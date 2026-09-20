@@ -17,13 +17,17 @@ import kr.joa.selahrta.audio.OpenedFormat
 import kr.joa.selahrta.audio.RequestedFormat
 import kr.joa.selahrta.calibration.ActiveCalibration
 import kr.joa.selahrta.calibration.CalibrationKey
+import kr.joa.selahrta.calibration.ActiveCurve
 import kr.joa.selahrta.calibration.CalibrationStore
+import kr.joa.selahrta.calibration.CurveStore
 import kr.joa.selahrta.calibration.GlobalCalibration
 import kr.joa.selahrta.calibration.SaveResult
 import kr.joa.selahrta.calibration.computeOffset
 import kr.joa.selahrta.domain.FailureReason
 import kr.joa.selahrta.domain.MeasureState
 import kr.joa.selahrta.domain.MicKind
+import kr.joa.selahrta.dsp.CalibrationCurve
+import kr.joa.selahrta.dsp.CalibrationFile
 import kr.joa.selahrta.dsp.RtaEngine
 import kr.joa.selahrta.dsp.RtaFrame
 import kr.joa.selahrta.dsp.SplEngine
@@ -78,6 +82,10 @@ data class CaptureUiState(
     val calibration: ActiveCalibration = ActiveCalibration.assumed,
     /** 31밴드 RTA. 아직 첫 FFT 가 안 찼으면 null. */
     val rta: RtaView? = null,
+    /** 지금 적용 중인 주파수 보정 곡선. */
+    val curve: ActiveCurve? = null,
+    /** 곡선 가져오기 결과 안내. */
+    val curveNoticeKo: String? = null,
     val meterSettings: MeterSettings = MeterSettings(),
     /** 지금 쓸 수 있는 입력 기기들. 꽂고 빼면 바뀐다. */
     val inputs: List<InputDeviceInfo> = emptyList(),
@@ -95,6 +103,10 @@ data class RtaView(
     val bandsSpl: DoubleArray,
     val holdSpl: DoubleArray,
     val resolved: BooleanArray,
+    /** 주파수 보정이 걸렸는가. 걸렸으면 화면이 그 사실을 적는다. */
+    val curveApplied: Boolean = false,
+    /** 보정 곡선이 덮지 않아 끝점 값을 늘여 쓴 밴드. */
+    val curveExtrapolated: BooleanArray? = null,
 ) {
     // DoubleArray 를 든 data class 는 equals 가 참조 비교라 Compose 가
     // 매번 다르다고 본다. 어차피 프레임마다 새 값이므로 그대로 두되,
@@ -109,10 +121,14 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     val state: StateFlow<CaptureUiState> = _state.asStateFlow()
 
     private val store = CalibrationStore(app)
+    private val curveStore = CurveStore(app)
     private val settingsStore = MeterSettingsStore(app)
     private val scanner = InputDeviceScanner(app)
     private var source: AudioSource? = null
     private var calibrationJob: Job? = null
+    private var curveJob: Job? = null
+    /** 지금 곡선의 밴드별 보정값. 프레임마다 다시 계산하지 않는다. */
+    private var curveBandGains: DoubleArray? = null
     private var settingsJob: Job? = null
     /** 지금 열려고 했던 기기의 열쇠. 목록이 바뀔 때 견주는 기준이다. */
     private var openingKey: String? = null
@@ -368,7 +384,9 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                                 currentDbfs = f.currentDbfs.value,
                             )
                         } ?: prev.meter,
-                        rta = rta?.frame()?.let { f -> f.toView(offset.db) } ?: prev.rta,
+                        rta = rta?.frame()?.let { f ->
+                            f.toView(offset.db, curveBandGains, prev.curve?.curve)
+                        } ?: prev.rta,
                     )
                 }
             }
@@ -389,6 +407,87 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 _state.value = _state.value.copy(calibration = ActiveCalibration.from(saved))
             }
         }
+        curveJob?.cancel()
+        curveJob = viewModelScope.launch {
+            curveStore.watch(key).collect { c ->
+                // 밴드 보정값은 곡선이 바뀔 때만 계산한다. 초당 15번 다시
+                // 계산하면 31개 밴드마다 보간이 세 번씩 돈다.
+                curveBandGains = c?.curve?.bandGainsDb()
+                _state.value = _state.value.copy(curve = c)
+            }
+        }
+    }
+
+    /**
+     * 고른 파일을 읽어 보정으로 삼는다.
+     *
+     * 읽기는 IO 스레드에서 한다 — 클라우드 제공자를 거치면 네트워크를 타서
+     * 주 스레드에서 하면 화면이 멈춘다.
+     */
+    fun importCurveFrom(uri: android.net.Uri) {
+        viewModelScope.launch {
+            val app = getApplication<Application>()
+            val read = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching {
+                    val name = app.contentResolver.query(uri, null, null, null, null)?.use { c ->
+                        val i = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                        if (i >= 0 && c.moveToFirst()) c.getString(i) else null
+                    } ?: uri.lastPathSegment ?: "보정 파일"
+                    val text = app.contentResolver.openInputStream(uri)
+                        ?.bufferedReader()?.use { it.readText() }
+                        ?: error("파일을 열 수 없습니다.")
+                    name to text
+                }
+            }
+            read.fold(
+                onSuccess = { (name, text) -> importCurve(name, text) },
+                onFailure = {
+                    _state.value = _state.value.copy(
+                        curveNoticeKo = "파일을 읽지 못했습니다: ${it.message}",
+                    )
+                },
+            )
+        }
+    }
+
+    /** 주파수 보정 파일을 가져온다(명세 8장). */
+    fun importCurve(fileName: String, text: String) {
+        val format = _state.value.opened
+        if (format == null) {
+            _state.value = _state.value.copy(
+                curveNoticeKo = "측정을 한 번 시작해야 어느 기기의 보정인지 정해집니다.",
+            )
+            return
+        }
+        viewModelScope.launch {
+            val r = curveStore.save(CalibrationKey.of(format), fileName, text)
+            _state.value = _state.value.copy(
+                curveNoticeKo = r.fold(
+                    onSuccess = { c ->
+                        // 파일이 수상해도 거부하지 않는다. 다만 무엇이 수상한지
+                        // 함께 적어 사람이 판단하게 한다.
+                        val warn = CalibrationFile.load(text).getOrNull()?.warningKo
+                        buildString {
+                            append("${c.fileName} 을(를) 적용했습니다. 점 ${c.pointCount}개.")
+                            warn?.let { append(" ").append(it) }
+                        }
+                    },
+                    onFailure = { it.message ?: "보정 파일을 읽지 못했습니다." },
+                ),
+            )
+        }
+    }
+
+    fun clearCurve() {
+        val format = _state.value.opened ?: return
+        viewModelScope.launch {
+            curveStore.clear(CalibrationKey.of(format))
+            _state.value = _state.value.copy(curveNoticeKo = "주파수 보정을 지웠습니다.")
+        }
+    }
+
+    fun dismissCurveNotice() {
+        _state.value = _state.value.copy(curveNoticeKo = null)
     }
 
     /**
@@ -462,6 +561,8 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         openingKey = null
         calibrationJob?.cancel()
         calibrationJob = null
+        curveJob?.cancel()
+        curveJob = null
         _state.value = _state.value.copy(measure = MeasureState.Idle)
     }
 
@@ -480,9 +581,26 @@ private fun OpenFailure.toDomain(): FailureReason = when (this) {
 }
 
 
-/** dBFS 밴드를 보정해 dB SPL 로 옮긴다. */
-private fun RtaFrame.toView(offsetDb: Double) = RtaView(
-    bandsSpl = DoubleArray(bandsDbfs.size) { bandsDbfs[it] + offsetDb },
-    holdSpl = DoubleArray(holdDbfs.size) { holdDbfs[it] + offsetDb },
+/**
+ * dBFS 밴드를 보정해 dB SPL 로 옮긴다.
+ *
+ * 주파수 보정은 **빼는 값**이다. 파일은 「이 마이크는 이 주파수에서 이만큼
+ * 더/덜 잡는다」를 적은 것이라, 그만큼 되돌려야 평탄해진다.
+ */
+private fun RtaFrame.toView(
+    offsetDb: Double,
+    curveGains: DoubleArray?,
+    curve: CalibrationCurve?,
+) = RtaView(
+    bandsSpl = DoubleArray(bandsDbfs.size) {
+        bandsDbfs[it] + offsetDb - (curveGains?.get(it) ?: 0.0)
+    },
+    holdSpl = DoubleArray(holdDbfs.size) {
+        holdDbfs[it] + offsetDb - (curveGains?.get(it) ?: 0.0)
+    },
     resolved = resolved,
+    curveApplied = curveGains != null,
+    curveExtrapolated = curve?.bandCovered()?.let { covered ->
+        BooleanArray(covered.size) { !covered[it] }
+    },
 )

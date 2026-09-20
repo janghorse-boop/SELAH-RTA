@@ -78,6 +78,16 @@ fun SelahApp() {
                 == PackageManager.PERMISSION_GRANTED,
         )
     }
+    // 보정 파일 고르기. 문서 제공자를 통해 읽으므로 저장소 권한이 필요 없다.
+    val pickCurve = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        // 파일 읽기는 잠깐이지만 주 스레드에서 하지 않는다 — 클라우드
+        // 제공자를 거치면 네트워크를 타서 화면이 멈출 수 있다.
+        vm.importCurveFrom(uri)
+    }
+
     val askPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
@@ -150,6 +160,11 @@ fun SelahApp() {
                         onPreferredInput = vm::setPreferredInput,
                         onAutoPreferExternal = vm::setAutoPreferExternal,
                         onDisconnectPolicy = vm::setDisconnectPolicy,
+                        // 확장자를 못 믿는 제공자가 많아 형식을 넓게 받는다.
+                        // 내용으로 판별하므로 잘못 고른 파일은 파서가 거른다.
+                        onPickCurveFile = { pickCurve.launch(arrayOf("*/*")) },
+                        onClearCurve = vm::clearCurve,
+                        onDismissCurveNotice = vm::dismissCurveNotice,
                     )
                 }
             }

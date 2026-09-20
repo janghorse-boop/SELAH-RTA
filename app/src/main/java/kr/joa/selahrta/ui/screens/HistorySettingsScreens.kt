@@ -32,6 +32,7 @@ import kr.joa.selahrta.dsp.Weighting
 import kr.joa.selahrta.settings.LeqWindow
 import kr.joa.selahrta.ui.CaptureUiState
 import kr.joa.selahrta.ui.components.CalibrationCard
+import kr.joa.selahrta.ui.components.CurveCard
 import kr.joa.selahrta.ui.components.InfoBar
 import kr.joa.selahrta.ui.components.NotYet
 import kr.joa.selahrta.ui.theme.SelahColors
@@ -80,6 +81,9 @@ fun SettingsScreen(
     onPreferredInput: (String?) -> Unit,
     onAutoPreferExternal: (Boolean) -> Unit,
     onDisconnectPolicy: (DisconnectPolicy) -> Unit,
+    onPickCurveFile: () -> Unit,
+    onClearCurve: () -> Unit,
+    onDismissCurveNotice: () -> Unit,
 ) {
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
@@ -137,6 +141,16 @@ fun SettingsScreen(
             modifier = Modifier.padding(top = 10.dp),
         )
 
+        CurveCard(
+            curve = capture.curve,
+            noticeKo = capture.curveNoticeKo,
+            canImport = capture.opened != null,
+            onPickFile = onPickCurveFile,
+            onClear = onClearCurve,
+            onDismissNotice = onDismissCurveNotice,
+            modifier = Modifier.padding(top = 10.dp),
+        )
+
         SectionTitle("측정 설정")
         ChoiceRow(
             "가중치 (Weighting)",
@@ -176,7 +190,7 @@ fun SettingsScreen(
         )
 
         SectionTitle("앱 정보")
-        SettingRow("SELAH RTA", "v0.1.0 (Phase 6)")
+        SettingRow("SELAH RTA", "v0.1.0 (Phase 7)")
         Text(
             "Real-Time Worship Audio Analyzer · made by Jesus On Air (JOA)",
             color = SelahColors.TextMuted,

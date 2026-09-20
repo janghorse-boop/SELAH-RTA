@@ -74,7 +74,7 @@ Critical/High 이슈가 남아 있으면 다음 Phase 로 넘어가지 않습니
 | 4 | 정식 음압 엔진 (A/C/Z, Fast/Slow, LAeq, Peak) | **완료** |
 | 5 | RTA (FFT, 31밴드) | **완료** |
 | 6 | USB-C 입력 | **완료** · USB 기기 확인 대기 |
-| 7 | 고급 Calibration | |
+| 7 | 고급 Calibration | **완료** · 파일 가져오기 손 확인 대기 |
 | 8 | 교회 모드 | |
 | 9 | Feedback 탐지 | |
 | 10 | 세션 기록 | |
