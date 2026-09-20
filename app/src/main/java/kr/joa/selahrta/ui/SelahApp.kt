@@ -17,12 +17,24 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
@@ -56,9 +68,36 @@ fun SelahApp() {
     var section by remember { mutableStateOf(NavSection.Measure) }
     var mode by remember { mutableStateOf(ViewMode.Sermon) }
 
-    // 아직 아무것도 재지 않는다. Idle 을 못박아 둬야 화면들이 「값 없음」
-    // 경로를 실제로 그리고, 나중에 값이 들어왔을 때 비교할 것이 생긴다.
-    val measure: MeasureState = MeasureState.Idle
+    val vm: CaptureViewModel = viewModel()
+    val capture by vm.state.collectAsStateWithLifecycle()
+
+    val context = LocalContext.current
+    var hasPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
+                == PackageManager.PERMISSION_GRANTED,
+        )
+    }
+    val askPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        hasPermission = granted
+        // 허용을 누른 그 손으로 바로 재기 시작하는 것이 자연스럽다.
+        // 거부했으면 시작하지 않는다 — 실패 메시지가 두 번 뜰 뿐이다.
+        if (granted) vm.start()
+    }
+
+    // 화면이 뒤로 가면 마이크를 놓는다. 안 놓으면 녹음 표시가 켜진 채로 남고
+    // 다른 앱이 마이크를 못 쓴다. 예배 내내 재는 것은 포그라운드 서비스가
+    // 필요한 별개 문제라 Phase 10 에서 다룬다.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val obs = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) vm.stop()
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
 
     Scaffold(
         containerColor = SelahColors.Background,
@@ -71,7 +110,7 @@ fun SelahApp() {
         },
     ) { inner ->
         Column(Modifier.fillMaxSize().padding(inner)) {
-            TopBrandBar()
+            TopBrandBar(capture.opened?.deviceLabel)
 
             if (section.hasModeChips) {
                 ModeChips(mode) { picked ->
@@ -85,9 +124,18 @@ fun SelahApp() {
             Box(Modifier.weight(1f)) {
                 when (section) {
                     NavSection.Measure, NavSection.Analyze -> when (mode) {
-                        ViewMode.Sermon, ViewMode.Worship -> MeasureScreen(mode, measure)
-                        ViewMode.Rta -> RtaScreen(measure)
-                        ViewMode.Feedback -> FeedbackScreen(measure)
+                        ViewMode.Sermon, ViewMode.Worship -> MeasureScreen(
+                            mode = mode,
+                            capture = capture,
+                            hasPermission = hasPermission,
+                            onRequestPermission = {
+                                askPermission.launch(Manifest.permission.RECORD_AUDIO)
+                            },
+                            onStart = vm::start,
+                            onStop = vm::stop,
+                        )
+                        ViewMode.Rta -> RtaScreen(capture.measure)
+                        ViewMode.Feedback -> FeedbackScreen(capture.measure)
                     }
                     NavSection.History -> HistoryScreen()
                     NavSection.Settings -> SettingsScreen()
@@ -105,7 +153,7 @@ fun SelahApp() {
  * 보정된 측정 마이크의 82 dBA 는 다른 값이다.
  */
 @Composable
-private fun TopBrandBar() {
+private fun TopBrandBar(openedDeviceLabel: String?) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -128,10 +176,13 @@ private fun TopBrandBar() {
             )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            // Phase 1 에는 열린 기기가 없다. 그래서 기기 이름이 아니라
-            // 「아직 없음」을 적는다. 그럴듯한 PHONE MIC 를 미리 띄우면
+            // 열리기 전에는 흐리게 둔다. 그럴듯한 PHONE MIC 를 미리 띄우면
             // 마이크가 실제로 열렸는지 아닌지 구별할 수 없게 된다.
-            StatusPill(MicKind.BuiltIn.badgeKo, SelahColors.TextMuted, dim = true)
+            StatusPill(
+                MicKind.BuiltIn.badgeKo,
+                if (openedDeviceLabel != null) SelahColors.Accent else SelahColors.TextMuted,
+                dim = openedDeviceLabel == null,
+            )
             StatusPill(CalibrationState.Uncalibrated.shortKo, SelahColors.Warn)
         }
     }

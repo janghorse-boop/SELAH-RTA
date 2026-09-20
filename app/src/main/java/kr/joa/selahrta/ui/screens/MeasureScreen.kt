@@ -1,5 +1,6 @@
 package kr.joa.selahrta.ui.screens
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,6 +11,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -23,13 +26,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.Canvas
 import kr.joa.selahrta.domain.ChurchMode
 import kr.joa.selahrta.domain.MeasureState
-import kr.joa.selahrta.domain.RangeVerdict
 import kr.joa.selahrta.domain.ReferenceRanges
 import kr.joa.selahrta.domain.verdictFor
+import kr.joa.selahrta.ui.CaptureUiState
+import kr.joa.selahrta.ui.components.DiagnosticsPanel
 import kr.joa.selahrta.ui.components.InfoBar
+import kr.joa.selahrta.ui.components.InputLevelBar
 import kr.joa.selahrta.ui.components.NO_VALUE
 import kr.joa.selahrta.ui.components.ValueTile
 import kr.joa.selahrta.ui.components.VerdictBadge
@@ -40,19 +44,28 @@ import kr.joa.selahrta.ui.theme.SelahColors
 /**
  * 컨셉 화면 1번 — 큰 현재 음압, 판정, LAeq/MAX/PEAK.
  *
- * Phase 1 에는 **값이 하나도 없다.** 82.4 같은 그럴듯한 숫자를 미리 띄우지
- * 않는다(명세 0장). 그래서 이 화면이 지금 보여주는 것은 「배치」와
- * 「값이 없을 때 어떻게 보이는가」 두 가지다. 후자는 나중에 실제로
- * 마이크가 죽었을 때 똑같이 나타날 화면이라 지금 확인해 두는 편이 낫다.
+ * Phase 2 에서 실제 PCM 이 들어오기 시작했지만 **음압 숫자는 아직 없다.**
+ * dBFS 를 dB SPL 로 옮기려면 보정이 필요하고, 보정 없이 그럴듯한 82.4 를
+ * 띄우면 그게 거짓말이 된다(명세 0장·1장). 그래서 큰 숫자는 여전히 「—」이고,
+ * 대신 **입력 레벨**이 움직인다 — 마이크가 실제로 소리를 받고 있다는 사실만
+ * 보여 주는, 음압이라고 주장하지 않는 눈금이다.
  */
 @Composable
-fun MeasureScreen(mode: ViewMode, state: MeasureState) {
+fun MeasureScreen(
+    mode: ViewMode,
+    capture: CaptureUiState,
+    hasPermission: Boolean,
+    onRequestPermission: () -> Unit,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+) {
     val church = if (mode == ViewMode.Worship) ChurchMode.Worship else ChurchMode.Sermon
     val range = ReferenceRanges.forMode(church)
 
-    // 아직 측정하지 않으므로 값은 없다. null 이 곧 「없음」이다.
+    // 음압은 보정을 거쳐야 나온다. Phase 3 까지는 없는 것이 맞다.
     val currentDba: Double? = null
     val verdict = range.verdictFor(currentDba)
+    val running = capture.measure is MeasureState.Running
 
     Column(
         Modifier
@@ -61,17 +74,34 @@ fun MeasureScreen(mode: ViewMode, state: MeasureState) {
             .padding(horizontal = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        InfoBar(
-            when (state) {
-                MeasureState.Idle ->
-                    "아직 측정하지 않습니다. 마이크 연결은 Phase 2 에서 붙습니다."
-                MeasureState.Starting -> "마이크를 여는 중입니다."
-                is MeasureState.Running -> "측정 중입니다."
-                is MeasureState.Failed -> "측정이 멈췄습니다: ${state.reason}"
-            },
-            tone = SelahColors.TextSecondary,
-            modifier = Modifier.padding(top = 4.dp, bottom = 16.dp),
-        )
+        when {
+            !hasPermission -> InfoBar(
+                "소리의 크기를 재려면 마이크 권한이 필요합니다. " +
+                    "이 앱은 소리를 저장하지 않고 음압과 주파수만 계산합니다.",
+                Modifier.padding(top = 4.dp, bottom = 12.dp),
+                tone = SelahColors.Warn,
+            )
+
+            capture.errorKo != null -> InfoBar(
+                capture.errorKo,
+                Modifier.padding(top = 4.dp, bottom = 12.dp),
+                tone = SelahColors.High,
+            )
+
+            running -> {
+                val f = capture.opened
+                InfoBar(
+                    f?.trustNoteKo ?: "재고 있습니다.",
+                    Modifier.padding(top = 4.dp, bottom = 12.dp),
+                    tone = if (f?.trustIsWarning == true) SelahColors.Warn else SelahColors.InRange,
+                )
+            }
+
+            else -> InfoBar(
+                "아래 버튼을 눌러 마이크를 엽니다. 음압 숫자는 보정이 붙는 Phase 3 부터 나옵니다.",
+                Modifier.padding(top = 4.dp, bottom = 12.dp),
+            )
+        }
 
         Box(contentAlignment = Alignment.Center) {
             GaugeArc(fraction = null, modifier = Modifier.size(260.dp, 150.dp))
@@ -97,8 +127,6 @@ fun MeasureScreen(mode: ViewMode, state: MeasureState) {
                 modifier = Modifier.padding(top = 10.dp),
             )
             Text(
-                // 「참고값」이라는 사실을 숫자 바로 옆에 적는다. 명세 10장이
-                // 보편 표준이 아니라고 못박았고, 설정에서 고칠 수 있다.
                 "보편적 기준이 아니라 참고값입니다. 설정에서 바꿀 수 있습니다.",
                 color = SelahColors.TextMuted,
                 fontSize = 11.sp,
@@ -108,12 +136,47 @@ fun MeasureScreen(mode: ViewMode, state: MeasureState) {
         }
 
         Row(
-            Modifier.fillMaxWidth().padding(top = 20.dp, bottom = 16.dp),
+            Modifier.fillMaxWidth().padding(top = 20.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             ValueTile("LAeq (1분)", NO_VALUE, "dBA", Modifier.weight(1f))
             ValueTile("MAX", NO_VALUE, "dBA", Modifier.weight(1f))
             ValueTile("PEAK", NO_VALUE, "dB", Modifier.weight(1f))
+        }
+
+        Button(
+            onClick = {
+                when {
+                    !hasPermission -> onRequestPermission()
+                    running -> onStop()
+                    else -> onStart()
+                }
+            },
+            modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (running) SelahColors.SurfaceVariant else SelahColors.Accent,
+                contentColor = if (running) SelahColors.TextPrimary else Color(0xFF00201C),
+            ),
+        ) {
+            Text(
+                when {
+                    !hasPermission -> "마이크 권한 허용하기"
+                    running -> "측정 멈추기"
+                    else -> "측정 시작"
+                },
+                fontWeight = FontWeight.Bold,
+            )
+        }
+
+        if (running) {
+            InputLevelBar(
+                capture.diagnostics.lastPeakAbs,
+                Modifier.fillMaxWidth().padding(top = 18.dp),
+            )
+        }
+
+        capture.opened?.let {
+            DiagnosticsPanel(it, capture.diagnostics, Modifier.padding(top = 16.dp, bottom = 24.dp))
         }
     }
 }
