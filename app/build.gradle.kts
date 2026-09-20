@@ -45,6 +45,12 @@ android {
     }
 }
 
+// 시험이 몇 개 돌았는지 보이게 한다. 조용히 0개가 도는 것을 못 알아채면
+// 「통과했다」는 말이 아무 뜻도 없어진다.
+tasks.withType<Test>().configureEach {
+    testLogging { events("passed", "failed", "skipped") }
+}
+
 dependencies {
     implementation(project(":dsp"))
 

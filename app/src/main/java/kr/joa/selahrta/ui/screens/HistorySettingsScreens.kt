@@ -23,6 +23,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kr.joa.selahrta.domain.ChurchMode
 import kr.joa.selahrta.domain.ReferenceRange
+import kr.joa.selahrta.audio.DisconnectPolicy
+import kr.joa.selahrta.audio.InputDeviceInfo
+import kr.joa.selahrta.domain.MicKind
 import kr.joa.selahrta.domain.ReferenceRanges
 import kr.joa.selahrta.dsp.TimeWeight
 import kr.joa.selahrta.dsp.Weighting
@@ -74,16 +77,41 @@ fun SettingsScreen(
     onWeighting: (Weighting) -> Unit,
     onTimeWeight: (TimeWeight) -> Unit,
     onLeqWindow: (LeqWindow) -> Unit,
+    onPreferredInput: (String?) -> Unit,
+    onAutoPreferExternal: (Boolean) -> Unit,
+    onDisconnectPolicy: (DisconnectPolicy) -> Unit,
 ) {
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
     ) {
-        SectionTitle("마이크와 보정")
-        SettingRow(
-            "입력 장치",
-            capture.opened?.deviceLabel ?: "아직 열지 않음",
-            phase = if (capture.opened == null) "측정을 시작하면 열립니다" else null,
+        SectionTitle("입력 기기")
+        InputDevicePicker(
+            inputs = capture.inputs,
+            selectedKey = capture.meterSettings.preferredInputKey,
+            openedLabel = capture.opened?.deviceLabel,
+            onPick = onPreferredInput,
         )
+        ChoiceRow(
+            "외부 기기 자동 사용",
+            "USB·유선·블루투스 마이크가 꽂히면 그쪽을 먼저 씁니다. " +
+                "기기를 직접 고르면 이 설정보다 그쪽이 앞섭니다.",
+            listOf(true, false),
+            capture.meterSettings.autoPreferExternal,
+            { if (it) "자동" else "끔" },
+            onAutoPreferExternal,
+        )
+        ChoiceRow(
+            "기기가 빠졌을 때",
+            DisconnectPolicy.entries.first {
+                it == capture.meterSettings.disconnectPolicy
+            }.helpKo,
+            DisconnectPolicy.entries,
+            capture.meterSettings.disconnectPolicy,
+            { it.labelKo },
+            onDisconnectPolicy,
+        )
+
+        SectionTitle("보정")
         SettingRow(
             "샘플레이트 / 형식",
             capture.opened?.let { "${it.sampleRate} Hz · ${it.encoding.bitsLabel}" } ?: "—",
@@ -148,7 +176,7 @@ fun SettingsScreen(
         )
 
         SectionTitle("앱 정보")
-        SettingRow("SELAH RTA", "v0.1.0 (Phase 5)")
+        SettingRow("SELAH RTA", "v0.1.0 (Phase 6)")
         Text(
             "Real-Time Worship Audio Analyzer · made by Jesus On Air (JOA)",
             color = SelahColors.TextMuted,
@@ -164,6 +192,109 @@ fun SettingsScreen(
  * 설정을 바꾸면 측정 엔진이 새로 만들어져 Leq 와 MAX 가 비워진다 —
  * 계수가 다른 필터의 값을 이어 붙이면 그 구간이 어느 쪽도 아닌 값이 된다.
  */
+/**
+ * 입력 기기 고르기(컨셉 화면 5번).
+ *
+ * **「자동」도 하나의 선택지로 둔다.** 목록에서 고르기만 하게 하면,
+ * 나중에 그 기기를 안 쓸 때 되돌릴 방법이 없다.
+ */
+@Composable
+private fun InputDevicePicker(
+    inputs: List<InputDeviceInfo>,
+    selectedKey: String?,
+    openedLabel: String?,
+    onPick: (String?) -> Unit,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(bottom = 8.dp)
+            .background(SelahColors.Surface, RoundedCornerShape(10.dp))
+            .border(1.dp, SelahColors.Outline, RoundedCornerShape(10.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text("입력 기기", color = SelahColors.TextPrimary, fontSize = 13.sp)
+
+        if (inputs.isEmpty()) {
+            Text(
+                "쓸 수 있는 입력 기기를 찾지 못했습니다. 마이크 권한을 허용하면 목록이 나타납니다.",
+                color = SelahColors.Warn,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+            )
+            return@Column
+        }
+
+        DeviceRow("자동으로 고르기", null, selectedKey == null, "설정에 따라 알아서", onPick)
+        inputs.forEach { d ->
+            DeviceRow(
+                d.displayName,
+                d.stableKey,
+                selectedKey == d.stableKey,
+                if (d.kind == MicKind.Usb) "외부 입력" else "내장",
+                onPick,
+            )
+        }
+
+        if (openedLabel != null) {
+            Text(
+                "지금 열려 있는 기기: $openedLabel",
+                color = SelahColors.TextMuted,
+                fontSize = 10.sp,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+        Text(
+            "기기마다 보정값을 따로 둡니다. 바꾸면 그 기기의 보정이 적용됩니다.",
+            color = SelahColors.TextMuted,
+            fontSize = 10.sp,
+            lineHeight = 14.sp,
+        )
+    }
+}
+
+@Composable
+private fun DeviceRow(
+    title: String,
+    key: String?,
+    selected: Boolean,
+    subtitle: String,
+    onPick: (String?) -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(
+                if (selected) SelahColors.Accent.copy(alpha = 0.16f) else SelahColors.SurfaceVariant,
+                RoundedCornerShape(8.dp),
+            )
+            .border(
+                1.dp,
+                if (selected) SelahColors.Accent else Color.Transparent,
+                RoundedCornerShape(8.dp),
+            )
+            .clickable { onPick(key) }
+            .padding(horizontal = 12.dp, vertical = 9.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column {
+            Text(
+                title,
+                color = if (selected) SelahColors.Accent else SelahColors.TextPrimary,
+                fontSize = 12.sp,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            )
+            Text(subtitle, color = SelahColors.TextMuted, fontSize = 10.sp)
+        }
+        // 색만으로 알리지 않는다(명세 11장).
+        if (selected) {
+            Text("사용 중", color = SelahColors.Accent, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
 @Composable
 private fun <T> ChoiceRow(
     label: String,

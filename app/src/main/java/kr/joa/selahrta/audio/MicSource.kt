@@ -6,6 +6,9 @@ import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
+import android.media.AudioRouting
+import android.os.Handler
+import android.os.Looper
 import android.os.Process
 import android.util.Log
 import androidx.core.content.ContextCompat
@@ -14,20 +17,33 @@ import kr.joa.selahrta.dsp.BlockStats
 import kr.joa.selahrta.dsp.blockStats
 import java.util.concurrent.atomic.AtomicBoolean
 
-private const val TAG = "BuiltInMicSource"
+private const val TAG = "MicSource"
 
 /**
- * 휴대폰 내장 마이크(명세 2장).
+ * 마이크 입력(명세 2장).
  *
- * **USB 마이크의 대체품이 아니다.** 외부 마이크 없이도 모든 핵심 기능이
- * 이 소스 위에서 돈다. 같은 [AudioSource] 계약을 지키므로 DSP 쪽은
- * 어느 마이크로 들어왔는지 알 필요가 없다.
+ * **내장과 USB 를 한 클래스로 연다.** 명세는 BuiltInMicSource 와
+ * UsbMicSource 를 나눠 적었지만, AudioRecord 를 여는 경로가 완전히 같아서
+ * 둘로 나누면 같은 버그를 두 번 고쳐야 한다. 명세가 정말로 요구하는 것은
+ * 「같은 DSP 파이프라인을 쓴다」이고, 하나의 구현은 그것을 더 강하게 지킨다.
+ * 어느 마이크인지는 [OpenedFormat.micKind] 에만 남고 계산 경로는 갈라지지 않는다.
+ *
+ * **내장 마이크는 USB 의 대체품이 아니다.** [target] 이 null 이면 시스템
+ * 기본(대개 내장)으로 열며, 그 상태로 모든 핵심 기능이 돈다.
  */
-class BuiltInMicSource(private val context: Context) : AudioSource {
+class MicSource(
+    private val context: Context,
+    /** 열고 싶은 기기. null 이면 시스템 기본. */
+    private val target: InputDeviceInfo? = null,
+    /** 쓰던 기기가 라우팅에서 빠졌을 때 알린다. */
+    private val onRoutingLost: (() -> Unit)? = null,
+) : AudioSource {
 
-    override val labelKo: String = "내장 마이크"
+    override val labelKo: String = target?.productName ?: "내장 마이크"
 
+    private val scanner = InputDeviceScanner(context)
     private val effects = AudioEffectsController()
+    private var routingListener: AudioRouting.OnRoutingChangedListener? = null
     private var record: AudioRecord? = null
     private var opened: OpenedFormat? = null
     private var thread: Thread? = null
@@ -121,6 +137,20 @@ class BuiltInMicSource(private val context: Context) : AudioSource {
             )
         }
 
+        // 고른 기기가 있으면 그쪽으로 열도록 요청한다. **요청일 뿐이다** —
+        // 실제로 그 기기로 열렸는지는 아래에서 routedDevice 로 다시 확인한다.
+        var routedToTarget = true
+        if (target != null) {
+            val raw = scanner.findRaw(target.stableKey)
+            if (raw == null) {
+                routedToTarget = false
+                Log.w(TAG, "고른 기기를 찾지 못했다: ${target.stableKey}")
+            } else if (!rec.setPreferredDevice(raw)) {
+                routedToTarget = false
+                Log.w(TAG, "setPreferredDevice 가 거절했다: ${target.productName}")
+            }
+        }
+
         // 요청한 값이 아니라 **열린 값**을 읽는다. 이 한 줄이 이 클래스의 요점이다.
         val actualRate = rec.sampleRate
         val actualEncoding = if (rec.audioFormat == AudioFormat.ENCODING_PCM_FLOAT) {
@@ -133,16 +163,30 @@ class BuiltInMicSource(private val context: Context) : AudioSource {
         // 유일한 방어다 — 자동 게인이 살아 있으면 큰 소리가 조용해 보인다.
         val effectsReport = effects.disableProcessing(rec.audioSessionId)
 
+        // 실제로 어느 기기로 붙었는가. 고른 것과 다를 수 있다.
+        val routed = rec.routedDevice
+        // 실제로 붙은 기기를 목록에서 찾는다. 스캐너가 만든 것과 같은
+        // 방식으로 만들어야 열쇠가 어긋나지 않는다 — 여기서 손으로
+        // 다시 만들면 주소가 빠져 보정 열쇠가 충돌한다.
+        val routedInfo = routed?.let { r -> scanner.list().firstOrNull { it.id == r.id } }
+        if (target != null && routedInfo != null && routedInfo.stableKey != target.stableKey) {
+            routedToTarget = false
+            Log.w(TAG, "고른 기기와 다른 곳으로 열렸다: ${routedInfo.productName}")
+        }
+
         record = rec
         val fmt = OpenedFormat(
-            micKind = MicKind.BuiltIn,
+            micKind = routedInfo?.kind ?: target?.kind ?: MicKind.BuiltIn,
             sampleRate = actualRate,
             encoding = actualEncoding,
             audioSource = source,
             bufferSizeBytes = bufferBytes,
-            deviceLabel = rec.routedDevice?.productName?.toString() ?: "시스템 기본 입력",
+            deviceLabel = routedInfo?.displayName ?: target?.displayName ?: "시스템 기본 입력",
+            deviceKey = routedInfo?.stableKey ?: target?.stableKey ?: "default",
             unprocessedSupported = unprocessedSupported,
             effects = effectsReport,
+            requestedDeviceLabel = target?.productName,
+            routedAsRequested = routedToTarget,
         )
         opened = fmt
         Log.i(TAG, "열림: $fmt")
@@ -155,6 +199,19 @@ class BuiltInMicSource(private val context: Context) : AudioSource {
         if (!running.compareAndSet(false, true)) return
 
         rec.startRecording()
+
+        // 쓰던 기기가 빠지면 AudioRecord 는 조용히 다른 기기로 갈아탄다.
+        // 알아채지 못하면 **다른 마이크의 소리에 옛 보정값을 그대로 적용**하게
+        // 된다 — 화면의 숫자는 멀쩡해 보이는데 전혀 다른 값이다.
+        val openedKey = opened?.deviceLabel
+        routingListener = AudioRouting.OnRoutingChangedListener { routing ->
+            val now = routing.routedDevice?.productName?.toString()?.trim()
+            if (now != null && openedKey != null && now != openedKey) {
+                Log.w(TAG, "라우팅이 바뀌었다: $openedKey → $now")
+                onRoutingLost?.invoke()
+            }
+        }
+        rec.addOnRoutingChangedListener(routingListener, Handler(Looper.getMainLooper()))
 
         thread = Thread({ loop(rec, fmt, onBlock) }, "selah-capture").apply {
             // 오디오 캡처를 UI 보다 앞에 둔다(명세 17장). 우선순위를 올리지
@@ -217,6 +274,10 @@ class BuiltInMicSource(private val context: Context) : AudioSource {
         thread?.join(500)
         thread = null
         effects.release()
+        record?.let { r ->
+            routingListener?.let { runCatching { r.removeOnRoutingChangedListener(it) } }
+        }
+        routingListener = null
         record?.let {
             // stop() 은 초기화되지 않은 상태에서 부르면 예외를 던진다.
             if (it.state == AudioRecord.STATE_INITIALIZED) {

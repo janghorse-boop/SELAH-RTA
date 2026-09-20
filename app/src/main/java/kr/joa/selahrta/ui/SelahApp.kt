@@ -133,6 +133,7 @@ fun SelahApp() {
                             },
                             onStart = vm::start,
                             onStop = vm::stop,
+                            onDismissDeviceNotice = vm::dismissDeviceNotice,
                         )
                         ViewMode.Rta -> RtaScreen(capture)
                         ViewMode.Feedback -> FeedbackScreen(capture.measure)
@@ -146,6 +147,9 @@ fun SelahApp() {
                         onWeighting = vm::setWeighting,
                         onTimeWeight = vm::setTimeWeight,
                         onLeqWindow = vm::setLeqWindow,
+                        onPreferredInput = vm::setPreferredInput,
+                        onAutoPreferExternal = vm::setAutoPreferExternal,
+                        onDisconnectPolicy = vm::setDisconnectPolicy,
                     )
                 }
             }

@@ -4,7 +4,12 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kr.joa.selahrta.audio.AudioSource
-import kr.joa.selahrta.audio.BuiltInMicSource
+import kr.joa.selahrta.audio.ChoiceReason
+import kr.joa.selahrta.audio.DisconnectPolicy
+import kr.joa.selahrta.audio.InputDeviceInfo
+import kr.joa.selahrta.audio.InputDeviceScanner
+import kr.joa.selahrta.audio.MicSource
+import kr.joa.selahrta.audio.chooseInput
 import kr.joa.selahrta.audio.CaptureDiagnostics
 import kr.joa.selahrta.audio.OpenFailure
 import kr.joa.selahrta.audio.OpenResult
@@ -18,6 +23,7 @@ import kr.joa.selahrta.calibration.SaveResult
 import kr.joa.selahrta.calibration.computeOffset
 import kr.joa.selahrta.domain.FailureReason
 import kr.joa.selahrta.domain.MeasureState
+import kr.joa.selahrta.domain.MicKind
 import kr.joa.selahrta.dsp.RtaEngine
 import kr.joa.selahrta.dsp.RtaFrame
 import kr.joa.selahrta.dsp.SplEngine
@@ -73,6 +79,10 @@ data class CaptureUiState(
     /** 31밴드 RTA. 아직 첫 FFT 가 안 찼으면 null. */
     val rta: RtaView? = null,
     val meterSettings: MeterSettings = MeterSettings(),
+    /** 지금 쓸 수 있는 입력 기기들. 꽂고 빼면 바뀐다. */
+    val inputs: List<InputDeviceInfo> = emptyList(),
+    /** 기기 선택·전환에 관해 알릴 것. 사실을 숨기지 않는다. */
+    val deviceNoticeKo: String? = null,
     val errorKo: String? = null,
     /** 보정 저장 결과 안내. 한 번 보여 주고 지운다. */
     val calibrationNoticeKo: String? = null,
@@ -100,9 +110,12 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
 
     private val store = CalibrationStore(app)
     private val settingsStore = MeterSettingsStore(app)
+    private val scanner = InputDeviceScanner(app)
     private var source: AudioSource? = null
     private var calibrationJob: Job? = null
     private var settingsJob: Job? = null
+    /** 지금 열려고 했던 기기의 열쇠. 목록이 바뀔 때 견주는 기준이다. */
+    private var openingKey: String? = null
 
     /** 측정 엔진. 설정이 바뀌면 통째로 새로 만든다. */
     private var engine: SplEngine? = null
@@ -111,6 +124,16 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     private var rta: RtaEngine? = null
 
     init {
+        // 기기 목록은 늘 지켜본다. 측정 중이 아닐 때도 설정 화면이 최신
+        // 목록을 보여야 하고, 측정 중이면 빠지는 것을 알아채야 한다.
+        viewModelScope.launch {
+            scanner.watch().collect { list ->
+                val prev = _state.value.inputs
+                _state.value = _state.value.copy(inputs = list)
+                if (source != null) onDeviceListChanged(prev, list)
+            }
+        }
+
         // 설정은 측정과 무관하게 늘 지켜본다. 바뀌면 엔진을 다시 만들어야
         // 하므로 돌아가는 중이면 다시 시작한다.
         settingsJob = viewModelScope.launch {
@@ -140,6 +163,75 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = _state.value.copy(meter = MeterReading())
     }
 
+    /**
+     * 기기 목록이 바뀌었다. 쓰던 것이 빠졌으면 정책대로 처리한다(명세 2장).
+     *
+     * **조용히 다른 마이크로 갈아타지 않는다.** 갈아타면 그 시점부터 다른
+     * 감도·다른 보정값인데 화면의 숫자는 멀쩡해 보인다.
+     */
+    private fun onDeviceListChanged(before: List<InputDeviceInfo>, now: List<InputDeviceInfo>) {
+        val key = openingKey ?: return
+        val stillThere = now.any { it.stableKey == key }
+        if (stillThere) {
+            // 새로 꽂힌 외부 기기가 있고 자동 전환이 켜져 있으면 알린다.
+            // 자동으로 바꾸지는 않는다 — 예배 중에 값이 튀면 안 된다.
+            val added = now.filter { n -> before.none { it.stableKey == n.stableKey } }
+            val newExternal = added.firstOrNull { it.kind == MicKind.Usb }
+            if (newExternal != null) {
+                _state.value = _state.value.copy(
+                    deviceNoticeKo = "${newExternal.productName} 이(가) 연결됐습니다. " +
+                        "쓰시려면 측정을 멈추고 다시 시작하십시오 — 재는 도중에 " +
+                        "바꾸면 그 앞뒤 값이 서로 다른 마이크의 값이 됩니다.",
+                )
+            }
+            return
+        }
+
+        val policy = _state.value.meterSettings.disconnectPolicy
+        val name = before.firstOrNull { it.stableKey == key }?.productName ?: "쓰던 마이크"
+        when (policy) {
+            DisconnectPolicy.Pause -> {
+                stop()
+                _state.value = _state.value.copy(
+                    measure = MeasureState.Failed(FailureReason.DeviceLost),
+                    errorKo = "$name 이(가) 빠져 측정을 멈췄습니다. 다시 꽂고 시작하십시오.",
+                )
+            }
+            DisconnectPolicy.FallBack -> {
+                stop()
+                _state.value = _state.value.copy(
+                    deviceNoticeKo = "$name 이(가) 빠져 다른 마이크로 다시 시작합니다. " +
+                        "여기서부터는 다른 마이크·다른 보정값의 값입니다.",
+                )
+                start()
+            }
+        }
+    }
+
+    /** 라우팅이 바뀌었다. AudioRecord 가 조용히 다른 기기로 갈아탄 경우다. */
+    private fun onRoutingLost() {
+        _state.value = _state.value.copy(
+            deviceNoticeKo = "입력 경로가 바뀌었습니다. 값이 달라졌을 수 있으니 " +
+                "측정을 멈추고 다시 시작하시는 편이 안전합니다.",
+        )
+    }
+
+    fun setPreferredInput(key: String?) {
+        viewModelScope.launch { settingsStore.setPreferredInput(key) }
+    }
+
+    fun setAutoPreferExternal(on: Boolean) {
+        viewModelScope.launch { settingsStore.setAutoPreferExternal(on) }
+    }
+
+    fun setDisconnectPolicy(p: DisconnectPolicy) {
+        viewModelScope.launch { settingsStore.setDisconnectPolicy(p) }
+    }
+
+    fun dismissDeviceNotice() {
+        _state.value = _state.value.copy(deviceNoticeKo = null)
+    }
+
     fun setWeighting(w: Weighting) { viewModelScope.launch { settingsStore.setWeighting(w) } }
     fun setTimeWeight(t: TimeWeight) { viewModelScope.launch { settingsStore.setTimeWeight(t) } }
     fun setLeqWindow(w: LeqWindow) { viewModelScope.launch { settingsStore.setLeqWindow(w) } }
@@ -157,7 +249,23 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         if (source != null) return
         _state.value = _state.value.copy(measure = MeasureState.Starting, errorKo = null)
 
-        val mic = BuiltInMicSource(getApplication())
+        val s0 = _state.value.meterSettings
+        val available = scanner.list()
+        val choice = chooseInput(available, s0.preferredInputKey, s0.autoPreferExternal)
+        if (choice.device == null) {
+            _state.value = _state.value.copy(
+                measure = MeasureState.Failed(FailureReason.NoInputDevice),
+                errorKo = choice.reason.noticeKo(null),
+            )
+            return
+        }
+        openingKey = choice.device.stableKey
+
+        val mic = MicSource(
+            context = getApplication(),
+            target = choice.device,
+            onRoutingLost = { onRoutingLost() },
+        )
         when (val r = mic.open(RequestedFormat())) {
             is OpenResult.Failed -> {
                 mic.close()
@@ -183,9 +291,27 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 )
                 rta = RtaEngine(r.format.sampleRate)
                 source = mic
-                _state.value = CaptureUiState(
+                _state.value = _state.value.copy(
                     measure = MeasureState.Running(System.nanoTime()),
                     opened = r.format,
+                    meter = MeterReading(),
+                    rta = null,
+                    errorKo = null,
+                    deviceNoticeKo = buildString {
+                        choice.reason.noticeKo(choice.device)?.let { append(it) }
+                        if (!r.format.routedAsRequested) {
+                            if (isNotEmpty()) append(" ")
+                            append(
+                                // 내장 마이크는 안드로이드가 오디오 경로에 맞는 것을
+                                // 스스로 고르므로 요청이 무시되는 일이 흔하다(실측).
+                                // 숨기면 담당자는 고른 마이크로 재고 있다고 믿는다.
+                                "고르신 ${r.format.requestedDeviceLabel ?: "기기"} 대신 " +
+                                    "${r.format.deviceLabel} 로 열렸습니다. " +
+                                    "내장 마이크는 시스템이 경로에 맞는 것을 고르기 때문입니다. " +
+                                    "보정값도 실제로 열린 기기의 것이 적용됩니다.",
+                            )
+                        }
+                    }.takeIf { it.isNotEmpty() },
                 )
                 watchCalibration(r.format)
                 mic.start { block, stats ->
@@ -333,6 +459,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         source = null
         engine = null
         rta = null
+        openingKey = null
         calibrationJob?.cancel()
         calibrationJob = null
         _state.value = _state.value.copy(measure = MeasureState.Idle)

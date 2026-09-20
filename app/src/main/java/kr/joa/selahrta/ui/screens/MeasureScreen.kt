@@ -14,6 +14,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -60,6 +61,7 @@ fun MeasureScreen(
     onRequestPermission: () -> Unit,
     onStart: () -> Unit,
     onStop: () -> Unit,
+    onDismissDeviceNotice: () -> Unit = {},
 ) {
     val church = if (mode == ViewMode.Worship) ChurchMode.Worship else ChurchMode.Sermon
     val range = ReferenceRanges.forMode(church)
@@ -109,6 +111,20 @@ fun MeasureScreen(
                 "아래 버튼을 눌러 마이크를 엽니다. 음압 숫자는 보정이 붙는 Phase 3 부터 나옵니다.",
                 Modifier.padding(top = 4.dp, bottom = 12.dp),
             )
+        }
+
+        // 기기가 바뀌거나 빠진 일은 숫자보다 먼저 알려야 한다 —
+        // 그 뒤의 값이 다른 마이크의 값일 수 있기 때문이다.
+        capture.deviceNoticeKo?.let {
+            Row(
+                Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                InfoBar(it, Modifier.weight(1f), tone = SelahColors.Warn)
+                TextButton(onClick = onDismissDeviceNotice) {
+                    Text("확인", color = SelahColors.Accent, fontSize = 12.sp)
+                }
+            }
         }
 
         Box(contentAlignment = Alignment.Center) {

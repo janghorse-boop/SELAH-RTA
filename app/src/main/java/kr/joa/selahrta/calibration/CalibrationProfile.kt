@@ -3,7 +3,6 @@ package kr.joa.selahrta.calibration
 import kr.joa.selahrta.audio.CaptureSource
 import kr.joa.selahrta.audio.OpenedFormat
 import kr.joa.selahrta.domain.CalibrationState
-import kr.joa.selahrta.domain.MicKind
 import kr.joa.selahrta.dsp.CalibrationOffset
 
 /**
@@ -15,17 +14,20 @@ import kr.joa.selahrta.dsp.CalibrationOffset
  * 완전히 틀린 음압이 표시된다.
  */
 data class CalibrationKey(
-    val micKind: MicKind,
-    val deviceLabel: String,
+    /**
+     * 실제로 열린 기기의 열쇠. 이름이 아니라 이것을 쓴다 —
+     * 갤럭시의 하단·후면 내장 마이크는 이름이 같아서, 이름으로 갈랐다가는
+     * 서로 다른 마이크에 같은 보정값이 적용된다(실기기에서 확인).
+     */
+    val deviceKey: String,
     val source: CaptureSource,
 ) {
     /** 저장소 열쇠 문자열. 사람이 읽을 수 있게 두어 진단에도 쓴다. */
-    fun storageKey(): String = "cal|${micKind.name}|$deviceLabel|${source.name}"
+    fun storageKey(): String = "cal|$deviceKey|${source.name}"
 
     companion object {
         fun of(format: OpenedFormat) = CalibrationKey(
-            micKind = format.micKind,
-            deviceLabel = format.deviceLabel,
+            deviceKey = format.deviceKey,
             source = format.audioSource,
         )
     }

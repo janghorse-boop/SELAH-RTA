@@ -33,12 +33,28 @@ data class OpenedFormat(
     val audioSource: CaptureSource,
     /** AudioRecord 가 잡은 버퍼 크기(바이트). 진단에 쓴다. */
     val bufferSizeBytes: Int,
-    /** 실제로 열린 입력 기기 이름. 기기를 고르기 전에는 시스템 기본이다. */
+    /** 실제로 열린 입력 기기 이름(위치 포함). 화면에 적는 값이다. */
     val deviceLabel: String,
+    /**
+     * 실제로 열린 기기의 열쇠. **보정값이 이것으로 갈린다.**
+     *
+     * 이름만 쓰면 안 된다 — 갤럭시의 하단·후면 내장 마이크는 이름이 같아서
+     * 서로 다른 마이크에 같은 보정값이 적용된다(실측으로 확인).
+     */
+    val deviceKey: String,
     /** 기기가 UNPROCESSED 를 공식 지원한다고 알리는가. */
     val unprocessedSupported: Boolean,
     /** 신호 가공(AGC/NS/AEC)을 끈 결과. 하나라도 남으면 절대값을 믿기 어렵다. */
     val effects: EffectsReport,
+    /** 사용자가 고른 기기 이름. 고르지 않았으면 null. */
+    val requestedDeviceLabel: String? = null,
+    /**
+     * 고른 기기로 실제로 열렸는가.
+     *
+     * false 면 **다른 마이크의 소리를 그 마이크의 보정값으로 재고 있다.**
+     * 숫자는 멀쩡해 보이므로 화면이 반드시 알려야 한다.
+     */
+    val routedAsRequested: Boolean = true,
 ) {
     /**
      * 지금 들어오는 소리를 얼마나 믿을 수 있는가. 화면에 그대로 띄운다.
