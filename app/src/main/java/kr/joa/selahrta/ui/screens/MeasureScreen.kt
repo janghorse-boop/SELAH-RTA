@@ -30,6 +30,8 @@ import kr.joa.selahrta.domain.ChurchMode
 import kr.joa.selahrta.domain.MeasureState
 import kr.joa.selahrta.domain.RangeVerdict
 import kr.joa.selahrta.domain.ReferenceRanges
+import kr.joa.selahrta.domain.verdictFor
+import kr.joa.selahrta.dsp.Weighting
 import kr.joa.selahrta.ui.CaptureUiState
 import kr.joa.selahrta.ui.components.DiagnosticsPanel
 import kr.joa.selahrta.ui.components.InfoBar
@@ -64,11 +66,14 @@ fun MeasureScreen(
 
     val running = capture.measure is MeasureState.Running
     val m = capture.meter
-    // **무가중(Z) 값이다.** A 가중은 Phase 4 에서 붙는다.
-    // 참고 범위는 dBA 기준이라 지금 값과 견줄 수 없다 — 견주면 저역이 큰
-    // 소리에서 늘 「높음」이 뜬다. 판정은 가중치가 붙을 때까지 보류한다.
-    val verdict = RangeVerdict.Unknown
+    val weighting = capture.meterSettings.weighting
     val uncalibrated = capture.calibration.isReferenceOnly
+
+    // **참고 범위는 dBA 기준이다.** A 가중일 때만 견준다 — C 나 Z 값을
+    // dBA 범위와 견주면 저음이 큰 찬양에서 늘 「높음」이 뜬다.
+    // 판정에는 순간값이 아니라 Leq 를 쓴다(범위 자체가 평균 기준이다).
+    val judged = if (weighting == Weighting.A) m.leqLong ?: m.leqShort else null
+    val verdict = range.verdictFor(judged)
 
     Column(
         Modifier
@@ -126,7 +131,7 @@ fun MeasureScreen(
                     },
                 )
                 Text(
-                    if (uncalibrated) "dB (Z, 참고용)" else "dB (Z, 무가중)",
+                    if (uncalibrated) "${weighting.unitSuffix} · 참고용" else weighting.unitSuffix,
                     fontSize = 14.sp,
                     color = if (uncalibrated) SelahColors.Warn else SelahColors.TextSecondary,
                 )
@@ -136,7 +141,11 @@ fun MeasureScreen(
         VerdictBadge(
             verdict,
             Modifier.padding(top = 12.dp),
-            unknownLabel = if (running) "판정 보류 — 가중치 없음" else "측정 안 함",
+            unknownLabel = when {
+                !running -> "측정 안 함"
+                weighting != Weighting.A -> "판정 보류 — ${weighting.labelKo}"
+                else -> "평균을 모으는 중"
+            },
         )
 
         if (range != null) {
@@ -160,15 +169,21 @@ fun MeasureScreen(
             Modifier.fillMaxWidth().padding(top = 20.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // LAeq 는 시간가중·에너지 평균이 필요해 Phase 4 다. 지금은 없다.
-            ValueTile("LAeq (1분)", NO_VALUE, "Phase 4", Modifier.weight(1f))
-            ValueTile("MAX", formatDb(m.maxSpl), "dB (Z)", Modifier.weight(1f))
+            ValueTile(
+                "Leq (${capture.meterSettings.leqWindow.labelKo})",
+                formatDb(m.leqLong),
+                // 창이 아직 안 찼으면 그 사실을 적는다 — 「1분 평균」이라고
+                // 적어 놓고 실제로는 10초치인 값을 보여 주면 안 된다.
+                if (m.leqLong != null && !m.leqLongFull) "모으는 중" else weighting.unitSuffix,
+                Modifier.weight(1f),
+            )
+            ValueTile("MAX", formatDb(m.maxSpl), weighting.unitSuffix, Modifier.weight(1f))
             // 잘린 피크는 측정값이 아니라 하한이다. 「≥」를 붙여 그 사실을
             // 숫자 옆에 적는다 — 각주로 미루면 아무도 안 읽는다.
             ValueTile(
                 "PEAK",
                 if (m.peakClipped && m.peakSpl != null) "≥${formatDb(m.peakSpl)}" else formatDb(m.peakSpl),
-                if (m.peakClipped) "잘림" else "dB (Z)",
+                if (m.peakClipped) "잘림" else weighting.unitSuffix,
                 Modifier.weight(1f),
             )
         }

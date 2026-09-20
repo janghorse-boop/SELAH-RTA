@@ -143,6 +143,9 @@ fun SelahApp() {
                         onSaveCalibration = vm::saveSimpleCalibration,
                         onClearCalibration = vm::clearCalibration,
                         onDismissCalibrationNotice = vm::dismissCalibrationNotice,
+                        onWeighting = vm::setWeighting,
+                        onTimeWeight = vm::setTimeWeight,
+                        onLeqWindow = vm::setLeqWindow,
                     )
                 }
             }

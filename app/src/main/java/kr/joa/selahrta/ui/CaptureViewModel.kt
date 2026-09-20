@@ -18,25 +18,31 @@ import kr.joa.selahrta.calibration.SaveResult
 import kr.joa.selahrta.calibration.computeOffset
 import kr.joa.selahrta.domain.FailureReason
 import kr.joa.selahrta.domain.MeasureState
-import kr.joa.selahrta.dsp.Dbfs
-import kr.joa.selahrta.dsp.EnergyAverage
-import kr.joa.selahrta.dsp.amplitudeToDbfs
+import kr.joa.selahrta.dsp.SplEngine
+import kr.joa.selahrta.dsp.TimeWeight
+import kr.joa.selahrta.dsp.Weighting
+import kr.joa.selahrta.settings.LeqWindow
+import kr.joa.selahrta.settings.MeterSettings
+import kr.joa.selahrta.settings.MeterSettingsStore
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 /**
- * 화면에 띄울 레벨.
- *
- * **모두 무가중(Z)이다.** A 가중은 Phase 4 에서 붙는다. 그 전에 dBA 라고
- * 적으면 거짓말이다 — A 가중은 저역에서 수십 dB 를 깎기 때문에 같은 소리도
- * 전혀 다른 숫자가 된다.
+ * 화면에 띄울 레벨. 단위는 설정한 가중치에 따라 dBA/dBC/dB(Z) 가 된다.
  */
 data class MeterReading(
-    /** 지금 레벨(dB SPL, 무가중). 보정 전이면 짐작한 눈금 위의 값이다. */
+    /** 지금 레벨(dB SPL). 보정 전이면 짐작한 눈금 위의 값이다. */
     val currentSpl: Double? = null,
+    /** 짧은 구르는 Leq(10초). */
+    val leqShort: Double? = null,
+    /** 긴 구르는 Leq. 길이는 설정에 따른다. */
+    val leqLong: Double? = null,
+    /** 긴 Leq 의 창이 찼는가. 차기 전 값은 이름보다 짧은 구간의 평균이다. */
+    val leqLongFull: Boolean = false,
     /** 측정을 시작한 뒤의 최대 레벨. */
     val maxSpl: Double? = null,
     /** 파형 최대(순간). MAX 와 다른 지표다(명세 6장). */
@@ -62,6 +68,7 @@ data class CaptureUiState(
     val diagnostics: CaptureDiagnostics = CaptureDiagnostics(),
     val meter: MeterReading = MeterReading(),
     val calibration: ActiveCalibration = ActiveCalibration.assumed,
+    val meterSettings: MeterSettings = MeterSettings(),
     val errorKo: String? = null,
     /** 보정 저장 결과 안내. 한 번 보여 주고 지운다. */
     val calibrationNoticeKo: String? = null,
@@ -73,8 +80,47 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     val state: StateFlow<CaptureUiState> = _state.asStateFlow()
 
     private val store = CalibrationStore(app)
+    private val settingsStore = MeterSettingsStore(app)
     private var source: AudioSource? = null
     private var calibrationJob: Job? = null
+    private var settingsJob: Job? = null
+
+    /** 측정 엔진. 설정이 바뀌면 통째로 새로 만든다. */
+    private var engine: SplEngine? = null
+
+    init {
+        // 설정은 측정과 무관하게 늘 지켜본다. 바뀌면 엔진을 다시 만들어야
+        // 하므로 돌아가는 중이면 다시 시작한다.
+        settingsJob = viewModelScope.launch {
+            settingsStore.settings.collect { s ->
+                val changed = _state.value.meterSettings != s
+                _state.value = _state.value.copy(meterSettings = s)
+                if (changed && source != null) restartEngine(s)
+            }
+        }
+    }
+
+    /**
+     * 설정이 바뀌면 엔진을 새로 만든다.
+     *
+     * 계수를 바꿔 끼우지 않는다 — 필터 안에 남은 이전 상태가 새 계수와 섞여
+     * 잠깐 동안 어느 쪽도 아닌 값이 나온다. 마이크는 그대로 두고 엔진만
+     * 갈아 끼우므로 측정이 끊기지는 않는다.
+     */
+    private fun restartEngine(s: MeterSettings) {
+        val fmt = _state.value.opened ?: return
+        engine = SplEngine(
+            sampleRate = fmt.sampleRate,
+            weighting = s.weighting,
+            timeWeight = s.timeWeight,
+            leqLongMs = s.leqWindow.millis,
+        )
+        _state.value = _state.value.copy(meter = MeterReading())
+    }
+
+    fun setWeighting(w: Weighting) { viewModelScope.launch { settingsStore.setWeighting(w) } }
+    fun setTimeWeight(t: TimeWeight) { viewModelScope.launch { settingsStore.setTimeWeight(t) } }
+    fun setLeqWindow(w: LeqWindow) { viewModelScope.launch { settingsStore.setLeqWindow(w) } }
 
     // 캡처 스레드만 만지는 값들.
     private var blocks = 0L
@@ -83,21 +129,6 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     private var clippedBlocks = 0L
     private var lastEmitNs = 0L
     private var captureStartNs = 0L
-    private var maxSpl = Double.NEGATIVE_INFINITY
-    private var maxPeakAbs = 0.0
-    /** 가장 큰 피크가 잘린 것이었는가. */
-    private var maxPeakClipped = false
-
-    /**
-     * 화면에 내보내는 사이에 들어온 덩어리들의 에너지를 모은다.
-     *
-     * 덩어리 하나(21ms)의 값을 그대로 띄우면 숫자가 심하게 튄다. 그렇다고
-     * dB 를 평균하면 안 되므로(에너지로 모아야 한다) 이 누적기를 쓴다.
-     * **이것은 아직 규격의 Fast/Slow 시간가중이 아니다** — 화면에 내보내는
-     * 주기만큼의 단순 에너지 평균이고, 정식 시간가중은 Phase 4 에서 붙는다.
-     */
-    private val window = EnergyAverage()
-
     private val emitIntervalNs = 66_000_000L
 
     fun start() {
@@ -120,9 +151,14 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
 
             is OpenResult.Opened -> {
                 blocks = 0; frames = 0; readErrors = 0; clippedBlocks = 0; lastEmitNs = 0
-                maxSpl = Double.NEGATIVE_INFINITY; maxPeakAbs = 0.0; maxPeakClipped = false
-                window.reset()
                 captureStartNs = System.nanoTime()
+                val s = _state.value.meterSettings
+                engine = SplEngine(
+                    sampleRate = r.format.sampleRate,
+                    weighting = s.weighting,
+                    timeWeight = s.timeWeight,
+                    leqLongMs = s.leqWindow.millis,
+                )
                 source = mic
                 _state.value = CaptureUiState(
                     measure = MeasureState.Running(System.nanoTime()),
@@ -134,13 +170,15 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                     frames += block.frames
                     if (block.frames == 0) readErrors++
                     if (stats.clipped) clippedBlocks++
-                    if (stats.peakAbs > maxPeakAbs) {
-                        maxPeakAbs = stats.peakAbs
-                        maxPeakClipped = stats.clipped
-                    }
-                    // 버린 덩어리(frames=0)는 에너지에 넣지 않는다. 넣으면
+
+                    // 버린 덩어리(frames=0)는 엔진에 넣지 않는다. 넣으면
                     // 읽기 오류가 「아주 조용한 구간」으로 둔갑한다.
-                    window.add(stats.rms, block.frames)
+                    val eng = engine ?: return@start
+                    val splFrame = if (block.frames > 0) {
+                        eng.process(block.samples, block.frames)
+                    } else {
+                        null
+                    }
 
                     val now = System.nanoTime()
                     if (now - lastEmitNs < emitIntervalNs) return@start
@@ -151,18 +189,8 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                     val audioMs = frames * 1000.0 / block.sampleRate
                     val lagMs = (now - captureStartNs) / 1e6 - audioMs
 
-                    val windowDbfs: Dbfs? = window.dbfs()
-                    window.reset()
-
                     val prev = _state.value
                     val offset = prev.calibration.offset
-                    val spl = windowDbfs?.toSpl(offset)?.value
-                    if (spl != null && spl > maxSpl) maxSpl = spl
-                    val peakSpl = if (maxPeakAbs > 0.0) {
-                        amplitudeToDbfs(maxPeakAbs).toSpl(offset).value
-                    } else {
-                        null
-                    }
 
                     _state.value = prev.copy(
                         diagnostics = CaptureDiagnostics(
@@ -175,14 +203,19 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                             blockDurationMs = blockMs,
                             audioLagMs = lagMs,
                         ),
-                        meter = MeterReading(
-                            currentSpl = spl,
-                            maxSpl = maxSpl.takeIf { it.isFinite() },
-                            peakSpl = peakSpl,
-                            peakClipped = maxPeakClipped,
-                            anyClipping = clippedBlocks > 0,
-                            currentDbfs = windowDbfs?.value,
-                        ),
+                        meter = splFrame?.let { f ->
+                            MeterReading(
+                                currentSpl = f.currentDbfs.toSpl(offset).value,
+                                leqShort = f.leqShortDbfs?.toSpl(offset)?.value,
+                                leqLong = f.leqLongDbfs?.toSpl(offset)?.value,
+                                leqLongFull = f.leqLongFull,
+                                maxSpl = f.maxDbfs.toSpl(offset).value,
+                                peakSpl = f.peakDbfs.toSpl(offset).value,
+                                peakClipped = f.peakClipped,
+                                anyClipping = clippedBlocks > 0,
+                                currentDbfs = f.currentDbfs.value,
+                            )
+                        } ?: prev.meter,
                     )
                 }
             }
@@ -232,8 +265,8 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                     "보정값 ${"%+.1f".format(cal.offsetDb)} dB 을 저장했습니다."
                 is SaveResult.Rejected -> r.reasonKo
             }
-            // MAX 는 보정 이전 눈금으로 쌓인 값이라 더는 뜻이 없다. 비운다.
-            maxSpl = Double.NEGATIVE_INFINITY
+            // MAX·PEAK 는 보정 이전 눈금으로 쌓인 값이라 더는 뜻이 없다. 비운다.
+            engine?.resetPeaks()
             _state.value = _state.value.copy(calibrationNoticeKo = notice)
         }
     }
@@ -242,7 +275,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         val format = _state.value.opened ?: return
         viewModelScope.launch {
             store.clear(CalibrationKey.of(format))
-            maxSpl = Double.NEGATIVE_INFINITY
+            engine?.resetPeaks()
             _state.value = _state.value.copy(calibrationNoticeKo = "보정값을 지웠습니다.")
         }
     }
@@ -251,11 +284,9 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = _state.value.copy(calibrationNoticeKo = null)
     }
 
-    /** MAX 를 다시 센다. 새 구간을 재기 시작할 때 쓴다. */
+    /** MAX·PEAK 를 다시 센다. Leq 는 그대로 둔다. */
     fun resetMax() {
-        maxSpl = Double.NEGATIVE_INFINITY
-        maxPeakAbs = 0.0
-        maxPeakClipped = false
+        engine?.resetPeaks()
         _state.value = _state.value.copy(
             meter = _state.value.meter.copy(
                 maxSpl = null,
@@ -268,6 +299,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     fun stop() {
         source?.close()
         source = null
+        engine = null
         calibrationJob?.cancel()
         calibrationJob = null
         _state.value = _state.value.copy(measure = MeasureState.Idle)

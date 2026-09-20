@@ -2,9 +2,11 @@ package kr.joa.selahrta.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -15,12 +17,16 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kr.joa.selahrta.domain.ChurchMode
 import kr.joa.selahrta.domain.ReferenceRange
 import kr.joa.selahrta.domain.ReferenceRanges
+import kr.joa.selahrta.dsp.TimeWeight
+import kr.joa.selahrta.dsp.Weighting
+import kr.joa.selahrta.settings.LeqWindow
 import kr.joa.selahrta.ui.CaptureUiState
 import kr.joa.selahrta.ui.components.CalibrationCard
 import kr.joa.selahrta.ui.components.InfoBar
@@ -65,6 +71,9 @@ fun SettingsScreen(
     onSaveCalibration: (Double) -> Unit,
     onClearCalibration: () -> Unit,
     onDismissCalibrationNotice: () -> Unit,
+    onWeighting: (Weighting) -> Unit,
+    onTimeWeight: (TimeWeight) -> Unit,
+    onLeqWindow: (LeqWindow) -> Unit,
 ) {
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
@@ -101,9 +110,30 @@ fun SettingsScreen(
         )
 
         SectionTitle("측정 설정")
-        SettingRow("가중치 (Weighting)", "무가중 (Z)", phase = "A/C 가중은 Phase 4")
-        SettingRow("응답 속도", "Fast (0.125s)", phase = "Phase 4")
-        SettingRow("LAeq 시간", "1분", phase = "Phase 4")
+        ChoiceRow(
+            "가중치 (Weighting)",
+            "A 는 사람 귀에 맞춘 가중입니다. 권장 범위 판정은 A 에서만 합니다.",
+            Weighting.entries,
+            capture.meterSettings.weighting,
+            { it.unitSuffix },
+            onWeighting,
+        )
+        ChoiceRow(
+            "응답 속도",
+            "Fast 는 짧은 봉우리를 그대로, Slow 는 뭉개서 보여 줍니다.",
+            TimeWeight.entries,
+            capture.meterSettings.timeWeight,
+            { if (it == TimeWeight.Fast) "Fast" else "Slow" },
+            onTimeWeight,
+        )
+        ChoiceRow(
+            "Leq 시간",
+            "권장 범위와 견주는 평균 구간입니다.",
+            LeqWindow.entries,
+            capture.meterSettings.leqWindow,
+            { it.labelKo },
+            onLeqWindow,
+        )
 
         SectionTitle("모드별 권장 범위")
         RangeCard(ChurchMode.Sermon.labelKo, ReferenceRanges.sermon)
@@ -118,13 +148,65 @@ fun SettingsScreen(
         )
 
         SectionTitle("앱 정보")
-        SettingRow("SELAH RTA", "v0.1.0 (Phase 3)")
+        SettingRow("SELAH RTA", "v0.1.0 (Phase 4)")
         Text(
             "Real-Time Worship Audio Analyzer · made by Jesus On Air (JOA)",
             color = SelahColors.TextMuted,
             fontSize = 11.sp,
             modifier = Modifier.padding(top = 4.dp, bottom = 24.dp),
         )
+    }
+}
+
+/**
+ * 고르는 줄. 지금 고른 것이 색으로도 글자로도 드러나야 한다.
+ *
+ * 설정을 바꾸면 측정 엔진이 새로 만들어져 Leq 와 MAX 가 비워진다 —
+ * 계수가 다른 필터의 값을 이어 붙이면 그 구간이 어느 쪽도 아닌 값이 된다.
+ */
+@Composable
+private fun <T> ChoiceRow(
+    label: String,
+    helpKo: String,
+    options: List<T>,
+    selected: T,
+    labelOf: (T) -> String,
+    onPick: (T) -> Unit,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(bottom = 8.dp)
+            .background(SelahColors.Surface, RoundedCornerShape(10.dp))
+            .border(1.dp, SelahColors.Outline, RoundedCornerShape(10.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(label, color = SelahColors.TextPrimary, fontSize = 13.sp)
+        Text(helpKo, color = SelahColors.TextMuted, fontSize = 10.sp, lineHeight = 14.sp)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            options.forEach { o ->
+                val on = o == selected
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .background(
+                            if (on) SelahColors.Accent else SelahColors.SurfaceVariant,
+                            RoundedCornerShape(8.dp),
+                        )
+                        .clickable { onPick(o) }
+                        .padding(vertical = 8.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        labelOf(o),
+                        color = if (on) Color(0xFF00201C) else SelahColors.TextSecondary,
+                        fontSize = 12.sp,
+                        fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
+                    )
+                }
+            }
+        }
     }
 }
 
