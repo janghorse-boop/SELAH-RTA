@@ -28,8 +28,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kr.joa.selahrta.domain.ChurchMode
 import kr.joa.selahrta.domain.MeasureState
+import kr.joa.selahrta.domain.RangeVerdict
 import kr.joa.selahrta.domain.ReferenceRanges
-import kr.joa.selahrta.domain.verdictFor
 import kr.joa.selahrta.ui.CaptureUiState
 import kr.joa.selahrta.ui.components.DiagnosticsPanel
 import kr.joa.selahrta.ui.components.InfoBar
@@ -62,10 +62,13 @@ fun MeasureScreen(
     val church = if (mode == ViewMode.Worship) ChurchMode.Worship else ChurchMode.Sermon
     val range = ReferenceRanges.forMode(church)
 
-    // 음압은 보정을 거쳐야 나온다. Phase 3 까지는 없는 것이 맞다.
-    val currentDba: Double? = null
-    val verdict = range.verdictFor(currentDba)
     val running = capture.measure is MeasureState.Running
+    val m = capture.meter
+    // **무가중(Z) 값이다.** A 가중은 Phase 4 에서 붙는다.
+    // 참고 범위는 dBA 기준이라 지금 값과 견줄 수 없다 — 견주면 저역이 큰
+    // 소리에서 늘 「높음」이 뜬다. 판정은 가중치가 붙을 때까지 보류한다.
+    val verdict = RangeVerdict.Unknown
+    val uncalibrated = capture.calibration.isReferenceOnly
 
     Column(
         Modifier
@@ -104,19 +107,37 @@ fun MeasureScreen(
         }
 
         Box(contentAlignment = Alignment.Center) {
-            GaugeArc(fraction = null, modifier = Modifier.size(260.dp, 150.dp))
+            // 눈금은 40~110 dB. 예배당에서 실제로 오가는 범위다.
+            GaugeArc(
+                fraction = m.currentSpl?.let { ((it - 40.0) / 70.0).toFloat() },
+                modifier = Modifier.size(260.dp, 150.dp),
+            )
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    formatDb(currentDba),
+                    formatDb(m.currentSpl),
                     fontSize = 64.sp,
                     fontWeight = FontWeight.Bold,
-                    color = if (currentDba != null) SelahColors.TextPrimary else SelahColors.TextMuted,
+                    // 미보정 값은 흐리게 그린다. 보정된 값과 같은 밝기로 띄우면
+                    // 둘의 무게가 같아 보인다 — 하나는 잰 값이고 하나는 짐작이다.
+                    color = when {
+                        m.currentSpl == null -> SelahColors.TextMuted
+                        uncalibrated -> SelahColors.TextSecondary
+                        else -> SelahColors.TextPrimary
+                    },
                 )
-                Text("dBA", fontSize = 16.sp, color = SelahColors.TextSecondary)
+                Text(
+                    if (uncalibrated) "dB (Z, 참고용)" else "dB (Z, 무가중)",
+                    fontSize = 14.sp,
+                    color = if (uncalibrated) SelahColors.Warn else SelahColors.TextSecondary,
+                )
             }
         }
 
-        VerdictBadge(verdict, Modifier.padding(top = 12.dp))
+        VerdictBadge(
+            verdict,
+            Modifier.padding(top = 12.dp),
+            unknownLabel = if (running) "판정 보류 — 가중치 없음" else "측정 안 함",
+        )
 
         if (range != null) {
             Text(
@@ -139,9 +160,27 @@ fun MeasureScreen(
             Modifier.fillMaxWidth().padding(top = 20.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            ValueTile("LAeq (1분)", NO_VALUE, "dBA", Modifier.weight(1f))
-            ValueTile("MAX", NO_VALUE, "dBA", Modifier.weight(1f))
-            ValueTile("PEAK", NO_VALUE, "dB", Modifier.weight(1f))
+            // LAeq 는 시간가중·에너지 평균이 필요해 Phase 4 다. 지금은 없다.
+            ValueTile("LAeq (1분)", NO_VALUE, "Phase 4", Modifier.weight(1f))
+            ValueTile("MAX", formatDb(m.maxSpl), "dB (Z)", Modifier.weight(1f))
+            // 잘린 피크는 측정값이 아니라 하한이다. 「≥」를 붙여 그 사실을
+            // 숫자 옆에 적는다 — 각주로 미루면 아무도 안 읽는다.
+            ValueTile(
+                "PEAK",
+                if (m.peakClipped && m.peakSpl != null) "≥${formatDb(m.peakSpl)}" else formatDb(m.peakSpl),
+                if (m.peakClipped) "잘림" else "dB (Z)",
+                Modifier.weight(1f),
+            )
+        }
+
+        if (m.anyClipping) {
+            InfoBar(
+                "소리가 너무 커서 파형이 잘린 구간이 있습니다. 그 구간의 음압은 " +
+                    "화면 값보다 높으며 얼마나 높은지는 알 수 없습니다. " +
+                    "마이크를 소리원에서 떼어 놓으십시오.",
+                Modifier.padding(top = 12.dp),
+                tone = SelahColors.High,
+            )
         }
 
         Button(

@@ -9,6 +9,7 @@ import android.media.AudioRecord
 import android.os.Process
 import android.util.Log
 import androidx.core.content.ContextCompat
+import kr.joa.selahrta.domain.MicKind
 import kr.joa.selahrta.dsp.BlockStats
 import kr.joa.selahrta.dsp.blockStats
 import java.util.concurrent.atomic.AtomicBoolean
@@ -134,6 +135,7 @@ class BuiltInMicSource(private val context: Context) : AudioSource {
 
         record = rec
         val fmt = OpenedFormat(
+            micKind = MicKind.BuiltIn,
             sampleRate = actualRate,
             encoding = actualEncoding,
             audioSource = source,

@@ -2,6 +2,7 @@ package kr.joa.selahrta.audio
 
 import android.media.AudioFormat
 import android.media.MediaRecorder
+import kr.joa.selahrta.domain.MicKind
 
 /**
  * 우리가 **바라는** 캡처 형식(명세 5장).
@@ -25,6 +26,8 @@ data class RequestedFormat(
  * 세션에 그대로 기록된다(명세 2장).
  */
 data class OpenedFormat(
+    /** 내장인가 USB 인가. 보정값이 이것으로 갈린다 — 감도가 수십 dB 다르다. */
+    val micKind: MicKind,
     val sampleRate: Int,
     val encoding: PcmEncoding,
     val audioSource: CaptureSource,

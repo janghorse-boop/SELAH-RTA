@@ -21,6 +21,8 @@ import androidx.compose.ui.unit.sp
 import kr.joa.selahrta.domain.ChurchMode
 import kr.joa.selahrta.domain.ReferenceRange
 import kr.joa.selahrta.domain.ReferenceRanges
+import kr.joa.selahrta.ui.CaptureUiState
+import kr.joa.selahrta.ui.components.CalibrationCard
 import kr.joa.selahrta.ui.components.InfoBar
 import kr.joa.selahrta.ui.components.NotYet
 import kr.joa.selahrta.ui.theme.SelahColors
@@ -58,17 +60,48 @@ fun HistoryScreen() {
  * 아직 없기** 때문이다. 빈 화면 셋을 만들어 두면 만들어진 것처럼 보인다.
  */
 @Composable
-fun SettingsScreen() {
+fun SettingsScreen(
+    capture: CaptureUiState,
+    onSaveCalibration: (Double) -> Unit,
+    onClearCalibration: () -> Unit,
+    onDismissCalibrationNotice: () -> Unit,
+) {
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
     ) {
         SectionTitle("마이크와 보정")
-        SettingRow("입력 장치", "아직 열지 않음", phase = "Phase 2 · 6")
-        SettingRow("샘플레이트 / 비트 깊이", "—", phase = "Phase 2")
-        SettingRow("보정 상태", "미보정", phase = "Phase 3 · 7", warn = true)
+        SettingRow(
+            "입력 장치",
+            capture.opened?.deviceLabel ?: "아직 열지 않음",
+            phase = if (capture.opened == null) "측정을 시작하면 열립니다" else null,
+        )
+        SettingRow(
+            "샘플레이트 / 형식",
+            capture.opened?.let { "${it.sampleRate} Hz · ${it.encoding.bitsLabel}" } ?: "—",
+        )
+        SettingRow(
+            "보정 상태",
+            capture.calibration.state.labelKo,
+            warn = capture.calibration.isReferenceOnly,
+        )
+
+        CalibrationCard(
+            capture = capture,
+            onSave = onSaveCalibration,
+            onClear = onClearCalibration,
+            onDismissNotice = onDismissCalibrationNotice,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+
+        InfoBar(
+            "보정하지 않은 값은 참고용입니다. 폰 마이크의 감도를 모르는 상태라 " +
+                "실제 음압과 10dB 넘게 차이 날 수 있습니다.",
+            tone = SelahColors.Warn,
+            modifier = Modifier.padding(top = 10.dp),
+        )
 
         SectionTitle("측정 설정")
-        SettingRow("가중치 (Weighting)", "dBA", phase = "Phase 4")
+        SettingRow("가중치 (Weighting)", "무가중 (Z)", phase = "A/C 가중은 Phase 4")
         SettingRow("응답 속도", "Fast (0.125s)", phase = "Phase 4")
         SettingRow("LAeq 시간", "1분", phase = "Phase 4")
 
@@ -85,7 +118,7 @@ fun SettingsScreen() {
         )
 
         SectionTitle("앱 정보")
-        SettingRow("SELAH RTA", "v0.1.0 (Phase 1)")
+        SettingRow("SELAH RTA", "v0.1.0 (Phase 3)")
         Text(
             "Real-Time Worship Audio Analyzer · made by Jesus On Air (JOA)",
             color = SelahColors.TextMuted,

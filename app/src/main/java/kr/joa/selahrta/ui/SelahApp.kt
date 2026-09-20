@@ -110,7 +110,7 @@ fun SelahApp() {
         },
     ) { inner ->
         Column(Modifier.fillMaxSize().padding(inner)) {
-            TopBrandBar(capture.opened?.deviceLabel)
+            TopBrandBar(capture)
 
             if (section.hasModeChips) {
                 ModeChips(mode) { picked ->
@@ -138,7 +138,12 @@ fun SelahApp() {
                         ViewMode.Feedback -> FeedbackScreen(capture.measure)
                     }
                     NavSection.History -> HistoryScreen()
-                    NavSection.Settings -> SettingsScreen()
+                    NavSection.Settings -> SettingsScreen(
+                        capture = capture,
+                        onSaveCalibration = vm::saveSimpleCalibration,
+                        onClearCalibration = vm::clearCalibration,
+                        onDismissCalibrationNotice = vm::dismissCalibrationNotice,
+                    )
                 }
             }
         }
@@ -153,7 +158,8 @@ fun SelahApp() {
  * 보정된 측정 마이크의 82 dBA 는 다른 값이다.
  */
 @Composable
-private fun TopBrandBar(openedDeviceLabel: String?) {
+private fun TopBrandBar(capture: CaptureUiState) {
+    val openedDeviceLabel = capture.opened?.deviceLabel
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -183,7 +189,10 @@ private fun TopBrandBar(openedDeviceLabel: String?) {
                 if (openedDeviceLabel != null) SelahColors.Accent else SelahColors.TextMuted,
                 dim = openedDeviceLabel == null,
             )
-            StatusPill(CalibrationState.Uncalibrated.shortKo, SelahColors.Warn)
+            StatusPill(
+                capture.calibration.state.shortKo,
+                if (capture.calibration.isReferenceOnly) SelahColors.Warn else SelahColors.InRange,
+            )
         }
     }
 }

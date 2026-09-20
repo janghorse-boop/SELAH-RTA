@@ -78,7 +78,12 @@ fun ValueTile(
  * 예배당에서는 누구에게나 구별이 어려워진다.
  */
 @Composable
-fun VerdictBadge(verdict: RangeVerdict, modifier: Modifier = Modifier) {
+fun VerdictBadge(
+    verdict: RangeVerdict,
+    modifier: Modifier = Modifier,
+    /** 판정할 수 없을 때 그 까닭을 대신 적는다. 「측정 안 함」과 「판정 보류」는 다르다. */
+    unknownLabel: String = "측정 안 함",
+) {
     val color = when (verdict) {
         RangeVerdict.Low -> SelahColors.Low
         RangeVerdict.InRange -> SelahColors.InRange
@@ -92,7 +97,7 @@ fun VerdictBadge(verdict: RangeVerdict, modifier: Modifier = Modifier) {
             .padding(horizontal = 16.dp, vertical = 6.dp),
     ) {
         Text(
-            if (verdict == RangeVerdict.Unknown) "측정 안 함" else verdict.labelKo,
+            if (verdict == RangeVerdict.Unknown) unknownLabel else verdict.labelKo,
             color = color,
             fontSize = 14.sp,
             fontWeight = FontWeight.SemiBold,
