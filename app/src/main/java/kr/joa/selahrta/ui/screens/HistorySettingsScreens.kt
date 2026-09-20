@@ -148,7 +148,7 @@ fun SettingsScreen(
         )
 
         SectionTitle("앱 정보")
-        SettingRow("SELAH RTA", "v0.1.0 (Phase 4)")
+        SettingRow("SELAH RTA", "v0.1.0 (Phase 5)")
         Text(
             "Real-Time Worship Audio Analyzer · made by Jesus On Air (JOA)",
             color = SelahColors.TextMuted,

@@ -134,7 +134,7 @@ fun SelahApp() {
                             onStart = vm::start,
                             onStop = vm::stop,
                         )
-                        ViewMode.Rta -> RtaScreen(capture.measure)
+                        ViewMode.Rta -> RtaScreen(capture)
                         ViewMode.Feedback -> FeedbackScreen(capture.measure)
                     }
                     NavSection.History -> HistoryScreen()

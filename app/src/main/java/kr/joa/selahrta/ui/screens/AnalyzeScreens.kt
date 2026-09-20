@@ -23,10 +23,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kr.joa.selahrta.domain.MeasureState
 import kr.joa.selahrta.dsp.ThirdOctave
+import kr.joa.selahrta.ui.CaptureUiState
+import kr.joa.selahrta.ui.components.BandMeter
 import kr.joa.selahrta.ui.components.InfoBar
 import kr.joa.selahrta.ui.components.NO_VALUE
 import kr.joa.selahrta.ui.components.NotYet
 import kr.joa.selahrta.ui.components.ValueTile
+import kr.joa.selahrta.ui.components.formatDb
+import kr.joa.selahrta.ui.components.rtaRange
 import kr.joa.selahrta.ui.theme.SelahColors
 
 /**
@@ -38,80 +42,55 @@ import kr.joa.selahrta.ui.theme.SelahColors
  * 눈으로 구별할 수 없다.
  */
 @Composable
-fun RtaScreen(state: MeasureState) {
+fun RtaScreen(capture: CaptureUiState) {
+    val rta = capture.rta
+    val (floor, ceil) = rtaRange(rta)
+    val unresolved = rta?.resolved?.indexOfFirst { it }?.takeIf { it > 0 }
+
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
     ) {
         InfoBar(
-            "1/3 옥타브 31밴드 · ${ThirdOctave.CENTERS_HZ.first().toInt()}Hz ~ " +
-                "${(ThirdOctave.CENTERS_HZ.last() / 1000).toInt()}kHz",
+            "1/3 옥타브 31밴드 · 20Hz ~ 20kHz · 가중 없음(원음 그대로)",
             modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
         )
 
-        BandFrame(Modifier.fillMaxWidth().height(220.dp))
+        BandMeter(rta, floor, ceil, Modifier.fillMaxWidth())
 
-        Row(
-            Modifier.fillMaxWidth().padding(top = 8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            listOf(20, 50, 125, 315, 800, 2000, 5000, 12500, 20000).forEach {
-                Text(
-                    if (it >= 1000) "${it / 1000}k" else "$it",
-                    color = SelahColors.TextMuted,
-                    fontSize = 9.sp,
-                )
-            }
+        if (unresolved != null) {
+            // 흐린 막대가 무슨 뜻인지 적는다. 안 적으면 「저음이 약하다」로 읽힌다.
+            InfoBar(
+                "${ThirdOctave.label(unresolved)}Hz 아래 밴드는 흐리게 그립니다. " +
+                    "FFT 한 칸이 그 밴드보다 넓어서, 그 값은 이웃에서 새어 온 것이지 " +
+                    "그 대역의 실제 에너지가 아닙니다.",
+                Modifier.padding(top = 10.dp),
+                tone = SelahColors.TextMuted,
+            )
         }
-        Text(
-            "주파수 (Hz)",
-            color = SelahColors.TextMuted,
-            fontSize = 10.sp,
-            modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
-        )
 
+        val top = rta?.let { r ->
+            r.bandsSpl.indices
+                .filter { r.resolved[it] }
+                .maxByOrNull { r.bandsSpl[it] }
+        }
         Row(
-            Modifier.fillMaxWidth().padding(top = 16.dp),
+            Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 24.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            ValueTile("선택 주파수", NO_VALUE, "Hz", Modifier.weight(1f))
-            ValueTile("레벨", NO_VALUE, "dB", Modifier.weight(1f))
-        }
-
-        NotYet("막대는 실제 FFT 가 붙으면 그립니다.", "Phase 5 — FFT · 31밴드", Modifier.padding(top = 12.dp))
-    }
-}
-
-/** 값이 없을 때의 RTA 틀. 눈금선만 그린다. */
-@Composable
-private fun BandFrame(modifier: Modifier = Modifier) {
-    Column(
-        modifier
-            .background(SelahColors.Surface, RoundedCornerShape(12.dp))
-            .border(1.dp, SelahColors.Outline, RoundedCornerShape(12.dp))
-            .padding(8.dp),
-    ) {
-        Canvas(Modifier.fillMaxSize()) {
-            // 가로 눈금 다섯 줄(+20 ~ -20 dB). 세로는 31밴드 자리.
-            val rows = 5
-            repeat(rows) { i ->
-                val y = size.height * i / (rows - 1f)
-                drawLine(
-                    color = SelahColors.Outline,
-                    start = Offset(0f, y),
-                    end = Offset(size.width, y),
-                    strokeWidth = 1f,
-                )
-            }
-            val n = ThirdOctave.CENTERS_HZ.size
-            repeat(n) { i ->
-                val x = size.width * (i + 0.5f) / n
-                drawLine(
-                    color = SelahColors.Outline.copy(alpha = 0.5f),
-                    start = Offset(x, size.height - 4f),
-                    end = Offset(x, size.height),
-                    strokeWidth = 1f,
-                )
-            }
+            ValueTile(
+                "가장 큰 대역",
+                top?.let { ThirdOctave.label(it) } ?: NO_VALUE,
+                "Hz",
+                Modifier.weight(1f),
+            )
+            ValueTile(
+                "그 레벨",
+                top?.let { formatDb(rta.bandsSpl[it]) } ?: NO_VALUE,
+                // RTA 는 늘 가중 없이 본다. 위의 큰 숫자(dBA 등)와 다른 값이므로
+                // 단위에 그 사실을 적는다 — 안 적으면 두 숫자가 안 맞는다고 읽힌다.
+                "dB · 가중 없음",
+                Modifier.weight(1f),
+            )
         }
     }
 }

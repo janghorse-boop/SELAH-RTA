@@ -101,6 +101,17 @@ fun CalibrationCard(
             lineHeight = 16.sp,
         )
 
+        // **가중치가 맞아야 한다.** 여기서 읽는 값에는 지금 고른 가중이
+        // 이미 걸려 있다. 소음계가 dBC 인데 앱이 dBA 면, 그 소리의
+        // A-C 차이가 보정값에 통째로 섞여 들어가 이후 모든 값이 그만큼
+        // 틀어진다. 1kHz 순음이면 세 가중이 모두 0dB 이라 안전하다.
+        InfoBar(
+            "소음계를 ${capture.meterSettings.weighting.unitSuffix} 로 맞추고 재십시오. " +
+                "가중치가 다르면 그 차이가 보정값에 섞여 들어갑니다. " +
+                "1kHz 순음(교정기)으로 하면 가중치와 무관합니다.",
+            tone = SelahColors.Warn,
+        )
+
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,

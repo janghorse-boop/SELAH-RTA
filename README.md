@@ -71,8 +71,8 @@ Critical/High 이슈가 남아 있으면 다음 Phase 로 넘어가지 않습니
 | 1 | 앱 골격/UI | **완료** |
 | 2 | 내장 마이크 MVP | **완료** |
 | 3 | 기본 Meter | **완료** |
-| 4 | 정식 음압 엔진 (A/C/Z, Fast/Slow, LAeq, Peak) | **완료** · 기기 확인 대기 |
-| 5 | RTA (FFT, 31밴드) | |
+| 4 | 정식 음압 엔진 (A/C/Z, Fast/Slow, LAeq, Peak) | **완료** |
+| 5 | RTA (FFT, 31밴드) | **완료** |
 | 6 | USB-C 입력 | |
 | 7 | 고급 Calibration | |
 | 8 | 교회 모드 | |

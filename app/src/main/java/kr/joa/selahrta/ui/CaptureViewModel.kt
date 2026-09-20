@@ -18,6 +18,8 @@ import kr.joa.selahrta.calibration.SaveResult
 import kr.joa.selahrta.calibration.computeOffset
 import kr.joa.selahrta.domain.FailureReason
 import kr.joa.selahrta.domain.MeasureState
+import kr.joa.selahrta.dsp.RtaEngine
+import kr.joa.selahrta.dsp.RtaFrame
 import kr.joa.selahrta.dsp.SplEngine
 import kr.joa.selahrta.dsp.TimeWeight
 import kr.joa.selahrta.dsp.Weighting
@@ -68,11 +70,28 @@ data class CaptureUiState(
     val diagnostics: CaptureDiagnostics = CaptureDiagnostics(),
     val meter: MeterReading = MeterReading(),
     val calibration: ActiveCalibration = ActiveCalibration.assumed,
+    /** 31밴드 RTA. 아직 첫 FFT 가 안 찼으면 null. */
+    val rta: RtaView? = null,
     val meterSettings: MeterSettings = MeterSettings(),
     val errorKo: String? = null,
     /** 보정 저장 결과 안내. 한 번 보여 주고 지운다. */
     val calibrationNoticeKo: String? = null,
 )
+
+/**
+ * 화면에 그릴 RTA 한 프레임. 값은 보정을 거친 dB SPL 이다.
+ */
+data class RtaView(
+    val bandsSpl: DoubleArray,
+    val holdSpl: DoubleArray,
+    val resolved: BooleanArray,
+) {
+    // DoubleArray 를 든 data class 는 equals 가 참조 비교라 Compose 가
+    // 매번 다르다고 본다. 어차피 프레임마다 새 값이므로 그대로 두되,
+    // 경고를 피하려고 명시해 둔다.
+    override fun equals(other: Any?): Boolean = this === other
+    override fun hashCode(): Int = System.identityHashCode(this)
+}
 
 class CaptureViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -87,6 +106,9 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 측정 엔진. 설정이 바뀌면 통째로 새로 만든다. */
     private var engine: SplEngine? = null
+
+    /** RTA 엔진. 가중과 무관하므로 설정이 바뀌어도 그대로 둔다. */
+    private var rta: RtaEngine? = null
 
     init {
         // 설정은 측정과 무관하게 늘 지켜본다. 바뀌면 엔진을 다시 만들어야
@@ -159,6 +181,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                     timeWeight = s.timeWeight,
                     leqLongMs = s.leqWindow.millis,
                 )
+                rta = RtaEngine(r.format.sampleRate)
                 source = mic
                 _state.value = CaptureUiState(
                     measure = MeasureState.Running(System.nanoTime()),
@@ -175,6 +198,9 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                     // 읽기 오류가 「아주 조용한 구간」으로 둔갑한다.
                     val eng = engine ?: return@start
                     val splFrame = if (block.frames > 0) {
+                        // RTA 에는 가중 전 원본을 넣는다. A 가중을 걸면
+                        // 저역이 깎인 그림이 되어 주파수 균형을 잘못 읽는다.
+                        rta?.process(block.samples, block.frames)
                         eng.process(block.samples, block.frames)
                     } else {
                         null
@@ -216,6 +242,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                                 currentDbfs = f.currentDbfs.value,
                             )
                         } ?: prev.meter,
+                        rta = rta?.frame()?.let { f -> f.toView(offset.db) } ?: prev.rta,
                     )
                 }
             }
@@ -284,6 +311,11 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = _state.value.copy(calibrationNoticeKo = null)
     }
 
+    /** RTA 의 Peak Hold 를 다시 센다. */
+    fun resetRtaHold() {
+        rta?.resetHold()
+    }
+
     /** MAX·PEAK 를 다시 센다. Leq 는 그대로 둔다. */
     fun resetMax() {
         engine?.resetPeaks()
@@ -300,6 +332,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         source?.close()
         source = null
         engine = null
+        rta = null
         calibrationJob?.cancel()
         calibrationJob = null
         _state.value = _state.value.copy(measure = MeasureState.Idle)
@@ -318,3 +351,11 @@ private fun OpenFailure.toDomain(): FailureReason = when (this) {
     OpenFailure.Unsupported -> FailureReason.Unknown
     OpenFailure.Unknown -> FailureReason.Unknown
 }
+
+
+/** dBFS 밴드를 보정해 dB SPL 로 옮긴다. */
+private fun RtaFrame.toView(offsetDb: Double) = RtaView(
+    bandsSpl = DoubleArray(bandsDbfs.size) { bandsDbfs[it] + offsetDb },
+    holdSpl = DoubleArray(holdDbfs.size) { holdDbfs[it] + offsetDb },
+    resolved = resolved,
+)

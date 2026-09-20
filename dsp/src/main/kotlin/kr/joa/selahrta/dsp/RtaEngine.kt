@@ -1,0 +1,112 @@
+package kr.joa.selahrta.dsp
+
+/**
+ * 31밴드 RTA 한 프레임의 결과.
+ *
+ * 값은 전부 dBFS 이며 **음압이 아니다** — 보정을 거쳐야 dB SPL 이 된다.
+ */
+class RtaFrame(
+    /** 밴드별 레벨(dBFS). 길이 31. */
+    val bandsDbfs: DoubleArray,
+    /** Peak Hold 로 붙들어 둔 값(dBFS). 길이 31. */
+    val holdDbfs: DoubleArray,
+    /** 밴드마다 FFT 로 실제 분해되는가. 안 되는 밴드의 값은 이웃에서 샌 것이다. */
+    val resolved: BooleanArray,
+)
+
+/**
+ * 실시간 주파수 분석기(명세 7장).
+ *
+ * 들어오는 PCM 을 **겹쳐 가며** FFT 한다. 겹치지 않으면 창이 깎아 버린
+ * 경계 근처의 소리를 놓쳐, 짧게 스치는 소리가 프레임 사이로 사라진다.
+ *
+ * 화면 갱신(10~20 FPS)보다 자주 FFT 를 돌리고 그 결과를 평활한다 —
+ * FFT 자체를 화면 속도로 늦추면 하울링이 시작되는 순간을 놓친다.
+ */
+class RtaEngine(
+    private val sampleRate: Int,
+    /** 명세 7장의 출발점은 4096. 길수록 저역이 잘 보이고 반응은 느려진다. */
+    val fftSize: Int = 4096,
+    /** 겹치는 비율. 0.5 면 절반씩 겹친다. */
+    overlap: Double = 0.5,
+    smoothingFactor: Double = 0.5,
+    peakHoldFallDb: Double = 0.4,
+) {
+    init {
+        require(sampleRate > 0) { "샘플레이트가 0 이하다" }
+        require(overlap in 0.0..0.9) { "겹침 비율이 범위를 벗어난다: $overlap" }
+    }
+
+    private val hop = (fftSize * (1.0 - overlap)).toInt().coerceAtLeast(1)
+    private val spectrum = PowerSpectrum(fftSize)
+    private val bands = BandAnalyzer(fftSize, sampleRate)
+    private val smoothing = BandSmoothing(ThirdOctave.BAND_COUNT, smoothingFactor)
+    private val peakHold = PeakHold(ThirdOctave.BAND_COUNT, peakHoldFallDb)
+
+    /** 들어온 샘플을 모아 두는 원형 버퍼. */
+    private val ring = DoubleArray(fftSize)
+    private var writePos = 0
+    private var sinceLastFft = 0
+    private var filled = 0
+
+    /** 작업용 버퍼들. 프레임마다 새로 만들지 않는다. */
+    private val linear = DoubleArray(fftSize)
+    private val power = DoubleArray(spectrum.binCount)
+    private val bandPower = DoubleArray(ThirdOctave.BAND_COUNT)
+    private val bandDb = DoubleArray(ThirdOctave.BAND_COUNT)
+
+    private var latest: RtaFrame? = null
+
+    /**
+     * 덩어리를 넣는다. FFT 를 돌릴 만큼 쌓이면 결과가 갱신된다.
+     *
+     * [samples] 는 **가중 전 원본**이다. RTA 는 주파수 균형을 보는 것이라
+     * A 가중을 걸면 저역이 깎인 그림이 되어 「어느 대역이 큰지」를 잘못 읽게
+     * 된다. 음압(dBA)과 RTA 는 다른 질문에 답한다.
+     */
+    fun process(samples: FloatArray, frames: Int) {
+        require(frames in 0..samples.size) { "frames=$frames 이 범위를 벗어난다" }
+        for (i in 0 until frames) {
+            ring[writePos] = samples[i].toDouble()
+            writePos = (writePos + 1) % fftSize
+            if (filled < fftSize) filled++
+            sinceLastFft++
+            if (filled >= fftSize && sinceLastFft >= hop) {
+                sinceLastFft = 0
+                runFft()
+            }
+        }
+    }
+
+    private fun runFft() {
+        // 원형 버퍼를 시간 순서대로 펴서 옮긴다. 순서가 틀리면 파형이
+        // 가운데서 끊긴 것처럼 되어 없던 고역이 잔뜩 생긴다.
+        for (i in 0 until fftSize) {
+            linear[i] = ring[(writePos + i) % fftSize]
+        }
+        spectrum.compute(linear, 0, power)
+        bands.toBandPower(power, bandPower)
+        val smoothed = smoothing.update(bandPower)
+        bands.toBandDbfs(smoothed, bandDb)
+        val held = peakHold.update(bandDb)
+        latest = RtaFrame(bandDb.copyOf(), held.copyOf(), bands.bandResolved)
+    }
+
+    /** 가장 최근 결과. 아직 FFT 를 한 번도 못 돌렸으면 null. */
+    fun frame(): RtaFrame? = latest
+
+    /** 분해되지 않는 가장 낮은 밴드 위의 첫 밴드. 화면이 그 아래를 흐리게 그린다. */
+    val lowestResolvedBand: Int get() = bands.lowestResolvedBand
+
+    fun resetHold() = peakHold.reset()
+
+    fun reset() {
+        ring.fill(0.0)
+        writePos = 0
+        sinceLastFft = 0
+        filled = 0
+        smoothing.reset()
+        peakHold.reset()
+        latest = null
+    }
+}
