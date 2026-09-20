@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose 가 실제 테마를 그린다. 이건 창이 뜨기 전 잠깐 보이는 바탕이라
+         Compose 다크 배경과 같은 색으로 둬야 앱을 열 때 흰 화면이 번쩍이지 않는다. -->
+    <style name="Theme.SelahRta" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#0B0E11</item>
+        <item name="android:statusBarColor">#0B0E11</item>
+        <item name="android:navigationBarColor">#0B0E11</item>
+    </style>
+</resources>

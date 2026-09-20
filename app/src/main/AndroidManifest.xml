@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+        측정에 마이크가 반드시 필요하다. 권한을 요청하는 자리에서 왜 필요한지
+        설명한다(명세 18장) — 「소리를 저장하지 않고 음압만 잰다」는 사실이
+        사용자에게 먼저 전달돼야 한다.
+    -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!--
+        내장 마이크 없는 기기에서도 USB 마이크로 쓸 수 있으므로 required 를
+        false 로 둔다. 명세 2장: 내장 마이크는 fallback 이 아니라 정식 입력이고,
+        USB 도 마찬가지로 정식 입력이다.
+    -->
+    <uses-feature
+        android:name="android.hardware.microphone"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.usb.host"
+        android:required="false" />
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.SelahRta">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.SelahRta">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>
