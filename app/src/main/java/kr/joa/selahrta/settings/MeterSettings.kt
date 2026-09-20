@@ -8,7 +8,11 @@ import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import androidx.datastore.preferences.core.doublePreferencesKey
 import kr.joa.selahrta.audio.DisconnectPolicy
+import kr.joa.selahrta.domain.ChurchSegment
+import kr.joa.selahrta.domain.DefaultSegmentRanges
+import kr.joa.selahrta.domain.SegmentRange
 import kr.joa.selahrta.dsp.TimeWeight
 import kr.joa.selahrta.dsp.Weighting
 import kotlinx.coroutines.flow.Flow
@@ -43,7 +47,23 @@ data class MeterSettings(
     val autoPreferExternal: Boolean = true,
     /** 쓰던 기기가 빠졌을 때(명세 2장). */
     val disconnectPolicy: DisconnectPolicy = DisconnectPolicy.FallBack,
-)
+    /** 지금 재고 있는 예배 구간. */
+    val segment: ChurchSegment = ChurchSegment.Sermon,
+    /**
+     * 구간별 참고 범위. 고친 것이 없으면 초기값을 쓴다.
+     *
+     * 명세 10장이 「사용자 수정 가능한 참고값」이라고 못박았다 —
+     * 예배당마다 알맞은 값이 다르다.
+     */
+    val ranges: Map<ChurchSegment, SegmentRange> = emptyMap(),
+) {
+    /** 이 구간의 참고 범위. 고친 값이 있으면 그것을, 없으면 초기값을. */
+    fun rangeFor(s: ChurchSegment): SegmentRange? =
+        ranges[s] ?: DefaultSegmentRanges.of(s)
+
+    /** 이 구간의 범위를 사용자가 고쳤는가. 화면이 「기본값으로」를 띄울 근거다. */
+    fun isCustom(s: ChurchSegment): Boolean = ranges.containsKey(s)
+}
 
 class MeterSettingsStore(private val context: Context) {
 
@@ -53,6 +73,11 @@ class MeterSettingsStore(private val context: Context) {
     private val preferredInputKey = stringPreferencesKey("preferredInput")
     private val autoExternalKey = stringPreferencesKey("autoPreferExternal")
     private val disconnectKey = stringPreferencesKey("disconnectPolicy")
+    private val segmentKey = stringPreferencesKey("segment")
+
+    // 범위는 구간마다 네 값이라 열쇠를 만들어 쓴다.
+    private fun rangeKey(s: ChurchSegment, part: String) =
+        doublePreferencesKey("range|${s.name}|$part")
 
     val settings: Flow<MeterSettings> = context.meterDataStore.data
         .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
@@ -75,6 +100,21 @@ class MeterSettingsStore(private val context: Context) {
                 disconnectPolicy = p[disconnectKey]?.let { n ->
                     DisconnectPolicy.entries.firstOrNull { it.name == n }
                 } ?: DisconnectPolicy.FallBack,
+                segment = p[segmentKey]?.let { n ->
+                    ChurchSegment.entries.firstOrNull { it.name == n }
+                } ?: ChurchSegment.Sermon,
+                ranges = ChurchSegment.entries.mapNotNull { seg ->
+                    // 네 값이 모두 있을 때만 고친 것으로 본다. 하나라도 빠지면
+                    // 반쯤 저장된 상태라 초기값으로 돌아가는 편이 안전하다.
+                    val al = p[rangeKey(seg, "avgLow")] ?: return@mapNotNull null
+                    val ah = p[rangeKey(seg, "avgHigh")] ?: return@mapNotNull null
+                    val pl = p[rangeKey(seg, "peakLow")] ?: return@mapNotNull null
+                    val ph = p[rangeKey(seg, "peakHigh")] ?: return@mapNotNull null
+                    val r = SegmentRange(al, ah, pl, ph)
+                    // 저장된 값이 말이 안 되면 무시한다 — 앱 판이 바뀌거나
+                    // 손으로 건드린 경우다.
+                    if (r.isSane) seg to r else null
+                }.toMap(),
             )
         }
 
@@ -84,6 +124,26 @@ class MeterSettingsStore(private val context: Context) {
     suspend fun setPreferredInput(key: String?) = write { it[preferredInputKey] = key ?: "" }
     suspend fun setAutoPreferExternal(on: Boolean) = write { it[autoExternalKey] = on.toString() }
     suspend fun setDisconnectPolicy(p: DisconnectPolicy) = write { it[disconnectKey] = p.name }
+    suspend fun setSegment(s: ChurchSegment) = write { it[segmentKey] = s.name }
+
+    /** 구간 범위를 고친다. 말이 안 되는 값은 저장하지 않는다. */
+    suspend fun setRange(s: ChurchSegment, r: SegmentRange): Boolean {
+        if (!r.isSane) return false
+        write {
+            it[rangeKey(s, "avgLow")] = r.avgLowDb
+            it[rangeKey(s, "avgHigh")] = r.avgHighDb
+            it[rangeKey(s, "peakLow")] = r.peakLowDb
+            it[rangeKey(s, "peakHigh")] = r.peakHighDb
+        }
+        return true
+    }
+
+    /** 초기값으로 되돌린다. */
+    suspend fun resetRange(s: ChurchSegment) = write {
+        listOf("avgLow", "avgHigh", "peakLow", "peakHigh").forEach { part ->
+            it.remove(rangeKey(s, part))
+        }
+    }
 
     private suspend fun write(block: (androidx.datastore.preferences.core.MutablePreferences) -> Unit) {
         // 저장이 막혀도 앱이 멈추면 안 된다. 이번 세션에는 적용되고

@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kr.joa.selahrta.R
 import kr.joa.selahrta.domain.CalibrationState
+import kr.joa.selahrta.domain.ChurchSegment
 import kr.joa.selahrta.domain.MeasureState
 import kr.joa.selahrta.domain.MicKind
 import kr.joa.selahrta.ui.nav.NavSection
@@ -128,6 +129,13 @@ fun SelahApp() {
                     // 칩을 누르면 아래 탭도 따라온다. 두 줄이 서로 다른 곳을
                     // 가리키면 지금 어디 있는지 알 수 없다.
                     section = picked.section
+                    // 설교·찬양 칩은 구간도 함께 바꾼다. 칩이 「설교」인데
+                    // 판정은 찬양 범위로 하고 있으면 아무도 이해할 수 없다.
+                    when (picked) {
+                        ViewMode.Sermon -> vm.setSegment(ChurchSegment.Sermon)
+                        ViewMode.Worship -> vm.setSegment(ChurchSegment.Worship)
+                        else -> Unit
+                    }
                 }
             }
 
@@ -144,6 +152,7 @@ fun SelahApp() {
                             onStart = vm::start,
                             onStop = vm::stop,
                             onDismissDeviceNotice = vm::dismissDeviceNotice,
+                            onSegment = vm::setSegment,
                         )
                         ViewMode.Rta -> RtaScreen(capture)
                         ViewMode.Feedback -> FeedbackScreen(capture.measure)
@@ -165,6 +174,8 @@ fun SelahApp() {
                         onPickCurveFile = { pickCurve.launch(arrayOf("*/*")) },
                         onClearCurve = vm::clearCurve,
                         onDismissCurveNotice = vm::dismissCurveNotice,
+                        onSaveRange = vm::setRange,
+                        onResetRange = vm::resetRange,
                     )
                 }
             }

@@ -25,12 +25,15 @@ import kr.joa.selahrta.calibration.SaveResult
 import kr.joa.selahrta.calibration.computeOffset
 import kr.joa.selahrta.domain.FailureReason
 import kr.joa.selahrta.domain.MeasureState
+import kr.joa.selahrta.domain.ChurchSegment
 import kr.joa.selahrta.domain.MicKind
+import kr.joa.selahrta.domain.SegmentRange
 import kr.joa.selahrta.dsp.CalibrationCurve
 import kr.joa.selahrta.dsp.CalibrationFile
 import kr.joa.selahrta.dsp.RtaEngine
 import kr.joa.selahrta.dsp.RtaFrame
-import kr.joa.selahrta.dsp.SplEngine
+import kr.joa.selahrta.dsp.LowEnergyHint
+import kr.joa.selahrta.dsp.MultiWeightEngine
 import kr.joa.selahrta.dsp.TimeWeight
 import kr.joa.selahrta.dsp.Weighting
 import kr.joa.selahrta.settings.LeqWindow
@@ -72,6 +75,15 @@ data class MeterReading(
     val anyClipping: Boolean = false,
     /** 보정에 쓰는 날 값. 화면의 SPL 과 달리 보정과 무관하다. */
     val currentDbfs: Double? = null,
+    /**
+     * C 가중과 A 가중의 차(dB). 저음이 얼마나 많은지를 말한다(명세 10장).
+     *
+     * 보정값은 두 쪽에 똑같이 더해지므로 **차이에는 영향이 없다** —
+     * 미보정 상태에서도 이 값만은 믿을 수 있다.
+     */
+    val cMinusA: Double? = null,
+    /** 그 차이가 뜻하는 바. 판정이 아니라 설명이다. */
+    val lowEnergyHint: LowEnergyHint? = null,
 )
 
 data class CaptureUiState(
@@ -133,8 +145,14 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     /** 지금 열려고 했던 기기의 열쇠. 목록이 바뀔 때 견주는 기준이다. */
     private var openingKey: String? = null
 
-    /** 측정 엔진. 설정이 바뀌면 통째로 새로 만든다. */
-    private var engine: SplEngine? = null
+    /**
+     * 측정 엔진. A·C·Z 를 나란히 돌린다.
+     *
+     * 가중치를 바꿔도 엔진을 새로 만들지 않는다 — 그러면 Leq 와 MAX 가
+     * 비워져서, 「저음이 얼마나 많지?」를 보려고 C 로 잠깐 바꿨다 돌아오면
+     * 그동안의 평균이 사라진다. 시간가중과 Leq 창이 바뀔 때만 새로 만든다.
+     */
+    private var engine: MultiWeightEngine? = null
 
     /** RTA 엔진. 가중과 무관하므로 설정이 바뀌어도 그대로 둔다. */
     private var rta: RtaEngine? = null
@@ -154,9 +172,9 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         // 하므로 돌아가는 중이면 다시 시작한다.
         settingsJob = viewModelScope.launch {
             settingsStore.settings.collect { s ->
-                val changed = _state.value.meterSettings != s
+                val old = _state.value.meterSettings
                 _state.value = _state.value.copy(meterSettings = s)
-                if (changed && source != null) restartEngine(s)
+                if (source != null && needsEngineRestart(old, s)) restartEngine(s)
             }
         }
     }
@@ -170,14 +188,22 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun restartEngine(s: MeterSettings) {
         val fmt = _state.value.opened ?: return
-        engine = SplEngine(
+        engine = MultiWeightEngine(
             sampleRate = fmt.sampleRate,
-            weighting = s.weighting,
             timeWeight = s.timeWeight,
             leqLongMs = s.leqWindow.millis,
         )
         _state.value = _state.value.copy(meter = MeterReading())
     }
+
+    /**
+     * 설정이 바뀌었을 때 엔진을 다시 만들어야 하는가.
+     *
+     * 가중치와 구간·범위는 엔진 밖의 일이라 다시 만들 필요가 없다.
+     * 필요 없는데 다시 만들면 Leq 와 MAX 가 사라진다.
+     */
+    private fun needsEngineRestart(old: MeterSettings, new: MeterSettings): Boolean =
+        old.timeWeight != new.timeWeight || old.leqWindow != new.leqWindow
 
     /**
      * 기기 목록이 바뀌었다. 쓰던 것이 빠졌으면 정책대로 처리한다(명세 2장).
@@ -248,6 +274,27 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = _state.value.copy(deviceNoticeKo = null)
     }
 
+    fun setSegment(s: ChurchSegment) {
+        viewModelScope.launch { settingsStore.setSegment(s) }
+    }
+
+    /** 구간 범위를 고친다. 말이 안 되는 값은 저장하지 않고 그 사실을 알린다. */
+    fun setRange(s: ChurchSegment, r: SegmentRange) {
+        viewModelScope.launch {
+            val ok = settingsStore.setRange(s, r)
+            if (!ok) {
+                _state.value = _state.value.copy(
+                    calibrationNoticeKo = "값이 서로 맞지 않습니다. " +
+                        "평균 아래값 < 평균 위값 이어야 하고, 피크 위값이 평균 위값보다 커야 합니다.",
+                )
+            }
+        }
+    }
+
+    fun resetRange(s: ChurchSegment) {
+        viewModelScope.launch { settingsStore.resetRange(s) }
+    }
+
     fun setWeighting(w: Weighting) { viewModelScope.launch { settingsStore.setWeighting(w) } }
     fun setTimeWeight(t: TimeWeight) { viewModelScope.launch { settingsStore.setTimeWeight(t) } }
     fun setLeqWindow(w: LeqWindow) { viewModelScope.launch { settingsStore.setLeqWindow(w) } }
@@ -299,9 +346,8 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 blocks = 0; frames = 0; readErrors = 0; clippedBlocks = 0; lastEmitNs = 0
                 captureStartNs = System.nanoTime()
                 val s = _state.value.meterSettings
-                engine = SplEngine(
+                engine = MultiWeightEngine(
                     sampleRate = r.format.sampleRate,
-                    weighting = s.weighting,
                     timeWeight = s.timeWeight,
                     leqLongMs = s.leqWindow.millis,
                 )
@@ -371,7 +417,8 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                             blockDurationMs = blockMs,
                             audioLagMs = lagMs,
                         ),
-                        meter = splFrame?.let { f ->
+                        meter = splFrame?.let { m ->
+                            val f = m.of(prev.meterSettings.weighting)
                             MeterReading(
                                 currentSpl = f.currentDbfs.toSpl(offset).value,
                                 leqShort = f.leqShortDbfs?.toSpl(offset)?.value,
@@ -382,6 +429,9 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                                 peakClipped = f.peakClipped,
                                 anyClipping = clippedBlocks > 0,
                                 currentDbfs = f.currentDbfs.value,
+                                // 차이는 보정과 무관하다 — 두 쪽에 같은 값이 더해진다.
+                                cMinusA = m.cMinusALeq ?: m.cMinusA,
+                                lowEnergyHint = LowEnergyHint.of(m.cMinusALeq ?: m.cMinusA),
                             )
                         } ?: prev.meter,
                         rta = rta?.frame()?.let { f ->

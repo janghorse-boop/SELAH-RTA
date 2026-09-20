@@ -27,11 +27,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kr.joa.selahrta.domain.ChurchMode
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
+import kr.joa.selahrta.domain.ChurchSegment
 import kr.joa.selahrta.domain.MeasureState
 import kr.joa.selahrta.domain.RangeVerdict
-import kr.joa.selahrta.domain.ReferenceRanges
-import kr.joa.selahrta.domain.verdictFor
+import kr.joa.selahrta.domain.focusKo
 import kr.joa.selahrta.dsp.Weighting
 import kr.joa.selahrta.ui.CaptureUiState
 import kr.joa.selahrta.ui.components.DiagnosticsPanel
@@ -45,13 +48,13 @@ import kr.joa.selahrta.ui.nav.ViewMode
 import kr.joa.selahrta.ui.theme.SelahColors
 
 /**
- * 컨셉 화면 1번 — 큰 현재 음압, 판정, LAeq/MAX/PEAK.
+ * 컨셉 화면 1번 — 큰 현재 음압, 구간 판정, Leq/MAX/PEAK.
  *
- * Phase 2 에서 실제 PCM 이 들어오기 시작했지만 **음압 숫자는 아직 없다.**
- * dBFS 를 dB SPL 로 옮기려면 보정이 필요하고, 보정 없이 그럴듯한 82.4 를
- * 띄우면 그게 거짓말이 된다(명세 0장·1장). 그래서 큰 숫자는 여전히 「—」이고,
- * 대신 **입력 레벨**이 움직인다 — 마이크가 실제로 소리를 받고 있다는 사실만
- * 보여 주는, 음압이라고 주장하지 않는 눈금이다.
+ * 보정 전에는 숫자를 흐리게 그리고 단위에 「참고용」을 붙인다. 폰 마이크의
+ * 감도를 모르는 상태라 ±10dB 넘게 틀릴 수 있기 때문이다(명세 1장).
+ *
+ * 판정은 **A 가중이고 판정하는 구간일 때만** 한다. C·Z 값을 dBA 기준
+ * 범위와 견주면 저음이 큰 찬양에서 늘 「높음」이 뜬다.
  */
 @Composable
 fun MeasureScreen(
@@ -62,9 +65,10 @@ fun MeasureScreen(
     onStart: () -> Unit,
     onStop: () -> Unit,
     onDismissDeviceNotice: () -> Unit = {},
+    onSegment: (ChurchSegment) -> Unit = {},
 ) {
-    val church = if (mode == ViewMode.Worship) ChurchMode.Worship else ChurchMode.Sermon
-    val range = ReferenceRanges.forMode(church)
+    val segment = capture.meterSettings.segment
+    val range = capture.meterSettings.rangeFor(segment)
 
     val running = capture.measure is MeasureState.Running
     val m = capture.meter
@@ -74,8 +78,14 @@ fun MeasureScreen(
     // **참고 범위는 dBA 기준이다.** A 가중일 때만 견준다 — C 나 Z 값을
     // dBA 범위와 견주면 저음이 큰 찬양에서 늘 「높음」이 뜬다.
     // 판정에는 순간값이 아니라 Leq 를 쓴다(범위 자체가 평균 기준이다).
-    val judged = if (weighting == Weighting.A) m.leqLong ?: m.leqShort else null
-    val verdict = range.verdictFor(judged)
+    // 자유 측정 구간은 아예 판정하지 않는다(명세 10장).
+    val judged = if (weighting == Weighting.A && segment.judges) m.leqLong ?: m.leqShort else null
+    val verdict = when {
+        judged == null || range == null -> RangeVerdict.Unknown
+        judged < range.avgLowDb -> RangeVerdict.Low
+        judged > range.avgHighDb -> RangeVerdict.High
+        else -> RangeVerdict.InRange
+    }
 
     Column(
         Modifier
@@ -108,7 +118,7 @@ fun MeasureScreen(
             }
 
             else -> InfoBar(
-                "아래 버튼을 눌러 마이크를 엽니다. 음압 숫자는 보정이 붙는 Phase 3 부터 나옵니다.",
+                "아래 버튼을 눌러 마이크를 엽니다.",
                 Modifier.padding(top = 4.dp, bottom = 12.dp),
             )
         }
@@ -159,6 +169,7 @@ fun MeasureScreen(
             Modifier.padding(top = 12.dp),
             unknownLabel = when {
                 !running -> "측정 안 함"
+                !segment.judges -> "자유 측정 — 판정 없음"
                 weighting != Weighting.A -> "판정 보류 — ${weighting.labelKo}"
                 else -> "평균을 모으는 중"
             },
@@ -166,8 +177,9 @@ fun MeasureScreen(
 
         if (range != null) {
             Text(
-                "${church.labelKo} 권장 범위 " +
-                    "${range.avg.start.toInt()} ~ ${range.avg.endInclusive.toInt()} dBA",
+                "${segment.shortKo} 권장 범위 " +
+                    "${range.avgLowDb.toInt()} ~ ${range.avgHighDb.toInt()} dBA" +
+                    if (capture.meterSettings.isCustom(segment)) " (고친 값)" else "",
                 color = SelahColors.TextSecondary,
                 fontSize = 13.sp,
                 modifier = Modifier.padding(top = 10.dp),
@@ -180,6 +192,47 @@ fun MeasureScreen(
                 modifier = Modifier.padding(top = 2.dp),
             )
         }
+
+        // 구간 고르기. 위 칩(설교/찬양)에 없는 기도·자유 측정은 여기서만 고른다.
+        Row(
+            Modifier.fillMaxWidth().padding(top = 14.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            ChurchSegment.entries.forEach { seg ->
+                val on = seg == segment
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .background(
+                            if (on) SelahColors.Accent.copy(alpha = 0.2f) else SelahColors.SurfaceVariant,
+                            RoundedCornerShape(8.dp),
+                        )
+                        .border(
+                            1.dp,
+                            if (on) SelahColors.Accent else Color.Transparent,
+                            RoundedCornerShape(8.dp),
+                        )
+                        .clickable { onSegment(seg) }
+                        .padding(vertical = 7.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        seg.shortKo,
+                        color = if (on) SelahColors.Accent else SelahColors.TextSecondary,
+                        fontSize = 12.sp,
+                        fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
+                    )
+                }
+            }
+        }
+        Text(
+            segment.focusKo,
+            color = SelahColors.TextMuted,
+            fontSize = 11.sp,
+            lineHeight = 15.sp,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 6.dp),
+        )
 
         Row(
             Modifier.fillMaxWidth().padding(top = 20.dp),
@@ -202,6 +255,39 @@ fun MeasureScreen(
                 if (m.peakClipped) "잘림" else weighting.unitSuffix,
                 Modifier.weight(1f),
             )
+        }
+
+        // 저역이 얼마나 많은가(명세 10장). 찬양에서 특히 중요하다 —
+        // A 가중 숫자만 보면 저음이 많은지 전혀 드러나지 않는다.
+        if (running && m.cMinusA != null && m.lowEnergyHint != null) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 12.dp)
+                    .background(SelahColors.Surface, RoundedCornerShape(10.dp))
+                    .border(1.dp, SelahColors.Outline, RoundedCornerShape(10.dp))
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("저역 비중 (C-A)", color = SelahColors.TextMuted, fontSize = 11.sp)
+                    Text(
+                        "%+.1f dB · %s".format(m.cMinusA, m.lowEnergyHint.labelKo),
+                        color = SelahColors.TextPrimary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+                Text(
+                    m.lowEnergyHint.noteKo,
+                    color = SelahColors.TextMuted,
+                    fontSize = 10.sp,
+                    lineHeight = 14.sp,
+                )
+            }
         }
 
         if (m.anyClipping) {

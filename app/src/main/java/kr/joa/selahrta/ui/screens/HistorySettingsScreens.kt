@@ -21,12 +21,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kr.joa.selahrta.domain.ChurchMode
-import kr.joa.selahrta.domain.ReferenceRange
+import kr.joa.selahrta.domain.ChurchSegment
+import kr.joa.selahrta.domain.SEGMENT_CAUTIONS
+import kr.joa.selahrta.domain.SegmentRange
 import kr.joa.selahrta.audio.DisconnectPolicy
 import kr.joa.selahrta.audio.InputDeviceInfo
 import kr.joa.selahrta.domain.MicKind
-import kr.joa.selahrta.domain.ReferenceRanges
+import kr.joa.selahrta.ui.components.SegmentRangeCard
 import kr.joa.selahrta.dsp.TimeWeight
 import kr.joa.selahrta.dsp.Weighting
 import kr.joa.selahrta.settings.LeqWindow
@@ -84,6 +85,8 @@ fun SettingsScreen(
     onPickCurveFile: () -> Unit,
     onClearCurve: () -> Unit,
     onDismissCurveNotice: () -> Unit,
+    onSaveRange: (ChurchSegment, SegmentRange) -> Unit,
+    onResetRange: (ChurchSegment) -> Unit,
 ) {
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
@@ -177,10 +180,18 @@ fun SettingsScreen(
             onLeqWindow,
         )
 
-        SectionTitle("모드별 권장 범위")
-        RangeCard(ChurchMode.Sermon.labelKo, ReferenceRanges.sermon)
-        RangeCard(ChurchMode.Worship.labelKo, ReferenceRanges.worship)
-        RangeCard("기도 / 성경봉독", ReferenceRanges.prayer)
+        SectionTitle("구간별 권장 범위")
+        ChurchSegment.entries.filter { it.judges }.forEach { seg ->
+            capture.meterSettings.rangeFor(seg)?.let { r ->
+                SegmentRangeCard(
+                    segment = seg,
+                    range = r,
+                    isCustom = capture.meterSettings.isCustom(seg),
+                    onSave = { onSaveRange(seg, it) },
+                    onReset = { onResetRange(seg) },
+                )
+            }
+        }
 
         InfoBar(
             "이 범위는 보편적 표준이 아니라 참고값입니다. " +
@@ -189,8 +200,25 @@ fun SettingsScreen(
             modifier = Modifier.padding(vertical = 12.dp),
         )
 
+        SectionTitle("주의사항")
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .background(SelahColors.Surface, RoundedCornerShape(10.dp))
+                .border(1.dp, SelahColors.Outline, RoundedCornerShape(10.dp))
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            SEGMENT_CAUTIONS.forEach {
+                Row {
+                    Text("· ", color = SelahColors.Warn, fontSize = 12.sp)
+                    Text(it, color = SelahColors.TextSecondary, fontSize = 12.sp, lineHeight = 17.sp)
+                }
+            }
+        }
+
         SectionTitle("앱 정보")
-        SettingRow("SELAH RTA", "v0.1.0 (Phase 7)")
+        SettingRow("SELAH RTA", "v0.1.0 (Phase 8)")
         Text(
             "Real-Time Worship Audio Analyzer · made by Jesus On Air (JOA)",
             color = SelahColors.TextMuted,
@@ -399,28 +427,4 @@ private fun SettingRow(
     }
 }
 
-@Composable
-private fun RangeCard(title: String, r: ReferenceRange) {
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .padding(bottom = 8.dp)
-            .background(SelahColors.Surface, RoundedCornerShape(10.dp))
-            .border(1.dp, SelahColors.Outline, RoundedCornerShape(10.dp))
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(3.dp),
-    ) {
-        Text(title, color = SelahColors.TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-        Text(
-            "권장 평균 ${r.avg.start.toInt()} ~ ${r.avg.endInclusive.toInt()} dBA",
-            color = SelahColors.TextSecondary,
-            fontSize = 12.sp,
-        )
-        Text(
-            "순간 피크 ${r.peak.start.toInt()} ~ ${r.peak.endInclusive.toInt()} dBA",
-            color = SelahColors.TextSecondary,
-            fontSize = 12.sp,
-        )
-        Text(r.noteKo, color = SelahColors.TextMuted, fontSize = 11.sp)
-    }
-}
+
