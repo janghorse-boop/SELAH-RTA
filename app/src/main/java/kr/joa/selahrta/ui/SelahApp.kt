@@ -155,7 +155,7 @@ fun SelahApp() {
                             onSegment = vm::setSegment,
                         )
                         ViewMode.Rta -> RtaScreen(capture)
-                        ViewMode.Feedback -> FeedbackScreen(capture.measure)
+                        ViewMode.Feedback -> FeedbackScreen(capture)
                     }
                     NavSection.History -> HistoryScreen()
                     NavSection.Settings -> SettingsScreen(

@@ -37,6 +37,18 @@ class RtaFrame(
  * 화면 갱신(10~20 FPS)보다 자주 FFT 를 돌리고 그 결과를 평활한다 —
  * FFT 자체를 화면 속도로 늦추면 하울링이 시작되는 순간을 놓친다.
  */
+/**
+ * FFT 한 장이 나올 때마다 부른다.
+ *
+ * 하울링 탐지는 **같은 스펙트럼**을 본다. 따로 FFT 를 돌리면 같은 일을
+ * 두 번 하는 셈이고, 두 결과의 시각이 어긋나 「RTA 에는 보이는데 후보에는
+ * 없는」 상태가 생긴다.
+ */
+fun interface SpectrumSink {
+    /** [power] 는 **빌려주는 배열**이다. 붙들어 두려면 복사해야 한다. */
+    fun onSpectrum(power: DoubleArray)
+}
+
 class RtaEngine(
     private val sampleRate: Int,
     /** 명세 7장의 출발점은 4096. 길수록 저역이 잘 보이고 반응은 느려진다. */
@@ -70,6 +82,10 @@ class RtaEngine(
     private val bandDb = DoubleArray(ThirdOctave.BAND_COUNT)
 
     private var latest: RtaFrame? = null
+
+    /** FFT 한 장마다 받아 갈 곳. 하울링 탐지기가 여기 붙는다. */
+    @Volatile
+    var spectrumSink: SpectrumSink? = null
 
     /**
      * 마이크 보정 곡선을 칸마다 걸 계수. 없으면 보정하지 않는다.
@@ -135,6 +151,12 @@ class RtaEngine(
             linear[i] = ring[(writePos + i) % fftSize]
         }
         spectrum.compute(linear, 0, power)
+
+        // 하울링 탐지는 **보정 전 스펙트럼**을 본다. 봉우리가 둘레보다
+        // 얼마나 솟았는지를 보는 것이라, 마이크 응답을 되돌리는 보정은
+        // 솟은 정도를 거의 바꾸지 않으면서 계산만 늘린다.
+        spectrumSink?.onSpectrum(power)
+
         // 보정은 **밴드로 묶기 전에** 칸마다 건다(독립 검증 R05).
         bands.toBandPower(power, bandPower, binCorrection)
         val smoothed = smoothing.update(bandPower)

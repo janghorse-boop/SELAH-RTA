@@ -32,7 +32,11 @@ import kr.joa.selahrta.domain.MicKind
 import kr.joa.selahrta.domain.SegmentRange
 import kr.joa.selahrta.dsp.CalibrationCurve
 import kr.joa.selahrta.dsp.CalibrationFile
+import kr.joa.selahrta.dsp.FeedbackCandidate
+import kr.joa.selahrta.dsp.FeedbackDetector
+import kr.joa.selahrta.dsp.FeedbackState
 import kr.joa.selahrta.dsp.RtaEngine
+import kr.joa.selahrta.dsp.SpectrumSink
 import kr.joa.selahrta.dsp.RtaFrame
 import kr.joa.selahrta.dsp.LowEnergyHint
 import kr.joa.selahrta.dsp.MultiWeightEngine
@@ -108,6 +112,8 @@ data class CaptureUiState(
     val calibration: ActiveCalibration = ActiveCalibration.assumed,
     /** 31밴드 RTA. 아직 첫 FFT 가 안 찼으면 null. */
     val rta: RtaView? = null,
+    /** 하울링 후보(명세 9장). 센 것부터. 없으면 빈 목록이다. */
+    val feedback: List<FeedbackCandidate> = emptyList(),
     /** 지금 적용 중인 주파수 보정 곡선. */
     val curve: ActiveCurve? = null,
     /** 곡선 가져오기 결과 안내. */
@@ -172,6 +178,8 @@ data class MeasurementSnapshot(
     val spl: MultiWeightFrame?,
     val rta: RtaFrame?,
     val anyClipping: Boolean,
+    /** 하울링 후보(명세 9장). 센 것부터. */
+    val feedback: List<FeedbackCandidate> = emptyList(),
 )
 
 /**
@@ -224,8 +232,25 @@ private class CaptureSession(
 
     val rta = RtaEngine(sampleRate)
 
+    /**
+     * 하울링 후보 탐지기(명세 9장).
+     *
+     * RTA 와 **같은 스펙트럼**을 본다 — 따로 FFT 를 돌리면 같은 일을 두 번
+     * 하고, 두 결과의 시각이 어긋난다.
+     */
+    val feedback = FeedbackDetector(rta.fftSize, sampleRate)
+
     /** 주 스레드가 이 세션의 오디오 스레드에 시킬 일. */
     val commands = java.util.concurrent.ConcurrentLinkedQueue<() -> Unit>()
+
+    init {
+        // FFT 한 장이 나올 때마다 탐지기에 넘긴다. 시각은 덩어리를 받은
+        // 시각으로 쓴다 — 오디오 스레드에서만 건드리므로 안전하다.
+        rta.spectrumSink = SpectrumSink { power -> feedback.process(power, spectrumMs) }
+    }
+
+    /** 지금 처리 중인 덩어리의 시각(ms). 탐지기에 넘길 값이다. */
+    var spectrumMs = 0L
 
     // 캡처 스레드만 만지는 값들.
     var blocks = 0L
@@ -646,6 +671,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                     session = mySession,
                     meter = MeterReading(),
                     rta = null,
+                    feedback = emptyList(),
                     diagnostics = CaptureDiagnostics(),
                     calibration = ActiveCalibration.assumed,
                     curve = null,
@@ -674,6 +700,8 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                     val splFrame = if (block.frames > 0) {
                         // RTA 에는 가중 전 원본을 넣는다. A 가중을 걸면
                         // 저역이 깎인 그림이 되어 주파수 균형을 잘못 읽는다.
+                        // 하울링 탐지기도 이 안에서 같은 스펙트럼을 받는다.
+                        session.spectrumMs = (block.monotonicNs - session.startedNs) / 1_000_000
                         session.rta.process(block.samples, block.frames)
                         session.engine.process(block.samples, block.frames)
                     } else {
@@ -706,6 +734,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                         spl = splFrame,
                         rta = session.rta.frame(),
                         anyClipping = session.clippedBlocks > 0,
+                        feedback = session.feedback.candidates,
                     )
                 }
             }
@@ -942,6 +971,8 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             calibration = ActiveCalibration.assumed,
             curve = null,
             curveGeneration = 0,
+            // 멈춘 뒤에도 후보 목록이 남으면 「지금 하울링 중」으로 읽힌다.
+            feedback = emptyList(),
             // **세션 번호를 지운다.** 늦게 도착하는 경로 확인·오류가 검사를
             // 통과해 방금 지운 보정을 되살리거나, 정상 종료를 실패로 뒤집는
             // 일을 막는다(독립 재검증 F04). 화면 쪽 사본이며, 실제 판정은
@@ -1001,6 +1032,7 @@ private fun CaptureUiState.withMeasurement(m: MeasurementSnapshot?): CaptureUiSt
             )
         } ?: meter,
         // 프레임이 **그 곡선으로 계산된 것일 때만** 보정 적용이라고 적는다.
+        feedback = m.feedback,
         rta = m.rta?.toView(
             offsetDb = offset.db,
             curve = curve?.curve?.takeIf { m.rta.curveGeneration == curveGeneration },
