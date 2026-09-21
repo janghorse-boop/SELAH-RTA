@@ -3,6 +3,7 @@ package kr.joa.selahrta.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kr.joa.selahrta.audio.AudioBlock
 import kr.joa.selahrta.audio.AudioSource
 import kr.joa.selahrta.audio.ChoiceReason
 import kr.joa.selahrta.audio.DisconnectPolicy
@@ -13,6 +14,10 @@ import kr.joa.selahrta.audio.chooseInput
 import kr.joa.selahrta.audio.CaptureDiagnostics
 import kr.joa.selahrta.audio.CaptureEnd
 import kr.joa.selahrta.audio.CaptureGeneration
+import kr.joa.selahrta.audio.TestSignal
+import kr.joa.selahrta.audio.SignalLevel
+import kr.joa.selahrta.audio.SignalPlayer
+import kr.joa.selahrta.audio.SyntheticSource
 import kr.joa.selahrta.audio.OpenFailure
 import kr.joa.selahrta.audio.OpenResult
 import kr.joa.selahrta.audio.OpenedFormat
@@ -30,6 +35,7 @@ import kr.joa.selahrta.domain.MeasureState
 import kr.joa.selahrta.domain.ChurchSegment
 import kr.joa.selahrta.domain.MicKind
 import kr.joa.selahrta.domain.SegmentRange
+import kr.joa.selahrta.dsp.BlockStats
 import kr.joa.selahrta.dsp.CalibrationCurve
 import kr.joa.selahrta.dsp.CalibrationFile
 import kr.joa.selahrta.dsp.FeedbackCandidate
@@ -151,6 +157,19 @@ data class CaptureUiState(
      * 있는데, 예전에는 거기에 새 곡선의 이름표를 붙였다(독립 재검증 F06).
      */
     val curveGeneration: Long = 0,
+    /**
+     * 디버그 빌드에서 마이크 대신 쓸 합성 신호(명세 16장). null 이면 마이크.
+     *
+     * 화면에는 **실제 마이크가 아님이 드러나야 한다** — 기기 이름에
+     * 「합성 신호」가 들어간다(명세 0장).
+     */
+    val debugSignal: TestSignal? = null,
+    /** 지금 스피커로 내보내고 있는 시험 신호. 안 내보내면 null. */
+    val playingSignal: TestSignal? = null,
+    /** 내보내는 세기. */
+    val signalLevel: SignalLevel = SignalLevel.Low,
+    /** 신호 발생기에 관해 알릴 것. */
+    val signalNoticeKo: String? = null,
 ) {
     /**
      * 지금 숫자를 그 기기의 측정값이라 불러도 되는가.
@@ -290,6 +309,9 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     private val curveStore = CurveStore(app)
     private val settingsStore = MeterSettingsStore(app)
     private val scanner = InputDeviceScanner(app)
+
+    /** 시험 신호를 스피커로 내보내는 쪽. 측정과는 따로 논다. */
+    private val player = SignalPlayer()
     private var calibrationJob: Job? = null
     private var curveJob: Job? = null
     private var settingsJob: Job? = null
@@ -569,6 +591,48 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { settingsStore.setDisconnectPolicy(p) }
     }
 
+    /**
+     * 시험 신호를 스피커로 내보낸다(명세 16장).
+     *
+     * 폰 두 대가 있으면 한 대가 내보내고 한 대가 잰다. 한 대뿐이어도
+     * 스피커에서 나온 소리가 제 마이크로 돌아오므로 하울링 탐지를 확인할
+     * 수 있다.
+     */
+    fun playSignal(signal: TestSignal) {
+        val ok = player.start(signal, _state.value.signalLevel)
+        _state.value = _state.value.copy(
+            playingSignal = if (ok) signal else null,
+            signalNoticeKo = if (ok) null else "소리를 내보내지 못했습니다. 다른 앱이 스피커를 쓰고 있는지 보십시오.",
+        )
+    }
+
+    fun stopSignal() {
+        player.stop()
+        _state.value = _state.value.copy(playingSignal = null)
+    }
+
+    /** 세기를 바꾼다. 내보내는 중이면 그 자리에서 바꿔 끼운다. */
+    fun setSignalLevel(level: SignalLevel) {
+        _state.value = _state.value.copy(signalLevel = level)
+        _state.value.playingSignal?.let { playSignal(it) }
+    }
+
+    fun dismissSignalNotice() {
+        _state.value = _state.value.copy(signalNoticeKo = null)
+    }
+
+    /**
+     * 마이크 대신 합성 신호로 잰다(명세 16장, 디버그 빌드 전용).
+     *
+     * 돌고 있으면 멈추고 다시 연다 — 입력을 바꾸는 일이라 새 측정이다.
+     */
+    fun setTestSignal(signal: TestSignal?) {
+        val wasRunning = active != null
+        if (wasRunning) stop()
+        _state.value = _state.value.copy(debugSignal = signal)
+        if (wasRunning) start()
+    }
+
     fun dismissDeviceNotice() {
         _state.value = _state.value.copy(deviceNoticeKo = null)
     }
@@ -603,6 +667,9 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     fun start(disconnectFallBack: Boolean = false) {
         if (active != null) return
         _state.value = _state.value.copy(measure = MeasureState.Starting, errorKo = null)
+
+        // 합성 신호가 골라져 있으면 마이크 대신 그것으로 연다(명세 16장).
+        _state.value.debugSignal?.let { return startSynthetic(it) }
 
         val s0 = _state.value.meterSettings
         val available = scanner.list()
@@ -681,64 +748,110 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                     deviceNoticeKo = choice.reason.noticeKo(choice.device),
                 )
                 // 보정은 경로가 확인된 뒤에 건다 — 지금은 어느 마이크인지 모른다.
-                mic.start { block, stats ->
-                    // **내가 아직 살아 있는 세션인가.** 아니면 아무것도 하지
-                    // 않는다. 종료가 늦어진 옛 스레드가 새 측정의 엔진과 명령
-                    // 큐를 만지는 것을 여기서 막는다(독립 재검증 F02).
-                    if (active !== session) return@start
-
-                    // 주 스레드가 시킨 일(엔진 교체·reset·곡선)을 먼저 한다.
-                    // 덩어리와 덩어리 사이가 DSP 상태를 바꿔도 안전한 자리다.
-                    drainCommands(session)
-                    session.blocks++
-                    session.frames += block.frames
-                    if (block.frames == 0) session.readErrors++
-                    if (stats.clipped) session.clippedBlocks++
-
-                    // 버린 덩어리(frames=0)는 엔진에 넣지 않는다. 넣으면
-                    // 읽기 오류가 「아주 조용한 구간」으로 둔갑한다.
-                    val splFrame = if (block.frames > 0) {
-                        // RTA 에는 가중 전 원본을 넣는다. A 가중을 걸면
-                        // 저역이 깎인 그림이 되어 주파수 균형을 잘못 읽는다.
-                        // 하울링 탐지기도 이 안에서 같은 스펙트럼을 받는다.
-                        session.spectrumMs = (block.monotonicNs - session.startedNs) / 1_000_000
-                        session.rta.process(block.samples, block.frames)
-                        session.engine.process(block.samples, block.frames)
-                    } else {
-                        null
-                    }
-
-                    val now = System.nanoTime()
-                    if (now - session.lastEmitNs < emitIntervalNs) return@start
-                    session.lastEmitNs = now
-
-                    val processMs = (now - block.monotonicNs) / 1e6
-                    val blockMs = block.frames * 1000.0 / block.sampleRate
-                    val audioMs = session.frames * 1000.0 / block.sampleRate
-                    val lagMs = (now - session.startedNs) / 1e6 - audioMs
-
-                    // **여기서 화면 상태를 읽지도 쓰지도 않는다.** 잰 것만
-                    // 내놓고, 보정·설정을 입히는 일은 주 스레드가 한다.
-                    _measurement.value = MeasurementSnapshot(
-                        session = session.id,
-                        diagnostics = CaptureDiagnostics(
-                            blocks = session.blocks,
-                            frames = session.frames,
-                            readErrors = session.readErrors,
-                            clippedBlocks = session.clippedBlocks,
-                            lastPeakAbs = stats.peakAbs,
-                            lastProcessMs = processMs,
-                            blockDurationMs = blockMs,
-                            audioLagMs = lagMs,
-                        ),
-                        spl = splFrame,
-                        rta = session.rta.frame(),
-                        anyClipping = session.clippedBlocks > 0,
-                        feedback = session.feedback.candidates,
-                    )
-                }
+                mic.start { block, stats -> onBlock(session, block, stats) }
             }
         }
+    }
+
+    /**
+     * 덩어리 하나를 처리한다. **오디오 스레드에서 불린다.**
+     *
+     * 마이크와 합성 신호가 **같은 자리**를 지나게 하려고 꺼내 두었다.
+     * 둘이 다른 길로 가면 합성 신호로 확인한 것이 실제에서 맞는다는
+     * 보장이 없다.
+     */
+    private fun onBlock(session: CaptureSession, block: AudioBlock, stats: BlockStats) {
+        // **내가 아직 살아 있는 세션인가.** 아니면 아무것도 하지 않는다.
+        // 종료가 늦어진 옛 스레드가 새 측정의 엔진과 명령 큐를 만지는 것을
+        // 여기서 막는다(독립 재검증 F02).
+        if (active !== session) return
+
+        // 주 스레드가 시킨 일(엔진 교체·reset·곡선)을 먼저 한다.
+        // 덩어리와 덩어리 사이가 DSP 상태를 바꿔도 안전한 자리다.
+        drainCommands(session)
+        session.blocks++
+        session.frames += block.frames
+        if (block.frames == 0) session.readErrors++
+        if (stats.clipped) session.clippedBlocks++
+
+        // 버린 덩어리(frames=0)는 엔진에 넣지 않는다. 넣으면 읽기 오류가
+        // 「아주 조용한 구간」으로 둔갑한다.
+        val splFrame = if (block.frames > 0) {
+            // RTA 에는 가중 전 원본을 넣는다. A 가중을 걸면 저역이 깎인
+            // 그림이 되어 주파수 균형을 잘못 읽는다. 하울링 탐지기도 이
+            // 안에서 같은 스펙트럼을 받는다.
+            session.spectrumMs = (block.monotonicNs - session.startedNs) / 1_000_000
+            session.rta.process(block.samples, block.frames)
+            session.engine.process(block.samples, block.frames)
+        } else {
+            null
+        }
+
+        val now = System.nanoTime()
+        if (now - session.lastEmitNs < emitIntervalNs) return
+        session.lastEmitNs = now
+
+        val processMs = (now - block.monotonicNs) / 1e6
+        val blockMs = block.frames * 1000.0 / block.sampleRate
+        val audioMs = session.frames * 1000.0 / block.sampleRate
+        val lagMs = (now - session.startedNs) / 1e6 - audioMs
+
+        // **여기서 화면 상태를 읽지도 쓰지도 않는다.** 잰 것만 내놓고,
+        // 보정·설정을 입히는 일은 주 스레드가 한다.
+        _measurement.value = MeasurementSnapshot(
+            session = session.id,
+            diagnostics = CaptureDiagnostics(
+                blocks = session.blocks,
+                frames = session.frames,
+                readErrors = session.readErrors,
+                clippedBlocks = session.clippedBlocks,
+                lastPeakAbs = stats.peakAbs,
+                lastProcessMs = processMs,
+                blockDurationMs = blockMs,
+                audioLagMs = lagMs,
+            ),
+            spl = splFrame,
+            rta = session.rta.frame(),
+            anyClipping = session.clippedBlocks > 0,
+            feedback = session.feedback.candidates,
+        )
+    }
+
+    /**
+     * 합성 신호로 연다. **디버그 빌드에서만 고를 수 있다.**
+     *
+     * 실제 마이크 경로와 **같은 자리**를 지난다 — 같은 엔진, 같은 세션,
+     * 같은 합성 로직. 그래야 여기서 확인한 것이 실제에서도 맞는다.
+     */
+    private fun startSynthetic(signal: TestSignal) {
+        val mySession = generation.begin()
+        val src = SyntheticSource(signal)
+        val r = src.open(RequestedFormat())
+        if (r !is OpenResult.Opened) {
+            generation.end()
+            return
+        }
+        val session = CaptureSession(mySession, src, r.format.sampleRate, _state.value.meterSettings)
+        session.startedNs = System.nanoTime()
+        active = session
+        openingKey = r.format.deviceKey
+        _measurement.value = null
+        _state.value = _state.value.copy(
+            measure = MeasureState.Running(System.nanoTime()),
+            opened = r.format,
+            session = mySession,
+            meter = MeterReading(),
+            rta = null,
+            feedback = emptyList(),
+            diagnostics = CaptureDiagnostics(),
+            calibration = ActiveCalibration.assumed,
+            curve = null,
+            curveGeneration = 0,
+            errorKo = null,
+            deviceNoticeKo = "합성 신호(${signal.labelKo})로 재고 있습니다. " +
+                "마이크가 아니라 앱이 만든 소리입니다 — 실제 음압이 아닙니다.",
+        )
+        src.start { block, stats -> onBlock(session, block, stats) }
     }
 
     /**
@@ -986,6 +1099,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     override fun onCleared() {
+        player.stop()
         stop()
         super.onCleared()
     }

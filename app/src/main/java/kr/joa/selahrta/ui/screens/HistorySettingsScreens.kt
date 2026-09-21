@@ -26,6 +26,8 @@ import kr.joa.selahrta.domain.SEGMENT_CAUTIONS
 import kr.joa.selahrta.domain.SegmentRange
 import kr.joa.selahrta.audio.DisconnectPolicy
 import kr.joa.selahrta.audio.InputDeviceInfo
+import kr.joa.selahrta.audio.SignalLevel
+import kr.joa.selahrta.audio.TestSignal
 import kr.joa.selahrta.domain.MeasureState
 import kr.joa.selahrta.domain.MicKind
 import kr.joa.selahrta.ui.components.SegmentRangeCard
@@ -35,6 +37,7 @@ import kr.joa.selahrta.settings.LeqWindow
 import kr.joa.selahrta.ui.CaptureUiState
 import kr.joa.selahrta.ui.components.CalibrationCard
 import kr.joa.selahrta.ui.components.CurveCard
+import kr.joa.selahrta.ui.components.SignalGeneratorCard
 import kr.joa.selahrta.ui.components.InfoBar
 import kr.joa.selahrta.ui.components.NotYet
 import kr.joa.selahrta.ui.theme.SelahColors
@@ -88,6 +91,10 @@ fun SettingsScreen(
     onDismissCurveNotice: () -> Unit,
     onSaveRange: (ChurchSegment, SegmentRange) -> Unit,
     onResetRange: (ChurchSegment) -> Unit,
+    onPlaySignal: (TestSignal) -> Unit,
+    onStopSignal: () -> Unit,
+    onSignalLevel: (SignalLevel) -> Unit,
+    onDismissSignalNotice: () -> Unit,
 ) {
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
@@ -161,6 +168,17 @@ fun SettingsScreen(
             onClear = onClearCurve,
             onDismissNotice = onDismissCurveNotice,
             modifier = Modifier.padding(top = 10.dp),
+        )
+
+        SectionTitle("시험 신호")
+        SignalGeneratorCard(
+            playing = capture.playingSignal,
+            level = capture.signalLevel,
+            noticeKo = capture.signalNoticeKo,
+            onPlay = onPlaySignal,
+            onStop = onStopSignal,
+            onLevel = onSignalLevel,
+            onDismissNotice = onDismissSignalNotice,
         )
 
         SectionTitle("측정 설정")

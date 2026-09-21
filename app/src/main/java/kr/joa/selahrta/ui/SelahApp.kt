@@ -176,6 +176,10 @@ fun SelahApp() {
                         onDismissCurveNotice = vm::dismissCurveNotice,
                         onSaveRange = vm::setRange,
                         onResetRange = vm::resetRange,
+                        onPlaySignal = vm::playSignal,
+                        onStopSignal = vm::stopSignal,
+                        onSignalLevel = vm::setSignalLevel,
+                        onDismissSignalNotice = vm::dismissSignalNotice,
                     )
                 }
             }
