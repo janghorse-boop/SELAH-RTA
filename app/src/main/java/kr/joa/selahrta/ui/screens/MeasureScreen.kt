@@ -289,52 +289,32 @@ fun MeasureScreen(
             )
         }
 
-        // **시작과 종료를 함께 보여준다.** 버튼 하나가 말을 바꾸면 지금
-        // 재고 있는지 아닌지를 버튼 글자로 되짚어야 한다. 둘을 나란히 두고
-        // **지금 누를 수 있는 쪽만 살려** 상태가 한눈에 보이게 한다.
-        if (!hasPermission) {
-            Button(
-                onClick = onRequestPermission,
-                modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = SelahColors.Accent,
-                    contentColor = Color(0xFF00201C),
-                ),
-            ) {
-                Text("마이크 권한 허용하기", fontWeight = FontWeight.Bold)
-            }
-        } else {
-            Row(
-                Modifier.fillMaxWidth().padding(top = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Button(
-                    onClick = onStart,
-                    enabled = !running,
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = SelahColors.Accent,
-                        contentColor = Color(0xFF00201C),
-                        disabledContainerColor = SelahColors.SurfaceVariant,
-                        disabledContentColor = SelahColors.TextMuted,
-                    ),
-                ) {
-                    Text("측정 시작", fontWeight = FontWeight.Bold)
+        // **버튼 하나로 여닫는다.** 둘을 나란히 두었더니, 재는 동안에는
+        // 안내가 길어져 두 버튼이 화면 밖으로 밀렸다 — 「한 화면에
+        // 보인다」는 목적을 오히려 못 지키고, 누를 수 없는 버튼이 자리만
+        // 차지했다. 사용자가 토글 하나로 돌리라고 정했다.
+        Button(
+            onClick = {
+                when {
+                    !hasPermission -> onRequestPermission()
+                    running -> onStop()
+                    else -> onStart()
                 }
-                Button(
-                    onClick = onStop,
-                    enabled = running,
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = SelahColors.SurfaceVariant,
-                        contentColor = SelahColors.TextPrimary,
-                        disabledContainerColor = SelahColors.SurfaceVariant,
-                        disabledContentColor = SelahColors.TextMuted,
-                    ),
-                ) {
-                    Text("측정 종료", fontWeight = FontWeight.Bold)
-                }
-            }
+            },
+            modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (running) SelahColors.SurfaceVariant else SelahColors.Accent,
+                contentColor = if (running) SelahColors.TextPrimary else Color(0xFF00201C),
+            ),
+        ) {
+            Text(
+                when {
+                    !hasPermission -> "마이크 권한 허용하기"
+                    running -> "측정 종료"
+                    else -> "측정 시작"
+                },
+                fontWeight = FontWeight.Bold,
+            )
         }
 
         if (running) {

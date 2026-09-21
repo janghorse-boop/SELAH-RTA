@@ -6,6 +6,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -207,7 +209,10 @@ private fun TopBrandBar(capture: CaptureUiState) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Column {
+        // 제목이 배지를 밀어내지 않게 한다. 글꼴 200% 에서
+        // 「미보정」이 화면 밖으로 사라졌다 — 보정 상태는 숨기면
+        // 안 되는 것이다.
+        Column(Modifier.weight(1f, fill = false)) {
             Text(
                 "SELAH RTA",
                 color = SelahColors.TextPrimary,
@@ -267,25 +272,30 @@ private fun StatusPill(text: String, color: Color, dim: Boolean = false) {
 }
 
 /** 컨셉 화면의 상단 칩 네 개. 설교·찬양·RTA·피드백. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ModeChips(selected: ViewMode, onSelect: (ViewMode) -> Unit) {
-    Row(
+    // **폭에 맞춰 접힌다.** 예전에는 Row 에 weight(1f) 로 나눠
+    // 놓았는데, 칩이 다섯으로 늘고 글꼴을 200% 로 키우면 마지막
+    // 칩이 화면 밖으로 잘렸다(기기에서 확인). 칩은 눈금이 아니라
+    // 가는 길이므로, 폭을 나누기보다 줄을 늘리는 편이 맞다.
+    FlowRow(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         ViewMode.entries.forEach { m ->
             val on = m == selected
             Box(
                 modifier = Modifier
-                    .weight(1f)
                     .background(
                         if (on) SelahColors.Accent else SelahColors.SurfaceVariant,
                         RoundedCornerShape(10.dp),
                     )
                     .clickable { onSelect(m) }
-                    .padding(vertical = 9.dp),
+                    .padding(horizontal = 14.dp, vertical = 9.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
