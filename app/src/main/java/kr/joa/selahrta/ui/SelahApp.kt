@@ -6,8 +6,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -42,6 +40,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kr.joa.selahrta.R
@@ -272,30 +271,32 @@ private fun StatusPill(text: String, color: Color, dim: Boolean = false) {
 }
 
 /** 컨셉 화면의 상단 칩 네 개. 설교·찬양·RTA·피드백. */
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ModeChips(selected: ViewMode, onSelect: (ViewMode) -> Unit) {
-    // **폭에 맞춰 접힌다.** 예전에는 Row 에 weight(1f) 로 나눠
-    // 놓았는데, 칩이 다섯으로 늘고 글꼴을 200% 로 키우면 마지막
-    // 칩이 화면 밖으로 잘렸다(기기에서 확인). 칩은 눈금이 아니라
-    // 가는 길이므로, 폭을 나누기보다 줄을 늘리는 편이 맞다.
-    FlowRow(
+    // **양쪽을 채운다.** 칩은 가는 길이라 가지런히 놀아 놓으면
+    // 한쪽이 비어 보인다. 폭을 똑같이 나눠 갖는다.
+    //
+    // 글꼴을 200% 로 키우면 글자가 칩 폭을 넘어서는데, 그때는
+    // **잘리는 대신 줄을 바꿈다**(maxLines 를 걸지 않는다). 칩은
+    // 높아지지만 글자가 사라지지는 않는다 — 이름이 잘리면 어디로
+    // 가는 칩인지 알 수 없다.
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         ViewMode.entries.forEach { m ->
             val on = m == selected
             Box(
                 modifier = Modifier
+                    .weight(1f)
                     .background(
                         if (on) SelahColors.Accent else SelahColors.SurfaceVariant,
                         RoundedCornerShape(10.dp),
                     )
                     .clickable { onSelect(m) }
-                    .padding(horizontal = 14.dp, vertical = 9.dp),
+                    .padding(horizontal = 4.dp, vertical = 9.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
@@ -303,6 +304,7 @@ private fun ModeChips(selected: ViewMode, onSelect: (ViewMode) -> Unit) {
                     color = if (on) Color(0xFF00201C) else SelahColors.TextSecondary,
                     fontSize = 13.sp,
                     fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
+                    textAlign = TextAlign.Center,
                 )
             }
         }

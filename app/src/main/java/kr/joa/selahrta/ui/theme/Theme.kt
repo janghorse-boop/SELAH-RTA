@@ -54,8 +54,13 @@ object SelahColors {
 
     val Accent = Color(0xFF4FC3F7)
 
-    /** 판정 색. 색만으로 알리지 않고 늘 글자를 함께 쓴다(명세 11장). */
-    val Low = Color(0xFF64B5F6)
+    /**
+     * 판정 색. 색만으로 알리지 않고 늘 글자를 함께 쓴다(명세 11장).
+     *
+     * **범위보다 낮으면 노랑**이다. 예전에는 파랑이었는데, 신호등처럼
+     * 노랑→초록→빨강으로 읽히는 편이 한눈에 들어온다.
+     */
+    val Low = Color(0xFFFFB74D)
     val InRange = Color(0xFF4CAF50)
     val High = Color(0xFFFF6B6B)
     val Warn = Color(0xFFFFB74D)

@@ -91,6 +91,30 @@ data class OpenedFormat(
                     "다만 하드웨어 안쪽의 가공까지는 알 수 없어, 절대 음압은 기준 소음계와 맞춰 봐야 합니다."
         }
 
+    /**
+     * 같은 이야기를 **한 줄로** 줄인 것.
+     *
+     * 긴 문구는 처음 한 번 읽으면 되는데, 예배 내내 세 줄을 차지하면
+     * 정작 봐야 할 숫자와 버튼이 아래로 밀린다(기기에서 확인). 그렇다고
+     * 아주 감추면 안 된다 — **이 기기가 가공 없는 입력을 지원하지
+     * 않는다는 사실은 화면에 남아 있어야 한다.** 그래서 줄이되 지우지
+     * 않는다. 긴 문구는 눌러서 편다.
+     */
+    val trustShortKo: String
+        get() = when {
+            effects.stillOn.isNotEmpty() ->
+                "${effects.stillOn.joinToString(" · ")} 이(가) 켜진 채입니다."
+
+            audioSource.trustworthy ->
+                "가공 없는 입력(UNPROCESSED)으로 재고 있습니다."
+
+            else ->
+                "가공 없는 입력이 아닙니다 — 절대 음압은 기준 소음계와 맞춰 봐야 합니다."
+        }
+
+    /** 줄인 말과 풀어 쓴 말이 다른가. 같으면 「자세히」를 띄울 까닭이 없다. */
+    val trustHasDetail: Boolean get() = trustShortKo != trustNoteKo
+
     /** 위 문구를 경고로 띄울 것인가, 사실로 띄울 것인가. */
     val trustIsWarning: Boolean
         get() = effects.stillOn.isNotEmpty() || !audioSource.trustworthy

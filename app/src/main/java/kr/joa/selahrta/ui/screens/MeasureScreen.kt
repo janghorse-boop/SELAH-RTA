@@ -16,6 +16,10 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -29,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import kr.joa.selahrta.domain.MeasureState
 import kr.joa.selahrta.domain.RangeVerdict
@@ -42,6 +47,7 @@ import kr.joa.selahrta.ui.components.NO_VALUE
 import kr.joa.selahrta.ui.components.ValueTile
 import kr.joa.selahrta.ui.components.VerdictBadge
 import kr.joa.selahrta.ui.components.formatDb
+import kr.joa.selahrta.ui.components.levelColor
 import kr.joa.selahrta.ui.nav.ViewMode
 import kr.joa.selahrta.ui.theme.SelahColors
 
@@ -84,6 +90,16 @@ fun MeasureScreen(
         else -> RangeVerdict.InRange
     }
 
+    // **큰 숫자 자체도 물들인다.** 색이 곧 「지금 볼륨이 어디쯤인가」다.
+    // 다만 **판정 배지와는 다른 양**이다 — 배지는 평균(Leq)을, 숫자는
+    // 지금 값을 견준다. 그래서 둘의 색이 잠깐 어긋날 수 있고, 그게 맞다.
+    // A 가중일 때만 칠한다(같은 까닭으로 판정도 그렇다).
+    val liveColor = levelColor(
+        if (weighting == Weighting.A) m.currentSpl else null,
+        range?.avgLowDb,
+        range?.avgHighDb,
+    )
+
     Column(
         Modifier
             .fillMaxSize()
@@ -119,15 +135,34 @@ fun MeasureScreen(
                             "낮게 나옵니다."
                     else -> null
                 }
-                InfoBar(
-                    warming ?: f?.trustNoteKo ?: "재고 있습니다.",
-                    Modifier.padding(top = 4.dp, bottom = 12.dp),
-                    tone = when {
-                        warming != null -> SelahColors.Warn
-                        f?.trustIsWarning == true -> SelahColors.Warn
-                        else -> SelahColors.InRange
-                    },
-                )
+                val tone = when {
+                    warming != null -> SelahColors.Warn
+                    f?.trustIsWarning == true -> SelahColors.Warn
+                    else -> SelahColors.InRange
+                }
+                if (warming != null || f == null) {
+                    InfoBar(warming ?: "재고 있습니다.", Modifier.padding(top = 4.dp, bottom = 12.dp), tone = tone)
+                } else {
+                    // **한 줄로 접어 둔다.** 세 줄짜리 안내가 예배 내내
+                    // 자리를 차지해 숫자와 버튼을 아래로 밀었다(기기에서
+                    // 확인). 눌러서 펴면 원래 문구가 그대로 나온다 —
+                    // 줄이되 지우지 않는다.
+                    var expanded by rememberSaveable { mutableStateOf(false) }
+                    InfoBar(
+                        if (expanded) f.trustNoteKo else f.trustShortKo,
+                        Modifier
+                            .padding(top = 4.dp, bottom = 12.dp)
+                            .then(
+                                if (f.trustHasDetail) {
+                                    Modifier.clickable { expanded = !expanded }
+                                } else {
+                                    Modifier
+                                }
+                            ),
+                        tone = tone,
+                        trailingKo = if (!f.trustHasDetail) null else if (expanded) "접기" else "자세히",
+                    )
+                }
             }
 
             else -> InfoBar(
@@ -155,6 +190,7 @@ fun MeasureScreen(
             GaugeArc(
                 fraction = m.currentSpl?.let { ((it - 40.0) / 70.0).toFloat() },
                 modifier = Modifier.size(260.dp, 150.dp),
+                color = liveColor ?: SelahColors.InRange,
             )
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
@@ -163,6 +199,10 @@ fun MeasureScreen(
                     fontWeight = FontWeight.Bold,
                     // 미보정 값은 흐리게 그린다. 보정된 값과 같은 밝기로 띄우면
                     // 둘의 무게가 같아 보인다 — 하나는 잰 값이고 하나는 짐작이다.
+                    //
+                    // **색은 바가 맡는다.** 숫자까지 물들이면 화면에 색이 두 번
+                    // 나와 어느 쪽을 읽어야 할지 흩어진다. 숫자는 값을, 바는
+                    // 그 값이 범위의 어디쯤인지를 말한다.
                     color = when {
                         m.currentSpl == null -> SelahColors.TextMuted
                         uncalibrated -> SelahColors.TextSecondary
@@ -177,15 +217,24 @@ fun MeasureScreen(
             }
         }
 
-        VerdictBadge(
-            verdict,
-            Modifier.padding(top = 12.dp),
-            unknownLabel = when {
-                !running -> "측정 안 함"
-                weighting != Weighting.A -> "판정 보류 — ${weighting.labelKo}"
-                else -> "평균을 모으는 중"
-            },
-        )
+        // **범위 안이면 배지를 띄우지 않는다.** 초록 바가 이미 그 말을 하고
+        // 있어 「적정」은 같은 말을 두 번 하는 것이다.
+        //
+        // 명세 11장은 「색만으로 알리지 않고 늘 글자를 함께 쓴다」고 한다.
+        // 그래서 **알려야 할 것에는 글자를 남긴다** — 낮음·높음, 그리고
+        // 판정할 수 없는 까닭. 지우는 것은 「괜찮다」 하나뿐이고, 그것은
+        // 경고의 부재로도 읽힌다.
+        if (verdict != RangeVerdict.InRange) {
+            VerdictBadge(
+                verdict,
+                Modifier.padding(top = 12.dp),
+                unknownLabel = when {
+                    !running -> "측정 안 함"
+                    weighting != Weighting.A -> "판정 보류 — ${weighting.labelKo}"
+                    else -> "평균을 모으는 중"
+                },
+            )
+        }
 
         if (range != null) {
             Text(
@@ -335,9 +384,18 @@ fun MeasureScreen(
  *
  * 값이 없을 때 바늘을 0 에 두면 「0 dB 을 재고 있다」로 읽힌다. 바늘이
  * 아예 없어야 재지 않는다는 뜻이 된다.
+ *
+ * [color] 는 **지금 값이 권장 범위의 어디쯤인가**를 나타낸다. 바가 길어
+ * 지면서 색도 함께 건너간다 — 눈이 먼저 잡는 것은 길이와 색이지 숫자가
+ * 아니다. 판정할 수 없으면(가중치가 A 가 아니거나 범위가 없으면) 기본
+ * 색으로 둔다.
  */
 @Composable
-private fun GaugeArc(fraction: Float?, modifier: Modifier = Modifier) {
+private fun GaugeArc(
+    fraction: Float?,
+    modifier: Modifier = Modifier,
+    color: Color = SelahColors.InRange,
+) {
     Canvas(modifier) {
         val stroke = 14.dp.toPx()
         val w = size.width
@@ -358,7 +416,7 @@ private fun GaugeArc(fraction: Float?, modifier: Modifier = Modifier) {
 
         if (fraction != null) {
             drawArc(
-                color = SelahColors.InRange,
+                color = color,
                 startAngle = 180f,
                 sweepAngle = 180f * fraction.coerceIn(0f, 1f),
                 useCenter = false,
