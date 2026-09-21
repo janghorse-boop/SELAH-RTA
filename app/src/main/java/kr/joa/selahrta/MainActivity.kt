@@ -6,7 +6,12 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import kr.joa.selahrta.ui.SelahApp
+import kr.joa.selahrta.ui.SplashScreen
 import kr.joa.selahrta.ui.theme.SelahRtaTheme
 
 class MainActivity : ComponentActivity() {
@@ -21,7 +26,15 @@ class MainActivity : ComponentActivity() {
         )
         setContent {
             SelahRtaTheme {
-                SelahApp()
+                // **표지는 프로세스가 새로 뜰 때만** 보인다.
+                // `rememberSaveable` 이라 화면을 돌려도 다시 나오지 않는다 —
+                // 재는 도중에 표지가 끼어들면 그만큼 소리를 놓친다.
+                var showSplash by rememberSaveable { mutableStateOf(true) }
+                if (showSplash) {
+                    SplashScreen(onDone = { showSplash = false })
+                } else {
+                    SelahApp()
+                }
             }
         }
     }
