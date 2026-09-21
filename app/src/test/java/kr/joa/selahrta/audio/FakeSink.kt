@@ -77,9 +77,10 @@ class FakeSink(
         if (unblockOnStop) gate.countDown()
     }
 
-    override fun release() {
+    override fun release(): Boolean {
         released = true
         releaseCount.incrementAndGet()
+        return true
     }
 
     /** 막아 둔 write 를 시험이 직접 푼다. */

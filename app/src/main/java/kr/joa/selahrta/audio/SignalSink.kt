@@ -46,8 +46,14 @@ interface SignalSink {
     /** 막혀 있는 [write] 를 풀고 멈춘다. */
     fun stop()
 
-    /** 자원을 놓는다. 두 번 불러도 탈나지 않아야 한다. */
-    fun release()
+    /**
+     * 자원을 놓는다. 두 번 불러도 탈나지 않아야 한다.
+     *
+     * @return **정말로 놓았는가.** 실패를 삼키고 성공처럼 굴면, 부르는
+     *   쪽은 자원이 없어진 줄 알고 새 출력을 계속 연다(독립 검증 RC02).
+     *   터져도 되고 false 를 돌려줘도 된다 — 둘 다 실패로 센다.
+     */
+    fun release(): Boolean
 
     companion object {
         /** 장치와의 연결이 끊겼다. `AudioTrack.ERROR_DEAD_OBJECT` 와 같은 값이다. */
@@ -128,8 +134,13 @@ class AudioTrackSink : SignalSink {
         }
     }
 
-    override fun release() {
-        track?.let { runCatching { it.release() } }
+    override fun release(): Boolean {
+        val t = track ?: return true
         track = null
+        // **삼키지 않는다.** 예전에는 runCatching 으로 감싸고 성공처럼
+        // 돌아갔다 — 위층이 그것을 「놓았다」로 세어 상한이 무력해진다.
+        return runCatching { t.release() }
+            .onFailure { Log.w(SINK_TAG, "release 실패", it) }
+            .isSuccess
     }
 }

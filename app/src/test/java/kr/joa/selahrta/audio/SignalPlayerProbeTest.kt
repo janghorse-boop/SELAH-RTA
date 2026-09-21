@@ -43,8 +43,9 @@ class SignalPlayerProbeTest {
             return frames
         }
         override fun stop() = Unit
-        override fun release() {
+        override fun release(): Boolean {
             released.countDown()
+            return true
         }
     }
 
@@ -76,9 +77,10 @@ class SignalPlayerProbeTest {
             insideStop = false
         }
 
-        override fun release() {
+        override fun release(): Boolean {
             releasedDuringStop = insideStop
             released.countDown()
+            return true
         }
     }
 
@@ -109,8 +111,9 @@ class SignalPlayerProbeTest {
             gate.countDown()
         }
 
-        override fun release() {
+        override fun release(): Boolean {
             released.countDown()
+            return true
         }
     }
 

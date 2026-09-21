@@ -416,6 +416,10 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             // 보라」고 하면 엉뚱한 곳을 보게 된다.
             signalNoticeKo = when {
                 ok -> null
+                // 놓기에 **실패**한 것이 자리를 차지하고 있으면 기다려도
+                // 풀리지 않는다. 그때 「잠시 뒤 다시」라고 하면 안 된다.
+                player.failedReleaseCount > 0 ->
+                    "소리 장치를 정리하지 못해 더 내보낼 수 없습니다. 앱을 다시 켜 보십시오."
                 player.pendingCount >= SignalPlayer.MAX_STUCK_PLAYBACKS ->
                     "앞서 내보내던 소리가 아직 끝나지 않았습니다. 잠시 뒤 다시 눌러 보십시오."
                 else ->

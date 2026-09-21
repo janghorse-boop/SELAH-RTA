@@ -2,7 +2,6 @@ package kr.joa.selahrta.audio
 
 import android.os.Process
 import android.util.Log
-import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.PI
 import kotlin.math.sin
@@ -98,9 +97,23 @@ class SignalPlayer(
          * 막힌다(검증자 권고).
          */
         @Volatile
-        private var releaseDone = false
+        private var releaseAttempted = false
 
-        val isReleaseComplete: Boolean get() = releaseDone
+        /** 그 시도가 **정말로 성공했는가.** */
+        @Volatile
+        private var releaseOk = false
+
+        /**
+         * 자리를 비켜 줘도 되는가.
+         *
+         * **놓기를 끝냈고 성공했을 때만**이다. 실패한 것을 성공처럼 세면
+         * 상한이 막으려던 자원 누적을 다시 허용한다 — 「다시 소리를 낼 수
+         * 있게 한다」는 자원이 없어졌다는 근거가 아니다(독립 검증 RC02).
+         */
+        val isSlotFree: Boolean get() = releaseAttempted && releaseOk
+
+        /** 놓기를 시도했는데 실패했는가. 화면에 알릴 값이다. */
+        val releaseFailed: Boolean get() = releaseAttempted && !releaseOk
 
         /** `stop()` 과 `release()` 만 직렬화한다. `write` 는 아니다. */
         private val sinkLock = Any()
@@ -118,12 +131,16 @@ class SignalPlayer(
          */
         fun releaseOnce(): Boolean {
             if (!releaseStarted.compareAndSet(false, true)) return false
+            var ok = false
             try {
-                synchronized(sinkLock) { sink.release() }
+                ok = synchronized(sinkLock) { sink.release() }
             } catch (t: Throwable) {
                 warn("출력을 놓다가 실패했다: $t")
             } finally {
-                releaseDone = true
+                // **성공 여부를 먼저 적고 나서** 끝났다고 적는다. 순서가
+                // 뒤바뀌면 끝난 것을 본 쪽이 옛 성공 여부를 읽는다.
+                releaseOk = ok
+                releaseAttempted = true
             }
             return true
         }
@@ -151,10 +168,13 @@ class SignalPlayer(
      * (독립 검증 SP01 — 세 번 되풀이에 셋). 요청서에 「하나가 남는다」고
      * 적은 것은 틀렸다.
      */
-    private val stuck = CopyOnWriteArrayList<Playback>()
+    private val stuck = PendingList<Playback>()
 
     /** 끝나기를 기다리는 재생 수. 화면이 알려 줄 수 있게 열어 둔다. */
     val pendingCount: Int get() = stuck.size
+
+    /** 그 가운데 **놓기가 실패한** 수. 자리를 영영 비켜 주지 못한다. */
+    val failedReleaseCount: Int get() = stuck.count { it.releaseFailed }
 
     /** 몇 번째 재생인가. 주 스레드만 만진다. */
     private var generation = 0L
@@ -171,14 +191,15 @@ class SignalPlayer(
      */
     fun start(signal: TestSignal, level: SignalLevel): Long {
         stop()
-        // **놓기가 끝난 것만** 치운다. 놓는 중인 것도 상한에 센다.
-        stuck.removeAll { it.isReleaseComplete }
+        // **자리를 비켜 준 것만** 치운다 — 놓기를 끝냈고 성공한 것.
+        // 놓는 중인 것도, 놓기에 실패한 것도 상한에 센다.
+        val pending = stuck.sweep { it.isSlotFree }
 
         // **끝나기를 기다리는 것이 쌓이면 새로 열지 않는다**(독립 검증 SP01).
         // 강제로 놓지 않는다 — 아직 `write` 안에 있는 자원을 놓으면 S01 이
         // 되돌아온다. 여기서 막고 사람에게 알리는 쪽이 낫다.
-        if (stuck.size >= MAX_STUCK_PLAYBACKS) {
-            warn("끝나기를 기다리는 재생이 ${stuck.size}개라 새로 시작하지 않는다")
+        if (pending >= MAX_STUCK_PLAYBACKS) {
+            warn("끝나기를 기다리는 재생이 ${pending}개라 새로 시작하지 않는다")
             return NONE
         }
 
@@ -256,7 +277,7 @@ class SignalPlayer(
         // 사람이 멈춰서 빠져나왔다. **여기서 놓는다** — `stop()` 의 기다림이
         // 시간 초과돼 그쪽이 놓지 않았을 수 있고, 그때 놓는 쪽은 나뿐이다.
         pb.releaseOnce()
-        stuck.remove(pb)
+        if (pb.isSlotFree) stuck.remove(pb)
     }
 
     /** 내보내기가 오류로 끝났다. **아직 내가 현재 재생일 때만** 알린다. */
@@ -272,7 +293,7 @@ class SignalPlayer(
             }
         }
         pb.releaseOnce()
-        stuck.remove(pb)
+        if (pb.isSlotFree) stuck.remove(pb)
         if (!mine) return
 
         onEnded?.invoke(
@@ -313,14 +334,13 @@ class SignalPlayer(
         t?.join(JOIN_MS)
         if (t == null || !t.isAlive) {
             pb.releaseOnce()
-            stuck.remove(pb)
+            // 놓기에 실패했으면 자리를 비켜 주지 않는다(독립 검증 RC02).
+            if (!pb.isSlotFree) stuck.addIfPending(pb) { it.isSlotFree }
         } else {
             // 아직 끝나지 않았다. 두고 간다 — 깨어나면 제 손으로 놓는다.
-            if (!stuck.contains(pb)) stuck.add(pb)
-            // **넣는 사이에 끝났을 수 있다.** 그 좁은 순서에서 끝난 것이
-            // 목록에 남으면 `pendingCount` 가 실제보다 커진다(검증자 후속
-            // 점검). 넣고 나서 한 번 더 본다.
-            if (pb.isReleaseComplete) stuck.remove(pb)
+            // **넣을지 말지를 같은 자물쇠 안에서 본다** — 밖에서 보고 넣으면
+            // 보는 사이에 끝난 것이 남아 세는 수가 커진다(검증자 후속 점검).
+            stuck.addIfPending(pb) { it.isSlotFree }
         }
     }
 

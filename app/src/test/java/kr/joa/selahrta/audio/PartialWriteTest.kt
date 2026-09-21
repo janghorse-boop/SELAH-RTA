@@ -66,8 +66,9 @@ class PartialWriteTest {
             stopped = true
         }
 
-        override fun release() {
+        override fun release(): Boolean {
             released.countDown()
+            return true
         }
 
         @Synchronized
@@ -262,8 +263,9 @@ class PartialWriteTest {
                 return frames
             }
             override fun stop() = hold.countDown()
-            override fun release() {
+            override fun release(): Boolean {
                 released.countDown()
+                return true
             }
         }
         val p = SignalPlayer(openSink = { sink }, warn = {})
