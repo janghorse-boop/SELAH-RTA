@@ -1,0 +1,46 @@
+TARGETED_RUN=1
+JUnit version 4.13.2
+.[SP01] ���� 2 �� ���� �̿� 2 �� pendingCount 2 �� ���� 2
+.[SP01 ȥ��] ���� 2 �� �̿� 2 �� pendingCount 2
+
+Time: 2.103
+
+OK (2 tests)
+
+TARGETED_RUN=2
+JUnit version 4.13.2
+.[SP01] ���� 2 �� ���� �̿� 2 �� pendingCount 2 �� ���� 2
+.[SP01 ȥ��] ���� 2 �� �̿� 2 �� pendingCount 2
+
+Time: 2.107
+
+OK (2 tests)
+
+TARGETED_RUN=3
+JUnit version 4.13.2
+.[SP01] ���� 2 �� ���� �̿� 2 �� pendingCount 2 �� ���� 2
+.[SP01 ȥ��] ���� 2 �� �̿� 2 �� pendingCount 2
+
+Time: 2.085
+
+OK (2 tests)
+
+TARGETED_RUN=4
+JUnit version 4.13.2
+.[SP01] ���� 2 �� ���� �̿� 2 �� pendingCount 2 �� ���� 2
+.[SP01 ȥ��] ���� 2 �� �̿� 2 �� pendingCount 2
+
+Time: 2.093
+
+OK (2 tests)
+
+TARGETED_RUN=5
+JUnit version 4.13.2
+.[SP01] ���� 2 �� ���� �̿� 2 �� pendingCount 2 �� ���� 2
+.[SP01 ȥ��] ���� 2 �� �̿� 2 �� pendingCount 2
+
+Time: 2.091
+
+OK (2 tests)
+
+FAILED_RUNS=0 of 5

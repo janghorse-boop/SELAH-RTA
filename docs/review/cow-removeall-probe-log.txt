@@ -1,0 +1,8 @@
+COW_REMOVE_ALL_FAILURE=java.lang.ArrayIndexOutOfBoundsException: Index 1 out of bounds for length 0
+java.lang.ArrayIndexOutOfBoundsException: Index 1 out of bounds for length 0
+	at java.base/java.util.concurrent.CopyOnWriteArrayList.elementAt(Unknown Source)
+	at java.base/java.util.concurrent.CopyOnWriteArrayList.get(Unknown Source)
+	at kotlin.collections.CollectionsKt__MutableCollectionsKt.filterInPlace$CollectionsKt__MutableCollectionsKt(MutableCollections.kt:285)
+	at kotlin.collections.CollectionsKt__MutableCollectionsKt.removeAll(MutableCollections.kt:270)
+	at CopyOnWriteRemoveAllProbeKt.main(CopyOnWriteRemoveAllProbe.kt:17)
+	at CopyOnWriteRemoveAllProbeKt.main(CopyOnWriteRemoveAllProbe.kt)
