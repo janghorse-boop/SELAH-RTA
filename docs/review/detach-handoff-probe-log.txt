@@ -1,0 +1,5 @@
+outputs\DetachHandoffProbe.kt:36:73: warning: 'val id: Long' is deprecated. Deprecated in Java.
+     val info=ManagementFactory.getThreadMXBean().getThreadInfo(starter.id)
+                                                                        ^^
+Independent verification scratch directory: C:\Users\jangh\AppData\Local\Temp\selah-independent-7c70a414025c46d588a29feaa33df694
+HANDOFF_BARRIER blockedOnLifecycleLock=true newOpenRefused=true opens=2 pending=2

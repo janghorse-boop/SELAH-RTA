@@ -1,0 +1,2 @@
+Independent verification scratch directory: C:\Users\jangh\AppData\Local\Temp\selah-independent-408433aa614440f1ad5a1af56509d897
+DETACH_GAP reproduced=false attempts=1000
