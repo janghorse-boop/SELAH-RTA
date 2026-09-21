@@ -2,4 +2,11 @@
 <resources>
     <string name="app_name">SELAH RTA</string>
     <string name="app_subtitle">Real-Time Worship Audio Analyzer</string>
+
+    <!-- 화면이 뒤로 가도 측정을 이어 갈 때 뜨는 알림. -->
+    <string name="capture_channel_name">측정 중</string>
+    <string name="capture_channel_desc">화면이 뒤로 가도 측정을 이어 가는 동안 표시합니다.</string>
+    <string name="capture_notice_title">재고 있습니다</string>
+    <string name="capture_notice_text">소리를 저장하지 않고 음압과 주파수만 계산합니다. 눌러서 열기.</string>
+    <string name="capture_notice_stop">측정 종료</string>
 </resources>

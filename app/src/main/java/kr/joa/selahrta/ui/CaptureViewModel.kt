@@ -14,6 +14,8 @@ import kr.joa.selahrta.audio.chooseInput
 import kr.joa.selahrta.audio.CaptureDiagnostics
 import kr.joa.selahrta.audio.CaptureEnd
 import kr.joa.selahrta.audio.CaptureGeneration
+import kr.joa.selahrta.audio.CaptureService
+import kr.joa.selahrta.audio.CaptureServiceBridge
 import kr.joa.selahrta.audio.TestSignal
 import kr.joa.selahrta.audio.SignalLevel
 import kr.joa.selahrta.audio.SignalPlayer
@@ -353,6 +355,12 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     private var curveJob: Job? = null
     private var settingsJob: Job? = null
     init {
+        // 알림의 「측정 종료」. 서비스는 화면을 알지 못하고 한 방향으로
+        // 알리기만 한다([CaptureServiceBridge]).
+        viewModelScope.launch {
+            CaptureServiceBridge.stopRequests.collect { stop() }
+        }
+
         // 기기 목록은 늘 지켜본다. 측정 중이 아닐 때도 설정 화면이 최신
         // 목록을 보여야 하고, 측정 중이면 빠지는 것을 알아채야 한다.
         viewModelScope.launch {
@@ -434,22 +442,39 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         controller.update { st -> st.copy(playingSignal = null) }
     }
 
-    /** 측정을 시작한다. 실제 일은 [CaptureController] 가 한다. */
-    fun start(disconnectFallBack: Boolean = false) = controller.start(disconnectFallBack)
+    /**
+     * 측정을 시작한다. 실제 일은 [CaptureController] 가 한다.
+     *
+     * **서비스를 먼저 띄운다.** 안드로이드 14부터 `microphone` 형
+     * 포그라운드 서비스는 앱이 앞에 있을 때만 띄울 수 있고, 사용자가
+     * 「측정 시작」을 누른 지금이 그 자리다. 이걸 뒤로 미루면 화면이
+     * 뒤로 간 뒤에는 띄울 수 없다.
+     */
+    fun start(disconnectFallBack: Boolean = false) {
+        CaptureService.start(getApplication())
+        controller.start(disconnectFallBack)
+    }
 
-    /** 측정을 멈춘다. */
-    fun stop() = controller.stop()
+    /** 측정을 멈춘다. 붙들어 두던 서비스도 내린다. */
+    fun stop() {
+        controller.stop()
+        CaptureService.stop(getApplication())
+    }
 
     /**
-     * 앱이 뒤로 갈 때 부른다. **측정과 소리를 함께 멈춘다.**
+     * 앱이 뒤로 갈 때 부른다. **소리만 멈춘다.**
      *
-     * 예전에는 측정만 멈추고 소리는 남았다. 예배당에서 4kHz 순음을 켜 놓고
-     * 앱을 나가면 **멈출 방법이 화면에 없었다** — 앱을 다시 열거나 강제
-     * 종료해야 했고, PA 에 물려 있으면 회중이 듣는다.
+     * 예전에는 측정도 함께 멈췄다. 예배는 두 시간이고 그동안 담당자는
+     * 다른 앱을 보는데, 그때마다 측정이 끊겼다. 이제 포그라운드 서비스가
+     * 마이크를 붙들고 있어 **측정은 이어진다.**
+     *
+     * **소리는 여전히 멈춘다.** 예배당에서 4kHz 순음을 켜 놓고 앱을
+     * 나가면 멈출 방법이 화면에 없다 — 앱을 다시 열거나 강제 종료해야
+     * 했고, PA 에 물려 있으면 회중이 듣는다. 측정은 조용하지만 신호는
+     * 그렇지 않다.
      */
     fun onBackground() {
         stopSignal()
-        controller.stop()
     }
 
     /** 세기를 바꾼다. 내보내는 중이면 그 자리에서 바꿔 끼운다. */
@@ -681,9 +706,16 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     }
 
 
+    /**
+     * 앱이 완전히 사라질 때(최근 앱에서 밀어내기 등).
+     *
+     * **서비스도 함께 내린다.** 안 내리면 아무도 보고 있지 않은 마이크가
+     * 켜진 채로 알림만 남는다.
+     */
     override fun onCleared() {
         player.stop()
         controller.stop()
+        CaptureService.stop(getApplication())
         super.onCleared()
     }
 }

@@ -23,6 +23,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -74,6 +75,23 @@ fun SelahApp() {
     val vm: CaptureViewModel = viewModel()
     val capture by vm.state.collectAsStateWithLifecycle()
 
+    // **칩을 저장된 구간에 맞춘다.** 구간을 고르는 줄을 없앤 뒤로 칩이
+    // 곧 구간인데, 칩은 늘 「설교」로 시작하고 구간은 지난번에 고른 것이
+    // 저장돼 있다. 맞추지 않으면 칩은 「설교」인데 범위는 「찬양 78~85」인
+    // 화면이 나온다(기기에서 확인).
+    //
+    // **측정 구역일 때만** 맞춘다. RTA·피드백을 보고 있는 사람을 끌어다
+    // 놓으면 안 된다.
+    val storedSegment = capture.meterSettings.segment
+    LaunchedEffect(storedSegment) {
+        if (mode.section == NavSection.Measure) {
+            mode = when (storedSegment) {
+                ChurchSegment.Sermon -> ViewMode.Sermon
+                ChurchSegment.Worship -> ViewMode.Worship
+            }
+        }
+    }
+
     val context = LocalContext.current
     var hasPermission by remember {
         mutableStateOf(
@@ -100,13 +118,14 @@ fun SelahApp() {
         if (granted) vm.start()
     }
 
-    // 화면이 뒤로 가면 마이크를 놓는다. 안 놓으면 녹음 표시가 켜진 채로 남고
-    // 다른 앱이 마이크를 못 쓴다. 예배 내내 재는 것은 포그라운드 서비스가
-    // 필요한 별개 문제라 Phase 10 에서 다룬다.
+    // 화면이 뒤로 가면 **소리만** 멈춘다. 측정은 포그라운드 서비스가
+    // 마이크를 붙들고 있어 이어진다 — 예배는 두 시간이고 그동안 담당자는
+    // 다른 앱을 본다.
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val obs = LifecycleEventObserver { _, event ->
-            // 측정과 **소리**를 함께 멈춘다. 소리만 남으면 끌 방법이 없다.
+            // 신호는 멈춘다. 예배당에서 순음을 켜 놓고 앱을 나가면 멈출
+            // 방법이 화면에 없다. 측정은 조용하지만 신호는 그렇지 않다.
             if (event == Lifecycle.Event.ON_STOP) vm.onBackground()
         }
         lifecycleOwner.lifecycle.addObserver(obs)

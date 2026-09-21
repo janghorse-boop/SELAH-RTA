@@ -9,6 +9,20 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <!--
+        예배는 두 시간이고 그동안 담당자는 다른 앱을 본다. 화면이 뒤로 가도
+        마이크를 놓지 않으려면 포그라운드 서비스가 필요하다. 형(type)을
+        microphone 으로 적어야 안드로이드 14 이상에서 마이크를 계속 쓸 수 있다.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+
+    <!--
+        알림을 띄우려면 13 이상에서 사용자 허락이 필요하다. **거부해도
+        측정은 돈다** — 알림이 안 보일 뿐이다. 그래서 측정을 막지 않는다.
+    -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!--
         내장 마이크 없는 기기에서도 USB 마이크로 쓸 수 있으므로 required 를
         false 로 둔다. 명세 2장: 내장 마이크는 fallback 이 아니라 정식 입력이고,
         USB 도 마찬가지로 정식 입력이다.
@@ -37,6 +51,15 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+            화면이 뒤로 가도 측정을 이어 가게 붙들어 두는 서비스.
+            밖에서 부를 일이 없으므로 exported 는 false 다.
+        -->
+        <service
+            android:name=".audio.CaptureService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
     </application>
 
 </manifest>
