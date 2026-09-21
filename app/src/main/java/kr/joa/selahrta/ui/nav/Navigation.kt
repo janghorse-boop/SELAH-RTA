@@ -13,7 +13,19 @@ enum class ViewMode(val labelKo: String, val section: NavSection) {
     Worship("찬양", NavSection.Measure),
     Rta("RTA", NavSection.Analyze),
     Feedback("피드백", NavSection.Analyze),
+
+    /**
+     * 악기 EQ 가이드(명세 §6).
+     *
+     * **마이크 없이도 열린다.** 다른 칩과 달리 캡처를 쓰지 않으므로,
+     * 권한이 없어도 이 칩은 제 내용을 그대로 보여준다(명세 §1 원칙 2).
+     */
+    InstrumentEq("악기 EQ", NavSection.Analyze),
 }
+
+/** 이 칩이 캡처를 쓰는가. 쓰지 않으면 권한이 없어도 막지 않는다. */
+val ViewMode.needsCapture: Boolean
+    get() = this != ViewMode.InstrumentEq
 
 /**
  * 아래쪽 탭 네 개(명세 11장).

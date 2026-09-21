@@ -48,6 +48,7 @@ import kr.joa.selahrta.domain.ChurchSegment
 import kr.joa.selahrta.domain.MeasureState
 import kr.joa.selahrta.domain.MicKind
 import kr.joa.selahrta.ui.nav.NavSection
+import kr.joa.selahrta.ui.instrument.InstrumentGuideScreen
 import kr.joa.selahrta.ui.nav.ViewMode
 import kr.joa.selahrta.ui.nav.defaultMode
 import kr.joa.selahrta.ui.nav.hasModeChips
@@ -157,6 +158,8 @@ fun SelahApp() {
                         )
                         ViewMode.Rta -> RtaScreen(capture)
                         ViewMode.Feedback -> FeedbackScreen(capture)
+                        // 캡처를 쓰지 않는다. 권한이 없어도 그대로 열린다.
+                        ViewMode.InstrumentEq -> InstrumentGuideScreen()
                     }
                     NavSection.History -> HistoryScreen()
                     NavSection.Settings -> SettingsScreen(
