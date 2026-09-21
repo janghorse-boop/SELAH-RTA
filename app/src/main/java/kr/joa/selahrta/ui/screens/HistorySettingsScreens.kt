@@ -97,16 +97,20 @@ fun SettingsScreen(
             inputs = capture.inputs,
             selectedKey = capture.meterSettings.preferredInputKey,
             openedLabel = capture.opened?.deviceLabel,
-            // 경로가 확인된 기기만 「사용 중」이라고 말한다.
+            lastLabel = capture.lastInput?.deviceLabel,
+            // 경로가 확인됐고 **지금 열려 있는** 기기만 「사용 중」이다.
+            // 멈춘 뒤에도 붙어 있으면 닫힌 기기로 재고 있다고 믿게 된다.
             openedKey = capture.opened?.takeIf { it.routeConfirmed }?.deviceKey,
             running = capture.measure is MeasureState.Running,
             onPick = onPreferredInput,
         )
         ChoiceRow(
             "외부 기기 자동 사용",
-            "측정을 시작할 때 USB·유선·블루투스 마이크가 꽂혀 있으면 " +
-                "그쪽을 먼저 씁니다. 재는 도중에 꽂아도 바꾸지 않고 알리기만 " +
-                "합니다. 기기를 직접 고르면 이 설정보다 그쪽이 앞섭니다.",
+            "USB·유선·블루투스 마이크가 꽂히면 그쪽을 먼저 씁니다. 재는 " +
+                "도중에 꽂히면 그 자리에서 측정을 끊고 새 측정을 시작합니다 — " +
+                "한 측정 안에서 마이크를 바꾸면 그 앞뒤 값이 서로 다른 마이크의 " +
+                "값인데 평균은 하나로 합쳐지기 때문입니다. 기기를 직접 고르면 " +
+                "이 설정보다 그쪽이 앞섭니다.",
             listOf(true, false),
             capture.meterSettings.autoPreferExternal,
             { if (it) "자동" else "끔" },
@@ -126,7 +130,7 @@ fun SettingsScreen(
         SectionTitle("보정")
         SettingRow(
             "샘플레이트 / 형식",
-            capture.opened?.let { "${it.sampleRate} Hz · ${it.encoding.bitsLabel}" } ?: "—",
+            capture.inputForDisplay?.let { "${it.sampleRate} Hz · ${it.encoding.bitsLabel}" } ?: "—",
         )
         SettingRow(
             "보정 상태",
@@ -250,6 +254,8 @@ private fun InputDevicePicker(
     inputs: List<InputDeviceInfo>,
     selectedKey: String?,
     openedLabel: String?,
+    /** 마지막으로 썼던 기기 이름. 멈춘 뒤에 적는다. */
+    lastLabel: String?,
     /** 지금 실제로 열려 있는 기기의 열쇠. 확인되기 전에는 null 이다. */
     openedKey: String?,
     /** 재는 중인가. 재는 중에 고른 기기는 다음 시작에야 쓰인다. */
@@ -299,9 +305,13 @@ private fun InputDevicePicker(
             )
         }
 
-        if (openedLabel != null) {
+        if (openedLabel != null || lastLabel != null) {
             Text(
-                "지금 열려 있는 기기: $openedLabel",
+                if (openedLabel != null) {
+                    "지금 열려 있는 기기: $openedLabel"
+                } else {
+                    "마지막으로 쓴 기기: $lastLabel (지금은 열려 있지 않습니다)"
+                },
                 color = SelahColors.TextMuted,
                 fontSize = 10.sp,
                 modifier = Modifier.padding(top = 4.dp),
@@ -311,9 +321,8 @@ private fun InputDevicePicker(
             // 재는 도중에 고른 기기가 곧바로 쓰이지 않는다는 사실을 적는다.
             // 안 적으면 고른 마이크로 재고 있다고 믿는다(독립 검증 R11).
             Text(
-                "재는 도중에는 입력을 바꾸지 않습니다. 바꾸면 그 앞뒤 값이 서로 " +
-                    "다른 마이크의 값이 되기 때문입니다. 멈추고 다시 시작하면 " +
-                    "고르신 기기로 엽니다.",
+                "여기서 고른 기기는 다음 시작에 씁니다. 재는 도중에 바꾸면 그 " +
+                    "앞뒤 값이 서로 다른 마이크의 값이 되기 때문입니다.",
                 color = SelahColors.Warn,
                 fontSize = 10.sp,
                 lineHeight = 14.sp,

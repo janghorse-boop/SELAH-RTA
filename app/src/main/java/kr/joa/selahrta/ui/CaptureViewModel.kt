@@ -128,6 +128,22 @@ data class CaptureUiState(
      * (독립 검증 R03).
      */
     val session: Long = 0,
+    /**
+     * 마지막으로 썼던 입력. **지금 열려 있는 것이 아니다.**
+     *
+     * [opened] 를 멈춘 뒤에도 남겨 두면 설정 화면이 이미 닫힌 기기에
+     * 「사용 중」을 붙이고 상단 배지도 켜진 색으로 남는다(독립 재검증
+     * 추가 지적). 「지금 쓰는 것」과 「마지막에 쓴 것」을 갈라 둔다.
+     */
+    val lastInput: OpenedFormat? = null,
+    /**
+     * 곡선을 몇 번 갈아 끼웠는가. 엔진의 세대와 견주는 값이다.
+     *
+     * 화면의 「보정 적용됨」은 **그 곡선으로 실제 계산된 프레임**에만
+     * 붙어야 한다. 곡선을 바꾼 직후에는 아직 옛 곡선의 프레임이 남아
+     * 있는데, 예전에는 거기에 새 곡선의 이름표를 붙였다(독립 재검증 F06).
+     */
+    val curveGeneration: Long = 0,
 ) {
     /**
      * 지금 숫자를 그 기기의 측정값이라 불러도 되는가.
@@ -136,6 +152,9 @@ data class CaptureUiState(
      * 없다(독립 검증 R01). 확인될 때까지는 미보정으로 둔다.
      */
     val routeConfirmed: Boolean get() = opened?.routeConfirmed == true
+
+    /** 화면에 기기 정보를 적을 때 쓸 값. 열려 있으면 그것, 아니면 마지막 것. */
+    val inputForDisplay: OpenedFormat? get() = opened ?: lastInput
 }
 
 /**
@@ -175,6 +194,47 @@ data class RtaView(
     override fun hashCode(): Int = System.identityHashCode(this)
 }
 
+/**
+ * 한 번의 측정. **엔진·명령·통계가 모두 여기에 매여 있다.**
+ *
+ * 예전에는 엔진과 명령 큐가 ViewModel 의 필드였다. 그래서 멈출 때
+ * `join(500)` 이 시간을 넘겨 옛 작업 스레드가 살아남으면, 그 스레드가
+ * 깨어나 **새 측정의 엔진과 명령 큐**를 만질 수 있었다(독립 재검증 F02).
+ * `@Volatile` 은 참조가 보이게만 할 뿐 두 스레드가 같은 객체를 동시에
+ * 만지는 것을 막지 않는다.
+ *
+ * 이제 캡처 콜백은 맨 앞에서 「내가 지금 살아 있는 세션인가」를 보고,
+ * 아니면 **자기 세션의 객체조차 건드리지 않고** 돌아간다. 옛 스레드가
+ * 늦게 깨어나도 새 측정에 닿을 길이 없다.
+ */
+private class CaptureSession(
+    val id: Long,
+    val source: AudioSource,
+    val sampleRate: Int,
+    settings: MeterSettings,
+) {
+    /** 설정이 바뀌면 갈아 끼운다. 갈아 끼우는 일도 오디오 스레드에서 한다. */
+    @Volatile
+    var engine: MultiWeightEngine = MultiWeightEngine(
+        sampleRate = sampleRate,
+        timeWeight = settings.timeWeight,
+        leqLongMs = settings.leqWindow.millis,
+    )
+
+    val rta = RtaEngine(sampleRate)
+
+    /** 주 스레드가 이 세션의 오디오 스레드에 시킬 일. */
+    val commands = java.util.concurrent.ConcurrentLinkedQueue<() -> Unit>()
+
+    // 캡처 스레드만 만지는 값들.
+    var blocks = 0L
+    var frames = 0L
+    var readErrors = 0L
+    var clippedBlocks = 0L
+    var lastEmitNs = 0L
+    var startedNs = 0L
+}
+
 class CaptureViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
@@ -204,7 +264,6 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     private val curveStore = CurveStore(app)
     private val settingsStore = MeterSettingsStore(app)
     private val scanner = InputDeviceScanner(app)
-    private var source: AudioSource? = null
     private var calibrationJob: Job? = null
     private var curveJob: Job? = null
     private var settingsJob: Job? = null
@@ -215,46 +274,41 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      * 계속 들고 있으면 엉뚱한 기기가 빠지는지를 지켜보게 된다(R01).
      */
     private var openingKey: String? = null
-    /** 입력 세션 번호. 기기를 열 때마다 올라간다. 주 스레드만 만진다. */
-    private var captureSession = 0L
 
     /**
-     * 오디오 스레드에 시킬 일.
+     * 지금 살아 있는 측정. 멈추면 **먼저** null 이 된다.
+     *
+     * 캡처 콜백은 맨 앞에서 이 값이 자기 세션인지 보고, 아니면 아무것도
+     * 하지 않고 돌아간다. 그래서 종료가 늦어진 옛 스레드가 새 측정에
+     * 닿지 못한다(독립 재검증 F02).
+     */
+    @Volatile
+    private var active: CaptureSession? = null
+
+    /** 여태 연 측정의 수. 세션 번호를 매긴다. 주 스레드만 만진다. */
+    private var sessionCounter = 0L
+
+    /**
+     * 그 세션의 오디오 스레드에 일을 시킨다.
      *
      * **DSP 객체는 오디오 스레드만 만진다.** 주 스레드에서 직접 reset 하거나
      * 엔진을 갈아 끼우면 캡처가 그 객체를 읽는 도중에 상태가 바뀐다 —
      * 반쯤 바뀐 상태로 계산된 값이 그대로 화면에 뜬다(독립 검증 R02).
      * 그래서 「무엇을 하라」만 건네고, 실제로 하는 것은 덩어리 사이의
      * 안전한 지점이다.
+     *
+     * 명령은 **세션에 매여 있다.** 멈춘 뒤 늦게 들어온 명령은 그 세션과
+     * 함께 버려지므로, 다음 측정의 MAX 가 까닭 없이 지워지는 일이 없다.
      */
-    private val commands = java.util.concurrent.ConcurrentLinkedQueue<() -> Unit>()
-
-    /** 캡처가 도는 동안에만 시킬 수 있다. 멈춰 있으면 받아 둘 곳이 없다. */
-    private fun postToCapture(cmd: () -> Unit) {
-        if (source != null) commands.add(cmd)
+    private fun postToCapture(cmd: (CaptureSession) -> Unit) {
+        val s = active ?: return
+        s.commands.add { cmd(s) }
     }
 
     /** 덩어리를 처리하기 직전에 밀린 일을 처리한다. 오디오 스레드에서만 부른다. */
-    private fun drainCommands() {
-        while (true) (commands.poll() ?: return).invoke()
+    private fun drainCommands(s: CaptureSession) {
+        while (true) (s.commands.poll() ?: return).invoke()
     }
-
-    /**
-     * 측정 엔진. A·C·Z 를 나란히 돌린다.
-     *
-     * 가중치를 바꿔도 엔진을 새로 만들지 않는다 — 그러면 Leq 와 MAX 가
-     * 비워져서, 「저음이 얼마나 많지?」를 보려고 C 로 잠깐 바꿨다 돌아오면
-     * 그동안의 평균이 사라진다. 시간가중과 Leq 창이 바뀔 때만 새로 만든다.
-     *
-     * 시작·정지 때만 주 스레드가 쓰고(그때는 캡처 스레드가 없다), 그 밖의
-     * 교체는 전부 [commands] 를 거쳐 오디오 스레드에서 일어난다.
-     */
-    @Volatile
-    private var engine: MultiWeightEngine? = null
-
-    /** RTA 엔진. 가중과 무관하므로 설정이 바뀌어도 그대로 둔다. */
-    @Volatile
-    private var rta: RtaEngine? = null
 
     init {
         // 기기 목록은 늘 지켜본다. 측정 중이 아닐 때도 설정 화면이 최신
@@ -263,7 +317,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             scanner.watch().collect { list ->
                 val prev = _state.value.inputs
                 _state.value = _state.value.copy(inputs = list)
-                if (source != null) onDeviceListChanged(prev, list)
+                if (active != null) onDeviceListChanged(prev, list)
             }
         }
 
@@ -273,7 +327,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             settingsStore.settings.collect { s ->
                 val old = _state.value.meterSettings
                 _state.value = _state.value.copy(meterSettings = s)
-                if (source != null && needsEngineRestart(old, s)) restartEngine(s)
+                if (active != null && needsEngineRestart(old, s)) restartEngine(s)
             }
         }
     }
@@ -286,10 +340,9 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      * 갈아 끼우므로 측정이 끊기지는 않는다.
      */
     private fun restartEngine(s: MeterSettings) {
-        val fmt = _state.value.opened ?: return
-        postToCapture {
-            engine = MultiWeightEngine(
-                sampleRate = fmt.sampleRate,
+        postToCapture { session ->
+            session.engine = MultiWeightEngine(
+                sampleRate = session.sampleRate,
                 timeWeight = s.timeWeight,
                 leqLongMs = s.leqWindow.millis,
             )
@@ -314,46 +367,69 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun onDeviceListChanged(before: List<InputDeviceInfo>, now: List<InputDeviceInfo>) {
         val key = openingKey ?: return
-        val stillThere = now.any { it.stableKey == key }
-        if (stillThere) {
-            // 새로 꽂힌 외부 기기를 알린다. **자동으로 바꾸지는 않는다** —
-            // 예배 중에 입력이 바뀌면 그 앞뒤 값이 서로 다른 마이크의 값이 된다.
-            //
-            // 「외부 기기 자동 사용」이 켜져 있어도 그렇다. 그 설정은 **시작할
-            // 때** 무엇을 고르느냐는 규칙이지 재는 도중의 전환이 아니다.
-            // 설정 화면이 그렇게 적고 있으므로 여기서도 같은 말을 한다
-            // (독립 검증 R11).
-            val added = now.filter { n -> before.none { it.stableKey == n.stableKey } }
-            val newExternal = added.firstOrNull { it.kind == MicKind.Usb } ?: return
-            val auto = _state.value.meterSettings.autoPreferExternal
-            _state.value = _state.value.copy(
-                deviceNoticeKo = "${newExternal.productName} 이(가) 연결됐습니다. " +
-                    if (auto) {
-                        "「외부 기기 자동 사용」이 켜져 있지만 재는 도중에는 바꾸지 " +
-                            "않습니다 — 바꾸면 그 앞뒤 값이 서로 다른 마이크의 값이 " +
-                            "됩니다. 멈추고 다시 시작하면 이 마이크로 엽니다."
-                    } else {
-                        "쓰시려면 측정을 멈추고, 설정에서 이 기기를 고른 뒤 다시 " +
-                            "시작하십시오."
-                    },
+        if (now.none { it.stableKey == key }) {
+            applyDisconnectPolicy(
+                before.firstOrNull { it.stableKey == key }?.productName ?: "쓰던 마이크",
             )
             return
         }
 
+        // 쓰던 기기는 그대로 있고 새 기기가 꽂혔다.
+        val added = now.filter { n -> before.none { it.stableKey == n.stableKey } }
+        val newExternal = added.firstOrNull { it.kind == MicKind.Usb } ?: return
+        val s = _state.value.meterSettings
+
+        // **자동 전환은 새 측정으로 한다**(명세 2·14장, 독립 재검증 F07).
+        // 한 세션 안에서 마이크를 갈아 끼우면 그 앞뒤 값이 서로 다른 마이크의
+        // 값인데 Leq·MAX 는 하나로 합쳐진다. 그래서 지금 측정을 끝내고 새로
+        // 연다 — 값이 섞이지 않으면서 자동 전환은 실제로 일어난다.
+        //
+        // 고른 기기가 있으면 자동 전환하지 않는다. 사용자의 선택이 앞선다.
+        val wouldPick = chooseInput(now, s.preferredInputKey, s.autoPreferExternal).device
+        if (s.autoPreferExternal && s.preferredInputKey == null &&
+            wouldPick?.stableKey == newExternal.stableKey
+        ) {
+            stop()
+            _state.value = _state.value.copy(
+                deviceNoticeKo = "${newExternal.productName} 이(가) 연결돼 그 마이크로 " +
+                    "새 측정을 시작합니다. 앞서 재던 값은 다른 마이크의 것이라 " +
+                    "이어 붙이지 않고 여기서 끊습니다.",
+            )
+            start()
+            return
+        }
+
+        _state.value = _state.value.copy(
+            deviceNoticeKo = "${newExternal.productName} 이(가) 연결됐습니다. " +
+                if (s.preferredInputKey != null) {
+                    "고르신 기기가 따로 있어 바꾸지 않았습니다. 쓰시려면 설정에서 " +
+                        "이 기기를 고르십시오."
+                } else {
+                    "「외부 기기 자동 사용」이 꺼져 있어 바꾸지 않았습니다."
+                },
+        )
+    }
+
+    /**
+     * 쓰던 마이크를 더는 쓸 수 없다. 정책대로 처리한다(명세 2장).
+     *
+     * 기기 목록에서 빠진 경우와 읽기가 오류로 끝난 경우가 **같은 일**이라
+     * 한 자리에서 처리한다. 예전에는 둘이 따로였고, 읽기 오류가 먼저 오면
+     * `source` 가 이미 null 이라 목록 변경 처리를 건너뛰어 분리 정책이
+     * 통째로 실행되지 않았다(독립 재검증 F03).
+     */
+    private fun applyDisconnectPolicy(name: String, extraKo: String? = null) {
         val policy = _state.value.meterSettings.disconnectPolicy
-        val name = before.firstOrNull { it.stableKey == key }?.productName ?: "쓰던 마이크"
+        stop()
         when (policy) {
-            DisconnectPolicy.Pause -> {
-                stop()
-                _state.value = _state.value.copy(
-                    measure = MeasureState.Failed(FailureReason.DeviceLost),
-                    errorKo = "$name 이(가) 빠져 측정을 멈췄습니다. 다시 꽂고 시작하십시오.",
-                )
-            }
+            DisconnectPolicy.Pause -> _state.value = _state.value.copy(
+                measure = MeasureState.Failed(FailureReason.DeviceLost),
+                errorKo = extraKo ?: "$name 이(가) 빠져 측정을 멈췄습니다. 다시 꽂고 시작하십시오.",
+            )
             DisconnectPolicy.FallBack -> {
-                stop()
                 _state.value = _state.value.copy(
-                    deviceNoticeKo = "$name 이(가) 빠져 내장 마이크로 다시 시작합니다.",
+                    deviceNoticeKo = "$name 이(가) 빠져 내장 마이크로 새 측정을 시작합니다. " +
+                        "여기서부터는 다른 마이크·다른 보정값의 값입니다.",
                 )
                 // 정책 이름이 「내장 마이크로 전환」이다. 평소 규칙대로 고르면
                 // 외부 마이크가 하나 더 꽂혀 있을 때 그쪽으로 열린다(R11).
@@ -362,11 +438,22 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** 라우팅이 바뀌었다. AudioRecord 가 조용히 다른 기기로 갈아탄 경우다. */
-    private fun onRoutingLost() {
-        _state.value = _state.value.copy(
-            deviceNoticeKo = "입력 경로가 바뀌었습니다. 값이 달라졌을 수 있으니 " +
-                "측정을 멈추고 다시 시작하시는 편이 안전합니다.",
+    /**
+     * 라우팅이 바뀌었다. AudioRecord 가 조용히 다른 기기로 갈아탄 경우다.
+     *
+     * **안내문만 띄우지 않는다.** 예전에는 그랬는데, 그러면 B 마이크의
+     * 소리에 A 의 보정을 계속 걸고 A·B 의 Leq·MAX 를 한 누적값으로
+     * 합쳤다(독립 재검증 F01). 쓰던 마이크가 사실상 사라진 것이므로
+     * 분리와 같은 정책으로 처리한다.
+     */
+    private fun onRoutingChanged(session: Long, to: InputDeviceInfo?) {
+        if (session != _state.value.session) return
+        val from = _state.value.opened?.deviceLabel ?: "쓰던 마이크"
+        applyDisconnectPolicy(
+            name = from,
+            extraKo = "입력 경로가 ${to?.displayName ?: "다른 기기"} 로 바뀌어 측정을 " +
+                "멈췄습니다. 그대로 이어 재면 다른 마이크의 소리에 이전 보정값을 " +
+                "걸게 됩니다.",
         )
     }
 
@@ -378,6 +465,9 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun onRouteConfirmed(session: Long, fmt: OpenedFormat) {
         // 그 사이에 멈췄거나 다시 시작했으면 지난 세션의 소식이다.
+        // 멈추면 세션 번호가 0 이 되므로 여기서 걸린다 — 예전에는 stop 이
+        // 번호를 그대로 둬서, 늦게 온 확인이 방금 지운 보정을 다시
+        // 구독했다(독립 재검증 F04).
         if (session != _state.value.session) return
         openingKey = fmt.deviceKey
         _state.value = _state.value.copy(
@@ -408,7 +498,22 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      * 남아, 마지막 숫자가 지금 소리인 것처럼 굳어 있었다(독립 검증 L01).
      */
     private fun onCaptureEnded(session: Long, end: CaptureEnd) {
+        // 사람이 멈춘 뒤 늦게 도착한 오류는 버린다. 그러지 않으면 정상
+        // 종료가 「다른 앱이 마이크를 가져갔습니다」로 뒤집힌다(F04).
         if (session != _state.value.session) return
+
+        // 기기가 빠져서 끝난 것이면 **분리 정책을 여기서 실행한다.**
+        // 목록 변경보다 읽기 오류가 먼저 오는 순서에서는 `active` 가 이미
+        // null 이라 목록 처리를 건너뛰어, 정책이 통째로 실행되지 않았다
+        // (독립 재검증 F03). 둘 중 먼저 온 쪽이 한 번만 실행한다.
+        if (end == CaptureEnd.DeviceLost) {
+            applyDisconnectPolicy(
+                name = _state.value.opened?.deviceLabel ?: "쓰던 마이크",
+                extraKo = end.messageKo,
+            )
+            return
+        }
+
         stop()
         _state.value = _state.value.copy(
             measure = MeasureState.Failed(end.reason),
@@ -462,17 +567,10 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     fun setTimeWeight(t: TimeWeight) { viewModelScope.launch { settingsStore.setTimeWeight(t) } }
     fun setLeqWindow(w: LeqWindow) { viewModelScope.launch { settingsStore.setLeqWindow(w) } }
 
-    // 캡처 스레드만 만지는 값들.
-    private var blocks = 0L
-    private var frames = 0L
-    private var readErrors = 0L
-    private var clippedBlocks = 0L
-    private var lastEmitNs = 0L
-    private var captureStartNs = 0L
     private val emitIntervalNs = 66_000_000L
 
     fun start(disconnectFallBack: Boolean = false) {
-        if (source != null) return
+        if (active != null) return
         _state.value = _state.value.copy(measure = MeasureState.Starting, errorKo = null)
 
         val s0 = _state.value.meterSettings
@@ -494,13 +592,13 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
 
         // 이 세션의 번호. 오디오 스레드가 내는 값에 이 번호가 붙고,
         // 주 스레드는 번호가 다른 값을 버린다.
-        captureSession++
-        val mySession = captureSession
+        sessionCounter++
+        val mySession = sessionCounter
 
         val mic = MicSource(
             context = getApplication(),
             target = choice.device,
-            onRoutingLost = { onRoutingLost() },
+            onRoutingChanged = { to -> onMainThread { onRoutingChanged(mySession, to) } },
             onRouteConfirmed = { fmt -> onMainThread { onRouteConfirmed(mySession, fmt) } },
             onCaptureEnded = { end -> onMainThread { onCaptureEnded(mySession, end) } },
         )
@@ -524,16 +622,14 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             }
 
             is OpenResult.Opened -> {
-                blocks = 0; frames = 0; readErrors = 0; clippedBlocks = 0; lastEmitNs = 0
-                captureStartNs = System.nanoTime()
-                val s = _state.value.meterSettings
-                engine = MultiWeightEngine(
+                val session = CaptureSession(
+                    id = mySession,
+                    source = mic,
                     sampleRate = r.format.sampleRate,
-                    timeWeight = s.timeWeight,
-                    leqLongMs = s.leqWindow.millis,
+                    settings = _state.value.meterSettings,
                 )
-                rta = RtaEngine(r.format.sampleRate)
-                source = mic
+                session.startedNs = System.nanoTime()
+                active = session
                 // **이전 기기의 보정을 여기서 끊는다.** 남겨 두면 새 기기의
                 // 첫 덩어리들이 지난 마이크의 보정값으로 나간다
                 // (독립 검증 R03). 실제로 어느 마이크로 붙었는지 확인되고
@@ -548,57 +644,63 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                     diagnostics = CaptureDiagnostics(),
                     calibration = ActiveCalibration.assumed,
                     curve = null,
+                    // 새 엔진의 세대는 0 부터다. 화면 쪽도 맞춰 놓는다.
+                    curveGeneration = 0,
                     errorKo = null,
                     deviceNoticeKo = choice.reason.noticeKo(choice.device),
                 )
                 // 보정은 경로가 확인된 뒤에 건다 — 지금은 어느 마이크인지 모른다.
                 mic.start { block, stats ->
+                    // **내가 아직 살아 있는 세션인가.** 아니면 아무것도 하지
+                    // 않는다. 종료가 늦어진 옛 스레드가 새 측정의 엔진과 명령
+                    // 큐를 만지는 것을 여기서 막는다(독립 재검증 F02).
+                    if (active !== session) return@start
+
                     // 주 스레드가 시킨 일(엔진 교체·reset·곡선)을 먼저 한다.
                     // 덩어리와 덩어리 사이가 DSP 상태를 바꿔도 안전한 자리다.
-                    drainCommands()
-                    blocks++
-                    frames += block.frames
-                    if (block.frames == 0) readErrors++
-                    if (stats.clipped) clippedBlocks++
+                    drainCommands(session)
+                    session.blocks++
+                    session.frames += block.frames
+                    if (block.frames == 0) session.readErrors++
+                    if (stats.clipped) session.clippedBlocks++
 
                     // 버린 덩어리(frames=0)는 엔진에 넣지 않는다. 넣으면
                     // 읽기 오류가 「아주 조용한 구간」으로 둔갑한다.
-                    val eng = engine ?: return@start
                     val splFrame = if (block.frames > 0) {
                         // RTA 에는 가중 전 원본을 넣는다. A 가중을 걸면
                         // 저역이 깎인 그림이 되어 주파수 균형을 잘못 읽는다.
-                        rta?.process(block.samples, block.frames)
-                        eng.process(block.samples, block.frames)
+                        session.rta.process(block.samples, block.frames)
+                        session.engine.process(block.samples, block.frames)
                     } else {
                         null
                     }
 
                     val now = System.nanoTime()
-                    if (now - lastEmitNs < emitIntervalNs) return@start
-                    lastEmitNs = now
+                    if (now - session.lastEmitNs < emitIntervalNs) return@start
+                    session.lastEmitNs = now
 
                     val processMs = (now - block.monotonicNs) / 1e6
                     val blockMs = block.frames * 1000.0 / block.sampleRate
-                    val audioMs = frames * 1000.0 / block.sampleRate
-                    val lagMs = (now - captureStartNs) / 1e6 - audioMs
+                    val audioMs = session.frames * 1000.0 / block.sampleRate
+                    val lagMs = (now - session.startedNs) / 1e6 - audioMs
 
                     // **여기서 화면 상태를 읽지도 쓰지도 않는다.** 잰 것만
                     // 내놓고, 보정·설정을 입히는 일은 주 스레드가 한다.
                     _measurement.value = MeasurementSnapshot(
-                        session = mySession,
+                        session = session.id,
                         diagnostics = CaptureDiagnostics(
-                            blocks = blocks,
-                            frames = frames,
-                            readErrors = readErrors,
-                            clippedBlocks = clippedBlocks,
+                            blocks = session.blocks,
+                            frames = session.frames,
+                            readErrors = session.readErrors,
+                            clippedBlocks = session.clippedBlocks,
                             lastPeakAbs = stats.peakAbs,
                             lastProcessMs = processMs,
                             blockDurationMs = blockMs,
                             audioLagMs = lagMs,
                         ),
                         spl = splFrame,
-                        rta = rta?.frame(),
-                        anyClipping = clippedBlocks > 0,
+                        rta = session.rta.frame(),
+                        anyClipping = session.clippedBlocks > 0,
                     )
                 }
             }
@@ -625,8 +727,22 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 // 보정은 **엔진 안에서 FFT 칸마다** 걸린다. 칸 계수는 곡선이
                 // 바뀔 때 한 번만 계산한다 — 초당 15번 2049개 칸을 보간하면
                 // 그것만으로 폰이 더워진다.
-                postToCapture { rta?.setCurve(c?.curve) }
-                _state.value = _state.value.copy(curve = c)
+                postToCapture { session -> session.rta.setCurve(c?.curve) }
+                _state.value = _state.value.copy(
+                    curve = c,
+                    curveGeneration = _state.value.curveGeneration + 1,
+                    // 이전 판의 이름으로 저장된 곡선이 남아 있으면 알린다.
+                    // 이름 규칙이 바뀌어 더는 찾지 못하는데, 조용히 두면
+                    // 보정이 걸린 줄 알고 재게 된다(독립 재검증 추가 지적).
+                    curveNoticeKo = if (c == null && curveStore.hasLegacyFile(key)) {
+                        "이전 판에서 저장한 주파수 보정 파일이 남아 있지만 지금 " +
+                            "판에서는 쓰지 않습니다. 파일을 다시 가져오십시오 — 옛 " +
+                            "이름은 서로 다른 기기가 같은 파일을 가리킬 수 있어, " +
+                            "어느 기기의 것인지 우리가 정할 수 없습니다."
+                    } else {
+                        _state.value.curveNoticeKo
+                    },
+                )
             }
         }
     }
@@ -663,12 +779,29 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * 보정을 저장해도 되는 기기가 지금 열려 있는가.
+     *
+     * **경로가 확인된 기기여야 한다.** 확인 전의 열쇠는 「요청한 기기」의
+     * 것이라, 그 열쇠로 저장하면 실제로는 다른 마이크로 잰 값을 엉뚱한
+     * 기기의 보정으로 남긴다 — R01 이 막으려던 오귀속이 저장 쪽으로
+     * 새어 나간 것이다(독립 재검증 추가 지적).
+     */
+    private fun confirmedFormat(): OpenedFormat? =
+        _state.value.opened?.takeIf { it.routeConfirmed }
+
     /** 주파수 보정 파일을 가져온다(명세 8장). */
     fun importCurve(fileName: String, text: String) {
-        val format = _state.value.opened
+        val format = confirmedFormat()
         if (format == null) {
             _state.value = _state.value.copy(
-                curveNoticeKo = "측정을 한 번 시작해야 어느 기기의 보정인지 정해집니다.",
+                curveNoticeKo = if (_state.value.opened == null) {
+                    "측정을 한 번 시작해야 어느 기기의 보정인지 정해집니다."
+                } else {
+                    "어느 마이크로 열렸는지 아직 확인되지 않았습니다. " +
+                        "확인된 뒤에 가져오십시오 — 지금 저장하면 다른 기기의 " +
+                        "보정으로 남을 수 있습니다."
+                },
             )
             return
         }
@@ -692,7 +825,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun clearCurve() {
-        val format = _state.value.opened ?: return
+        val format = confirmedFormat() ?: return
         viewModelScope.launch {
             curveStore.clear(CalibrationKey.of(format))
             _state.value = _state.value.copy(curveNoticeKo = "주파수 보정을 지웠습니다.")
@@ -710,11 +843,18 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      * 눌러야 맞는 값이 나오며, 그렇지 않으면 저장소가 거부한다.
      */
     fun saveSimpleCalibration(referenceDb: Double) {
-        val format = _state.value.opened
+        val format = confirmedFormat()
         val measured = state.value.meter.currentDbfs
         if (format == null || measured == null) {
             _state.value = _state.value.copy(
-                calibrationNoticeKo = "먼저 측정을 시작해야 보정할 수 있습니다.",
+                calibrationNoticeKo = when {
+                    _state.value.opened == null -> "먼저 측정을 시작해야 보정할 수 있습니다."
+                    format == null ->
+                        "어느 마이크로 열렸는지 아직 확인되지 않았습니다. " +
+                            "확인된 뒤에 보정하십시오 — 지금 저장하면 다른 기기의 " +
+                            "보정값으로 남을 수 있습니다."
+                    else -> "아직 읽은 값이 없습니다. 잠시 뒤에 다시 누르십시오."
+                },
             )
             return
         }
@@ -731,16 +871,16 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 is SaveResult.Rejected -> r.reasonKo
             }
             // MAX·PEAK 는 보정 이전 눈금으로 쌓인 값이라 더는 뜻이 없다. 비운다.
-            postToCapture { engine?.resetPeaks() }
+            postToCapture { session -> session.engine.resetPeaks() }
             _state.value = _state.value.copy(calibrationNoticeKo = notice)
         }
     }
 
     fun clearCalibration() {
-        val format = _state.value.opened ?: return
+        val format = confirmedFormat() ?: return
         viewModelScope.launch {
             store.clear(CalibrationKey.of(format))
-            postToCapture { engine?.resetPeaks() }
+            postToCapture { session -> session.engine.resetPeaks() }
             _state.value = _state.value.copy(calibrationNoticeKo = "보정값을 지웠습니다.")
         }
     }
@@ -751,7 +891,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
 
     /** RTA 의 Peak Hold 를 다시 센다. */
     fun resetRtaHold() {
-        postToCapture { rta?.resetHold() }
+        postToCapture { session -> session.rta.resetHold() }
     }
 
     /**
@@ -762,28 +902,30 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      * 도로 올라온 것처럼 보인다.
      */
     fun resetMax() {
-        postToCapture { engine?.resetPeaks() }
+        postToCapture { session -> session.engine.resetPeaks() }
     }
 
     fun stop() {
-        source?.close()
-        source = null
-        // 스레드를 보낸 뒤에 비운다 — 다음 세션의 엔진에 지난 명령이
-        // 걸리면, 방금 시작한 측정의 MAX 가 까닭 없이 지워진다.
-        commands.clear()
-        engine = null
-        rta = null
+        // 마지막에 본 숫자는 그대로 둔다 — 멈춘 뒤 MAX 를 적는 일이 실제로
+        // 있다. 다만 **지금 보정으로 계산한 값을 굳혀서** 남긴다. 그러지
+        // 않고 보정만 지우면, 화면의 숫자가 아무 일도 없었는데 갑자기
+        // 튀어 오른다. 세션을 무효로 만들기 **전에** 읽어야 한다.
+        val frozen = state.value
+
+        // **세션부터 무효로 만든다.** 닫기보다 먼저다 — 닫는 동안에도
+        // 캡처 콜백이 한두 번 더 올 수 있는데, 그때 이 검사에 걸려야
+        // 이미 끝난 측정이 화면을 건드리지 못한다(독립 재검증 F02).
+        val ending = active
+        active = null
+
+        ending?.source?.close()
+        ending?.commands?.clear()
         openingKey = null
         calibrationJob?.cancel()
         calibrationJob = null
         curveJob?.cancel()
         curveJob = null
 
-        // 마지막에 본 숫자는 그대로 둔다 — 멈춘 뒤 MAX 를 적는 일이 실제로
-        // 있다. 다만 **지금 보정으로 계산한 값을 굳혀서** 남긴다. 그러지
-        // 않고 보정만 지우면, 화면의 숫자가 아무 일도 없었는데 갑자기
-        // 튀어 오른다.
-        val frozen = state.value
         _measurement.value = null
         _state.value = _state.value.copy(
             measure = MeasureState.Idle,
@@ -793,6 +935,15 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             // 다음 기기의 첫 덩어리에 이 보정이 붙지 않게 지운다(R03).
             calibration = ActiveCalibration.assumed,
             curve = null,
+            curveGeneration = 0,
+            // **세션 번호를 지운다.** 늦게 도착하는 경로 확인·오류가 검사를
+            // 통과해 방금 지운 보정을 되살리거나, 정상 종료를 실패로 뒤집는
+            // 일을 막는다(독립 재검증 F04).
+            session = 0,
+            // 열린 기기도 지운다. 남겨 두면 설정 화면이 이미 닫힌 기기에
+            // 「사용 중」을 붙인다. 마지막으로 쓴 기기는 따로 기억한다.
+            opened = null,
+            lastInput = frozen.opened,
         )
     }
 
@@ -842,7 +993,11 @@ private fun CaptureUiState.withMeasurement(m: MeasurementSnapshot?): CaptureUiSt
                 settled = f.settled,
             )
         } ?: meter,
-        rta = m.rta?.toView(offset.db, curve?.curve) ?: rta,
+        // 프레임이 **그 곡선으로 계산된 것일 때만** 보정 적용이라고 적는다.
+        rta = m.rta?.toView(
+            offsetDb = offset.db,
+            curve = curve?.curve?.takeIf { m.rta.curveGeneration == curveGeneration },
+        ) ?: rta,
     )
 }
 

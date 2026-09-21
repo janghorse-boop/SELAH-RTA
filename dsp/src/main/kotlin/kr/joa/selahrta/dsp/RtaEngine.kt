@@ -19,6 +19,13 @@ class RtaFrame(
      * 2dB 과 7dB 은 다른 이야기다(독립 검증 R08).
      */
     val lossDb: DoubleArray,
+    /**
+     * 이 프레임을 계산할 때 걸려 있던 보정 곡선의 세대.
+     *
+     * 화면이 자기 상태의 세대와 견줘, 다르면 「보정 적용됨」이라고 적지
+     * 않는다. 숫자와 이름표가 어긋나는 구간을 없앤다(독립 재검증 F06).
+     */
+    val curveGeneration: Long,
 )
 
 /**
@@ -75,15 +82,29 @@ class RtaEngine(
     private var binCorrection: DoubleArray? = null
 
     /**
+     * 지금 결과가 **몇 번째 곡선으로** 계산된 것인가.
+     *
+     * 화면은 「보정이 걸렸다」를 자기 상태에서 읽는데, 엔진이 아직 새 곡선으로
+     * 한 번도 계산하지 않았으면 그 말이 숫자와 맞지 않는다. 프레임에 세대를
+     * 실어 보내 화면이 견줄 수 있게 한다(독립 재검증 F06).
+     */
+    @Volatile
+    private var curveGeneration = 0L
+
+    /**
      * 마이크 보정 곡선을 건다. null 이면 보정 없이 돌린다.
      *
-     * 곡선이 바뀌면 평활과 Peak Hold 를 비운다. 보정 전후 값이 한 상태에
-     * 섞이면, 바꾼 직후 몇 초 동안 두 곡선을 섞은 값이 화면에 남는다.
+     * 곡선이 바뀌면 평활·Peak Hold 와 **마지막 결과까지** 비운다. 마지막
+     * 결과를 남겨 두면 다음 FFT 가 돌 때까지 옛 곡선으로 계산한 프레임을
+     * 새 곡선의 이름표와 함께 내보낸다 — 화면이 「+10dB 보정 적용됨」이라고
+     * 적는 동안 숫자는 보정 전 값이었다(독립 재검증 F06).
      */
     fun setCurve(curve: CalibrationCurve?) {
         binCorrection = curve?.binCorrectionLinear(fftSize, sampleRate)
+        curveGeneration++
         smoothing.reset()
         peakHold.reset()
+        latest = null
     }
 
     /**
@@ -119,11 +140,20 @@ class RtaEngine(
         val smoothed = smoothing.update(bandPower)
         bands.toBandDbfs(smoothed, bandDb)
         val held = peakHold.update(bandDb)
-        latest = RtaFrame(bandDb.copyOf(), held.copyOf(), bands.bandResolved, bands.bandLossDb)
+        latest = RtaFrame(
+            bandDb.copyOf(),
+            held.copyOf(),
+            bands.bandResolved,
+            bands.bandLossDb,
+            curveGeneration,
+        )
     }
 
     /** 가장 최근 결과. 아직 FFT 를 한 번도 못 돌렸으면 null. */
     fun frame(): RtaFrame? = latest
+
+    /** 지금 걸려 있는 곡선의 세대. 화면이 프레임의 것과 견준다. */
+    val currentCurveGeneration: Long get() = curveGeneration
 
     /** 분해되지 않는 가장 낮은 밴드 위의 첫 밴드. 화면이 그 아래를 흐리게 그린다. */
     val lowestResolvedBand: Int get() = bands.lowestResolvedBand

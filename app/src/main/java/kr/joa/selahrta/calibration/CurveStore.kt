@@ -105,6 +105,25 @@ class CurveStore(private val context: Context) {
             .digest(s.toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
 
+    /**
+     * 이전 판이 쓰던 파일 이름. **읽기만 한다.**
+     *
+     * 이름 규칙이 바뀌었으므로(R09) 예전에 저장한 곡선은 새 이름으로는
+     * 찾을 수 없다. 조용히 사라지면 담당자는 보정이 걸린 줄 알고 재게
+     * 된다.
+     *
+     * 그렇다고 옛 파일을 새 이름으로 옮기지도 않는다 — 옛 이름은 서로 다른
+     * 기기가 같은 파일을 가리킬 수 있었으므로, 옮기는 순간 **어느 기기의
+     * 것인지 정하는 셈**이 된다. 그 판단은 우리가 할 수 없다(독립 재검증
+     * 추가 지적). 있다는 사실만 알리고 다시 가져오게 한다.
+     */
+    private fun legacyFileFor(k: CalibrationKey): File =
+        File(curveDir(), k.storageKey().replace(Regex("[^A-Za-z0-9._-]"), "_") + ".cal")
+
+    /** 이전 판의 곡선 파일이 남아 있는가. 화면이 「다시 가져오십시오」를 띄운다. */
+    fun hasLegacyFile(key: CalibrationKey): Boolean =
+        !fileFor(key).exists() && legacyFileFor(key).exists()
+
     fun watch(key: CalibrationKey): Flow<ActiveCurve?> =
         context.curveDataStore.data
             .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
@@ -155,13 +174,16 @@ class CurveStore(private val context: Context) {
      * 적히면서 값은 틀린 상태다.
      */
     private fun writeAtomically(target: File, text: String) {
-        val tmp = File(target.parentFile, target.name + ".tmp")
+        // 임시 이름을 매번 다르게 짓는다. 같은 기기에 두 번 저장이 겹치면
+        // 둘이 같은 `.tmp` 에 써서 서로의 내용을 섞는다(독립 재검증 추가 지적).
+        val tmp = File(target.parentFile, "${target.name}.${System.nanoTime()}.tmp")
         tmp.writeText(text)
         if (!tmp.renameTo(target)) {
-            // 같은 폴더 안의 rename 이 실패하는 일은 드물지만, 실패하면
-            // 조용히 넘어가지 않는다.
-            target.writeText(text)
+            // **여기서 직접 덮어쓰지 않는다.** 그러면 「원자적으로 쓴다」는
+            // 말이 실패 경로에서만 거짓이 되어, 하필 그때 반쯤 쓰인 파일이
+            // 남는다(독립 재검증 추가 지적). 실패는 실패로 알린다.
             tmp.delete()
+            throw IOException("보정 파일을 제자리에 옮기지 못했습니다: ${target.name}")
         }
     }
 

@@ -353,7 +353,7 @@ fun MeasureScreen(
             )
         }
 
-        capture.opened?.let {
+        capture.inputForDisplay?.let {
             DiagnosticsPanel(it, capture.diagnostics, Modifier.padding(top = 16.dp, bottom = 24.dp))
         }
     }

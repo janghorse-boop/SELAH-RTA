@@ -1,0 +1,27 @@
+JUnit version 4.13.2
+.........................................................................................................................................................
+Time: 0.824
+
+OK (153 tests)
+
+BAND f=20.0 t=0.1 measuredLoss=6.882398052858364
+BAND f=20.0 t=0.9 measuredLoss=5.932521500410751
+BAND_SUMMARY f=20.0 declaredLoss=6.6387043200320175 resolved=false sampledWorst=7.04439662129206 at=0.01
+BAND f=63.0 t=0.1 measuredLoss=2.7538954048229387
+BAND f=63.0 t=0.9 measuredLoss=2.927081536564342
+BAND_SUMMARY f=63.0 declaredLoss=2.490750097642475 resolved=false sampledWorst=3.29810849186954 at=0.99
+BAND f=100.0 t=0.1 measuredLoss=1.9444292398873178
+BAND f=100.0 t=0.9 measuredLoss=1.9971880800458668
+BAND_SUMMARY f=100.0 declaredLoss=1.0243097802870127 resolved=false sampledWorst=3.0402641055276525 at=0.99
+BAND f=125.0 t=0.1 measuredLoss=1.7511892363293766
+BAND f=125.0 t=0.9 measuredLoss=1.9186363512351696
+BAND_SUMMARY f=125.0 declaredLoss=0.9193782717341716 resolved=true sampledWorst=2.8169422753585733 at=0.99
+BAND f=200.0 t=0.1 measuredLoss=1.7285277890806727
+BAND f=200.0 t=0.9 measuredLoss=1.4102944331988256
+BAND_SUMMARY f=200.0 declaredLoss=0.40589271534872373 resolved=true sampledWorst=3.061549499993095 at=0.01
+BAND f=1000.0 t=0.1 measuredLoss=0.0027171852539613272
+BAND f=1000.0 t=0.9 measuredLoss=0.0017418087677327655
+BAND_SUMMARY f=1000.0 declaredLoss=3.661309282500879E-5 resolved=true sampledWorst=2.3642995970174057 at=0.01
+ACTUAL_RTA_CORRECTION actual=-9.015380001895736 expected=-9.030899869919436 error=0.015519868023700312
+AFTER_SET_CURVE priorFrameStillReturned=true level=-9.015380001895736
+AFTER_NEXT_FFT level=-19.03090098797338

@@ -60,12 +60,19 @@ fun RtaScreen(capture: CaptureUiState) {
         if (unresolved != null && rta != null) {
             // 흐린 막대가 무슨 뜻인지, **얼마나** 못 믿을지를 함께 적는다.
             // 참·거짓만 적으면 2dB 과 7dB 을 같은 것으로 읽게 된다.
-            val worst = (0 until unresolved).maxOf { rta.lossDb[it] }
+            //
+            // **「최대」라고 적지 않는다.** 이 값은 밴드 가운데 구간에 순음을
+            // 놓고 잰 표본이다. 경계에 바싹 붙은 소리는 이보다 더 샌다 —
+            // 1kHz 밴드조차 경계에서는 2.4dB 이 빠진다. 유한한 창을 쓰는 한
+            // 피할 수 없는 일이라, 모든 밴드의 진짜 상한을 적으면 31개가 전부
+            // 「못 믿음」이 되어 아무 정보도 주지 못한다(독립 재검증 F05).
+            val sampled = (0 until unresolved).maxOf { rta.lossDb[it] }
             InfoBar(
                 "${ThirdOctave.label(unresolved)}Hz 아래 밴드는 흐리게 그립니다. " +
                     "FFT 창이 낮은 주파수를 한 밴드 안에 다 담지 못해 에너지가 " +
-                    "이웃으로 새고, 실제보다 최대 ${"%.1f".format(worst)}dB 낮게 " +
-                    "나옵니다.",
+                    "이웃으로 샙니다. 밴드 가운데에 순음을 놓고 재면 " +
+                    "${"%.1f".format(sampled)}dB 까지 낮게 나왔습니다 — 밴드 경계 " +
+                    "가까이에서는 더 샙니다.",
                 Modifier.padding(top = 10.dp),
                 tone = SelahColors.TextMuted,
             )

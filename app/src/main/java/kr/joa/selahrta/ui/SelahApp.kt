@@ -223,17 +223,20 @@ private fun TopBrandBar(capture: CaptureUiState) {
             // 아직 확인 못 함(「확인 중」 — 그때의 종류는 요청한 값일 뿐이다),
             // 확인됨(그 기기의 배지).
             val opened = capture.opened
+            val shown = capture.inputForDisplay
             StatusPill(
                 when {
-                    opened == null -> MicKind.BuiltIn.badgeKo
-                    !opened.routeConfirmed -> "입력 확인 중"
-                    else -> opened.micKind.badgeKo
+                    shown == null -> MicKind.BuiltIn.badgeKo
+                    opened != null && !opened.routeConfirmed -> "입력 확인 중"
+                    else -> shown.micKind.badgeKo
                 },
                 when {
                     opened == null -> SelahColors.TextMuted
                     !opened.routeConfirmed -> SelahColors.Warn
                     else -> SelahColors.Accent
                 },
+                // 멈췄으면 흐리게. 마지막에 쓴 기기를 적되 「지금 열려 있다」로
+                // 보이면 안 된다.
                 dim = opened == null,
             )
             StatusPill(

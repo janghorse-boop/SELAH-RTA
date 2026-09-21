@@ -35,8 +35,13 @@ class MicSource(
     private val context: Context,
     /** 열고 싶은 기기. null 이면 시스템 기본. */
     private val target: InputDeviceInfo? = null,
-    /** 쓰던 기기가 라우팅에서 빠졌을 때 알린다. */
-    private val onRoutingLost: (() -> Unit)? = null,
+    /**
+     * 실제 입력 경로가 **다른 기기로 바뀌었을 때** 알린다.
+     *
+     * 무엇으로 바뀌었는지 함께 넘긴다 — 받는 쪽이 「무슨 일이 났다」만
+     * 알면 안내문밖에 쓸 수 없다(독립 재검증 F01).
+     */
+    private val onRoutingChanged: ((InputDeviceInfo?) -> Unit)? = null,
     /**
      * 어느 기기로 붙었는지 확인되면 알린다. **녹음을 시작한 뒤에 온다.**
      *
@@ -254,7 +259,7 @@ class MicSource(
                 // 이름이 아니라 열쇠로 견준다(위 confirmRoute 주석 참고).
                 known != null && now.stableKey != known.deviceKey -> {
                     Log.w(TAG, "라우팅이 바뀌었다: ${known.deviceKey} → ${now.stableKey}")
-                    onRoutingLost?.invoke()
+                    onRoutingChanged?.invoke(now)
                 }
             }
         }
@@ -303,6 +308,11 @@ class MicSource(
             // 이 덩어리의 자료가 손에 들어온 시각. 나중에 녹음과 그래프를
             // 맞출 때 기준이 되는 값이라 단조 시계를 쓴다(벽시계는 뒤로 갈 수 있다).
             val ready = System.nanoTime()
+
+            // **읽고 나서 다시 본다.** `read()` 는 데이터가 찰 때까지 기다리므로,
+            // 기다리는 동안 누군가 멈췄을 수 있다. 여기서 안 보면 이미 끝난
+            // 캡처가 덩어리를 한 번 더 흘려보낸다(독립 재검증 F02).
+            if (!running.get()) return
 
             if (read <= 0) {
                 // 음수는 오류, 0 은 멈추는 중이다. 둘 다 이 덩어리는 버린다.
