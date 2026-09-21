@@ -59,7 +59,7 @@ class FakeSink(
         return true
     }
 
-    override fun write(buf: FloatArray, frames: Int): Int {
+    override fun write(buf: FloatArray, offset: Int, frames: Int): Int {
         val n = writeCount.incrementAndGet()
         if (released) writesAfterRelease.incrementAndGet()
         if (blockAtWrite != null && n == blockAtWrite) {

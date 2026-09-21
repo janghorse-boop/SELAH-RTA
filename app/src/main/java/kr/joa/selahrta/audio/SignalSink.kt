@@ -31,11 +31,17 @@ interface SignalSink {
     fun open(sampleRate: Int, frames: Int): Boolean
 
     /**
-     * [frames] 개를 내보낸다. **버퍼가 빌 때까지 막는다.**
+     * [buf] 의 [offset] 부터 [frames] 개를 내보낸다. **버퍼가 빌 때까지 막는다.**
      *
-     * @return 실제로 쓴 개수. **음수면 오류다**(`AudioTrack` 규약과 같다).
+     * @return **실제로 쓴 개수.** 요청보다 적을 수 있다 — `AudioTrack` 은
+     *   `WRITE_BLOCKING` 이어도 멈춤·일시정지·입출력 오류 중에 적게 받을 수
+     *   있다. 음수면 오류다.
+     *
+     *   **부르는 쪽은 이 값을 반드시 본다.** 적게 쓰인 만큼을 버리고 다음
+     *   덩어리로 넘어가면 파형이 끊긴다(독립 검증 SP02) — 그래서 [offset]
+     *   을 받아 **남은 부분을 이어서** 쓸 수 있게 했다.
      */
-    fun write(buf: FloatArray, frames: Int): Int
+    fun write(buf: FloatArray, offset: Int, frames: Int): Int
 
     /** 막혀 있는 [write] 를 풀고 멈춘다. */
     fun stop()
@@ -111,8 +117,9 @@ class AudioTrackSink : SignalSink {
         return true
     }
 
-    override fun write(buf: FloatArray, frames: Int): Int =
-        track?.write(buf, 0, frames, AudioTrack.WRITE_BLOCKING) ?: AudioTrack.ERROR_INVALID_OPERATION
+    override fun write(buf: FloatArray, offset: Int, frames: Int): Int =
+        track?.write(buf, offset, frames, AudioTrack.WRITE_BLOCKING)
+            ?: AudioTrack.ERROR_INVALID_OPERATION
 
     override fun stop() {
         track?.let { t ->

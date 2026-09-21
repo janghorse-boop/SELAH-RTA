@@ -39,6 +39,8 @@ class SignalPlayerTest {
                 endedLatch.countDown()
             },
             openSink = { sinks[i++] },
+            // 로그는 시험이 받아 둔다 — android.jar 의 빈 구현을 건드리지 않는다.
+            warn = {},
         )
     }
 
