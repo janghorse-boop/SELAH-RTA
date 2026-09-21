@@ -102,6 +102,19 @@ class CaptureController(
      */
     private var openingKey: String? = null
 
+    /**
+     * 분리 정책이 **자동으로** 다시 연 횟수. 주 스레드만 만진다.
+     *
+     * 세지 않으면 끝없이 되풀이된다 — 열리기는 하는데 곧바로 끊기는
+     * 기기(오디오 서버가 거듭 죽거나 USB 독이 깜박일 때)에서
+     * `onCaptureEnded(DeviceLost)` → `applyDisconnectPolicy` → `stop`+
+     * `start` 가 그대로 반복된다. 시험에서 **13번 열렸다**.
+     *
+     * **소리가 실제로 들어오면 0 으로 되돌린다** — 두 시간 예배에서
+     * 드문드문 끊긴 것이 모여 멀쩡한 전환까지 막으면 안 된다.
+     */
+    private var autoRestarts = 0
+
     /** 세대를 매기고 늦게 온 소식을 가린다. 주 스레드만 만진다. */
     private val generation = CaptureGeneration()
 
@@ -235,6 +248,19 @@ class CaptureController(
                 errorKo = extraKo ?: "$name 이(가) 빠져 측정을 멈췄습니다. 다시 꽂고 시작하십시오.",
             )
             DisconnectPolicy.FallBack -> {
+                // **끝없이 다시 열지 않는다.** 열리자마자 끊기는 기기에서는
+                // 다시 여는 것이 도움이 되지 않고 스레드와 장치만 축낸다.
+                if (autoRestarts >= MAX_AUTO_RESTARTS) {
+                    _state.value = _state.value.copy(
+                        measure = MeasureState.Failed(FailureReason.DeviceLost),
+                        errorKo = "마이크 연결이 거듭 끊겨 자동 전환을 멈췄습니다" +
+                            "(${autoRestarts}번 다시 열어 봤습니다). " +
+                            "케이블과 다른 앱을 확인한 뒤 다시 시작하십시오.",
+                        deviceNoticeKo = null,
+                    )
+                    return
+                }
+                autoRestarts++
                 _state.value = _state.value.copy(
                     deviceNoticeKo = "$name 이(가) 빠져 내장 마이크로 새 측정을 시작합니다. " +
                         "여기서부터는 다른 마이크·다른 보정값의 값입니다.",
@@ -331,6 +357,8 @@ class CaptureController(
 
     fun start(disconnectFallBack: Boolean = false) {
         if (active != null) return
+        // 사람이 시작한 것이면 지난 실패는 잊는다. 자동 전환만 센다.
+        if (!disconnectFallBack) autoRestarts = 0
         _state.value = _state.value.copy(measure = MeasureState.Starting, errorKo = null)
 
         val s0 = _state.value.meterSettings
@@ -491,7 +519,13 @@ class CaptureController(
         //
         // 그래서 세대를 **넣을 때가 아니라 받을 때** 본다. 세션을 갈아
         // 끼우는 것도 이 스레드라, 여기서는 경합할 상대가 없다.
-        post { if (active === session) _measurement.value = snapshot }
+        post {
+            if (active !== session) return@post
+            // **여기까지 왔다는 것은 소리가 실제로 들어왔다는 뜻**이다.
+            // 잘 재고 있었으면 지난 자동 전환은 세지 않는다.
+            autoRestarts = 0
+            _measurement.value = snapshot
+        }
     }
 
     fun stop() {
@@ -558,5 +592,14 @@ class CaptureController(
             opened = null,
             lastInput = frozen.opened,
         )
+    }
+
+    companion object {
+        /**
+         * 분리 정책이 **자동으로** 다시 여는 횟수의 상한.
+         *
+         * 말썽인 기기에서 끝없이 되풀이하지 않기 위한 것이다.
+         */
+        const val MAX_AUTO_RESTARTS = 3
     }
 }

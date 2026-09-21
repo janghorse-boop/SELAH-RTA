@@ -47,6 +47,14 @@ class FakeSource(
     private val confirmOnStart: Boolean = true,
     /** 덩어리를 흘릴 때마다 그 길이만큼 흐른다. */
     private val clock: FakeClock = FakeClock(),
+    /**
+     * 시작하자마자 이 까닭으로 끝난다. null 이면 정상으로 돈다.
+     *
+     * **기기가 계속 말썽인 상황**을 만든다 — 열리기는 하는데 곧바로
+     * 끊기는 기기다. 분리 정책이 자동으로 다시 열면 그 기기도 같으므로,
+     * 상한이 없으면 끝없이 되풀이된다.
+     */
+    private val endOnStart: CaptureEnd? = null,
 ) : AudioSource {
 
     override val labelKo: String = device?.productName ?: "가짜 입력"
@@ -85,6 +93,7 @@ class FakeSource(
         started = true
         this.onBlock = onBlock
         if (confirmOnStart) confirmRoute()
+        endOnStart?.let { hooks.onCaptureEnded(it) }
     }
 
     override fun close() {

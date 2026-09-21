@@ -1,0 +1,9 @@
+ADMISSION: reserved=0 closeCount=1 consumed=0; equality cannot be reached without a terminal drop outcome.
+ROW: block=[23552,24576) boundary=24000; impulse at 23999 and impulse at 24000 have identical block peak, but belong to different rows.
+EPOCH: trueMax=90; rawMaxWithOldEpoch=80; rawMaxWithNewEpoch=100.
+ROUND: scaled=0.5 tiesEven=0 halfAway=1
+ROUND: scaled=-0.5 tiesEven=-0 halfAway=-1
+ROUND: scaled=2.5 tiesEven=2 halfAway=3
+ROUND: scaled=-2.5 tiesEven=-2 halfAway=-3
+DRIFT: 7200 seconds * 50ppm = 0.36 seconds.
+Arithmetic/state models only. Kotlin round semantics separately checked in official Kotlin documentation.
