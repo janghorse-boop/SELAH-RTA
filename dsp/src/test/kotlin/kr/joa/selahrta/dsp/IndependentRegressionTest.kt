@@ -19,6 +19,7 @@ import kotlin.math.sin
  *
  * 패키지와 import 만 이 저장소에 맞췄고, 검증 논리는 손대지 않았다.
  */
+@Suppress("DEPRECATION") // 검증자가 쓴 그대로 둔다. 고치면 「그대로 옮겼다」가 깨진다.
 class IndependentRegressionTest {
 
     /** R06 — MAX 는 덩어리를 어떻게 잘라 넣든 같아야 한다. */

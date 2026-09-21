@@ -183,9 +183,9 @@ class CurveCorrectionTest {
      * 1kHz 순음이 +2.4157dB 만큼 틀렸다(R05).
      */
     @Test
-    fun `밴드 보정값은 중심 주파수의 응답이다`() {
+    fun `밴드 표시값은 중심 주파수의 응답이다`() {
         val steep = curve(891.0 to 0.0, 1000.0 to 0.0, 1123.0 to 12.0)
-        assertEquals(steep.gainDbAt(ThirdOctave.exactCenter(17)), steep.bandGainsDb()[17], 1e-12)
-        assertTrue("중심이 0dB 이면 표시값도 0dB 이다", steep.bandGainsDb()[17] < 0.01)
+        assertEquals(steep.gainDbAt(ThirdOctave.exactCenter(17)), steep.bandCenterResponseDb()[17], 1e-12)
+        assertTrue("중심이 0dB 이면 표시값도 0dB 이다", steep.bandCenterResponseDb()[17] < 0.01)
     }
 }

@@ -229,7 +229,10 @@ fun SettingsScreen(
         SectionTitle("앱 정보")
         SettingRow("SELAH RTA", "v0.1.0 (Phase 8)")
         Text(
-            "Real-Time Worship Audio Analyzer · made by Jesus On Air (JOA)",
+            // 만든 사람과 소속 팀은 다른 것이다. 팀만 적으면 누가 만들었는지가
+            // 사라진다.
+            "Real-Time Worship Audio Analyzer\n" +
+                "개발 장훈 (JANGHUN) · Jesus On Air (JOA)",
             color = SelahColors.TextMuted,
             fontSize = 11.sp,
             modifier = Modifier.padding(top = 4.dp, bottom = 24.dp),

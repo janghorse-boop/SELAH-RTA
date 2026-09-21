@@ -89,4 +89,4 @@ Critical/High 이슈가 남아 있으면 다음 Phase 로 넘어가지 않습니
 
 ---
 
-made by **Jesus On Air (JOA)**
+개발 **장훈 (JANGHUN)** · **Jesus On Air (JOA)**

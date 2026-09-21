@@ -89,9 +89,21 @@ class CalibrationCurve private constructor(
      *
      * 실제 보정은 [binCorrectionLinear] 로 칸마다 한다.
      */
-    fun bandGainsDb(): DoubleArray = DoubleArray(ThirdOctave.BAND_COUNT) { b ->
+    fun bandCenterResponseDb(): DoubleArray = DoubleArray(ThirdOctave.BAND_COUNT) { b ->
         gainDbAt(ThirdOctave.exactCenter(b))
     }
+
+    /**
+     * 옛 이름. **쓰지 말 것** — 이름이 「밴드에 걸 이득」처럼 읽혀 다시
+     * 보정 경로로 끌려 들어가기 쉽다(독립 검증 R05 가 바로 그 일이었다).
+     *
+     * 검증자의 재현 시험이 이 이름을 부르고 있어 남겨 둔다.
+     */
+    @Deprecated(
+        "뜻이 분명한 이름을 쓴다. 이 값은 보정량이 아니라 중심 주파수의 응답이다.",
+        ReplaceWith("bandCenterResponseDb()"),
+    )
+    fun bandGainsDb(): DoubleArray = bandCenterResponseDb()
 
     /** 곡선이 실제로 덮는 밴드인가. 밖이면 끝점 값을 늘여 쓴 것이라 근거가 약하다. */
     fun bandCovered(): BooleanArray = BooleanArray(ThirdOctave.BAND_COUNT) { b ->

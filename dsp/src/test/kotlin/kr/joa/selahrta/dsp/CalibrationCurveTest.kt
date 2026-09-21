@@ -77,7 +77,7 @@ class CalibrationCurveTest {
     @Test
     fun `밴드 보정값은 평탄한 곡선에서 그 값이다`() {
         val flat = curve(20.0 to -2.5, 20000.0 to -2.5)
-        for (g in flat.bandGainsDb()) assertEquals(-2.5, g, 1e-9)
+        for (g in flat.bandCenterResponseDb()) assertEquals(-2.5, g, 1e-9)
     }
 
     /**
@@ -88,7 +88,7 @@ class CalibrationCurveTest {
     @Test
     fun `밴드 보정값은 중심 주파수의 응답을 그대로 준다`() {
         val steep = curve(891.0 to 0.0, 1000.0 to 0.0, 1123.0 to 12.0)
-        val gains = steep.bandGainsDb()
+        val gains = steep.bandCenterResponseDb()
         for (b in 0 until ThirdOctave.BAND_COUNT) {
             assertEquals(steep.gainDbAt(ThirdOctave.exactCenter(b)), gains[b], 1e-12)
         }
