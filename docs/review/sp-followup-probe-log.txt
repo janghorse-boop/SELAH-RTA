@@ -1,0 +1,3 @@
+Independent verification scratch directory: C:\Users\jangh\AppData\Local\Temp\selah-independent-be1d829f966f4226a731e629467fdd09
+RELEASE_PENDING starts=4 unfinished=4 pendingCount=1 cap=2
+CLEANUP all 4 releases completed exactly once
