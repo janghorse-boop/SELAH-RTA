@@ -20,6 +20,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import android.Manifest
+import android.os.Build
 import android.content.pm.PackageManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -115,13 +116,51 @@ fun SelahApp() {
         vm.importCurveFrom(uri)
     }
 
+    // **알림 권한은 백그라운드 측정을 시작하는 그 자리에서 묻는다**(FS02).
+    //
+    // 안드로이드 13 이상 신규 설치는 알림이 기본 off 다. 묻지 않으면
+    // 포그라운드 서비스는 떠도 알림 서랍의 「측정 종료」가 보이지 않아,
+    // 끝내려면 앱으로 돌아와야 한다.
+    //
+    // **거부해도 측정은 시작한다.** 알림은 편의이지 측정의 조건이 아니다.
+    var askedNotifications by rememberSaveable { mutableStateOf(false) }
+    val askNotifications = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        vm.start()
+        // 대화상자를 취소한 경우도 여기로 온다(granted=false). 둘을 같게
+        // 다룬다 — 어느 쪽이든 알림 버튼은 없다.
+        if (!granted) vm.noteNotificationsBlocked()
+    }
+
+    /**
+     * 재기 시작한다. 알림 권한이 필요하면 **먼저 묻고**, 답이 무엇이든 잰다.
+     */
+    val beginMeasure: () -> Unit = {
+        val notifGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+                PackageManager.PERMISSION_GRANTED
+        } else {
+            true
+        }
+        if (shouldAskNotifications(granted = notifGranted, alreadyAsked = askedNotifications)) {
+            // **한 번만 묻는다.** 안드로이드도 거부 뒤에는 대화상자를 다시
+            // 띄우지 않지만, 그 왕복을 매번 거칠 까닭이 없다.
+            askedNotifications = true
+            askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            vm.start()
+            if (notificationsBlocked(granted = notifGranted)) vm.noteNotificationsBlocked()
+        }
+    }
+
     val askPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
         hasPermission = granted
         // 허용을 누른 그 손으로 바로 재기 시작하는 것이 자연스럽다.
         // 거부했으면 시작하지 않는다 — 실패 메시지가 두 번 뜰 뿐이다.
-        if (granted) vm.start()
+        if (granted) beginMeasure()
     }
 
     // 화면이 뒤로 가면 **소리만** 멈춘다. 측정은 포그라운드 서비스가
@@ -226,7 +265,7 @@ fun SelahApp() {
                             onRequestPermission = {
                                 askPermission.launch(Manifest.permission.RECORD_AUDIO)
                             },
-                            onStart = vm::start,
+                            onStart = beginMeasure,
                             onStop = vm::stop,
                             onDismissDeviceNotice = vm::dismissDeviceNotice,
                         )

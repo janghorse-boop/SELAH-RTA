@@ -53,6 +53,26 @@ class SourceHooks(
  * **시험용 사본을 따로 두지 않는다.** 이 클래스가 실제로 도는 코드이고,
  * 시험은 이것을 그대로 돌린다.
  */
+/**
+ * 측정 세션이 **살아 있어야 하는가.** 포그라운드 서비스가 따라갈 유일한 신호다.
+ *
+ * **매번의 `stop()` 이 아니다.** 기기를 갈아타는 중에도 `stop()` 은
+ * 불리는데, 그때 서비스를 내리면 백그라운드에서는 **다시 띄울 수 없다**
+ * (안드로이드 14부터 `microphone` 형은 앱이 앞에 있어야 띄운다). 그래서
+ * 「멈컴」과 「끝남」을 가른다.
+ *
+ * 이것이 없어 생긴 결함이 독립 검증 FS01 이다 — 입력 없음·open
+ * 실패·read 오류·USB Pause·재시도 한도 초과는 모두 컴트롤러 안에서
+ * 끝나고, 서비스는 「측정 중입니다」 알림을 달고 그대로 남아 있었다.
+ */
+enum class CaptureLifecycle {
+    /** 재고 있다. 서비스가 떠 있어야 한다. */
+    Active,
+
+    /** 끝났다(정상 종료든 실패든). 서비스를 내려야 한다. */
+    Finished,
+}
+
 class CaptureController(
     private val listDevices: () -> List<InputDeviceInfo>,
     private val openSource: (InputDeviceInfo?, SourceHooks) -> AudioSource,
@@ -62,6 +82,11 @@ class CaptureController(
     private val onRouteConfirmedHook: (OpenedFormat) -> Unit,
     /** 측정이 끝났다. 보정 구독을 끊는다. */
     private val onStoppedHook: () -> Unit,
+    /**
+     * 측정 세션의 **최종** 상태가 바뀜다. 포그라운드 서비스가
+     * 이것만 따라간다([CaptureLifecycle]).
+     */
+    private val onLifecycle: (CaptureLifecycle) -> Unit = {},
     private val nowNs: () -> Long = System::nanoTime,
 ) {
     private val _state = MutableStateFlow(CaptureUiState())
@@ -115,6 +140,26 @@ class CaptureController(
      */
     private var autoRestarts = 0
 
+    /**
+     * 밖에 마지막으로 알린 수명주기. 같은 것을 두 번 알리지 않는다.
+     *
+     * 처음에는 재고 있지 않다.
+     */
+    private var lifecycle = CaptureLifecycle.Finished
+
+    /**
+     * 지금 **기기를 갈아타는 중**인가. 주 스레드만 만진다.
+     *
+     * 분리 정책이 `FallBack` 이면 `stop()` 다음에 곰바로 `start()` 가
+     * 온다. 그 사이의 `stop` 을 **끝났다고 알리면 안 된다** —
+     * 백그라운드에서 서비스를 내렸다가는 다시 띄울 수 없고
+     * (안드로이드 14부터 `microphone` 형은 앱이 앞에 있어야 한다),
+     * 그러면 자동 전환 중에 마이크가 끊긴다. 검증자가 짚은
+     * 「`onStoppedHook` 에 무조건 서비스 stop 만 더하지 말 것」이 이것이다
+     * (독립 검증 FS01).
+     */
+    private var switchingDevice = false
+
     /** 세대를 매기고 늦게 온 소식을 가린다. 주 스레드만 만진다. */
     private val generation = CaptureGeneration()
 
@@ -126,6 +171,20 @@ class CaptureController(
 
     /** 돌고 있는가. */
     val running: Boolean get() = active != null
+
+    /**
+     * 수명주기를 밖에 알린다. **바뀜 때만**, 주 스레드에서.
+     *
+     * 갈아타는 중의 `Finished` 는 삼킨다 — 그건 끝난 것이 아니라 잠깐
+     * 놓는 것이다([switchingDevice]). 갈아타기가 끝나면
+     * [applyDisconnectPolicy] 가 **실제로 살아 있는지로** 다시 맞춘다.
+     */
+    private fun emitLifecycle(next: CaptureLifecycle) {
+        if (switchingDevice && next == CaptureLifecycle.Finished) return
+        if (lifecycle == next) return
+        lifecycle = next
+        onLifecycle(next)
+    }
 
     private val emitIntervalNs = 66_000_000L
 
@@ -241,6 +300,28 @@ class CaptureController(
      */
     private fun applyDisconnectPolicy(name: String, extraKo: String? = null) {
         val policy = _state.value.meterSettings.disconnectPolicy
+        // **이 stop 이 「끝」인지 「갈아타기」인지를 먼저 가른다.**
+        // 갈아타는 중이면 서비스를 내리지 않는다 — 백그라운드에서는
+        // 다시 띄울 수 없기 때문이다(FS01).
+        switchingDevice =
+            policy == DisconnectPolicy.FallBack && autoRestarts < MAX_AUTO_RESTARTS
+        try {
+            applyDisconnectPolicyInner(policy, name, extraKo)
+        } finally {
+            switchingDevice = false
+            // 갈아타기가 끝났다. **실제로 살아 있는지로** 맞춘다 —
+            // 새 기기를 여는 데 실패했으면 서비스도 내려야 한다.
+            emitLifecycle(
+                if (active != null) CaptureLifecycle.Active else CaptureLifecycle.Finished,
+            )
+        }
+    }
+
+    private fun applyDisconnectPolicyInner(
+        policy: DisconnectPolicy,
+        name: String,
+        extraKo: String?,
+    ) {
         stop()
         when (policy) {
             DisconnectPolicy.Pause -> _state.value = _state.value.copy(
@@ -374,6 +455,8 @@ class CaptureController(
                 measure = MeasureState.Failed(FailureReason.NoInputDevice),
                 errorKo = choice.reason.noticeKo(null),
             )
+            // 시작도 못 했다. 붙들어 둔 것이 있으면 내려야 한다(독립 검증 FS01).
+            emitLifecycle(CaptureLifecycle.Finished)
             return
         }
         openingKey = choice.device.stableKey
@@ -406,6 +489,8 @@ class CaptureController(
                         r.detail?.let { append("\n($it)") }
                     },
                 )
+                // 마이크를 못 열었다. 서비스만 「측정 중」으로 남으면 안 된다(FS01).
+                emitLifecycle(CaptureLifecycle.Finished)
                 return
             }
 
@@ -440,6 +525,11 @@ class CaptureController(
                     errorKo = null,
                     deviceNoticeKo = choice.reason.noticeKo(choice.device),
                 )
+                // **살아난 것을 먼저 알린다.** `mic.start` 뒤에 두면 안 된다 —
+                // 열자마자 끊기는 기기에서는 그 안에서 분리 정책이 끝까지 돌고
+                // 돌아온다. 그 뒤에 Active 를 내보내면 **다 죽은 뒤에 서비스만
+                // 떠 있다고 말하게 된다** — 자동 전환 한도 초과에서 실제로 그러했다.
+                emitLifecycle(CaptureLifecycle.Active)
                 // 보정은 경로가 확인된 뒤에 건다 — 지금은 어느 마이크인지 모른다.
                 mic.start { block, stats -> onBlock(session, block, stats) }
             }
@@ -592,6 +682,9 @@ class CaptureController(
             opened = null,
             lastInput = frozen.opened,
         )
+        // **맨 끝이다.** 상태를 다 적은 뒤에 알려야 받는 쪽이 보는
+        // 상태가 이미 「끝난 상태」다.
+        emitLifecycle(CaptureLifecycle.Finished)
     }
 
     companion object {

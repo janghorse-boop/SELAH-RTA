@@ -48,16 +48,28 @@ class CaptureService : Service() {
             return START_NOT_STICKY
         }
         ensureChannel()
-        ServiceCompat.startForeground(
-            this,
-            NOTIFICATION_ID,
-            buildNotification(),
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-            } else {
-                0
-            },
-        )
+        // **승격을 삼키지 않는다.** `startForeground` 는 알림 권한이 없거나
+        // 마이크 권한이 회수되면 던진다. 그걸 그대로 두면 안드로이드가
+        // 5초 뒤에 앱을 죽인다 — 측정 중에 앱이 통째로 사라진다.
+        val promoted = runCatching {
+            ServiceCompat.startForeground(
+                this,
+                NOTIFICATION_ID,
+                buildNotification(),
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                } else {
+                    0
+                },
+            )
+        }.isSuccess
+        if (!promoted) {
+            // 붙들어 둘 수 없다. 재는 쪽에 알리고 스스로 내려간다.
+            // **측정을 멈추지는 않는다** — 화면을 보고 있는 동안은
+            // 그대로 재고, 뒤로 가면 끊길 수 있다는 것만 알린다.
+            CaptureServiceBridge.reportUnavailable()
+            stopSelf()
+        }
         return START_NOT_STICKY
     }
 
@@ -119,12 +131,12 @@ class CaptureService : Service() {
          * 안드로이드 14부터 `microphone` 형 서비스는 **앱이 앞에 있을 때만**
          * 띄울 수 있다. 사용자가 「측정 시작」을 누른 그 순간이 그 자리다.
          */
-        fun start(context: Context) {
+        fun start(context: Context): Boolean = runCatching {
             ContextCompat.startForegroundService(
                 context,
                 Intent(context, CaptureService::class.java),
             )
-        }
+        }.isSuccess
 
         fun stop(context: Context) {
             context.stopService(Intent(context, CaptureService::class.java))
@@ -153,5 +165,20 @@ object CaptureServiceBridge {
 
     fun requestStop() {
         _stopRequests.tryEmit(Unit)
+    }
+
+    private val _unavailable = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
+    /**
+     * 백그라운드로 붙들어 두기에 실패했다.
+     *
+     * [stopRequests] 와 따로 둔다 — 하나는 「멈춰 달라」, 하나는
+     * 「붙들지 못한다」다. 같은 통로로 보내면 서비스가 실패한 것과
+     * 사용자가 누른 것이 구별되지 않아 측정이 엉뚱하게 멈춘다.
+     */
+    val unavailable: SharedFlow<Unit> = _unavailable
+
+    fun reportUnavailable() {
+        _unavailable.tryEmit(Unit)
     }
 }

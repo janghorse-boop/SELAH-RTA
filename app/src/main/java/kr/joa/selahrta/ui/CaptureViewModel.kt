@@ -322,7 +322,47 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             curveJob?.cancel()
             curveJob = null
         },
+        // **서비스는 여기서만 내린다.** `onStoppedHook` 에 넣으면 기기를
+        // 갈아타는 중의 `stop` 에도 내려가고, 백그라운드에서는 다시 띄울 수
+        // 없어 거기서 마이크가 끊긴다(독립 검증 FS01).
+        onLifecycle = { life -> reconcileService(life) },
     )
+
+    /**
+     * 측정의 최종 상태에 **서비스를 맞춘다.**
+     *
+     * 서비스를 띄우는 자리는 둘이다 — 사람이 「측정 시작」을 누른 [start] 와
+     * 여기. [start] 가 먼저인 까닭은 안드로이드 14부터 `microphone` 형은
+     * **앱이 앞에 있을 때만** 띄울 수 있기 때문이고, 여기는 같은 것을 다시
+     * 확인하는 자리다(이미 떠 있으면 값이 바뀌지 않아 불리지도 않는다).
+     */
+    private fun reconcileService(life: CaptureLifecycle) {
+        when (life) {
+            CaptureLifecycle.Active -> if (!CaptureService.start(getApplication())) {
+                noteServiceUnavailable()
+            }
+
+            CaptureLifecycle.Finished -> CaptureService.stop(getApplication())
+        }
+    }
+
+    /**
+     * 붙들어 두지 못한다고 알린다. **측정은 그대로 둔다.**
+     *
+     * 검증자는 「실패 상태로 전달」을 권했지만, 화면을 보고 있는 동안의
+     * 측정은 서비스 없이도 멀쩡하다. 재는 것까지 꺼 버리면 재려던 사람이
+     * 잃는 것이 더 크다. 대신 **무엇을 잃는지**를 적는다 — 뒤로 가면
+     * 끊길 수 있다.
+     */
+    private fun noteServiceUnavailable() {
+        controller.update { st ->
+            st.copy(
+                deviceNoticeKo = "백그라운드 유지를 시작하지 못했습니다. " +
+                    "화면을 보고 있는 동안은 그대로 재지만, 다른 앱으로 넘어가면 " +
+                    "측정이 끊길 수 있습니다. 알림 권한이 허용되어 있는지 확인하십시오.",
+            )
+        }
+    }
 
     /**
      * 화면이 보는 상태. **합치는 일은 주 스레드에서 한다.**
@@ -359,6 +399,11 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         // 알리기만 한다([CaptureServiceBridge]).
         viewModelScope.launch {
             CaptureServiceBridge.stopRequests.collect { stop() }
+        }
+
+        // 붙들어 두기에 실패했다는 소식. **멈추지 않고 알리기만 한다.**
+        viewModelScope.launch {
+            CaptureServiceBridge.unavailable.collect { noteServiceUnavailable() }
         }
 
         // 기기 목록은 늘 지켜본다. 측정 중이 아닐 때도 설정 화면이 최신
@@ -443,22 +488,51 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * 알림이 막혀 있어 **서랍에 「측정 종료」 버튼이 없다**고 알린다(FS02).
+     *
+     * 측정은 그대로 한다 — 알림은 편의이지 측정의 조건이 아니다. 대신
+     * 끝내는 방법이 앱뿐이라는 것을 말한다. 화면을 못 보는 사람이 두 시간
+     * 뒤에 「어떻게 끄지」로 막히는 것이 실제 피해다.
+     *
+     * **[CaptureController.start] 뒤에 부른다** — 시작하면서 기기 안내문을
+     * 덮어쓰기 때문이다.
+     */
+    fun noteNotificationsBlocked() {
+        controller.update { st ->
+            st.copy(
+                deviceNoticeKo = "알림이 꺼져 있어 알림 서랍에 「측정 종료」 버튼이 나오지 않습니다. " +
+                    "측정은 그대로 이어지며, 끝낼 때는 앱으로 돌아와 「측정 종료」를 누르십시오. " +
+                    "설정 > 알림에서 허용하면 서랍에서도 끌 수 있습니다.",
+            )
+        }
+    }
+    /**
      * 측정을 시작한다. 실제 일은 [CaptureController] 가 한다.
      *
-     * **서비스를 먼저 띄운다.** 안드로이드 14부터 `microphone` 형
-     * 포그라운드 서비스는 앱이 앞에 있을 때만 띄울 수 있고, 사용자가
-     * 「측정 시작」을 누른 지금이 그 자리다. 이걸 뒤로 미루면 화면이
-     * 뒤로 간 뒤에는 띄울 수 없다.
+     * **서비스는 여기서 띄우지 않는다.** 띄우고 내리는 자리를 모두
+     * [reconcileService] 하나로 모았다. 예전에는 여기서 먼저 띄웠는데,
+     * 마이크를 못 열면 컨트롤러는 「끝났다」를 내보내지 않았다(처음부터
+     * 끝난 상태였으니 바뀐 것이 없다) — 그래서 **띄워 놓은 서비스가
+     * 그대로 남았다.** 시작하는 자리와 끝내는 자리가 다른 것을 보고 있던
+     * 셈이다(독립 검증 FS01).
+     *
+     * 안드로이드 14부터 `microphone` 형 포그라운드 서비스는 앱이 앞에
+     * 있을 때만 띄울 수 있다. 여기서 [CaptureController.start] 는 사용자가
+     * 「측정 시작」을 누른 그 순간 주 스레드에서 곧바로 돌고, 서비스는
+     * 마이크가 열린 직후 같은 호출 안에서 뜬다 — 여전히 앞에 있다.
      */
     fun start(disconnectFallBack: Boolean = false) {
-        CaptureService.start(getApplication())
         controller.start(disconnectFallBack)
     }
 
-    /** 측정을 멈춘다. 붙들어 두던 서비스도 내린다. */
+    /**
+     * 측정을 멈춘다. 서비스는 [reconcileService] 가 내린다.
+     *
+     * 여기서 따로 내리지 않는다 — 내리는 자리가 둘이면 한쪽만 고치는 일이
+     * 생긴다. 그게 FS01 에서 서비스가 남은 까닭이다.
+     */
     fun stop() {
         controller.stop()
-        CaptureService.stop(getApplication())
     }
 
     /**
