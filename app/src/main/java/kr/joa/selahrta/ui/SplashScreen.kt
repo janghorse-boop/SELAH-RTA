@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -84,7 +85,12 @@ fun SplashScreen(onDone: () -> Unit) {
             ),
         contentAlignment = Alignment.Center,
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            // 화면 한가운데에 두면 아래가 허전하다. 눈이 머무는 자리는
+            // 가운데보다 조금 위다.
+            modifier = Modifier.offset(y = (-26).dp),
+        ) {
 
             // ---- 막대 다섯 ----
             Row(
@@ -136,20 +142,32 @@ fun SplashScreen(onDone: () -> Unit) {
                     .alpha(credit.value * 0.6f)
                     .background(SelahColors.Outline),
             )
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(16.dp))
+
+            // 작은 대문자 라벨 + 이름. 위의 SELAH RTA 와 같은 결로 맞춘다.
             Text(
-                "개발 장훈 (JANGHUN)",
-                color = SelahColors.TextPrimary,
-                fontSize = 15.sp,
+                "DEVELOPED BY",
+                color = SelahColors.TextMuted,
+                fontSize = 10.sp,
                 fontWeight = FontWeight.Medium,
-                letterSpacing = 0.5.sp,
+                letterSpacing = 4.sp,
+                modifier = Modifier.alpha(credit.value),
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "JANGHUN",
+                color = SelahColors.TextPrimary,
+                fontSize = 19.sp,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 3.sp,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.alpha(credit.value),
             )
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(6.dp))
             Text(
                 "Jesus On Air (JOA)",
-                color = SelahColors.TextMuted,
+                // 팀 이름이라 한 단계 밝힌다 — TextMuted 로는 거의 안 보였다.
+                color = SelahColors.TextSecondary,
                 fontSize = 12.sp,
                 letterSpacing = 1.sp,
                 modifier = Modifier.alpha(credit.value),
