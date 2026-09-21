@@ -197,25 +197,26 @@ fun SelahApp() {
             onDismissRequest = { askExit = false },
             containerColor = SelahColors.Surface,
             title = { Text("앱을 닫을까요?", color = SelahColors.TextPrimary) },
-            text = {
-                Text(
-                    // 재고 있을 때와 아닐 때는 잃는 것이 다르다. 같은 말을
-                    // 쓰면 「닫아도 괜찮겠지」로 읽힌다.
-                    if (running) {
-                        "지금 측정 중입니다. 닫으면 측정이 종료됩니다."
-                    } else {
-                        "SELAH RTA 를 닫습니다."
-                    },
-                    color = SelahColors.TextSecondary,
-                    fontSize = 13.sp,
-                )
+            // **재고 있을 때만 본문을 둔다.** 안 재고 있을 때 「SELAH RTA 를
+            // 닫습니다」는 제목을 한 번 더 말하는 것뿐이라 지웠다. 재고 있을
+            // 때는 잃는 것이 있으므로 그대로 둔다.
+            text = if (running) {
+                {
+                    Text(
+                        "지금 측정 중입니다. 닫으면 측정이 종료됩니다.",
+                        color = SelahColors.TextSecondary,
+                        fontSize = 13.sp,
+                    )
+                }
+            } else {
+                null
             },
             confirmButton = {
                 TextButton(onClick = {
                     askExit = false
                     activity?.finish()
                 }) {
-                    Text("닫기", color = SelahColors.High)
+                    Text("확인", color = SelahColors.High)
                 }
             },
             dismissButton = {
