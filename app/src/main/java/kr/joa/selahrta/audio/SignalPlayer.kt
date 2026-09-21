@@ -276,6 +276,23 @@ class SignalPlayer(
 
         // 사람이 멈춰서 빠져나왔다. **여기서 놓는다** — `stop()` 의 기다림이
         // 시간 초과돼 그쪽이 놓지 않았을 수 있고, 그때 놓는 쪽은 나뿐이다.
+        settle(pb)
+    }
+
+    /**
+     * 이 재생을 **끝낸다.** 등록·해제·정리 규칙을 여기 한 곳에 모은다.
+     *
+     * **놓기를 시도하기 전에 먼저 등록한다.** 그래야 놓기가 늦어지는
+     * 동안에도 상한에 세어진다. 성공했을 때만 목록에서 뺀다.
+     *
+     * 예전에는 **수동으로 멈춘 경로만** 등록하고 자동 오류 종료는 빼먹었다
+     * (독립 검증 RC02 후속). 자동 종료는 `current` 를 먼저 지우므로 그
+     * 재생이 목록에도 없고 현재도 아니어서, **놓기에 실패해도 아무 데도
+     * 세어지지 않았다** — 검증자 측정: 자동 경로에서 시작 4회·
+     * failedReleaseCount 0·pendingCount 0(상한 2).
+     */
+    private fun settle(pb: Playback) {
+        stuck.addIfPending(pb) { it.isSlotFree }
         pb.releaseOnce()
         if (pb.isSlotFree) stuck.remove(pb)
     }
@@ -292,8 +309,7 @@ class SignalPlayer(
                 false
             }
         }
-        pb.releaseOnce()
-        if (pb.isSlotFree) stuck.remove(pb)
+        settle(pb)
         if (!mine) return
 
         onEnded?.invoke(
@@ -333,9 +349,7 @@ class SignalPlayer(
         pb.stopSink()
         t?.join(JOIN_MS)
         if (t == null || !t.isAlive) {
-            pb.releaseOnce()
-            // 놓기에 실패했으면 자리를 비켜 주지 않는다(독립 검증 RC02).
-            if (!pb.isSlotFree) stuck.addIfPending(pb) { it.isSlotFree }
+            settle(pb)
         } else {
             // 아직 끝나지 않았다. 두고 간다 — 깨어나면 제 손으로 놓는다.
             // **넣을지 말지를 같은 자물쇠 안에서 본다** — 밖에서 보고 넣으면

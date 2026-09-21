@@ -27,61 +27,63 @@ class PendingListTest {
     }
 
     /**
-     * **정리 한가운데에서 지워도 터지지 않는다.**
+     * **정리 한가운데에서 지우려 하면 그쪽이 기다린다.**
      *
      * 예전 구현(`CopyOnWriteArrayList` + Kotlin `removeAll { }`)은 이
      * 순서에서 `ArrayIndexOutOfBoundsException` 을 냈다. 그것도 **주
      * 스레드의 `start()`** 에서 나므로 앱이 죽는다.
+     *
+     * **기다린다는 것을 실제로 확인한다.** 처음 쓴 시험은 술어 안에서
+     * latch 만 열고 끝나서, 지우는 쪽이 `remove` 에 닿기도 전에 정리가
+     * 끝나 버릴 수 있었다 — 그러면 아무것도 보지 않은 것이다(검증자
+     * 보완 제안). 이제 그 스레드가 정말 `BLOCKED` 가 되는 것을 본다.
      */
     @Test
-    fun `정리 도중에 같은 항목을 지워도 터지지 않는다`() {
+    fun `정리 도중에 지우려 하면 그쪽이 기다린다`() {
         val list = PendingList<Item>()
-        val a = Item("A").also { it.done = true }
-        val b = Item("B").also { it.done = true }
-        list.addIfPending(a) { false }
-        list.addIfPending(b) { false }
-        assertEquals(2, list.size)
+        val done = Item("끝남").also { it.done = true }
+        val pending = Item("진행중")
+        list.addIfPending(done) { false }
+        list.addIfPending(pending) { false }
 
         val inPredicate = CountDownLatch(1)
-        val letGo = CountDownLatch(1)
         val workerFailure = AtomicReference<Throwable?>(null)
-        val workerDone = CountDownLatch(1)
-
         val worker = Thread {
             try {
-                // 정리가 술어 안에 들어간 뒤에 지운다.
                 check(inPredicate.await(5, TimeUnit.SECONDS))
-                list.remove(a)
-                list.remove(b)
+                list.remove(pending)
             } catch (t: Throwable) {
                 workerFailure.set(t)
-            } finally {
-                workerDone.countDown()
             }
-        }.apply { start() }
+        }.apply { name = "pending-remover"; start() }
 
+        var blocked = false
         var sweepFailure: Throwable? = null
         var remaining = -1
         try {
-            remaining = list.sweep {
-                // **자물쇠 안이다.** 여기서 풀어 주면 지우는 쪽은 기다린다 —
-                // 그것이 바로 이 구조가 지켜 주는 것이다.
+            remaining = list.sweep { item ->
                 inPredicate.countDown()
-                letGo.countDown()
-                it.done
+                // 지우려는 쪽이 **자물쇠 앞에서 막히는지** 본다.
+                val until = System.nanoTime() + 3_000_000_000L
+                while (!blocked && System.nanoTime() < until) {
+                    if (worker.state == Thread.State.BLOCKED) blocked = true
+                }
+                item.done
             }
         } catch (t: Throwable) {
             sweepFailure = t
         }
 
-        assertTrue("지우는 쪽이 끝나야 한다", workerDone.await(5, TimeUnit.SECONDS))
         worker.join(5_000)
 
+        println("[RC01] 막혔는가=$blocked · 남은 수=$remaining")
         assertNull("정리가 터지면 안 된다", sweepFailure)
         assertNull("지우는 쪽도 터지면 안 된다", workerFailure.get())
-        assertEquals("둘 다 사라져야 한다", 0, remaining)
-        assertEquals("목록도 비어야 한다", 0, list.size)
+        assertTrue("지우려는 쪽이 자물쇠에서 기다려야 한다", blocked)
+        assertEquals("끝난 것만 치우고 나머지는 남긴다", 1, remaining)
         assertFalse("지우는 스레드가 남으면 안 된다", worker.isAlive)
+        // 정리가 끝난 뒤 지우는 쪽이 제 일을 마쳐 결국 비워진다.
+        assertEquals("지우는 쪽 일까지 끝나면 빈다", 0, list.size)
     }
 
     /** **아직 안 끝난 것은 정리에 쓸려 가지 않는다.** */
