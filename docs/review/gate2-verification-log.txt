@@ -1,0 +1,29 @@
+outputs\Gate2Probe.kt:25:94: warning: condition is always 'true'.
+    println("STOP_BEFORE current=${before.meter.currentSpl} max=${before.meter.maxSpl} rta=${before.rta != null} frames=${before.diagnostics.frames}")
+                                                                                             ^^^^^^^^^^^^^^^^^^
+JUnit version 4.13.2
+.........................................................................................................................................[��ũ 48000] detected=false hz=null latency=nullms hop=42.7ms ����=[]
+[��ũ 44100] detected=false hz=null latency=nullms hop=46.4ms ����=[]
+.[������ 48000] detected=false hz=null latency=nullms hop=42.7ms ����=[]
+[������ 44100] detected=false hz=null latency=nullms hop=46.4ms ����=[]
+.[���� 250Hz] 48k=detected=true hz=250.2 latency=1621ms hop=42.7ms ����=[250] | 44.1k=detected=true hz=250.2 latency=1625ms hop=46.4ms ����=[250]
+[���� 1000Hz] 48k=detected=true hz=1000.2 latency=1621ms hop=42.7ms ����=[1000] | 44.1k=detected=true hz=999.9 latency=1625ms hop=46.4ms ����=[999]
+[���� 4000Hz] 48k=detected=true hz=4000.2 latency=1621ms hop=42.7ms ����=[4000] | 44.1k=detected=true hz=4000.0 latency=1625ms hop=46.4ms ����=[3999]
+[���� 8000Hz] 48k=detected=true hz=7999.8 latency=1621ms hop=42.7ms ����=[7999] | 44.1k=detected=true hz=8000.0 latency=1625ms hop=46.4ms ����=[8000]
+.[�� 2.0Hz] 48k=11/12 44.1k=12/12
+[�� 5.0Hz] 48k=6/12 44.1k=9/12
+[�� 10.0Hz] 48k=3/12 44.1k=3/12
+[�� 20.0Hz] 48k=0/12 44.1k=1/12
+[�հ�] 48k=20 44.1k=25
+.[���ش�] 48k: â 85.3ms ĭ 11.72Hz | 44.1k: â 92.9ms ĭ 10.77Hz
+[5ĭ ����] 48k=58.6Hz 44.1k=53.8Hz (8.1% ����)
+........................................................................................................
+Time: 34.474
+
+OK (245 tests)
+
+Independent verification scratch directory: C:\Users\jangh\AppData\Local\Temp\selah-independent-6a296e6799a54e8d9039f98bf00fb464
+STOP_BEFORE current=103.01261109988741 max=103.01306644370138 rta=true frames=102400
+STOP_AFTER current=103.01261109988741 max=103.01306644370138 rta=true frames=102400 log=1
+Confirmed stop snapshot preservation using unmodified CaptureController and production state composition.
+LATE_SNAPSHOT active=3 published=3 visibleCurrent=2.1953315869553194
