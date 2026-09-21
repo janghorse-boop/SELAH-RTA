@@ -58,6 +58,28 @@ class RtaEngine(
     private var latest: RtaFrame? = null
 
     /**
+     * 마이크 보정 곡선을 칸마다 걸 계수. 없으면 보정하지 않는다.
+     *
+     * 주 스레드가 갈아 끼우고 오디오 스레드가 읽는다. 다 만든 배열의
+     * **참조만** 바꾸므로 `@Volatile` 로 그 참조가 보이게만 하면 된다 —
+     * 반쯤 채워진 배열을 읽는 일은 없다.
+     */
+    @Volatile
+    private var binCorrection: DoubleArray? = null
+
+    /**
+     * 마이크 보정 곡선을 건다. null 이면 보정 없이 돌린다.
+     *
+     * 곡선이 바뀌면 평활과 Peak Hold 를 비운다. 보정 전후 값이 한 상태에
+     * 섞이면, 바꾼 직후 몇 초 동안 두 곡선을 섞은 값이 화면에 남는다.
+     */
+    fun setCurve(curve: CalibrationCurve?) {
+        binCorrection = curve?.binCorrectionLinear(fftSize, sampleRate)
+        smoothing.reset()
+        peakHold.reset()
+    }
+
+    /**
      * 덩어리를 넣는다. FFT 를 돌릴 만큼 쌓이면 결과가 갱신된다.
      *
      * [samples] 는 **가중 전 원본**이다. RTA 는 주파수 균형을 보는 것이라
@@ -85,7 +107,8 @@ class RtaEngine(
             linear[i] = ring[(writePos + i) % fftSize]
         }
         spectrum.compute(linear, 0, power)
-        bands.toBandPower(power, bandPower)
+        // 보정은 **밴드로 묶기 전에** 칸마다 건다(독립 검증 R05).
+        bands.toBandPower(power, bandPower, binCorrection)
         val smoothed = smoothing.update(bandPower)
         bands.toBandDbfs(smoothed, bandDb)
         val held = peakHold.update(bandDb)

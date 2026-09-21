@@ -75,23 +75,23 @@ class CalibrationCurveTest {
     }
 
     @Test
-    fun `밴드 보정값은 밴드 안을 에너지로 평균한다`() {
-        // 평탄한 곡선이면 어느 밴드든 그 값이다.
+    fun `밴드 보정값은 평탄한 곡선에서 그 값이다`() {
         val flat = curve(20.0 to -2.5, 20000.0 to -2.5)
         for (g in flat.bandGainsDb()) assertEquals(-2.5, g, 1e-9)
     }
 
+    /**
+     * 예전에는 여기서 「밴드 평균이 중심 한 점과 달라야 한다」를 확인했다.
+     * 그 평균을 빼는 것이 보정 경로였는데 그것이 R05 의 결함이었다 —
+     * 실제 보정은 칸마다 건다([CurveCorrectionTest]).
+     */
     @Test
-    fun `가파른 구간에서는 중심 한 점만 보는 것과 다르다`() {
-        // 1kHz 밴드 안에서 곡선이 가파르게 변한다.
+    fun `밴드 보정값은 중심 주파수의 응답을 그대로 준다`() {
         val steep = curve(891.0 to 0.0, 1000.0 to 0.0, 1123.0 to 12.0)
-        val band = steep.bandGainsDb()[17]
-        val centreOnly = steep.gainDbAt(1000.0)
-        assertEquals("중심만 보면 0dB 이다", 0.0, centreOnly, 1e-9)
-        assertTrue(
-            "밴드 평균은 위끝의 큰 값을 반영해야 한다 (${"%.2f".format(band)}dB)",
-            band > 2.0,
-        )
+        val gains = steep.bandGainsDb()
+        for (b in 0 until ThirdOctave.BAND_COUNT) {
+            assertEquals(steep.gainDbAt(ThirdOctave.exactCenter(b)), gains[b], 1e-12)
+        }
     }
 
     @Test

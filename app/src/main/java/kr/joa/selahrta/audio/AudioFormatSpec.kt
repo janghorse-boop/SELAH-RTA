@@ -55,6 +55,18 @@ data class OpenedFormat(
      * 숫자는 멀쩡해 보이므로 화면이 반드시 알려야 한다.
      */
     val routedAsRequested: Boolean = true,
+    /**
+     * 어느 기기로 붙었는지 **실제로 확인했는가.**
+     *
+     * `AudioRecord.getRoutedDevice()` 는 녹음을 시작하기 전에는 규약상
+     * null 이다. 시작 전에 읽은 값을 믿으면 — 갤럭시 S23 은 시작 전에도
+     * 값을 돌려준다 — 확인하지 않은 것을 확인했다고 말하게 된다
+     * (독립 검증 R01).
+     *
+     * false 인 동안의 [deviceKey] 는 **요청한 기기의 열쇠일 뿐 열린 기기의
+     * 것이 아니다.** 그 상태로 보정값을 걸면 안 된다.
+     */
+    val routeConfirmed: Boolean = false,
 ) {
     /**
      * 지금 들어오는 소리를 얼마나 믿을 수 있는가. 화면에 그대로 띄운다.

@@ -74,6 +74,15 @@ class InputDeviceScanner(context: Context) {
     fun findRaw(key: String): AudioDeviceInfo? =
         audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS)
             .firstOrNull { it.toInfo()?.stableKey == key }
+
+    /**
+     * 안드로이드가 준 기기를 우리 자료형으로 옮긴다.
+     *
+     * `AudioRecord.getRoutedDevice()` 가 돌려준 기기의 신원을 확인할 때 쓴다.
+     * **목록에서 id 로 되찾지 않는다** — 목록에 없는 기기로 열릴 수도 있고,
+     * 열쇠를 만드는 방식이 한 군데여야 어긋나지 않는다.
+     */
+    fun infoOf(raw: AudioDeviceInfo): InputDeviceInfo? = raw.toInfo()
 }
 
 /**

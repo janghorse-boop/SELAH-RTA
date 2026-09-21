@@ -23,9 +23,12 @@ enum class TimeWeight(val labelKo: String, val tauSeconds: Double) {
  *
  *     y[n] = y[n-1] + α·(x[n]² - y[n-1]),   α = 1 - exp(-T/τ)
  */
+/** 덩어리 하나를 처리한 결과. 마지막 값과 그 안의 최대를 함께 준다. */
+data class BlockWeighting(val last: Double, val max: Double)
+
 class ExponentialTimeWeighting(
     private val timeWeight: TimeWeight,
-    sampleRate: Int,
+    private val sampleRate: Int,
 ) {
     init {
         require(sampleRate > 0) { "샘플레이트가 0 이하다: $sampleRate" }
@@ -36,27 +39,60 @@ class ExponentialTimeWeighting(
     /** 지금까지 쌓인 평균 제곱(에너지). */
     private var meanSquare = 0.0
     private var started = false
+    /** 넣은 샘플 수. 자리를 잡았는지 판단하는 데 쓴다. */
+    private var samples = 0L
 
-    /** 샘플 하나를 넣고 지금의 평균 제곱을 돌려준다. */
+    /**
+     * 샘플 하나를 넣고 지금의 평균 제곱을 돌려준다.
+     *
+     * **초기 에너지는 0 이다.** 예전에는 첫 샘플의 제곱을 상태에 통째로
+     * 주입했는데, 그러면 규격이 정의한 시간상수를 지키지 않는다.
+     * Slow(τ=1s, 48kHz)에서 첫 샘플 1.0 을 넣으면 상태가 1.0 이 되는데
+     * 정의대로면 1-exp(-1/48000) = 2.0833e-5 로 **46.8dB 차이**다.
+     *
+     * 더 나쁜 것은 그 값이 **시작 위상에 좌우된다**는 점이다. 같은
+     * 1kHz 사인파도 위상 0 에서 시작하면 -25.8dBFS, π/2 에서 시작하면
+     * -6.1dBFS 가 나왔다(19.7dB 차이). 정상상태는 -9.03dBFS 다.
+     * 그 과대값이 MAX 에 남기까지 했다.
+     */
     fun push(sample: Double): Double {
         val sq = sample * sample
-        if (!started) {
-            // 0 에서 출발하면 첫 τ 동안 실제보다 낮게 나온다. 첫 샘플로
-            // 자리를 잡아 두면 시작 직후의 값도 쓸 수 있다.
-            meanSquare = sq
-            started = true
-        } else {
-            meanSquare += alpha * (sq - meanSquare)
-        }
+        meanSquare += alpha * (sq - meanSquare)
+        started = true
+        samples++
         return meanSquare
     }
 
-    /** 덩어리 하나를 넣고 마지막 값을 돌려준다. */
-    fun pushBlock(buf: DoubleArray, frames: Int): Double {
+    /**
+     * 덩어리 하나를 넣고 **그 덩어리 안의 최대** 평균 제곱을 돌려준다.
+     *
+     * 마지막 값만 돌려주면 덩어리 안에서 스친 봉우리를 놓친다. 1024 샘플
+     * 가운데 하나만 큰 충격음이 있을 때, 그 봉우리는 덩어리가 끝날 무렵
+     * 이미 감쇠해 MAX 에 0.74dB 낮게 기록됐다. 덩어리를 어떻게 자르느냐에
+     * 따라 MAX 가 달라지면 그것은 MAX 가 아니다.
+     */
+    fun pushBlock(buf: DoubleArray, frames: Int): BlockWeighting {
         require(frames in 0..buf.size) { "frames=$frames 이 범위를 벗어난다" }
-        for (i in 0 until frames) push(buf[i])
-        return meanSquare
+        var peak = Double.NEGATIVE_INFINITY
+        for (i in 0 until frames) {
+            val v = push(buf[i])
+            if (v > peak) peak = v
+        }
+        return BlockWeighting(
+            last = meanSquare,
+            max = if (peak.isFinite()) peak else meanSquare,
+        )
     }
+
+    /**
+     * 시간가중이 자리를 잡았는가.
+     *
+     * 시작 직후 첫 τ 동안의 값은 실제보다 낮다(0 에서 올라오는 중이다).
+     * 그 구간을 「측정값」이라고 부르면 안 되므로 화면이 알 수 있게 한다.
+     */
+    val settled: Boolean get() = samples >= settleSamples
+
+    private val settleSamples: Long = (sampleRate * timeWeight.tauSeconds * 3).toLong()
 
     /** 지금 레벨(dBFS). 아직 아무것도 안 넣었으면 null. */
     fun levelDbfs(): Dbfs? = if (!started) null else amplitudeToDbfs(kotlin.math.sqrt(meanSquare))
@@ -64,6 +100,7 @@ class ExponentialTimeWeighting(
     fun reset() {
         meanSquare = 0.0
         started = false
+        samples = 0L
     }
 
     /** 시험과 진단용. */

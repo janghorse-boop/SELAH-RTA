@@ -62,18 +62,28 @@ class BandAnalyzer(
      *
      * [power] 는 [PowerSpectrum.compute] 가 낸 칸별 전력,
      * [out] 은 길이 31 의 밴드 전력 배열이다.
+     *
+     * [binCorrection] 은 마이크 보정 곡선을 칸마다 적용하는 선형 계수다
+     * ([CalibrationCurve.binCorrectionLinear]). **밴드로 묶기 전에 곱한다** —
+     * 묶은 뒤에 밴드 하나를 숫자 하나로 보정하면, 밴드 안에서 응답이 변하는
+     * 구간에서 실제와 다른 값을 뺀다(독립 검증 R05).
      */
-    fun toBandPower(power: DoubleArray, out: DoubleArray) {
+    fun toBandPower(power: DoubleArray, out: DoubleArray, binCorrection: DoubleArray? = null) {
         require(power.size == binCount) { "power 길이가 ${binCount} 가 아니다: ${power.size}" }
         require(out.size == ThirdOctave.BAND_COUNT) {
             "out 길이가 ${ThirdOctave.BAND_COUNT} 가 아니다: ${out.size}"
+        }
+        require(binCorrection == null || binCorrection.size == binCount) {
+            "binCorrection 길이가 ${binCount} 가 아니다: ${binCorrection?.size}"
         }
         for (b in out.indices) {
             var sum = 0.0
             val w = weights[b]
             for (i in power.indices) {
                 val wi = w[i]
-                if (wi > 0.0) sum += power[i] * wi
+                if (wi > 0.0) {
+                    sum += power[i] * wi * (binCorrection?.get(i) ?: 1.0)
+                }
             }
             out[b] = sum
         }

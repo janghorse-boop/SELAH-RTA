@@ -154,9 +154,12 @@ class SplEngineTest {
     fun `resetPeaks 는 MAX 만 지우고 Leq 는 남긴다`() {
         val e = engine()
         e.process(tone(1000.0, 1.0, 500), fs / 2)
+        // 먼저 바늘이 내려오게 둔다 — 2초는 Fast 시간상수(125ms)의 16배다.
+        // 바늘이 아직 올라가 있을 때 지우면 그 꼬리가 곧바로 새 MAX 가
+        // 되는데, 그것은 아래 시험이 따로 못박는다.
+        e.process(tone(1000.0, 0.01, 2000), fs * 2)
         e.resetPeaks()
-        // 2초는 Fast 시간상수(125ms)의 16배라 앞선 큰 소리가 다 빠진다.
-        val f = e.process(tone(1000.0, 0.01, 2000), fs * 2)
+        val f = e.process(tone(1000.0, 0.01, 500), fs / 2)
         assertEquals("MAX 는 지워지고 지금 소리만 남아야 한다", -43.0, f.maxDbfs.value, 0.5)
         // 세션 Leq 는 큰 소리를 기억한다.
         assertTrue("세션 Leq 는 남아야 한다", f.leqSessionDbfs!!.value > -20.0)
@@ -167,15 +170,28 @@ class SplEngineTest {
         // 실제 소음계와 같은 동작이다. 큰 소리 직후에 MAX 를 지우면
         // 바늘이 아직 내려오는 중이라 그 값이 곧바로 새 MAX 가 된다.
         // 「지웠는데 왜 높지」로 읽히지 않도록 여기에 못박아 둔다.
+        //
+        // **지운 바로 다음 샘플**의 레벨이 새 MAX 다. 그 순간 바늘은 아직
+        // 큰 소리의 정상상태(-3.01dBFS)에 있으므로 MAX 도 거기서 시작한다.
+        // 예전에는 덩어리의 마지막 값만 봐서 500ms 감쇠한 뒤의 값이
+        // 기록됐는데, 그러면 덩어리를 어떻게 자르느냐에 따라 MAX 가
+        // 달라진다(독립 검증 R06).
         val e = engine()
         e.process(tone(1000.0, 1.0, 500), fs / 2)
         e.resetPeaks()
         val f = e.process(tone(1000.0, 0.01, 500), fs / 2)  // 4τ 만 지남
-        assertTrue(
-            "감쇠 중인 꼬리가 잡혀 조용한 레벨보다 높다 (${"%.1f".format(f.maxDbfs.value)}dB)",
-            f.maxDbfs.value > -30.0,
+        assertEquals(
+            "지운 직후의 바늘 높이가 그대로 새 MAX 가 된다",
+            -3.01,
+            f.maxDbfs.value,
+            0.2,
         )
-        assertTrue("그래도 원래 큰 소리보다는 낮다", f.maxDbfs.value < -10.0)
+        // 4τ 뒤라 바늘은 아직 내려오는 중이다 — 에너지가 exp(-4) 만 남아
+        // -20dB 언저리다. 조용한 정상상태(-43dB)에는 아직 닿지 않았다.
+        assertTrue(
+            "바늘은 내려오는 중이다 (${"%.1f".format(f.currentDbfs.value)}dB)",
+            f.currentDbfs.value in -30.0..-15.0,
+        )
     }
 
     @Test

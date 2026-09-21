@@ -21,6 +21,13 @@ data class SplFrame(
     val peakClipped: Boolean,
     /** 긴 Leq 의 창이 가득 찼는가. 차기 전 값은 이름보다 짧은 구간의 평균이다. */
     val leqLongFull: Boolean,
+    /**
+     * 시간가중이 자리를 잡았는가.
+     *
+     * 시작 직후 첫 τ 동안은 0 에서 올라오는 중이라 실제보다 낮다.
+     * 그 값을 측정값이라 부르면 안 된다.
+     */
+    val settled: Boolean,
 )
 
 /**
@@ -86,8 +93,11 @@ class SplEngine(
         filter.processInPlace(work, frames)
 
         if (frames > 0) anyInput = true
-        val ms = timeWeighting.pushBlock(work, frames)
-        if (ms > maxMeanSquare) maxMeanSquare = ms
+        // 덩어리 안의 **최대**를 본다. 마지막 값만 보면 덩어리 경계에 따라
+        // MAX 가 달라진다 — 같은 PCM 을 1샘플씩 넣을 때와 1024개씩 넣을 때
+        // 0.74dB 이 갈렸다(독립 검증 R06).
+        val bw = timeWeighting.pushBlock(work, frames)
+        if (frames > 0 && bw.max > maxMeanSquare) maxMeanSquare = bw.max
 
         leqShort.addBlock(work, frames)
         leqLong.addBlock(work, frames)
@@ -103,6 +113,7 @@ class SplEngine(
             peakDbfs = amplitudeToDbfs(peakAbs),
             peakClipped = peakClipped,
             leqLongFull = leqLong.isFull,
+            settled = timeWeighting.settled,
         )
     }
 

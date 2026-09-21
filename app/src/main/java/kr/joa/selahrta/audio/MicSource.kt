@@ -37,6 +37,15 @@ class MicSource(
     private val target: InputDeviceInfo? = null,
     /** 쓰던 기기가 라우팅에서 빠졌을 때 알린다. */
     private val onRoutingLost: (() -> Unit)? = null,
+    /**
+     * 어느 기기로 붙었는지 확인되면 알린다. **녹음을 시작한 뒤에 온다.**
+     *
+     * 이 값이 오기 전의 [OpenedFormat.deviceKey] 는 요청한 열쇠일 뿐이라
+     * 보정값을 걸 근거가 못 된다(독립 검증 R01).
+     */
+    private val onRouteConfirmed: ((OpenedFormat) -> Unit)? = null,
+    /** 캡처가 스스로 끝났을 때 알린다. 읽기 오류로 죽는 경우다. */
+    private val onCaptureEnded: ((CaptureEnd) -> Unit)? = null,
 ) : AudioSource {
 
     override val labelKo: String = target?.productName ?: "내장 마이크"
@@ -45,6 +54,7 @@ class MicSource(
     private val effects = AudioEffectsController()
     private var routingListener: AudioRouting.OnRoutingChangedListener? = null
     private var record: AudioRecord? = null
+    @Volatile
     private var opened: OpenedFormat? = null
     private var thread: Thread? = null
     private val running = AtomicBoolean(false)
@@ -163,52 +173,89 @@ class MicSource(
         // 유일한 방어다 — 자동 게인이 살아 있으면 큰 소리가 조용해 보인다.
         val effectsReport = effects.disableProcessing(rec.audioSessionId)
 
-        // 실제로 어느 기기로 붙었는가. 고른 것과 다를 수 있다.
-        val routed = rec.routedDevice
-        // 실제로 붙은 기기를 목록에서 찾는다. 스캐너가 만든 것과 같은
-        // 방식으로 만들어야 열쇠가 어긋나지 않는다 — 여기서 손으로
-        // 다시 만들면 주소가 빠져 보정 열쇠가 충돌한다.
-        val routedInfo = routed?.let { r -> scanner.list().firstOrNull { it.id == r.id } }
-        if (target != null && routedInfo != null && routedInfo.stableKey != target.stableKey) {
-            routedToTarget = false
-            Log.w(TAG, "고른 기기와 다른 곳으로 열렸다: ${routedInfo.productName}")
-        }
-
+        // **여기서 routedDevice 를 읽지 않는다.** 규약상 녹음을 시작하기
+        // 전에는 null 이다. 갤럭시 S23 은 시작 전에도 값을 돌려주지만,
+        // 그 값을 믿으면 기기에 따라 확인하지 않은 것을 확인했다고 말하게
+        // 된다(독립 검증 R01). 신원은 startRecording 뒤 [confirmRoute] 에서
+        // 확정한다.
         record = rec
         val fmt = OpenedFormat(
-            micKind = routedInfo?.kind ?: target?.kind ?: MicKind.BuiltIn,
+            micKind = target?.kind ?: MicKind.BuiltIn,
             sampleRate = actualRate,
             encoding = actualEncoding,
             audioSource = source,
             bufferSizeBytes = bufferBytes,
-            deviceLabel = routedInfo?.displayName ?: target?.displayName ?: "시스템 기본 입력",
-            deviceKey = routedInfo?.stableKey ?: target?.stableKey ?: "default",
+            deviceLabel = target?.displayName ?: "시스템 기본 입력",
+            deviceKey = target?.stableKey ?: "default",
             unprocessedSupported = unprocessedSupported,
             effects = effectsReport,
             requestedDeviceLabel = target?.productName,
+            // 요청이 받아들여졌는지까지만 안다. 실제로 그리 붙었는지는 아직 모른다.
             routedAsRequested = routedToTarget,
+            routeConfirmed = false,
         )
         opened = fmt
-        Log.i(TAG, "열림: $fmt")
+        Log.i(TAG, "열림(경로 미확인): $fmt")
         return OpenResult.Opened(fmt)
+    }
+
+    /**
+     * 실제로 붙은 기기를 확인한다. **녹음을 시작한 뒤에만 뜻이 있다.**
+     *
+     * 이름이 아니라 **열쇠**(종류|이름|주소)로 견준다. 갤럭시 S23 은 내장
+     * 마이크를 둘 노출하는데 productName 이 똑같아서, 이름으로 견주면
+     * 하단에서 후면으로 바뀌어도 「그대로」로 읽힌다(실측).
+     */
+    private fun confirmRoute(rec: AudioRecord): OpenedFormat? {
+        val provisional = opened ?: return null
+        val info = rec.routedDevice?.let { scanner.infoOf(it) }
+        if (info == null) {
+            Log.w(TAG, "녹음을 시작했는데도 경로를 확인할 수 없다")
+            return null
+        }
+        val asRequested = target == null || info.stableKey == target.stableKey
+        if (!asRequested) {
+            Log.w(TAG, "고른 기기와 다른 곳으로 열렸다: ${target?.stableKey} → ${info.stableKey}")
+        }
+        val fmt = provisional.copy(
+            micKind = info.kind,
+            deviceLabel = info.displayName,
+            deviceKey = info.stableKey,
+            routedAsRequested = asRequested,
+            routeConfirmed = true,
+        )
+        opened = fmt
+        Log.i(TAG, "경로 확인: ${fmt.deviceKey}")
+        return fmt
     }
 
     override fun start(onBlock: (AudioBlock, BlockStats) -> Unit) {
         val rec = record ?: error("open() 을 먼저 불러야 한다")
-        val fmt = opened ?: error("open() 을 먼저 불러야 한다")
+        val provisional = opened ?: error("open() 을 먼저 불러야 한다")
         if (!running.compareAndSet(false, true)) return
 
         rec.startRecording()
 
+        // 경로는 **지금** 확정된다. 확인되면 그 사실을 알려, 보정값을 고를
+        // 열쇠가 실제로 열린 기기의 것이 되게 한다.
+        val fmt = confirmRoute(rec)?.also { onRouteConfirmed?.invoke(it) } ?: provisional
+
         // 쓰던 기기가 빠지면 AudioRecord 는 조용히 다른 기기로 갈아탄다.
         // 알아채지 못하면 **다른 마이크의 소리에 옛 보정값을 그대로 적용**하게
         // 된다 — 화면의 숫자는 멀쩡해 보이는데 전혀 다른 값이다.
-        val openedKey = opened?.deviceLabel
         routingListener = AudioRouting.OnRoutingChangedListener { routing ->
-            val now = routing.routedDevice?.productName?.toString()?.trim()
-            if (now != null && openedKey != null && now != openedKey) {
-                Log.w(TAG, "라우팅이 바뀌었다: $openedKey → $now")
-                onRoutingLost?.invoke()
+            val now = routing.routedDevice?.let { scanner.infoOf(it) } ?: return@OnRoutingChangedListener
+            val known = opened
+            when {
+                // 아직 확인 못 했던 경로가 이제 잡혔다.
+                known != null && !known.routeConfirmed ->
+                    confirmRoute(rec)?.let { onRouteConfirmed?.invoke(it) }
+
+                // 이름이 아니라 열쇠로 견준다(위 confirmRoute 주석 참고).
+                known != null && now.stableKey != known.deviceKey -> {
+                    Log.w(TAG, "라우팅이 바뀌었다: ${known.deviceKey} → ${now.stableKey}")
+                    onRoutingLost?.invoke()
+                }
             }
         }
         rec.addOnRoutingChangedListener(routingListener, Handler(Looper.getMainLooper()))
@@ -232,6 +279,10 @@ class MicSource(
         val floats = FloatArray(frames)
         val shorts = if (fmt.encoding == PcmEncoding.Int16) ShortArray(frames) else null
 
+        // startRecording 직후에도 경로가 아직 안 잡히는 기기가 있다.
+        // 소리가 실제로 들어온 뒤 한 번 더 물어본다.
+        var retriedConfirm = false
+
         while (running.get()) {
             // read() 는 READ_BLOCKING 이라 **데이터가 찰 때까지 기다린다.**
             // 그 대기 시간을 처리 시간에 넣으면 잘 돌아가는 기기도 늘
@@ -254,14 +305,26 @@ class MicSource(
             val ready = System.nanoTime()
 
             if (read <= 0) {
-                if (read < 0) Log.w(TAG, "read 오류: $read")
                 // 음수는 오류, 0 은 멈추는 중이다. 둘 다 이 덩어리는 버린다.
                 onBlock(
                     AudioBlock(floats, 0, fmt.sampleRate, ready),
                     BlockStats(0.0, 0.0, 0),
                 )
-                if (read < 0) break
+                if (read < 0) {
+                    // **여기서 조용히 빠져나가지 않는다.** 예전에는 break 만
+                    // 하고 아무에게도 알리지 않아, 화면은 「측정 중」인 채로
+                    // 마지막 숫자가 굳은 채 남았다(독립 검증 L01).
+                    Log.w(TAG, "read 오류로 캡처를 끝낸다: $read")
+                    running.set(false)
+                    onCaptureEnded?.invoke(CaptureEnd.of(read))
+                    return
+                }
                 continue
+            }
+
+            if (!retriedConfirm && opened?.routeConfirmed != true) {
+                retriedConfirm = true
+                confirmRoute(rec)?.let { onRouteConfirmed?.invoke(it) }
             }
 
             val stats = blockStats(floats, read)

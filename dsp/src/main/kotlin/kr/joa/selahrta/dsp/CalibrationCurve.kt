@@ -59,21 +59,38 @@ class CalibrationCurve private constructor(
     }
 
     /**
-     * 1/3 옥타브 31밴드에 걸 보정값(dB). **빼는 값이다.**
+     * FFT 칸마다 **곱할** 보정 계수(선형 전력비).
      *
-     * 밴드 하나의 응답은 그 밴드 안에서도 변하므로, 중심 한 점만 보지 않고
-     * 아래끝·중심·위끝을 에너지로 평균한다. 좁은 밴드에서는 차이가 없지만
-     * 곡선이 가파른 구간에서는 1dB 넘게 갈린다.
+     * 이것이 실제 보정 경로다. 칸 전력에 이 값을 곱한 뒤 밴드로 합산하면
+     * `Σ P[k]·10^(−g(f_k)/10)` 이 되어, 밴드 안 어디에 에너지가 있든
+     * 그 주파수의 응답을 받는다.
+     *
+     * 칸 0 은 DC 라 주파수가 0 이다. 마이크 응답을 말할 수 있는 자리가
+     * 아니므로 곡선의 첫 점 값을 쓴다([gainDbAt] 이 곡선 밖을 그렇게 다룬다).
+     */
+    fun binCorrectionLinear(fftSize: Int, sampleRate: Int): DoubleArray {
+        require(fftSize > 0) { "FFT 길이가 0 이하다: $fftSize" }
+        require(sampleRate > 0) { "샘플레이트가 0 이하다: $sampleRate" }
+        val binWidth = sampleRate.toDouble() / fftSize
+        return DoubleArray(fftSize / 2 + 1) { k ->
+            val hz = if (k == 0) lowestHz else k * binWidth
+            10.0.pow(-gainDbAt(hz) / 10.0)
+        }
+    }
+
+    /**
+     * 밴드 중심에서의 응답(dB). **화면에 곡선 모양을 그리기 위한 값이다.**
+     *
+     * 측정값 보정에 쓰지 않는다. 밴드 하나를 숫자 하나로 보정하려면 그 밴드
+     * 안의 에너지가 어느 주파수에 있는지 알아야 하는데, 그건 신호마다 다르다.
+     * 예전에는 아래끝·중심·위끝을 전력 평균해 뺐는데, 1kHz 밴드 응답이
+     * −6/0/+6dB 인 곡선에서 1kHz 순음의 실제 보정량은 0dB 이지만 그 평균은
+     * **+2.4157dB** 이라 없던 오차를 만들었다(독립 검증 R05).
+     *
+     * 실제 보정은 [binCorrectionLinear] 로 칸마다 한다.
      */
     fun bandGainsDb(): DoubleArray = DoubleArray(ThirdOctave.BAND_COUNT) { b ->
-        val lo = ThirdOctave.lowerEdge(b)
-        val c = ThirdOctave.exactCenter(b)
-        val hi = ThirdOctave.upperEdge(b)
-        // 세 점의 전력 평균. dB 평균이 아니다.
-        val p = (10.0.pow(gainDbAt(lo) / 10.0) +
-            10.0.pow(gainDbAt(c) / 10.0) +
-            10.0.pow(gainDbAt(hi) / 10.0)) / 3.0
-        10.0 * log10(p)
+        gainDbAt(ThirdOctave.exactCenter(b))
     }
 
     /** 곡선이 실제로 덮는 밴드인가. 밖이면 끝점 값을 늘여 쓴 것이라 근거가 약하다. */

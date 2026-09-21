@@ -55,6 +55,42 @@ sealed interface OpenResult {
     data class Failed(val reason: OpenFailure, val detail: String?) : OpenResult
 }
 
+/**
+ * 캡처가 **스스로** 끝난 까닭. 사람이 멈춘 경우는 여기 오지 않는다.
+ *
+ * 조용히 끝나면 화면은 「측정 중」인 채로 마지막 숫자를 붙들고 있게 된다.
+ * 그 숫자는 더 이상 지금 소리가 아니다(독립 검증 L01).
+ */
+enum class CaptureEnd(val messageKo: String, val reason: kr.joa.selahrta.domain.FailureReason) {
+    /** 다른 앱이 마이크를 가져갔다(통화 등). */
+    Preempted(
+        "다른 앱이 마이크를 가져가 측정이 끊겼습니다. 통화나 녹음 앱을 끄고 다시 시작하십시오.",
+        kr.joa.selahrta.domain.FailureReason.Preempted,
+    ),
+
+    /** 기기가 빠졌거나 오디오 서버가 죽었다. */
+    DeviceLost(
+        "마이크와의 연결이 끊겨 측정이 멈췄습니다. 다시 꽂고 시작하십시오.",
+        kr.joa.selahrta.domain.FailureReason.DeviceLost,
+    ),
+
+    /** 그 밖의 읽기 오류. */
+    ReadError(
+        "소리를 읽지 못해 측정이 멈췄습니다.",
+        kr.joa.selahrta.domain.FailureReason.Unknown,
+    ),
+    ;
+
+    companion object {
+        /** `AudioRecord.read()` 가 돌려준 음수 코드를 옮긴다. */
+        fun of(code: Int): CaptureEnd = when (code) {
+            android.media.AudioRecord.ERROR_INVALID_OPERATION -> Preempted
+            android.media.AudioRecord.ERROR_DEAD_OBJECT -> DeviceLost
+            else -> ReadError
+        }
+    }
+}
+
 /** 열지 못한 까닭. 담당자가 할 수 있는 일이 저마다 다르다. */
 enum class OpenFailure(val messageKo: String) {
     PermissionDenied("마이크 권한이 없습니다. 설정에서 허용해 주십시오."),
