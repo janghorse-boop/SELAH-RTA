@@ -1,0 +1,10 @@
+JUnit version 4.13.2
+..........................................................................................................................................................................................
+Time: 1.692
+
+OK (186 tests)
+
+Independent verification scratch directory: C:\Users\jangh\AppData\Local\Temp\selah-independent-f8b9297fbca242a2b5d325b154771dae
+SILENCE_PROMOTION events=[FeedbackEvent(hz=1000.1812391993856, peakLevelDbfs=-19.37827421816055, maxProminenceDb=95.93647703944893, startMs=0, endMs=null, durationMs=1462, hasHarmonics=false)]
+CONCURRENT_FINISH failure=java.util.ConcurrentModificationException
+Confirmed two residual defects; no Android runtime or ViewModel was executed.

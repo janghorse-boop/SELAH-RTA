@@ -64,6 +64,21 @@ data class FeedbackCandidate(
 )
 
 /**
+ * 기록이 **왜** 끝났는가.
+ *
+ * 「측정이 끝나서 관측이 잘린 것」은 **소리가 그쳤다는 증거가 아니다.**
+ * Phase 10 에서 이 기록을 저장하기 전에 그 차이를 남겨 둬야, 나중에
+ * 리포트가 「30초 울렸다」를 잘못 말하지 않는다(독립 검증 C 답변 5번).
+ */
+enum class FeedbackCloseReason(val labelKo: String) {
+    /** 소리가 그쳐서 끊겼다. 울린 시간이 곧 기록의 길이다. */
+    SilenceGap("소리가 그침"),
+
+    /** 측정이 끝나서 관측이 잘렸다. **더 울렸을 수 있다.** */
+    MeasurementEnded("측정 종료"),
+}
+
+/**
  * 「지속」까지 간 후보 하나의 **기록**(명세 9장).
  *
  * 화면의 후보 목록은 소리가 그치면 사라진다. 그러면 예배가 끝난 뒤
@@ -88,9 +103,19 @@ data class FeedbackEvent(
     val durationMs: Long,
     /** 배음이 함께 보였는가. 악기음일 수 있다는 뜻이다. */
     val hasHarmonics: Boolean,
+    /** 왜 끝났는가. 아직 울리는 중이면 null. */
+    val closeReason: FeedbackCloseReason? = null,
 ) {
     /** 아직 울리고 있는가. */
     val ongoing: Boolean get() = endMs == null
+
+    /**
+     * 이 길이를 「울린 시간」이라고 말해도 되는가.
+     *
+     * 측정이 끝나서 잘린 것이면 **더 울렸을 수 있다.** 리포트에 그대로
+     * 싣기 전에 이 값을 본다.
+     */
+    val durationIsComplete: Boolean get() = closeReason == FeedbackCloseReason.SilenceGap
 }
 
 /**
@@ -168,7 +193,27 @@ class FeedbackDetector(
         const val MAX_EVENTS = 50
     }
 
+    /**
+     * 처리와 종료가 함께 쓰는 자물쇠.
+     *
+     * **입구 검사만으로는 부족하다.** ViewModel 의 캡처 콜백은 맨 앞에서
+     * 「내가 살아 있는 세션인가」를 보는데, 그 검사를 **이미 지나 들어와
+     * 있는** 콜백은 막지 못한다. 그 상태에서 주 스레드가 [finish] 를
+     * 부르면 둘이 같은 `tracks` 를 동시에 만져
+     * `ConcurrentModificationException` 이 난다(독립 검증 C01).
+     *
+     * 오디오 스레드가 무는 시간은 한 프레임 처리(약 3ms)뿐이고, 부딪히는
+     * 것은 멈추는 순간 한 번이다. 주 스레드가 `join(500)` 으로 기다리는
+     * 것보다 짧다.
+     */
+    private val lock = Any()
+
     private val tracks = ArrayList<Track>()
+
+    /**
+     * 이미 끝났는가. 끝난 뒤에 늦게 온 덩어리가 기록을 되살리면 안 된다.
+     */
+    private var finished = false
 
     /** 넣은 프레임 수. 「얼마나 자주 보였는가」를 세는 기준이다. */
     private var frame = 0L
@@ -182,7 +227,8 @@ class FeedbackDetector(
     private val log = ArrayDeque<FeedbackEvent>()
 
     /** 이번 측정의 기록. 새것부터. */
-    val events: List<FeedbackEvent> get() = log.toList().asReversed()
+    val events: List<FeedbackEvent>
+        get() = synchronized(lock) { log.toList().asReversed() }
 
     /**
      * 지금 내놓을 만한 후보들. 센 것부터.
@@ -205,7 +251,11 @@ class FeedbackDetector(
      * [nowMs] 는 **단조 시계** 기준이어야 한다. 벽시계는 뒤로 갈 수 있어
      * 이어진 시간이 음수가 된다.
      */
-    fun process(power: DoubleArray, nowMs: Long) {
+    fun process(power: DoubleArray, nowMs: Long) = synchronized(lock) {
+        // 이미 끝낸 뒤라면 아무것도 하지 않는다. 늦게 도착한 덩어리가
+        // 닫아 둔 기록을 되살리면, 멈춘 뒤에도 하울링이 나는 것처럼 보인다.
+        if (finished) return@synchronized
+
         frame++
         val peaks = finder.find(power, minProminenceDb)
             .filter { it.widthBins <= maxWidthBins && amplitudeToDbfs(kotlin.math.sqrt(it.power)).value >= minLevelDbfs }
@@ -219,7 +269,7 @@ class FeedbackDetector(
         // 통과한다 — 관측 두 장뿐인데 2초를 「이어졌다」로 세는 일이
         // 그래서 생겼다(독립 검증 P9-03).
         val stale = tracks.filter { nowMs - it.lastSeenMs > gapMs }
-        for (t in stale) t.close()
+        for (t in stale) t.close(FeedbackCloseReason.SilenceGap)
         tracks.removeAll(stale)
 
         // **한 프레임에서 한 track 은 한 번만 갱신한다.** 예전에는 가까운
@@ -230,22 +280,29 @@ class FeedbackDetector(
         // 솟은 것부터 짝지어, 가장 센 봉우리가 제 track 을 가져간다.
         val taken = HashSet<Track>()
         for ((i, p) in peaks.withIndex()) {
-            val t = tracks.firstOrNull { it !in taken && it.matches(p.hz) }
+            // **가장 가까운** track 을 고른다. 예전에는 「허용 범위의 첫
+            // track」이라, 가까운 두 봉우리의 솟음 순서가 바뀌기만 해도
+            // 정체성이 뒤바뀌었다(독립 검증 C 답변 6번).
+            val t = tracks
+                .filter { it !in taken && it.matches(p.hz) }
+                .minByOrNull { cents(p.hz, it.hz) }
             if (t == null) {
                 val fresh = Track(p, nowMs, frame, harmonic[i])
                 tracks.add(fresh)
                 taken.add(fresh)
             } else {
-                t.update(p, nowMs, harmonic[i])
+                t.update(p, nowMs, frame, harmonic[i])
                 taken.add(t)
             }
         }
 
-        // 「지속」까지 간 것을 기록한다. 화면의 후보는 사라져도 기록은 남는다.
-        for (t in tracks) t.record(nowMs)
+        // **이번 프레임에 실제로 본 것만** 기록을 갱신한다. 유예 안에서
+        // 안 보이는 track 까지 갱신하면, 무음이 흐른 시간이 울린 증거로
+        // 쓰여 문턱을 못 넘은 소리가 사라진 뒤 승격된다(독립 검증 C03).
+        for (t in tracks) if (t.lastFrame == frame) t.record()
 
         candidates = tracks
-            .map { it.toCandidate(nowMs) }
+            .map { it.toCandidate() }
             .filter { it.state != FeedbackState.None }
             .sortedByDescending { it.prominenceDb }
     }
@@ -258,18 +315,20 @@ class FeedbackDetector(
      * 멈춘 시각으로 적으면 소리가 그친 뒤 조용했던 시간까지 울린 것으로
      * 센다(독립 검증 P9-01).
      */
-    fun finish(): List<FeedbackEvent> {
-        for (t in tracks) t.close()
+    fun finish(): List<FeedbackEvent> = synchronized(lock) {
+        for (t in tracks) t.close(FeedbackCloseReason.MeasurementEnded)
         tracks.clear()
         candidates = emptyList()
-        return events
+        finished = true
+        log.toList().asReversed()
     }
 
-    fun reset() {
+    fun reset() = synchronized(lock) {
         tracks.clear()
         candidates = emptyList()
         log.clear()
         frame = 0
+        finished = false
     }
 
     /**
@@ -309,6 +368,7 @@ class FeedbackDetector(
         val firstSeenMs = now
         var lastSeenMs = now
         val firstFrame = atFrame
+        var lastFrame = atFrame
         var framesSeen = 1L
         var harmonicSeen = harmonic
 
@@ -317,8 +377,9 @@ class FeedbackDetector(
 
         fun matches(other: Double): Boolean = cents(other, hz) <= matchCents
 
-        fun update(peak: SpectralPeak, now: Long, harmonic: Boolean) {
+        fun update(peak: SpectralPeak, now: Long, atFrame: Long, harmonic: Boolean) {
             framesSeen++
+            lastFrame = atFrame
             // 주파수는 천천히 따라간다. 한 프레임의 흔들림에 끌려가면
             // 흔들림 자체를 못 보게 된다.
             hz = hz * 0.8 + peak.hz * 0.2
@@ -340,8 +401,8 @@ class FeedbackDetector(
          * 시간과 최대값이 빠져 `start=0 · end=5160 · duration=3870` 처럼
          * 셋이 어긋났다(독립 검증 P9-04).
          */
-        fun record(now: Long) {
-            val c = toCandidate(now)
+        fun record() {
+            val c = toCandidate()
             val old = event
             if (old == null && c.state != FeedbackState.Persistent) return
 
@@ -372,20 +433,30 @@ class FeedbackDetector(
          * 끝난 시각은 **마지막으로 본 때**이고, 이어진 시간은 언제나
          * `end − start` 다. 셋이 서로 맞아야 나중에 리포트에 실어도 된다.
          */
-        fun close() {
+        fun close(reason: FeedbackCloseReason) {
             val e = event ?: return
             val i = log.indexOf(e)
             if (i >= 0) {
-                log[i] = e.copy(endMs = lastSeenMs, durationMs = lastSeenMs - e.startMs)
+                log[i] = e.copy(
+                    endMs = lastSeenMs,
+                    durationMs = lastSeenMs - e.startMs,
+                    closeReason = reason,
+                )
             }
             event = null
         }
 
-        fun toCandidate(now: Long): FeedbackCandidate {
-            val duration = now - firstSeenMs
+        /**
+         * 지금까지 **관측한** 구간으로 후보를 만든다.
+         *
+         * `now − firstSeen` 이 아니라 `lastSeen − firstSeen` 이다. 안 보이는
+         * 동안 흐른 시간은 울린 시간이 아니다(독립 검증 C03).
+         */
+        fun toCandidate(): FeedbackCandidate {
+            val duration = lastSeenMs - firstSeenMs
             val drift = cents(maxHz, minHz)
             val needed = if (harmonicSeen) (persistentMs * harmonicPatience).toLong() else persistentMs
-            val continuity = framesSeen.toDouble() / (frame - firstFrame + 1)
+            val continuity = framesSeen.toDouble() / (lastFrame - firstFrame + 1)
             val state = when {
                 duration >= needed && drift <= maxDriftCents && continuity >= minContinuity ->
                     FeedbackState.Persistent

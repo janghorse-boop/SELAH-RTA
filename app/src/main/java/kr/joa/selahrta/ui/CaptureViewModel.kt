@@ -320,13 +320,21 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 시험 신호를 스피커로 내보내는 쪽. 측정과는 따로 논다. */
     private val player = SignalPlayer(
-        onEnded = { reason ->
+        onEnded = { generation, reason ->
             // 오디오 스레드에서 온다. 상태는 주 스레드만 쓴다.
             onMainThread {
+                // **주 스레드에서 처리할 때 세대를 다시 본다.** 그 사이에
+                // 다음 재생이 시작됐으면 이것은 지난 소식이다 — 그대로
+                // 처리하면 소리는 나는데 화면만 꺼진다(독립 검증 C02).
+                if (generation != playGeneration) return@onMainThread
+                playGeneration = SignalPlayer.NONE
                 _state.value = _state.value.copy(playingSignal = null, signalNoticeKo = reason)
             }
         },
     )
+
+    /** 지금 내보내고 있는 재생의 세대. 늦게 온 소식을 가린다. */
+    private var playGeneration = SignalPlayer.NONE
     private var calibrationJob: Job? = null
     private var curveJob: Job? = null
     private var settingsJob: Job? = null
@@ -614,7 +622,9 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      * 수 있다.
      */
     fun playSignal(signal: TestSignal) {
-        val ok = player.start(signal, _state.value.signalLevel)
+        val gen = player.start(signal, _state.value.signalLevel)
+        playGeneration = gen
+        val ok = gen != SignalPlayer.NONE
         _state.value = _state.value.copy(
             playingSignal = if (ok) signal else null,
             signalNoticeKo = if (ok) null else "소리를 내보내지 못했습니다. 다른 앱이 스피커를 쓰고 있는지 보십시오.",
@@ -623,6 +633,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
 
     fun stopSignal() {
         player.stop()
+        playGeneration = SignalPlayer.NONE
         _state.value = _state.value.copy(playingSignal = null)
     }
 

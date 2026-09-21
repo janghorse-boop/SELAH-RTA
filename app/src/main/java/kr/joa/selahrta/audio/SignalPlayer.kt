@@ -44,8 +44,12 @@ class SignalPlayer(
      *
      * 알리지 않으면 화면은 「내보내는 중」인데 소리는 안 나는 상태가
      * 되고, 담당자는 그것을 측정기 탓으로 읽는다(독립 검증 P9-05).
+     *
+     * **세대를 함께 넘긴다.** 받는 쪽이 주 스레드에서 처리할 때쯤이면
+     * 이미 다음 재생이 시작됐을 수 있는데, 그때 이 소식으로 화면을 끄면
+     * **소리는 나는데 멈춘 것으로 보인다**(독립 검증 C02).
      */
-    private val onEnded: ((String) -> Unit)? = null,
+    private val onEnded: ((generation: Long, reason: String) -> Unit)? = null,
 ) {
 
     private val running = AtomicBoolean(false)
@@ -68,7 +72,12 @@ class SignalPlayer(
      *
      * @return 시작했으면 true. 오디오 장치를 못 열면 false.
      */
-    fun start(signal: TestSignal, level: SignalLevel): Boolean {
+    /**
+     * 소리를 내보내기 시작한다.
+     *
+     * @return 시작한 재생의 세대. 못 열면 [NONE].
+     */
+    fun start(signal: TestSignal, level: SignalLevel): Long {
         stop()
 
         val minBytes = AudioTrack.getMinBufferSize(
@@ -78,7 +87,7 @@ class SignalPlayer(
         )
         if (minBytes <= 0) {
             Log.w(TAG, "getMinBufferSize=$minBytes")
-            return false
+            return NONE
         }
 
         val t = runCatching {
@@ -103,12 +112,12 @@ class SignalPlayer(
                 .build()
         }.getOrElse {
             Log.w(TAG, "AudioTrack 을 만들지 못했다", it)
-            return false
+            return NONE
         }
 
         if (t.state != AudioTrack.STATE_INITIALIZED) {
             t.release()
-            return false
+            return NONE
         }
 
         // play() 도 실패할 수 있다. 생성자만 감싸고 여기를 빼 두면,
@@ -117,7 +126,7 @@ class SignalPlayer(
         if (!started) {
             t.release()
             Log.w(TAG, "play() 가 실패했다")
-            return false
+            return NONE
         }
 
         generation++
@@ -130,7 +139,7 @@ class SignalPlayer(
             isDaemon = true
             start()
         }
-        return true
+        return mine
     }
 
     private fun loop(t: AudioTrack, signal: TestSignal, level: SignalLevel, mine: Long) {
@@ -166,6 +175,7 @@ class SignalPlayer(
                     track = null
                     runCatching { t.release() }
                     onEnded?.invoke(
+                        mine,
                         if (wrote == AudioTrack.ERROR_DEAD_OBJECT) {
                             "소리 장치와의 연결이 끊겨 내보내기를 멈췄습니다."
                         } else {
@@ -195,8 +205,11 @@ class SignalPlayer(
         track = null
     }
 
-    private companion object {
-        const val SAMPLE_RATE = 48_000
-        const val FRAMES = 1024
+    companion object {
+        /** 「재생 아님」. 시작하지 못했거나 멈춘 상태다. */
+        const val NONE = 0L
+
+        private const val SAMPLE_RATE = 48_000
+        private const val FRAMES = 1024
     }
 }
