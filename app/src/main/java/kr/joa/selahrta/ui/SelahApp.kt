@@ -11,14 +11,17 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import android.Manifest
 import android.content.pm.PackageManager
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
@@ -27,6 +30,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
@@ -93,6 +97,8 @@ fun SelahApp() {
     }
 
     val context = LocalContext.current
+    // 닫기를 고르면 액티비티를 끝낸다. 컨텍스트가 액티비티가 아니면 null 이다.
+    val activity = context as? android.app.Activity
     var hasPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
@@ -130,6 +136,55 @@ fun SelahApp() {
         }
         lifecycleOwner.lifecycle.addObserver(obs)
         onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
+
+    // **뒤로 가기.** 측정 화면에서는 바로 닫지 않고 묻는다 — 예배 중에
+    // 손이 스쳐 닫히면 그때까지 잰 것이 사라진다. 다른 화면에서는 측정
+    // 화면으로 돌아오기만 한다(안드로이드의 보통 방식이다).
+    var askExit by rememberSaveable { mutableStateOf(false) }
+    val onMeasureHome = section == NavSection.Measure
+    BackHandler(enabled = true) {
+        if (onMeasureHome) {
+            askExit = true
+        } else {
+            section = NavSection.Measure
+            mode = NavSection.Measure.defaultMode(mode)
+        }
+    }
+
+    if (askExit) {
+        val running = capture.measure is MeasureState.Running
+        AlertDialog(
+            onDismissRequest = { askExit = false },
+            containerColor = SelahColors.Surface,
+            title = { Text("앱을 닫을까요?", color = SelahColors.TextPrimary) },
+            text = {
+                Text(
+                    // 재고 있을 때와 아닐 때는 잃는 것이 다르다. 같은 말을
+                    // 쓰면 「닫아도 괜찮겠지」로 읽힌다.
+                    if (running) {
+                        "지금 재고 있습니다. 닫으면 측정이 끝납니다."
+                    } else {
+                        "SELAH RTA 를 닫습니다."
+                    },
+                    color = SelahColors.TextSecondary,
+                    fontSize = 13.sp,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    askExit = false
+                    activity?.finish()
+                }) {
+                    Text("닫기", color = SelahColors.High)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { askExit = false }) {
+                    Text("취소", color = SelahColors.Accent)
+                }
+            },
+        )
     }
 
     Scaffold(
