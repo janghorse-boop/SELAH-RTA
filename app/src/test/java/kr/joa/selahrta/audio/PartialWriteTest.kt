@@ -134,6 +134,77 @@ class PartialWriteTest {
     }
 
     /**
+     * **0 이 잠깐 나왔다가 다시 나아가면 세던 횟수를 되돌린다.**
+     *
+     * 검증자가 적은 회귀다 — 49회 0 → 양수 → 다시 0 이어도 정상 진행.
+     * 되돌리지 않으면 **멀쩡한 출력이 잘린다.**
+     */
+    @Test
+    fun `0 이 나왔다 다시 나아가면 횟수를 되돌린다`() {
+        // 49회 0 → 한 번 받음 → 다시 49회 0 → 나머지 전부.
+        val zeros = 49
+        val sink = RecordingSink { call, offered ->
+            when {
+                call <= zeros -> 0
+                call == zeros + 1 -> 128
+                call <= zeros * 2 + 1 -> 0
+                else -> offered
+            }
+        }
+        val ended = java.util.concurrent.atomic.AtomicInteger(0)
+        val p = SignalPlayer(onEnded = { _, _ -> ended.incrementAndGet() }, openSink = { sink }, warn = {})
+        p.start(TestSignal.Sine1k, SignalLevel.Low)
+        assertTrue("두 덩어리는 나가야 한다", sink.enough.await(10, TimeUnit.SECONDS))
+        p.stop()
+
+        assertEquals("중간에 끝내면 안 된다", 0, ended.get())
+        val got = sink.snapshot()
+        assertArrayEquals(
+            "0 을 건너뛴 뒤에도 파형이 이어져야 한다",
+            expected(FRAMES * 2),
+            got.copyOf(FRAMES * 2),
+            1e-6f,
+        )
+    }
+
+    /** 끝없이 0 이어도 **알림은 한 번뿐**이다. */
+    @Test
+    fun `0 이 이어져 끝나도 알림은 한 번뿐이다`() {
+        val sink = RecordingSink { _, _ -> 0 }
+        val count = java.util.concurrent.atomic.AtomicInteger(0)
+        val latch = CountDownLatch(1)
+        val p = SignalPlayer(
+            onEnded = { _, _ -> count.incrementAndGet(); latch.countDown() },
+            openSink = { sink },
+            warn = {},
+        )
+        p.start(TestSignal.Sine1k, SignalLevel.Low)
+        assertTrue(latch.await(5, TimeUnit.SECONDS))
+        Thread.sleep(100)
+        p.stop()
+
+        assertEquals("한 번만 알려야 한다", 1, count.get())
+    }
+
+    /** 0 을 기다리는 도중 사람이 멈추면 **알리지 않고** 끝난다. */
+    @Test
+    fun `0 을 기다리는 도중 멈추면 알리지 않는다`() {
+        val started = CountDownLatch(1)
+        val sink = RecordingSink { _, _ -> started.countDown(); 0 }
+        val count = java.util.concurrent.atomic.AtomicInteger(0)
+        val p = SignalPlayer(onEnded = { _, _ -> count.incrementAndGet() }, openSink = { sink }, warn = {})
+        p.start(TestSignal.Sine1k, SignalLevel.Low)
+        assertTrue(started.await(5, TimeUnit.SECONDS))
+
+        p.stop()
+        Thread.sleep(150)
+
+        assertEquals("사람이 멈춘 것은 알림이 아니다", 0, count.get())
+        assertNull(p.playing)
+        assertTrue("자원을 놓아야 한다", sink.released.await(5, TimeUnit.SECONDS))
+    }
+
+    /**
      * **적게 받은 뒤 오류가 오면 그 오류로 끝난다.**
      *
      * Android 문서가 적은 순서다 — 일부가 전송된 경우 `DEAD_OBJECT` 는

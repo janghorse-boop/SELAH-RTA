@@ -411,7 +411,16 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         val ok = gen != SignalPlayer.NONE
         controller.update { st -> st.copy(
             playingSignal = if (ok) signal else null,
-            signalNoticeKo = if (ok) null else "소리를 내보내지 못했습니다. 다른 앱이 스피커를 쓰고 있는지 보십시오.",
+            // **막힌 까닭을 구분해 적는다**(독립 검증 답변 1번). 앞 재생이
+            // 아직 끝나지 않아 막힌 것인데 「다른 앱이 스피커를 쓰는지
+            // 보라」고 하면 엉뚱한 곳을 보게 된다.
+            signalNoticeKo = when {
+                ok -> null
+                player.pendingCount >= SignalPlayer.MAX_STUCK_PLAYBACKS ->
+                    "앞서 내보내던 소리가 아직 끝나지 않았습니다. 잠시 뒤 다시 눌러 보십시오."
+                else ->
+                    "소리를 내보내지 못했습니다. 다른 앱이 스피커를 쓰고 있는지 보십시오."
+            },
         ) }
     }
 

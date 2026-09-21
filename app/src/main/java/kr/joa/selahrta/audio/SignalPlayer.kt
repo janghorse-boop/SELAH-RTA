@@ -71,24 +71,61 @@ class SignalPlayer(
      * 보장하지 않는다. 다만 **`write` 는 같은 자물쇠로 감싸지 않는다** —
      * 감싸면 막혀 있는 write 가 stop 을 영영 막아 교착이 된다.
      */
-    private class Playback(val id: Long, val sink: SignalSink) {
+    private class Playback(
+        val id: Long,
+        val sink: SignalSink,
+        private val warn: (String) -> Unit,
+    ) {
         /** 이 재생이 계속 써도 되는가. **재생마다 따로다.** */
         val running = AtomicBoolean(true)
 
-        private val released = AtomicBoolean(false)
+        /**
+         * 놓기를 **시작**했는가. 두 번 놓지 않으려는 것뿐이다.
+         *
+         * **이것을 「끝났다」로 쓰면 안 된다.** `compareAndSet` 이 먼저 돌고
+         * `sink.release()` 는 그 뒤에 불리므로, 이 값이 true 여도 아직
+         * 장치를 놓는 중일 수 있다. 예전에 이것을 상한 계산에 써서,
+         * **놓는 중인 것이 세어지지 않아 상한이 무력해졌다**
+         * (독립 검증 SP01 후속 — 시작 5회에 미완 5개, 보이는 수는 1).
+         */
+        private val releaseStarted = AtomicBoolean(false)
+
+        /**
+         * 놓기가 **끝났는가.** 상한과 `pendingCount` 는 이것으로 센다.
+         *
+         * `@Volatile` 인 까닭은 **기다리지 않고** 읽어야 하기 때문이다.
+         * 자물쇠를 걸어 읽게 하면 늦어지는 `release()` 에 시작·화면이 함께
+         * 막힌다(검증자 권고).
+         */
+        @Volatile
+        private var releaseDone = false
+
+        val isReleaseComplete: Boolean get() = releaseDone
 
         /** `stop()` 과 `release()` 만 직렬화한다. `write` 는 아니다. */
         private val sinkLock = Any()
 
-        val isReleased: Boolean get() = released.get()
-
         fun stopSink() = synchronized(sinkLock) {
-            if (!released.get()) sink.stop()
+            if (!releaseStarted.get()) sink.stop()
         }
 
-        /** 두 번 놓지 않는다. 실제로 놓은 쪽만 true 를 받는다. */
-        fun releaseOnce(): Boolean = synchronized(sinkLock) {
-            released.compareAndSet(false, true).also { if (it) sink.release() }
+        /**
+         * 두 번 놓지 않는다. 실제로 놓은 쪽만 true 를 받는다.
+         *
+         * **놓다가 터져도 「끝난 것」으로 둔다.** 다시 부를 수 없는데
+         * 끝나지 않은 것으로 남기면 상한이 영영 막혀, 그 뒤로 소리를
+         * 아예 낼 수 없게 된다.
+         */
+        fun releaseOnce(): Boolean {
+            if (!releaseStarted.compareAndSet(false, true)) return false
+            try {
+                synchronized(sinkLock) { sink.release() }
+            } catch (t: Throwable) {
+                warn("출력을 놓다가 실패했다: $t")
+            } finally {
+                releaseDone = true
+            }
+            return true
         }
     }
 
@@ -134,7 +171,8 @@ class SignalPlayer(
      */
     fun start(signal: TestSignal, level: SignalLevel): Long {
         stop()
-        stuck.removeAll { it.isReleased }
+        // **놓기가 끝난 것만** 치운다. 놓는 중인 것도 상한에 센다.
+        stuck.removeAll { it.isReleaseComplete }
 
         // **끝나기를 기다리는 것이 쌓이면 새로 열지 않는다**(독립 검증 SP01).
         // 강제로 놓지 않는다 — 아직 `write` 안에 있는 자원을 놓으면 S01 이
@@ -153,7 +191,7 @@ class SignalPlayer(
         val pb: Playback
         synchronized(lock) {
             generation++
-            pb = Playback(generation, s)
+            pb = Playback(generation, s, warn)
             current = pb
             playing = signal
             thread = Thread({ loop(pb, signal, level) }, "selah-signal-out").apply {
@@ -277,8 +315,12 @@ class SignalPlayer(
             pb.releaseOnce()
             stuck.remove(pb)
         } else {
-            // 아직 write 안에 있다. 두고 간다 — 깨어나면 제 손으로 놓는다.
+            // 아직 끝나지 않았다. 두고 간다 — 깨어나면 제 손으로 놓는다.
             if (!stuck.contains(pb)) stuck.add(pb)
+            // **넣는 사이에 끝났을 수 있다.** 그 좁은 순서에서 끝난 것이
+            // 목록에 남으면 `pendingCount` 가 실제보다 커진다(검증자 후속
+            // 점검). 넣고 나서 한 번 더 본다.
+            if (pb.isReleaseComplete) stuck.remove(pb)
         }
     }
 
@@ -301,10 +343,20 @@ class SignalPlayer(
          */
         const val MAX_STUCK_PLAYBACKS = 2
 
-        /** `write` 가 0 을 돌려줄 때 몇 번까지 더 기다릴 것인가. */
+        /**
+         * `write` 가 0 을 돌려줄 때 **몇 번 연속**까지 더 기다릴 것인가.
+         *
+         * **시계로 재는 제한이 아니다**(독립 검증 답변 2번). 쉬는 것은
+         * 처음 49회 뒤뿐이라 요청한 잠은 모두 98ms 이고, 거기에 `write`
+         * 자체가 걸리는 시간과 스케줄링 지연이 더해진다. 안드로이드가
+         * 「이만큼이면 고장」이라고 보장하는 값도 아니다 — **끝없이 도는
+         * 것을 끊는 방어**일 뿐이다.
+         *
+         * 잠깐 0 이 나왔다가 다시 나아가면 세던 횟수는 0 으로 되돌린다.
+         */
         private const val MAX_IDLE_ROUNDS = 50
 
-        /** 그 사이에 쉬는 시간(ms). 바쁜 맴돌이를 만들지 않는다. */
+        /** 0 이 이어질 때 한 번 쉬는 시간(ms). 바쁜 맴돌이를 만들지 않는다. */
         private const val IDLE_WAIT_MS = 2L
     }
 }
