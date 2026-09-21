@@ -1,0 +1,6 @@
+Independent verification scratch directory: C:\Users\jangh\AppData\Local\Temp\selah-independent-46e768e23df84d10a71d695c3c46d491
+PENDING_LOCK blocked=true remaining=1 pendingItemPreserved=true
+RELEASE_PATH autonomous=false throws=false starts=2 failedCount=2 pending=2
+RELEASE_PATH autonomous=false throws=true starts=2 failedCount=2 pending=2
+RELEASE_PATH autonomous=true throws=false starts=4 failedCount=0 pending=0
+RELEASE_PATH autonomous=true throws=true starts=4 failedCount=0 pending=0
