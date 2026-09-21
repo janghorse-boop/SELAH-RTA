@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.sp
 import kr.joa.selahrta.domain.MeasureState
 import kr.joa.selahrta.dsp.ThirdOctave
 import kr.joa.selahrta.dsp.FeedbackCandidate
+import kr.joa.selahrta.dsp.FeedbackEvent
 import kr.joa.selahrta.dsp.FeedbackState
 import kr.joa.selahrta.ui.CaptureUiState
 import kr.joa.selahrta.ui.components.BandMeter
@@ -216,6 +217,28 @@ fun FeedbackScreen(capture: CaptureUiState) {
             }
         }
 
+        // 명세 9장: frequency·level·prominence·duration·timestamp 를 기록한다.
+        // 후보는 소리가 그치면 사라지지만 기록은 남는다 — 예배가 끝난 뒤
+        // 「아까 그게 몇 Hz 였지」에 답할 수 있어야 EQ 를 만질 수 있다.
+        Text(
+            "이번 측정의 기록",
+            color = SelahColors.TextPrimary,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(top = 20.dp, bottom = 8.dp),
+        )
+        if (capture.feedbackLog.isEmpty()) {
+            Text(
+                "아직 없습니다. 「지속」까지 간 것만 남깁니다.",
+                color = SelahColors.TextMuted,
+                fontSize = 12.sp,
+            )
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (e in capture.feedbackLog) EventRow(e)
+            }
+        }
+
         Text(
             "「후보」입니다 — 오래 끄는 오르간 저음도 여기까지 올 수 있습니다. " +
                 "소리를 듣고 판단하십시오.",
@@ -225,6 +248,50 @@ fun FeedbackScreen(capture: CaptureUiState) {
             modifier = Modifier.padding(top = 16.dp, bottom = 24.dp),
         )
     }
+}
+
+/** 기록 한 줄. 언제·어디서·얼마나였는지를 적는다. */
+@Composable
+private fun EventRow(e: FeedbackEvent) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(SelahColors.SurfaceVariant, RoundedCornerShape(8.dp))
+            .padding(horizontal = 12.dp, vertical = 9.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                "${formatHz(e.hz)} ${hzUnit(e.hz)}",
+                color = SelahColors.TextPrimary,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                // 측정을 시작한 뒤 몇 분 몇 초에 있었던 일인지 적는다.
+                "${formatElapsed(e.startMs)} · ${(e.durationMs / 100) / 10.0}초 · " +
+                    "솟음 ${"%.0f".format(e.maxProminenceDb)}dB" +
+                    if (e.hasHarmonics) " · 배음 있음" else "",
+                color = SelahColors.TextMuted,
+                fontSize = 10.sp,
+            )
+        }
+        if (e.ongoing) {
+            Text(
+                "울리는 중",
+                color = SelahColors.High,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+    }
+}
+
+/** 측정을 시작한 뒤 흐른 시간을 분:초로 적는다. */
+private fun formatElapsed(ms: Long): String {
+    val total = ms / 1000
+    return "%d:%02d".format(total / 60, total % 60)
 }
 
 /** 후보 한 줄. 무엇을 근거로 올렸는지 숫자로 함께 보인다. */

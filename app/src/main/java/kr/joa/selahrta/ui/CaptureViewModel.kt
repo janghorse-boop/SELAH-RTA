@@ -40,6 +40,7 @@ import kr.joa.selahrta.dsp.CalibrationCurve
 import kr.joa.selahrta.dsp.CalibrationFile
 import kr.joa.selahrta.dsp.FeedbackCandidate
 import kr.joa.selahrta.dsp.FeedbackDetector
+import kr.joa.selahrta.dsp.FeedbackEvent
 import kr.joa.selahrta.dsp.FeedbackState
 import kr.joa.selahrta.dsp.RtaEngine
 import kr.joa.selahrta.dsp.SpectrumSink
@@ -120,6 +121,13 @@ data class CaptureUiState(
     val rta: RtaView? = null,
     /** 하울링 후보(명세 9장). 센 것부터. 없으면 빈 목록이다. */
     val feedback: List<FeedbackCandidate> = emptyList(),
+    /**
+     * 이번 측정에서 「지속」까지 간 것들의 기록. 새것부터.
+     *
+     * 후보는 소리가 그치면 사라지지만 기록은 남는다 — 예배가 끝난 뒤
+     * 「아까 그게 몇 Hz 였지」에 답할 수 있어야 한다.
+     */
+    val feedbackLog: List<FeedbackEvent> = emptyList(),
     /** 지금 적용 중인 주파수 보정 곡선. */
     val curve: ActiveCurve? = null,
     /** 곡선 가져오기 결과 안내. */
@@ -197,8 +205,16 @@ data class MeasurementSnapshot(
     val spl: MultiWeightFrame?,
     val rta: RtaFrame?,
     val anyClipping: Boolean,
-    /** 하울링 후보(명세 9장). 센 것부터. */
-    val feedback: List<FeedbackCandidate> = emptyList(),
+    /**
+     * 하울링 후보(명세 9장). 센 것부터.
+     *
+     * **기본값을 두지 않는다.** 두었더니 스냅샷을 만들 때 기록을 빠뜨려도
+     * 컴파일이 통과했고, 화면만 조용히 비어 있었다. 새 필드를 더할 때
+     * 채우는 것을 잊으면 컴파일이 막아 주어야 한다.
+     */
+    val feedback: List<FeedbackCandidate>,
+    /** 이번 측정에서 「지속」까지 간 것들의 기록. 새것부터. */
+    val feedbackLog: List<FeedbackEvent>,
 )
 
 /**
@@ -739,6 +755,8 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                     meter = MeterReading(),
                     rta = null,
                     feedback = emptyList(),
+                    // 새 측정이므로 지난 기록을 비운다.
+                    feedbackLog = emptyList(),
                     diagnostics = CaptureDiagnostics(),
                     calibration = ActiveCalibration.assumed,
                     curve = null,
@@ -814,6 +832,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             rta = session.rta.frame(),
             anyClipping = session.clippedBlocks > 0,
             feedback = session.feedback.candidates,
+            feedbackLog = session.feedback.events,
         )
     }
 
@@ -1085,6 +1104,8 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             curve = null,
             curveGeneration = 0,
             // 멈춘 뒤에도 후보 목록이 남으면 「지금 하울링 중」으로 읽힌다.
+            // **기록(feedbackLog)은 지우지 않는다** — 멈춘 뒤에 보려고
+            // 남기는 것이다. 새 측정을 시작할 때 비운다.
             feedback = emptyList(),
             // **세션 번호를 지운다.** 늦게 도착하는 경로 확인·오류가 검사를
             // 통과해 방금 지운 보정을 되살리거나, 정상 종료를 실패로 뒤집는
@@ -1147,6 +1168,7 @@ private fun CaptureUiState.withMeasurement(m: MeasurementSnapshot?): CaptureUiSt
         } ?: meter,
         // 프레임이 **그 곡선으로 계산된 것일 때만** 보정 적용이라고 적는다.
         feedback = m.feedback,
+        feedbackLog = m.feedbackLog,
         rta = m.rta?.toView(
             offsetDb = offset.db,
             curve = curve?.curve?.takeIf { m.rta.curveGeneration == curveGeneration },

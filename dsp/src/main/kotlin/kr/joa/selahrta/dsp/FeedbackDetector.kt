@@ -64,6 +64,36 @@ data class FeedbackCandidate(
 )
 
 /**
+ * 「지속」까지 간 후보 하나의 **기록**(명세 9장).
+ *
+ * 화면의 후보 목록은 소리가 그치면 사라진다. 그러면 예배가 끝난 뒤
+ * 「아까 그게 몇 Hz 였지」를 답할 수 없다 — 담당자가 EQ 를 만질 때
+ * 필요한 것이 바로 그 답이다.
+ *
+ * 명세가 적으라고 한 다섯 가지를 그대로 담는다: frequency, level,
+ * prominence, duration, timestamp.
+ */
+data class FeedbackEvent(
+    /** 주파수(Hz). 이어지는 동안의 평균이다. */
+    val hz: Double,
+    /** 이어지는 동안의 **가장 큰** 레벨(dBFS). */
+    val peakLevelDbfs: Double,
+    /** 이어지는 동안의 **가장 큰** 솟음(dB). */
+    val maxProminenceDb: Double,
+    /** 시작 시각(측정을 시작한 뒤 ms). */
+    val startMs: Long,
+    /** 끝난 시각. 아직 이어지는 중이면 null. */
+    val endMs: Long?,
+    /** 이어진 시간(ms). 아직 이어지는 중이면 마지막으로 본 시각까지다. */
+    val durationMs: Long,
+    /** 배음이 함께 보였는가. 악기음일 수 있다는 뜻이다. */
+    val hasHarmonics: Boolean,
+) {
+    /** 아직 울리고 있는가. */
+    val ongoing: Boolean get() = endMs == null
+}
+
+/**
  * 하울링 후보 탐지기(명세 9장).
  *
  * **가장 큰 FFT 칸 하나를 하울링으로 단정하지 않는다.** 명세가 그렇게
@@ -133,10 +163,26 @@ class FeedbackDetector(
     /** 같은 소리로 볼 주파수 차이. 반음의 1/4 쯤이다. */
     private val matchCents = 25.0
 
+    private companion object {
+        /** 기록을 몇 개까지 들고 있을 것인가. */
+        const val MAX_EVENTS = 50
+    }
+
     private val tracks = ArrayList<Track>()
 
     /** 넣은 프레임 수. 「얼마나 자주 보였는가」를 세는 기준이다. */
     private var frame = 0L
+
+    /**
+     * 이번 측정에서 「지속」까지 간 것들의 기록(명세 9장).
+     *
+     * **개수를 막아 둔다.** 예배 한 번이 두 시간이고 하울링이 잦으면
+     * 끝없이 쌓인다. 오래된 것부터 버린다 — 방금 일이 더 중요하다.
+     */
+    private val log = ArrayDeque<FeedbackEvent>()
+
+    /** 이번 측정의 기록. 새것부터. */
+    val events: List<FeedbackEvent> get() = log.toList().asReversed()
 
     /**
      * 지금 내놓을 만한 후보들. 센 것부터.
@@ -177,8 +223,13 @@ class FeedbackDetector(
             }
         }
 
-        // 끊긴 것을 버린다.
-        tracks.removeAll { nowMs - it.lastSeenMs > gapMs }
+        // 「지속」까지 간 것을 기록한다. 화면의 후보는 사라져도 기록은 남는다.
+        for (t in tracks) t.record(nowMs)
+
+        // 끊긴 것을 버린다. 기록해 둔 것은 그때 마무리한다.
+        val dead = tracks.filter { nowMs - it.lastSeenMs > gapMs }
+        for (t in dead) t.close()
+        tracks.removeAll(dead)
 
         candidates = tracks
             .map { it.toCandidate(nowMs) }
@@ -189,6 +240,7 @@ class FeedbackDetector(
     fun reset() {
         tracks.clear()
         candidates = emptyList()
+        log.clear()
         frame = 0
     }
 
@@ -232,6 +284,9 @@ class FeedbackDetector(
         var framesSeen = 1L
         var harmonicSeen = harmonic
 
+        /** 이 소리가 남긴 기록. 「지속」이 된 뒤에 생긴다. */
+        var event: FeedbackEvent? = null
+
         fun matches(other: Double): Boolean = cents(other, hz) <= matchCents
 
         fun update(peak: SpectralPeak, now: Long, harmonic: Boolean) {
@@ -245,6 +300,43 @@ class FeedbackDetector(
             prominenceDb = max(prominenceDb, peak.prominenceDb)
             lastSeenMs = now
             if (harmonic) harmonicSeen = true
+        }
+
+        /**
+         * 「지속」이면 기록을 만들거나 갱신한다.
+         *
+         * **「의심」은 기록하지 않는다.** 스쳐 가는 소리까지 남기면 목록이
+         * 잡음으로 덮여, 정작 봐야 할 것이 묻힌다.
+         */
+        fun record(now: Long) {
+            val c = toCandidate(now)
+            if (c.state != FeedbackState.Persistent) return
+            val updated = FeedbackEvent(
+                hz = c.hz,
+                peakLevelDbfs = c.levelDbfs,
+                maxProminenceDb = c.prominenceDb,
+                startMs = firstSeenMs,
+                endMs = null,
+                durationMs = lastSeenMs - firstSeenMs,
+                hasHarmonics = c.hasHarmonics,
+            )
+            val old = event
+            if (old == null) {
+                log.addLast(updated)
+                if (log.size > MAX_EVENTS) log.removeFirst()
+            } else {
+                val i = log.indexOf(old)
+                if (i >= 0) log[i] = updated
+            }
+            event = updated
+        }
+
+        /** 소리가 끊겼다. 기록을 마무리한다. */
+        fun close() {
+            val e = event ?: return
+            val i = log.indexOf(e)
+            if (i >= 0) log[i] = e.copy(endMs = lastSeenMs)
+            event = null
         }
 
         fun toCandidate(now: Long): FeedbackCandidate {
