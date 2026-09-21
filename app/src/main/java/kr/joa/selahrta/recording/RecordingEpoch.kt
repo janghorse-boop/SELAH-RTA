@@ -31,6 +31,9 @@ data class RecordingEpoch(
  * 과거 행이 가리키는 epoch 가 사라지면 그 행의 뜻을 되살릴 수 없다.
  * 그래서 [MAX_EPOCHS] 를 넘으면 **녹음을 실패로 끝낸다** — 말없이
  * 잃는 것보다 낫다(녹음 설계 2차 ⑤).
+ *
+ * **한 스레드 전용이다.** [add] 와 읽기를 다른 스레드에서 섞어
+ * 부르지 않는다는 전제다. 잠금을 두어 가리지 않고 **적어 둔다.**
  */
 class EpochTable(private val max: Int = MAX_EPOCHS) {
 
