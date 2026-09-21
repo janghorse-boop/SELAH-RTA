@@ -35,8 +35,13 @@ class SpectralWidthBoundaryTest {
         const val FS_48 = 48_000
         const val FS_44 = 44_100
 
-        /** [FeedbackDetector] 의 기본값. 이 시험이 견주는 대상이다. */
-        const val MAX_WIDTH_BINS = 5
+        /**
+         * [FeedbackDetector] 의 기본값을 **그대로 가져온다.**
+         *
+         * 숫자를 베껴 두면 detector 기본값이 바뀌어도 이 시험은 옛 값을
+         * 계속 시험한다(독립 검증 답변 2번의 지적).
+         */
+        const val MAX_WIDTH_BINS = FeedbackDetector.DEFAULT_MAX_WIDTH_BINS
 
         /** 폭을 훑는 눈금(Hz). 8.1% 차이(≈4Hz)를 구별할 만큼 촘촘하다. */
         const val STEP_HZ = 0.5
@@ -130,6 +135,52 @@ class SpectralWidthBoundaryTest {
             binRatio,
             ratio,
             STEP_HZ / at48 + 0.01,
+        )
+    }
+
+    /**
+     * **문턱을 `5 × 칸폭` 으로 읽으면 틀린다.**
+     *
+     * 독립 검증자가 짚어 준 것이다:
+     *
+     * > `widthBins` 는 half-power 이상인 연속 bin 의 **개수**를 센다. 중앙에
+     * > 맞춘 대칭 봉우리는 5개에서 7개로 바뀌므로, 문턱을 단순히
+     * > `5 × fs/N` 으로 읽으면 안 된다. … ±3 bin 이 half-power 에 들어오는
+     * > **B ≈ 6×fs/N** 부근에서 탈락한다.
+     *
+     * 나는 요청서에 「5칸 문턱 = 58.6Hz」라고 적어 놓고 실측 경계가
+     * 70.0Hz 로 나온 것을 **그대로 뒀다.** 둘이 안 맞는데 보지 못했다.
+     *
+     * 여기서 그 관계를 못박는다 — 대칭 봉우리의 칸 수는 **5 다음이 7**이고,
+     * 6은 나오지 않는다.
+     */
+    @Test
+    fun `대칭 봉우리의 칸 수는 5 다음이 7 이다`() {
+        val binHz = FS_48.toDouble() / N
+        val seen = sortedSetOf<Int>()
+        var bw = 1.0
+        while (bw <= 8 * binHz) {
+            val w = widthBins(FS_48, bw)
+            if (w > 0) seen.add(w)
+            bw += 0.5
+        }
+        println("[칸 수] 나타난 값 $seen")
+        assertTrue("5칸은 나와야 한다", 5 in seen)
+        assertTrue("7칸도 나와야 한다", 7 in seen)
+        assertTrue("대칭이면 6칸은 나올 수 없다 ($seen)", 6 !in seen)
+
+        // 그래서 문턱은 6×칸폭 직전이다 — 5×칸폭이 아니다.
+        val boundary = boundaryHz(FS_48)
+        println("[문턱] 실측 ${boundary}Hz · 5×칸폭 ${"%.1f".format(5 * binHz)}Hz · 6×칸폭 ${"%.1f".format(6 * binHz)}Hz")
+        assertTrue(
+            "실측이 5×칸폭보다 훨씬 커야 한다 (${boundary} vs ${5 * binHz})",
+            boundary > 5 * binHz + binHz / 2,
+        )
+        assertEquals(
+            "실측은 6×칸폭 직전이어야 한다",
+            6 * binHz,
+            boundary,
+            STEP_HZ + 0.01,
         )
     }
 

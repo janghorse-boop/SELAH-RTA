@@ -165,7 +165,7 @@ class FeedbackDetector(
      * 4096점 Hann 창에서 순음의 −3dB 폭은 2~3칸이다. 넉넉히 잡아도
      * 말소리 포먼트(수십 칸)와는 확실히 갈린다.
      */
-    private val maxWidthBins: Int = 5,
+    private val maxWidthBins: Int = DEFAULT_MAX_WIDTH_BINS,
     /** 이보다 조용하면 보지 않는다. 고요 속의 봉우리는 뜻이 없다. */
     private val minLevelDbfs: Double = -70.0,
     /** 이만큼 이어지면 「의심」. */
@@ -197,9 +197,21 @@ class FeedbackDetector(
     /** 같은 소리로 볼 주파수 차이. 반음의 1/4 쯤이다. */
     private val matchCents = 25.0
 
-    private companion object {
+    companion object {
+        /**
+         * 순음으로 볼 최대 폭(칸).
+         *
+         * **이 값을 Hz 로 옮길 때 `5 × 칸폭` 으로 읽으면 틀린다.**
+         * `widthBins` 는 half-power 이상인 **연속 칸의 개수**라, 칸 한가운데
+         * 놓인 대칭 봉우리에서는 5개(±2칸) 다음이 7개(±3칸)다 — 6은 나오지
+         * 않는다. 그래서 실제로 떨어지는 자리는 **±3칸이 들어오는 폭**,
+         * 곧 `6 × 칸폭` 직전이다(48kHz 70.3Hz · 44.1kHz 64.6Hz).
+         * 자세한 것은 `SpectralWidthBoundaryTest`.
+         */
+        const val DEFAULT_MAX_WIDTH_BINS = 5
+
         /** 기록을 몇 개까지 들고 있을 것인가. */
-        const val MAX_EVENTS = 50
+        private const val MAX_EVENTS = 50
     }
 
     /**

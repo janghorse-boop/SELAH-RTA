@@ -43,6 +43,18 @@ android {
     buildFeatures {
         compose = true
     }
+
+    testOptions {
+        unitTests {
+            // android.jar 의 빈 구현은 기본값을 돌려주게 한다.
+            //
+            // 이것이 꺼져 있으면 `Log.w` 같은 호출이 예외를 던져, 시험이
+            // 돌리는 스레드가 그 자리에서 죽는다 — 실기기에서는 멀줦한 경로가
+            // 시험에서만 깨져, **없는 결함을 있다고 읽게 된다.** 실제로
+            // 내보내기 시험을 쓸 때 그런 일이 있었다.
+            isReturnDefaultValues = true
+        }
+    }
 }
 
 // 시험이 몇 개 돌았는지 보이게 한다. 조용히 0개가 도는 것을 못 알아채면

@@ -1,14 +1,9 @@
 package kr.joa.selahrta.audio
 
-import android.media.AudioAttributes
-import android.media.AudioFormat
-import android.media.AudioManager
-import android.media.AudioTrack
 import android.os.Process
 import android.util.Log
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.PI
-import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.random.Random
 
@@ -35,8 +30,8 @@ enum class SignalLevel(val labelKo: String, val amplitude: Double) {
  * 잰다. 예배당의 주파수 응답을 그렇게 본다. 한 대만 있어도 스피커에서 나온
  * 소리가 제 마이크로 돌아오므로 하울링 탐지를 확인할 수 있다.
  *
- * 재생은 **미디어 소리**로 나간다(USAGE_MEDIA). 알림음 경로로 내보내면
- * 기기에 따라 음량이 따로 놀고, 무음 모드에서 안 들린다.
+ * 실제 출력은 [SignalSink] 가 한다 — 그래야 출력 오류·늦은 종료·빠른
+ * 재시작을 **에뮬레이터 없이** 시험할 수 있다.
  */
 class SignalPlayer(
     /**
@@ -50,16 +45,52 @@ class SignalPlayer(
      * **소리는 나는데 멈춘 것으로 보인다**(독립 검증 C02).
      */
     private val onEnded: ((generation: Long, reason: String) -> Unit)? = null,
+    /** 소리를 내보낼 곳. 시험은 가짜를 끼운다. */
+    private val openSink: () -> SignalSink = { AudioTrackSink() },
 ) {
 
-    private val running = AtomicBoolean(false)
-    private var thread: Thread? = null
-    private var track: AudioTrack? = null
+    /**
+     * 한 번의 내보내기. **상태를 재생마다 따로 갖는다.**
+     *
+     * 예전에는 `running` 플래그와 출력 장치가 **하나씩만** 있었다. 그래서
+     * 두 가지가 났다(둘 다 시험으로 재현했다):
+     *
+     * - `stop()` 의 `join` 이 시간 초과되면 주 스레드가 자원을 놓는데,
+     *   내보내는 스레드는 아직 `write` 안에 있었다 — **놓은 것을 계속 쓴다.**
+     * - 그 스레드가 살아남은 채로 새 재생이 `running = true` 를 세우면,
+     *   옛 스레드가 그것을 보고 **제 출력으로 다시 쓴다** — 소리가 둘 난다.
+     *
+     * 둘 다 「이미 들어와 있는 것」과 「새로 시작한 것」이 같은 공용 상태를
+     * 만져서 생긴 일이다. 캡처 쪽에서 세 번 같은 실수를 했다(F02·C01·G02).
+     * 그래서 여기서는 **공용 상태를 없앤다** — 플래그도 출력도 재생이
+     * 소유하고, 자원은 **마지막에 손을 떼는 쪽**이 한 번만 놓는다.
+     */
+    private class Playback(val id: Long, val sink: SignalSink) {
+        /** 이 재생이 계속 써도 되는가. **재생마다 따로다.** */
+        val running = AtomicBoolean(true)
+
+        private val released = AtomicBoolean(false)
+
+        /** 두 번 놓지 않는다. 실제로 놓은 쪽만 true 를 받는다. */
+        fun releaseOnce(): Boolean =
+            released.compareAndSet(false, true).also { if (it) sink.release() }
+    }
 
     /**
-     * 몇 번째 재생인가. 늦게 끝나는 옛 스레드가 새 재생을 정리하지
-     * 못하게 막는다 — 캡처 쪽 [CaptureGeneration] 과 같은 규칙이다.
+     * 상태를 갈아 끼우는 자리를 직렬화한다.
+     *
+     * **`join` 을 이 안에서 하지 않는다.** 내보내는 스레드가 끝내려면 이
+     * 자물쇠가 필요한데, 기다리는 쪽이 쥐고 있으면 서로 막힌다.
      */
+    private val lock = Any()
+
+    private var thread: Thread? = null
+
+    /** 지금 살아 있는 재생. 멈추면 **먼저** null 이 된다. */
+    @Volatile
+    private var current: Playback? = null
+
+    /** 몇 번째 재생인가. 주 스레드만 만진다. */
     private var generation = 0L
 
     /** 지금 내보내고 있는 신호. 멈춰 있으면 null. */
@@ -70,86 +101,39 @@ class SignalPlayer(
     /**
      * 소리를 내보내기 시작한다. 이미 내보내고 있으면 갈아 끼운다.
      *
-     * @return 시작했으면 true. 오디오 장치를 못 열면 false.
-     */
-    /**
-     * 소리를 내보내기 시작한다.
-     *
      * @return 시작한 재생의 세대. 못 열면 [NONE].
      */
     fun start(signal: TestSignal, level: SignalLevel): Long {
         stop()
 
-        val minBytes = AudioTrack.getMinBufferSize(
-            SAMPLE_RATE,
-            AudioFormat.CHANNEL_OUT_MONO,
-            AudioFormat.ENCODING_PCM_FLOAT,
-        )
-        if (minBytes <= 0) {
-            Log.w(TAG, "getMinBufferSize=$minBytes")
+        val s = openSink()
+        if (!s.open(SAMPLE_RATE, FRAMES)) {
+            s.release()
             return NONE
         }
 
-        val t = runCatching {
-            AudioTrack.Builder()
-                .setAudioAttributes(
-                    AudioAttributes.Builder()
-                        // 미디어 소리로 내보낸다 — 음량 조절이 예상대로 된다.
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                        .build(),
-                )
-                .setAudioFormat(
-                    AudioFormat.Builder()
-                        .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
-                        .setSampleRate(SAMPLE_RATE)
-                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                        .build(),
-                )
-                // 최소의 네 배. 작게 잡으면 소리가 끊긴다.
-                .setBufferSizeInBytes(minBytes * 4)
-                .setTransferMode(AudioTrack.MODE_STREAM)
-                .build()
-        }.getOrElse {
-            Log.w(TAG, "AudioTrack 을 만들지 못했다", it)
-            return NONE
+        val pb: Playback
+        synchronized(lock) {
+            generation++
+            pb = Playback(generation, s)
+            current = pb
+            playing = signal
+            thread = Thread({ loop(pb, signal, level) }, "selah-signal-out").apply {
+                isDaemon = true
+            }
         }
-
-        if (t.state != AudioTrack.STATE_INITIALIZED) {
-            t.release()
-            return NONE
-        }
-
-        // play() 도 실패할 수 있다. 생성자만 감싸고 여기를 빼 두면,
-        // 실패했는데 「내보내는 중」으로 남는다(독립 검증 P9-05).
-        val started = runCatching { t.play() }.isSuccess
-        if (!started) {
-            t.release()
-            Log.w(TAG, "play() 가 실패했다")
-            return NONE
-        }
-
-        generation++
-        val mine = generation
-        track = t
-        playing = signal
-        running.set(true)
-
-        thread = Thread({ loop(t, signal, level, mine) }, "selah-signal-out").apply {
-            isDaemon = true
-            start()
-        }
-        return mine
+        thread?.start()
+        return pb.id
     }
 
-    private fun loop(t: AudioTrack, signal: TestSignal, level: SignalLevel, mine: Long) {
-        Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
+    private fun loop(pb: Playback, signal: TestSignal, level: SignalLevel) {
+        runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO) }
         val buf = FloatArray(FRAMES)
         val rng = Random(System.nanoTime())
         val pink = PinkNoise(rng)
         var sample = 0L
 
-        while (running.get()) {
+        while (pb.running.get()) {
             for (i in 0 until FRAMES) {
                 val time = (sample + i).toDouble() / SAMPLE_RATE
                 val v = when (signal) {
@@ -162,47 +146,71 @@ class SignalPlayer(
             sample += FRAMES
 
             // 막고 쓴다 — 버퍼가 빌 때까지 기다린다. 멈추면 write 가 바로 돌아온다.
-            val wrote = t.write(buf, 0, FRAMES, AudioTrack.WRITE_BLOCKING)
+            val wrote = pb.sink.write(buf, FRAMES)
             if (wrote < 0) {
                 // **조용히 빠져나가지 않는다.** 예전에는 로그만 쓰고
-                // 돌아가서, `running`·`playing` 과 AudioTrack 이 그대로
-                // 남았다 — 소리는 안 나는데 화면은 「내보내는 중」이고
-                // 장치 자원도 잡은 채였다(독립 검증 P9-05).
+                // 돌아가서, 화면은 「내보내는 중」인데 소리는 안 나고 장치
+                // 자원도 잡은 채였다(독립 검증 P9-05).
                 Log.w(TAG, "write 오류로 재생을 끝낸다: $wrote")
-                if (generation == mine) {
-                    running.set(false)
-                    playing = null
-                    track = null
-                    runCatching { t.release() }
-                    onEnded?.invoke(
-                        mine,
-                        if (wrote == AudioTrack.ERROR_DEAD_OBJECT) {
-                            "소리 장치와의 연결이 끊겨 내보내기를 멈췄습니다."
-                        } else {
-                            "소리를 내보내지 못해 멈췄습니다."
-                        },
-                    )
-                } else {
-                    // 이미 다음 재생이 시작됐다. 내 것만 놓고 물러난다.
-                    runCatching { t.release() }
-                }
+                endWithError(pb, wrote)
                 return
             }
         }
+
+        // 사람이 멈춰서 빠져나왔다. **여기서 놓는다** — `stop()` 의 기다림이
+        // 시간 초과돼 그쪽이 놓지 않았을 수 있고, 그때 놓는 쪽은 나뿐이다.
+        pb.releaseOnce()
     }
 
-    fun stop() {
-        generation++
-        running.set(false)
-        playing = null
-        track?.let { t ->
-            runCatching { if (t.state == AudioTrack.STATE_INITIALIZED) t.stop() }
-                .onFailure { Log.w(TAG, "stop 실패", it) }
+    /** 내보내기가 오류로 끝났다. **아직 내가 현재 재생일 때만** 알린다. */
+    private fun endWithError(pb: Playback, wrote: Int) {
+        pb.running.set(false)
+        val mine = synchronized(lock) {
+            if (current === pb) {
+                current = null
+                playing = null
+                true
+            } else {
+                false
+            }
         }
-        thread?.join(500)
-        thread = null
-        track?.release()
-        track = null
+        pb.releaseOnce()
+        if (!mine) return
+
+        onEnded?.invoke(
+            pb.id,
+            if (wrote == SignalSink.ERROR_DEAD_OBJECT) {
+                "소리 장치와의 연결이 끊겨 내보내기를 멈췄습니다."
+            } else {
+                "소리를 내보내지 못해 멈췄습니다."
+            },
+        )
+    }
+
+    /**
+     * 사람이 멈춘다. **알리지 않는다** — 스스로 끊긴 것이 아니다.
+     *
+     * 기다림이 시간 초과되면 **자원을 놓지 않고 물러난다.** 아직
+     * `write` 안에 있는 스레드가 깨어날 때 제 손으로 놓는다. 장치가 아주
+     * 죽어 영영 안 깨어나면 그 하나가 남지만, **놓은 것을 쓰는 것보다는
+     * 낫다.**
+     */
+    fun stop() {
+        val pb: Playback?
+        val t: Thread?
+        synchronized(lock) {
+            pb = current
+            t = thread
+            current = null
+            thread = null
+            playing = null
+            pb?.running?.set(false)
+        }
+        if (pb == null) return
+
+        pb.sink.stop()
+        t?.join(JOIN_MS)
+        if (t == null || !t.isAlive) pb.releaseOnce()
     }
 
     companion object {
@@ -211,5 +219,8 @@ class SignalPlayer(
 
         private const val SAMPLE_RATE = 48_000
         private const val FRAMES = 1024
+
+        /** 내보내는 스레드를 기다리는 시간. */
+        internal const val JOIN_MS = 500L
     }
 }

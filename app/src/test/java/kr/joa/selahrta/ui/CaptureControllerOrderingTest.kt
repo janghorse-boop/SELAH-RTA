@@ -134,8 +134,12 @@ class CaptureControllerOrderingTest {
      * > 미처리 snapshot 을 최신 하나로 합친다.
      *
      * **아직 합치지(conflate) 않는다.** 먼저 재고, 재 보고 정한다.
-     * 이 시험은 그 숫자를 찍고 **회복 뒤 최신 값으로 수렴하는 것**만
-     * 단언한다.
+     *
+     * **이 시험이 재는 것은 「시간」이 아니라 「데이터 시점」이다**(독립
+     * 검증 답변 3번). 가짜 큐를 동기로 비우므로, 벽시계 회복 시간·실제
+     * Main Looper 지연·Compose 비용·메모리는 **재지 않는다.** 그리고
+     * `StateFlow` 의 conflation 은 값만 합칠 뿐 **이미 post 된 runnable 을
+     * 없애지 않는다** — 58개는 실제로 58번 돈다.
      */
     @Test
     fun `주 스레드가 밀려도 회복하면 최신 값으로 수렴한다`() {
@@ -371,8 +375,39 @@ class CaptureControllerOrderingTest {
             after.meter.maxSpl!!,
             1e-9,
         )
-        assertNotNull("Leq 누적도 이어져야 한다", leqBefore)
-        assertNotNull(after.meter.leqShort)
+        // **Leq 도 이력을 잃지 않아야 한다.** null 검사만으로는 리셋을
+        // 잡지 못한다(독립 검증 권고). 조용한 소리만 넣은 쪽과 견준다 —
+        // 엔진이 새로 만들어졌다면 두 값이 같아진다.
+        assertNotNull("Leq 가 있어야 한다", leqBefore)
+        val withHistory = after.meter.leqShort
+        assertNotNull(withHistory)
+
+        val fresh = freshControllerFedQuietOnly()
+        assertNotNull("견줄 값이 있어야 한다", fresh)
+        assertTrue(
+            "큰 소리의 이력이 남아 있어야 한다 (이어온 $withHistory / 새로 시작 $fresh)",
+            withHistory!! > fresh!! + 3.0,
+        )
+    }
+
+    /** 처음부터 조용한 소리만 넣은 새 측정의 Leq. 위 시험이 견줄 값이다. */
+    private fun freshControllerFedQuietOnly(): Double? {
+        val keepDevices = devices
+        val keepSources = sources
+        val keepController = controller
+        val keepMain = main
+        val keepClock = clock
+        build()
+        controller.start()
+        repeat(60) { last.deliver(amplitude = 0.02f) }
+        val v = controller.composed().meter.leqShort
+        controller.stop()
+        devices = keepDevices
+        sources = keepSources
+        controller = keepController
+        main = keepMain
+        clock = keepClock
+        return v
     }
 
     /**

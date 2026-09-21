@@ -29,7 +29,7 @@ import kotlin.random.Random
  *
  * | 기준 | 값 | 48kHz | 44.1kHz |
  * |---|---|---|---|
- * | `maxWidthBins` | 5칸 | 58.6Hz 까지 | 53.8Hz 까지 |
+ * | `maxWidthBins` | 5칸 | **70.3Hz 직전까지** | **64.6Hz 직전까지** |
  * | 둘레 안쪽(`skirtBins`) | 4칸 | ±46.9Hz 바깥 | ±43.1Hz 바깥 |
  * | 둘레 바깥(`neighbourhoodBins`) | 48칸 | ±562Hz 까지 | ±517Hz 까지 |
  *
@@ -406,8 +406,12 @@ class SampleRateEquivalenceTest {
             "[분해능] 48k: 창 ${"%.1f".format(window48)}ms 칸 ${"%.2f".format(bin48)}Hz | " +
                 "44.1k: 창 ${"%.1f".format(window44)}ms 칸 ${"%.2f".format(bin44)}Hz",
         )
+        // **`5 × 칸폭` 이 아니다.** widthBins 는 half-power 이상인 연속
+        // 칸의 **개수**라, 대칭 봉우리에서 5개(±2칸) 다음은 7개(±3칸)다.
+        // 그래서 떨어지는 자리는 `6 × 칸폭` 직전이다(독립 검증 답변 2번).
         println(
-            "[5칸 문턱] 48k=${"%.1f".format(5 * bin48)}Hz 44.1k=${"%.1f".format(5 * bin44)}Hz " +
+            "[폭 문턱] 48k=${"%.1f".format(6 * bin48)}Hz 직전 " +
+                "44.1k=${"%.1f".format(6 * bin44)}Hz 직전 " +
                 "(${"%.1f".format((1 - bin44 / bin48) * 100)}% 좁다)",
         )
 
