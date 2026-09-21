@@ -12,6 +12,7 @@ import kr.joa.selahrta.audio.MicSource
 import kr.joa.selahrta.audio.chooseInput
 import kr.joa.selahrta.audio.CaptureDiagnostics
 import kr.joa.selahrta.audio.CaptureEnd
+import kr.joa.selahrta.audio.CaptureGeneration
 import kr.joa.selahrta.audio.OpenFailure
 import kr.joa.selahrta.audio.OpenResult
 import kr.joa.selahrta.audio.OpenedFormat
@@ -285,8 +286,13 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     @Volatile
     private var active: CaptureSession? = null
 
-    /** 여태 연 측정의 수. 세션 번호를 매긴다. 주 스레드만 만진다. */
-    private var sessionCounter = 0L
+    /**
+     * 세대를 매기고 늦게 온 소식을 가린다. 주 스레드만 만진다.
+     *
+     * 규칙과 그 까닭은 [CaptureGeneration] 에 적었고, 규칙 자체는
+     * `CaptureGenerationTest` 가 못박는다.
+     */
+    private val generation = CaptureGeneration()
 
     /**
      * 그 세션의 오디오 스레드에 일을 시킨다.
@@ -447,7 +453,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      * 분리와 같은 정책으로 처리한다.
      */
     private fun onRoutingChanged(session: Long, to: InputDeviceInfo?) {
-        if (session != _state.value.session) return
+        if (!generation.accepts(session)) return
         val from = _state.value.opened?.deviceLabel ?: "쓰던 마이크"
         applyDisconnectPolicy(
             name = from,
@@ -468,7 +474,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         // 멈추면 세션 번호가 0 이 되므로 여기서 걸린다 — 예전에는 stop 이
         // 번호를 그대로 둬서, 늦게 온 확인이 방금 지운 보정을 다시
         // 구독했다(독립 재검증 F04).
-        if (session != _state.value.session) return
+        if (!generation.accepts(session)) return
         openingKey = fmt.deviceKey
         _state.value = _state.value.copy(
             opened = fmt,
@@ -500,7 +506,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     private fun onCaptureEnded(session: Long, end: CaptureEnd) {
         // 사람이 멈춘 뒤 늦게 도착한 오류는 버린다. 그러지 않으면 정상
         // 종료가 「다른 앱이 마이크를 가져갔습니다」로 뒤집힌다(F04).
-        if (session != _state.value.session) return
+        if (!generation.accepts(session)) return
 
         // 기기가 빠져서 끝난 것이면 **분리 정책을 여기서 실행한다.**
         // 목록 변경보다 읽기 오류가 먼저 오는 순서에서는 `active` 가 이미
@@ -592,8 +598,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
 
         // 이 세션의 번호. 오디오 스레드가 내는 값에 이 번호가 붙고,
         // 주 스레드는 번호가 다른 값을 버린다.
-        sessionCounter++
-        val mySession = sessionCounter
+        val mySession = generation.begin()
 
         val mic = MicSource(
             context = getApplication(),
@@ -917,6 +922,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         // 이미 끝난 측정이 화면을 건드리지 못한다(독립 재검증 F02).
         val ending = active
         active = null
+        generation.end()
 
         ending?.source?.close()
         ending?.commands?.clear()
@@ -938,8 +944,9 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             curveGeneration = 0,
             // **세션 번호를 지운다.** 늦게 도착하는 경로 확인·오류가 검사를
             // 통과해 방금 지운 보정을 되살리거나, 정상 종료를 실패로 뒤집는
-            // 일을 막는다(독립 재검증 F04).
-            session = 0,
+            // 일을 막는다(독립 재검증 F04). 화면 쪽 사본이며, 실제 판정은
+            // [generation] 이 한다 — 둘은 여기와 start 에서만 함께 바뀐다.
+            session = CaptureGeneration.NONE,
             // 열린 기기도 지운다. 남겨 두면 설정 화면이 이미 닫힌 기기에
             // 「사용 중」을 붙인다. 마지막으로 쓴 기기는 따로 기억한다.
             opened = null,

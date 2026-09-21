@@ -273,73 +273,58 @@ class MicSource(
         }
     }
 
+    /**
+     * `AudioRecord` 를 [CaptureRecorder] 로 감싼다.
+     *
+     * 안드로이드에 붙어 있는 부분은 여기까지다 — 16비트 변환과 실제 읽기.
+     * 순서를 지키는 일은 [runCaptureLoop] 이 하고, 그쪽은 기기 없이 시험한다.
+     */
+    private inner class RecordAdapter(
+        private val rec: AudioRecord,
+        encoding: PcmEncoding,
+    ) : CaptureRecorder {
+        private val shorts = if (encoding == PcmEncoding.Int16) ShortArray(1024) else null
+
+        override fun read(into: FloatArray, frames: Int): Int {
+            // read() 는 READ_BLOCKING 이라 **데이터가 찰 때까지 기다린다.**
+            if (shorts == null) return rec.read(into, 0, frames, AudioRecord.READ_BLOCKING)
+            val n = rec.read(shorts, 0, frames, AudioRecord.READ_BLOCKING)
+            if (n > 0) {
+                // 16비트 정수를 -1..1 로 옮긴다. 32768 로 나눈다 —
+                // 32767 로 나누면 최소값(-32768)이 1.0 을 넘어
+                // 멀쩡한 신호가 클리핑으로 잡힌다.
+                for (i in 0 until n) into[i] = shorts[i] / 32768f
+            }
+            return n
+        }
+
+        override fun routedDevice(): InputDeviceInfo? =
+            rec.routedDevice?.let { scanner.infoOf(it) }
+    }
+
     private fun loop(rec: AudioRecord, fmt: OpenedFormat, onBlock: (AudioBlock, BlockStats) -> Unit) {
+        // 오디오 캡처를 UI 보다 앞에 둔다(명세 17장).
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
 
-        // 한 덩어리는 약 21ms(1024 프레임 @48kHz). FFT 4096 을 채우기에
-        // 알맞고, 화면 갱신 10~20 FPS 와도 어긋나지 않는다.
-        val frames = 1024
-        // **버퍼를 한 번만 만든다.** 덩어리마다 새로 만들면 초당 50번 쓰레기가
-        // 생겨 장시간 예배에서 GC 가 캡처를 멈춘다.
-        val floats = FloatArray(frames)
-        val shorts = if (fmt.encoding == PcmEncoding.Int16) ShortArray(frames) else null
+        runCaptureLoop(
+            recorder = RecordAdapter(rec, fmt.encoding),
+            sampleRate = fmt.sampleRate,
+            running = running,
+            routeAlreadyConfirmed = { opened?.routeConfirmed == true },
+            callbacks = object : CaptureLoopCallbacks {
+                override fun onBlock(block: AudioBlock, stats: BlockStats) = onBlock(block, stats)
 
-        // startRecording 직후에도 경로가 아직 안 잡히는 기기가 있다.
-        // 소리가 실제로 들어온 뒤 한 번 더 물어본다.
-        var retriedConfirm = false
-
-        while (running.get()) {
-            // read() 는 READ_BLOCKING 이라 **데이터가 찰 때까지 기다린다.**
-            // 그 대기 시간을 처리 시간에 넣으면 잘 돌아가는 기기도 늘
-            // 「못 따라간다」로 보인다. 그래서 시각은 read 가 돌아온 뒤에 잡는다.
-            val read = if (shorts != null) {
-                val n = rec.read(shorts, 0, frames, AudioRecord.READ_BLOCKING)
-                if (n > 0) {
-                    // 16비트 정수를 -1..1 로 옮긴다. 32768 로 나눈다 —
-                    // 32767 로 나누면 최소값(-32768)이 1.0 을 넘어
-                    // 멀쩡한 신호가 클리핑으로 잡힌다.
-                    for (i in 0 until n) floats[i] = shorts[i] / 32768f
+                override fun onRouteConfirmed(device: InputDeviceInfo) {
+                    // 늦게 잡힌 경로다. 열린 형식을 확정하고 알린다.
+                    confirmRoute(rec)?.let { this@MicSource.onRouteConfirmed?.invoke(it) }
                 }
-                n
-            } else {
-                rec.read(floats, 0, frames, AudioRecord.READ_BLOCKING)
-            }
 
-            // 이 덩어리의 자료가 손에 들어온 시각. 나중에 녹음과 그래프를
-            // 맞출 때 기준이 되는 값이라 단조 시계를 쓴다(벽시계는 뒤로 갈 수 있다).
-            val ready = System.nanoTime()
-
-            // **읽고 나서 다시 본다.** `read()` 는 데이터가 찰 때까지 기다리므로,
-            // 기다리는 동안 누군가 멈췄을 수 있다. 여기서 안 보면 이미 끝난
-            // 캡처가 덩어리를 한 번 더 흘려보낸다(독립 재검증 F02).
-            if (!running.get()) return
-
-            if (read <= 0) {
-                // 음수는 오류, 0 은 멈추는 중이다. 둘 다 이 덩어리는 버린다.
-                onBlock(
-                    AudioBlock(floats, 0, fmt.sampleRate, ready),
-                    BlockStats(0.0, 0.0, 0),
-                )
-                if (read < 0) {
-                    // **여기서 조용히 빠져나가지 않는다.** 예전에는 break 만
-                    // 하고 아무에게도 알리지 않아, 화면은 「측정 중」인 채로
-                    // 마지막 숫자가 굳은 채 남았다(독립 검증 L01).
-                    Log.w(TAG, "read 오류로 캡처를 끝낸다: $read")
-                    running.set(false)
-                    onCaptureEnded?.invoke(CaptureEnd.of(read))
-                    return
+                override fun onEnded(end: CaptureEnd) {
+                    Log.w(TAG, "읽기 오류로 캡처를 끝낸다: $end")
+                    onCaptureEnded?.invoke(end)
                 }
-                continue
-            }
-
-            if (!retriedConfirm && opened?.routeConfirmed != true) {
-                retriedConfirm = true
-                confirmRoute(rec)?.let { onRouteConfirmed?.invoke(it) }
-            }
-
-            val stats = blockStats(floats, read)
-            onBlock(AudioBlock(floats, read, fmt.sampleRate, ready), stats)
-        }
+            },
+        )
     }
 
     override fun close() {
