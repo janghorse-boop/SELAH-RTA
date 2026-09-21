@@ -1,0 +1,18 @@
+JUnit version 4.13.2
+.[RTA] ù ��� -79.639445818 vs -79.639445818
+.[�Ͽ︵] �ѹ��� [1000] / �ɰ��� [1000]
+..[SPL A] �ѹ��� max=-17.049979318 peak=-0.915150041 / �ɰ��� max=-17.049979318 peak=-0.915150041
+[SPL C] �ѹ��� max=-17.053778601 peak=-0.915150041 / �ɰ��� max=-17.053778601 peak=-0.915150041
+[SPL Z] �ѹ��� max=-17.029959968 peak=-0.915150041 / �ɰ��� max=-17.029959968 peak=-0.915150041
+
+Time: 0.447
+
+OK (4 tests)
+
+QUEUE emptyCapacity=1 accepted=1 consumed=0 interrupted=true
+SPL A short=true long=true sessionA=Dbfs(value=-16.987394982269134) sessionB=Dbfs(value=-16.987394982269134) fullEqual=true
+SPL C short=true long=true sessionA=Dbfs(value=-16.989467593842537) sessionB=Dbfs(value=-16.989467593842534) fullEqual=false
+SPL Z short=true long=true sessionA=Dbfs(value=-16.973783164086015) sessionB=Dbfs(value=-16.973783164085997) fullEqual=false
+FEEDBACK whole=[FeedbackEvent(hz=1000.1803242626909, peakLevelDbfs=-19.37753819101507, maxProminenceDb=95.95813674971455, startMs=85, endMs=null, durationMs=2901, hasHarmonics=false, closeReason=null)]
+FEEDBACK split=[FeedbackEvent(hz=1000.1803242626909, peakLevelDbfs=-19.37753819101507, maxProminenceDb=95.95813674971455, startMs=93, endMs=null, durationMs=2907, hasHarmonics=false, closeReason=null)]
+FEEDBACK equal=false
