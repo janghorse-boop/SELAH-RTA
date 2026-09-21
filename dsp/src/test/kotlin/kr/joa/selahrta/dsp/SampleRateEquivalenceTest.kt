@@ -1,6 +1,7 @@
 package kr.joa.selahrta.dsp
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.PI
@@ -245,53 +246,140 @@ class SampleRateEquivalenceTest {
     // ---- 3. 폭이 있는 소리에서 판정이 갈리는가 ----
 
     /**
-     * 폭이 있는 소리에서도 **두 레이트의 판정이 같은가.**
+     * 씨앗마다 짝지은 결과. **어느 쪽으로** 갈렸는지를 담는다.
      *
-     * `maxWidthBins` 가 칸으로 적혀 있으니, 폭이 문턱 근처인 소리는 한쪽
-     * 에서만 통과할 수 있다. 그런데 이 신호는 **한 번 돌린 결과로 견줄 수
-     * 없다** — 줄들의 간섭 무늬가 씨앗마다 달라, 5Hz 에서 48kHz 만 놓치고
-     * 2Hz·10Hz 에서는 양쪽 다 잡는 식으로 들쭉날쭉했다. 폭 문턱으로는
-     * 설명되지 않는 움직임이다.
+     * 총 검출 수만 견주면 **서로 다른 씨앗에서 같은 수만큼 잡은 경우**와
+     * 「똑같이 잡은 경우」를 구별하지 못한다(독립 검증 M01).
+     */
+    private class Paired(val both: Int, val only48: Int, val only44: Int, val neither: Int) {
+        val n get() = both + only48 + only44 + neither
+        val total48 get() = both + only48
+        val total44 get() = both + only44
+
+        /** 짝이 어긋난 씨앗 수. 총 수가 같아도 이것이 크면 같은 판정이 아니다. */
+        val discordant get() = only48 + only44
+
+        /**
+         * **동등하다고 말할 수 있는가.**
+         *
+         * 두 조건을 **모두** 넘겨야 한다 — 한쪽으로 쏠리지 않을 것, 그리고
+         * 어긋난 짝 자체가 적을 것. 뒤엣것이 없으면 6 대 6 으로 완전히
+         * 엇갈린 결과도 「동등」이 된다.
+         */
+        fun equivalent(maxSkew: Int, maxDiscordant: Int) =
+            abs(only48 - only44) <= maxSkew && discordant <= maxDiscordant
+
+        override fun toString() =
+            "48k=$total48/$n 44.1k=$total44/$n (둘다=$both 48k만=$only48 44.1k만=$only44 어긋남=$discordant)"
+    }
+
+    /** 폭 [bandwidthHz] 에서 씨앗 [seeds] 개를 두 레이트에 똑같이 넣는다. */
+    private fun pairedRuns(bandwidthHz: Double, seeds: Int): Paired {
+        var both = 0
+        var only48 = 0
+        var only44 = 0
+        var neither = 0
+        for (seed in 1..seeds) {
+            val a = run(FS_48, 2.0, bump(1000.0, bandwidthHz, FS_48, seed)).detected
+            val b = run(FS_44, 2.0, bump(1000.0, bandwidthHz, FS_44, seed)).detected
+            when {
+                a && b -> both++
+                a -> only48++
+                b -> only44++
+                else -> neither++
+            }
+        }
+        return Paired(both, only48, only44, neither)
+    }
+
+    /**
+     * **동등성 판정기가 제 일을 하는가.**
      *
-     * 그래서 **우연을 없애는 대신 센다.** 폭마다 씨앗을 [SEEDS] 개 돌려
-     * 검출된 횟수를 두 쪽에서 견준다. 진짜로 8% 문턱 차이가 판정을
-     * 움직인다면 **폭이 커질수록 44.1kHz 쪽이 체계적으로 덜 잡혀야** 한다.
+     * 검증자가 요구한 회귀다(M01):
+     *
+     * > 한쪽만 모두 검출하는 결과가 동등성 판정을 통과하지 않는지, 동일
+     * > 총 검출 수이지만 서로 다른 seed 에서만 검출하는 경우를 구별하는지
+     * > 검사한다.
+     *
+     * 판정기를 먼저 시험해 두지 않으면 아래 실제 자료에 대한 판정을 믿을
+     * 근거가 없다.
      */
     @Test
-    fun `폭이 있는 소리에서 두 샘플레이트의 검출률이 같다`() {
-        val worse = ArrayList<String>()
-        var total48 = 0
-        var total44 = 0
+    fun `동등성 판정은 한쪽으로 쏠린 결과와 엇갈린 결과를 거른다`() {
+        val oneSided = Paired(both = 0, only48 = 0, only44 = 12, neither = 0)
+        assertEquals("총 수는 0 대 12", 0, oneSided.total48)
+        assertFalse(
+            "한쪽만 다 잡은 것을 동등이라 하면 안 된다",
+            oneSided.equivalent(MAX_SKEW, MAX_DISCORDANT),
+        )
+
+        // 총 수는 6 대 6 으로 같지만, 같은 씨앗에서 함께 잡은 적이 한 번도 없다.
+        val crossed = Paired(both = 0, only48 = 6, only44 = 6, neither = 0)
+        assertEquals("총 수는 같다", crossed.total48, crossed.total44)
+        assertFalse(
+            "서로 다른 씨앗에서만 잡은 것을 동등이라 하면 안 된다",
+            crossed.equivalent(MAX_SKEW, MAX_DISCORDANT),
+        )
+
+        val same = Paired(both = 9, only48 = 0, only44 = 0, neither = 3)
+        assertTrue("정말 같으면 통과해야 한다", same.equivalent(MAX_SKEW, MAX_DISCORDANT))
+    }
+
+    /**
+     * **이 신호 집합에서 44.1kHz 가 덜 잡지 않는다.**
+     *
+     * 이름이 단언보다 앞서지 않게 적는다 — 이것은 **한 방향 점검**이지
+     * 「검출률이 같다」가 아니다(독립 검증 M01). 처음에는 「검출률이 같다」고
+     * 이름 붙였는데 단언은 `n44 < n48 - 2` 하나뿐이라, 48kHz 가 0/12 이고
+     * 44.1kHz 가 12/12 여도 통과하는 시험이었다.
+     *
+     * 왜 한 방향만 단언하는가: `maxWidthBins` 가 칸으로 적혀 있어 44.1kHz
+     * 에서 8.1% 좁은 주파수를 가리키므로, 걱정한 위험은 **44.1kHz 가 덜
+     * 잡는 것**이었다. 그 위험만 여기서 막는다.
+     *
+     * **더 잡는 쪽이 옳다는 뜻이 아니다.** 이 합성 신호에는 정답 레이블이
+     * 없어, 늘어난 검출이 참인지 오탐인지 이 시험으로는 알 수 없다.
+     * 동등성 판정 결과도 함께 찍되 **단언하지 않는다** — 실제 자료는 짝이
+     * 어긋나 있어 동등하다고 말할 수 없다.
+     */
+    @Test
+    fun `폭이 있는 소리에서 44_1kHz 가 덜 잡지 않는다`() {
+        val fewer = ArrayList<String>()
         for (bw in listOf(2.0, 5.0, 10.0, 20.0)) {
-            var n48 = 0
-            var n44 = 0
-            for (seed in 1..SEEDS) {
-                if (run(FS_48, 2.0, bump(1000.0, bw, FS_48, seed)).detected) n48++
-                if (run(FS_44, 2.0, bump(1000.0, bw, FS_44, seed)).detected) n44++
-            }
-            total48 += n48
-            total44 += n44
-            println("[폭 ${bw}Hz] 48k=$n48/$SEEDS 44.1k=$n44/$SEEDS")
-            // 걱정한 방향은 한 쪽이다 — 칸으로 적힌 문턱이라 44.1kHz 가 **덜**
-            // 잡는 것이 가설이었다. 반대 방향으로 벌어지는 것은 경고가 아니다.
-            if (n44 < n48 - SEED_NOISE) worse.add("${bw}Hz(48k=$n48 44.1k=$n44)")
+            val p = pairedRuns(bw, SEEDS)
+            println("[폭 ${bw}Hz] $p 동등=${p.equivalent(MAX_SKEW, MAX_DISCORDANT)}")
+            if (p.total44 < p.total48 - SEED_NOISE) fewer.add("${bw}Hz($p)")
         }
-        println("[합계] 48k=$total48 44.1k=$total44")
-        assertTrue("44.1kHz 가 체계적으로 덜 잡는다: $worse", worse.isEmpty())
+        assertTrue("44.1kHz 가 체계적으로 덜 잡는다: $fewer", fewer.isEmpty())
     }
 
     /** 폭마다 돌리는 씨앗 수. 한 번 돌린 결과는 간섭 무늬의 우연에 좌우된다. */
     private val SEEDS = 12
 
     /**
-     * 씨앗이 만드는 흔들림. 이만큼은 우연으로 본다.
+     * 한 방향 점검에서 이만큼은 우연으로 본다.
      *
-     * **재서 정했다.** 12개 씨앗으로 실제로 잰 값은 폭 2Hz 에서 11 대 12,
-     * 5Hz 에서 6 대 9, 10Hz 에서 3 대 3, 20Hz 에서 0 대 1 이었다 — 갈리는
-     * 방향이 **44.1kHz 쪽이 더 많이 잡는** 쪽이라 문턱 가설과 반대다.
-     * 분석 창이 92.9ms 로 더 길어 주파수가 더 또렷해지기 때문이다.
+     * **재서 정했다.** 12개 씨앗으로 잰 값은 폭 2Hz 에서 11 대 12, 5Hz 에서
+     * 6 대 9, 10Hz 에서 3 대 3, 20Hz 에서 0 대 1 이었다 — 갈리는 방향이
+     * **44.1kHz 쪽이 더 많이 잡는** 쪽이라 문턱 가설과 반대다.
+     *
+     * **왜 그런지는 아직 모른다.** 44.1kHz 의 분석 창이 92.9ms 로 더 길어
+     * 주파수가 또렷해지기 때문이라는 것은 **가설이고 분리 실험으로 확인하지
+     * 않았다**(독립 검증 게이트2 답변 3번). 합성 신호의 위상 간섭이나
+     * 프레임 눈금 차이일 수도 있다.
      */
     private val SEED_NOISE = 2
+
+    /**
+     * 동등성 판정의 문턱. **사전에 정하고, 자료를 보고 늘리지 않는다.**
+     *
+     * 12개 씨앗에서 한쪽으로 2 를 넘게 쏠리거나 어긋난 짝이 4 를 넘으면
+     * 「같은 판정」이라고 말하지 않는다. 실제 자료가 이 문턱을 넘으면
+     * **문턱이 아니라 주장을 접는다** — 늘리면 시험이 아무 말도 하지 않게
+     * 된다.
+     */
+    private val MAX_SKEW = 2
+    private val MAX_DISCORDANT = 4
 
     // ---- 4. 무엇이 실제로 다른가 — 숫자로 못박는다 ----
 

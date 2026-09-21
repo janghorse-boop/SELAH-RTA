@@ -5,6 +5,7 @@ import kr.joa.selahrta.audio.DisconnectPolicy
 import kr.joa.selahrta.audio.InputDeviceInfo
 import kr.joa.selahrta.domain.MeasureState
 import kr.joa.selahrta.domain.MicKind
+import kr.joa.selahrta.dsp.TimeWeight
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -118,8 +119,56 @@ class CaptureControllerOrderingTest {
 
         val m = controller.measurement.value
         assertNotNull("새 세션의 값이 있어야 한다", m)
-        assertEquals("새 세션의 것이어야 한다", controller.state.value.session, m!!.session)
+        assertEquals("새 세션의 것이어야 한다", controller.baseState.value.session, m!!.session)
         assertNotNull("화면에 보이는 값이 비면 안 된다", composed().meter.currentSpl)
+    }
+
+    /**
+     * **주 스레드가 밀리면 큐가 얼마나 쌓이는가.**
+     *
+     * 검증자 답변 2번이 재라고 한 것이다:
+     *
+     * > 부하 상황에서 큐가 얼마나 쌓이고 회복 때 오래된 같은 세션 값이
+     * > 연속 표시되는지는 별도다. main 큐를 0.5/2/5초 지연시킨 뒤 최신
+     * > 값으로 수렴하는 시간·큐 길이를 측정하고, 필요하면 같은 세션의
+     * > 미처리 snapshot 을 최신 하나로 합친다.
+     *
+     * **아직 합치지(conflate) 않는다.** 먼저 재고, 재 보고 정한다.
+     * 이 시험은 그 숫자를 찍고 **회복 뒤 최신 값으로 수렴하는 것**만
+     * 단언한다.
+     */
+    @Test
+    fun `주 스레드가 밀려도 회복하면 최신 값으로 수렴한다`() {
+        for (heldSeconds in listOf(0.5, 2.0, 5.0)) {
+            build()
+            controller.start()
+            main.drain()
+
+            main.held = true
+            // 48kHz·1024프레임이면 한 덩어리가 21.3ms 다.
+            val blocks = (heldSeconds * 48_000 / 1024).toInt()
+            feed(last, blocks)
+            val queued = main.pending
+
+            main.drain()
+
+            val m = controller.measurement.value!!
+            val behindBlocks = blocks - (m.diagnostics.frames / 1024).toInt()
+            println(
+                "[${heldSeconds}초 밀림] 덩어리 $blocks → 큐 $queued · " +
+                    "발행 프레임 ${m.diagnostics.frames} (뒤처짐 ${behindBlocks}덩어리)",
+            )
+            // **마지막 덩어리까지는 아니다.** 화면 갱신이 66ms 에 한 번이라
+            // 마지막으로 내보낸 스냅샷이 최신이고, 그 뒤 덩어리는 다음 발행
+            // 때 실린다. 처음에는 이것을 몰라 시험이 틀렸었다.
+            assertTrue(
+                "한 발행 간격(약 4덩어리)보다 더 뒤처지면 안 된다 (뒤처짐 $behindBlocks)",
+                behindBlocks in 0..4,
+            )
+            assertNotNull("화면 값이 비면 안 된다", composed().meter.currentSpl)
+            // 66ms 마다 한 번 내므로, 큐 길이는 밀린 시간에 비례한다.
+            assertTrue("큐가 쌓여야 이 시험이 뜻을 갖는다 (큐 $queued)", queued > 0)
+        }
     }
 
     // ---- 2. 분리: 두 이벤트를 **모두** 보낸다 ----
@@ -143,7 +192,7 @@ class CaptureControllerOrderingTest {
             )
         }
         controller.start()
-        assertEquals("USB 로 열렸다", usbMic().stableKey, controller.state.value.opened?.deviceKey)
+        assertEquals("USB 로 열렸다", usbMic().stableKey, controller.baseState.value.opened?.deviceKey)
         val opened = sources.size
 
         val before = devices.toList()
@@ -157,7 +206,7 @@ class CaptureControllerOrderingTest {
         sources.first().endWith(CaptureEnd.DeviceLost)
 
         assertTrue("다시 돌아야 한다", controller.running)
-        assertEquals("내장으로 바뀌어야 한다", MicKind.BuiltIn, controller.state.value.opened?.micKind)
+        assertEquals("내장으로 바뀌어야 한다", MicKind.BuiltIn, controller.baseState.value.opened?.micKind)
         assertEquals("마이크를 한 번만 더 열어야 한다", opened + 1, sources.size)
     }
 
@@ -185,7 +234,7 @@ class CaptureControllerOrderingTest {
         usbSource.endWith(CaptureEnd.ReadError)
 
         assertTrue(controller.running)
-        assertEquals(MicKind.BuiltIn, controller.state.value.opened?.micKind)
+        assertEquals(MicKind.BuiltIn, controller.baseState.value.opened?.micKind)
         assertEquals("마이크를 한 번만 더 열어야 한다", opened + 1, sources.size)
     }
 
@@ -284,18 +333,73 @@ class CaptureControllerOrderingTest {
      * DataStore 는 같은 값을 다시 흘릴 수 있다. 그때마다 엔진을 새로
      * 만들면 재던 Leq 와 MAX 가 리셋된다 — 사용자에게는 아무 짓도 안 했는데
      * 숫자가 사라지는 것으로 보인다(검증자 답변 3번의 「같은 값 재발행」).
+     *
+     * **처음 쓴 시험은 이것을 못 잡았다**(독립 검증 L01). 엔진 교체는
+     * `postToCapture` 로 **명령 큐에 들어가서** 다음 덩어리를 처리할 때
+     * 실행되는데, 재발행 직후의 스냅샷만 보고 끝냈기 때문이다. 큐에 잘못된
+     * 명령이 들어 있어도 아직 돌지 않았으니 통과했다.
+     *
+     * 그래서 이제 **큰 소리로 MAX 를 만든 뒤 작은 소리 덩어리를 여러 개
+     * 더 흘린다.** 엔진이 새로 만들어졌다면 그 작은 소리가 새 MAX 가 되어
+     * 값이 내려앉는다.
      */
     @Test
-    fun `같은 설정을 다시 발행해도 재던 값이 사라지지 않는다`() {
+    fun `같은 설정을 다시 발행해도 재던 MAX 가 살아남는다`() {
         build()
         controller.start()
-        feed(last)
-        val before = composed()
-        assertNotNull(before.meter.maxSpl)
 
-        val same = controller.state.value.meterSettings
+        // 큰 소리로 MAX 를 만든다.
+        repeat(60) { last.deliver(amplitude = 0.8f) }
+        val loud = composed()
+        val maxBefore = loud.meter.maxSpl
+        val leqBefore = loud.meter.leqShort
+        assertNotNull("MAX 가 있어야 한다", maxBefore)
+
+        // 같은 설정이 다시 온다.
+        val same = controller.baseState.value.meterSettings
         controller.onSettingsChanged(same, same)
 
-        assertEquals("MAX 가 그대로여야 한다", before.meter.maxSpl!!, composed().meter.maxSpl!!, 1e-9)
+        // **여기가 핵심이다** — 명령 큐가 실제로 돌도록 덩어리를 더 흘린다.
+        // 조용한 소리라, 엔진이 새로 만들어졌다면 MAX 가 이 값으로 내려앉는다.
+        repeat(60) { last.deliver(amplitude = 0.02f) }
+
+        val after = composed()
+        assertNotNull("여전히 MAX 가 있어야 한다", after.meter.maxSpl)
+        assertEquals(
+            "조용해졌다고 MAX 가 내려가면 안 된다 (전 $maxBefore / 후 ${after.meter.maxSpl})",
+            maxBefore!!,
+            after.meter.maxSpl!!,
+            1e-9,
+        )
+        assertNotNull("Leq 누적도 이어져야 한다", leqBefore)
+        assertNotNull(after.meter.leqShort)
+    }
+
+    /**
+     * **거꾸로, 정말 바뀐 설정이면 엔진을 다시 만든다.**
+     *
+     * 위 시험만 있으면 「엔진을 아예 안 만드는」 구현도 통과한다. 짝을
+     * 이루는 시험을 함께 둔다 — 시간가중을 바꾸면 MAX 가 새로 잡혀야 한다.
+     */
+    @Test
+    fun `설정이 실제로 바뀌면 엔진을 다시 만든다`() {
+        build()
+        controller.start()
+        repeat(60) { last.deliver(amplitude = 0.8f) }
+        val maxBefore = composed().meter.maxSpl!!
+
+        val old = controller.baseState.value.meterSettings
+        val changed = old.copy(timeWeight = if (old.timeWeight == TimeWeight.Fast) TimeWeight.Slow else TimeWeight.Fast)
+        controller.update { it.copy(meterSettings = changed) }
+        controller.onSettingsChanged(old, changed)
+
+        repeat(60) { last.deliver(amplitude = 0.02f) }
+
+        val after = composed().meter.maxSpl
+        assertNotNull(after)
+        assertTrue(
+            "엔진이 새로 만들어졌으면 조용한 값으로 다시 잡혀야 한다 (전 $maxBefore / 후 $after)",
+            after!! < maxBefore - 10.0,
+        )
     }
 }

@@ -75,7 +75,7 @@ class CaptureController(
      * 있다(독립 검증 G01) — 화면에 보이는 값을 읽으려면 [composed] 를
      * 쓴다.
      */
-    val state: StateFlow<CaptureUiState> = _state.asStateFlow()
+    val baseState: StateFlow<CaptureUiState> = _state.asStateFlow()
 
     private val _measurement = MutableStateFlow<MeasurementSnapshot?>(null)
 

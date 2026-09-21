@@ -68,7 +68,7 @@ class CaptureControllerTest {
     }
 
     private val last: FakeSource get() = sources.last()
-    private val state get() = controller.state.value
+    private val state get() = controller.baseState.value
 
     /** 화면이 보는 값 — 측정 결과를 합친 뒤의 상태. */
     private fun composed() = state.withMeasurement(controller.measurement.value)

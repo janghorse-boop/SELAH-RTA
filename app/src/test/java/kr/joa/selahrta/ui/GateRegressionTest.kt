@@ -58,18 +58,19 @@ class GateRegressionTest {
             src.deliverRaw(FloatArray(1024) { (0.2 * sin(2 * PI * 1000 * sample++ / 48000)).toFloat() })
         }
 
-        val before = c.state.value.withMeasurement(c.measurement.value)
+        val before = c.baseState.value.withMeasurement(c.measurement.value)
         assertNotNull("멈추기 전에 SPL 이 있어야 한다", before.meter.currentSpl)
         assertNotNull("멈추기 전에 RTA 가 있어야 한다", before.rta)
         assertTrue("멈추기 전에 프레임이 세어져야 한다", before.diagnostics.frames > 0)
 
         c.stop()
-        val after = c.state.value.withMeasurement(c.measurement.value)
+        val after = c.baseState.value.withMeasurement(c.measurement.value)
 
-        assertEquals("현재 SPL 이 남아야 한다", before.meter.currentSpl!!, after.meter.currentSpl!!, 1e-9)
-        assertEquals("MAX 가 남아야 한다", before.meter.maxSpl!!, after.meter.maxSpl!!, 1e-9)
+        // 검증자의 Gate2Probe 와 같은 세기로 본다 — 값 하나씩이 아니라
+        // MeterReading 과 diagnostics 를 **통째로** 견준다.
+        assertEquals("계기값이 통째로 남아야 한다", before.meter, after.meter)
+        assertEquals("진단도 통째로 남아야 한다", before.diagnostics, after.diagnostics)
         assertNotNull("RTA 가 남아야 한다", after.rta)
-        assertEquals("진단 프레임 수가 남아야 한다", before.diagnostics.frames, after.diagnostics.frames)
     }
 
     /**
@@ -96,12 +97,12 @@ class GateRegressionTest {
             src.deliverRaw(FloatArray(1024) { (0.2 * sin(2 * PI * 1000 * sample++ / 48000)).toFloat() })
         }
 
-        val before = c.state.value.withMeasurement(c.measurement.value)
+        val before = c.baseState.value.withMeasurement(c.measurement.value)
         assertNotNull("Peak 이 있어야 한다", before.meter.peakSpl)
         val peak = before.meter.peakSpl!!
 
         c.stop()
-        val after = c.state.value.withMeasurement(c.measurement.value)
+        val after = c.baseState.value.withMeasurement(c.measurement.value)
 
         assertEquals("Peak 이 남아야 한다", peak, after.meter.peakSpl!!, 1e-9)
         // 95dB 로 계산한 값이 남아야 한다. 기본값 120dB 로 다시 계산되면
@@ -150,9 +151,9 @@ class GateRegressionTest {
         c.start()
         repeat(100) { src.deliver() }
 
-        val newId = c.state.value.session
+        val newId = c.baseState.value.session
         assertEquals("새 세션의 값이 올라와 있어야 한다", newId, c.measurement.value!!.session)
-        val expected = c.state.value.withMeasurement(c.measurement.value).meter.currentSpl
+        val expected = c.baseState.value.withMeasurement(c.measurement.value).meter.currentSpl
         assertNotNull("새 세션의 SPL 이 있어야 한다", expected)
 
         release.countDown()
@@ -165,7 +166,7 @@ class GateRegressionTest {
         assertEquals(
             "화면에 보이는 값이 사라지면 안 된다",
             expected!!,
-            c.state.value.withMeasurement(now).meter.currentSpl!!,
+            c.baseState.value.withMeasurement(now).meter.currentSpl!!,
             1e-9,
         )
         c.stop()

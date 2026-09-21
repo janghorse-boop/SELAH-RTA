@@ -329,7 +329,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      * 계산한 값인가」가 언제나 지금 상태와 같다.
      */
     val state: StateFlow<CaptureUiState> =
-        combine(controller.state, controller.measurement) { base, m -> base.withMeasurement(m) }
+        combine(controller.baseState, controller.measurement) { base, m -> base.withMeasurement(m) }
             .stateIn(viewModelScope, SharingStarted.Eagerly, CaptureUiState())
 
     /** 시험 신호를 스피커로 내보내는 쪽. 측정과는 따로 논다. */
@@ -357,7 +357,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         // 목록을 보여야 하고, 측정 중이면 빠지는 것을 알아채야 한다.
         viewModelScope.launch {
             scanner.watch().collect { list ->
-                val prev = controller.state.value.inputs
+                val prev = controller.baseState.value.inputs
                 controller.update { st -> st.copy(inputs = list) }
                 if (controller.running) controller.onDeviceListChanged(prev, list)
             }
@@ -367,7 +367,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         // 하므로 돌아가는 중이면 다시 시작한다.
         settingsJob = viewModelScope.launch {
             settingsStore.settings.collect { s ->
-                val old = controller.state.value.meterSettings
+                val old = controller.baseState.value.meterSettings
                 controller.update { st -> st.copy(meterSettings = s) }
                 controller.onSettingsChanged(old, s)
             }
@@ -406,7 +406,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      * 수 있다.
      */
     fun playSignal(signal: TestSignal) {
-        val gen = player.start(signal, controller.state.value.signalLevel)
+        val gen = player.start(signal, controller.baseState.value.signalLevel)
         playGeneration = gen
         val ok = gen != SignalPlayer.NONE
         controller.update { st -> st.copy(
@@ -442,7 +442,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     /** 세기를 바꾼다. 내보내는 중이면 그 자리에서 바꿔 끼운다. */
     fun setSignalLevel(level: SignalLevel) {
         controller.update { st -> st.copy(signalLevel = level) }
-        controller.state.value.playingSignal?.let { playSignal(it) }
+        controller.baseState.value.playingSignal?.let { playSignal(it) }
     }
 
     fun dismissSignalNotice() {
@@ -503,7 +503,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 controller.postToCapture { session -> session.rta.setCurve(c?.curve) }
                 controller.update { st -> st.copy(
                     curve = c,
-                    curveGeneration = controller.state.value.curveGeneration + 1,
+                    curveGeneration = controller.baseState.value.curveGeneration + 1,
                     // 이전 판의 이름으로 저장된 곡선이 남아 있으면 알린다.
                     // 이름 규칙이 바뀌어 더는 찾지 못하는데, 조용히 두면
                     // 보정이 걸린 줄 알고 재게 된다(독립 재검증 추가 지적).
@@ -513,7 +513,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                             "이름은 서로 다른 기기가 같은 파일을 가리킬 수 있어, " +
                             "어느 기기의 것인지 우리가 정할 수 없습니다."
                     } else {
-                        controller.state.value.curveNoticeKo
+                        controller.baseState.value.curveNoticeKo
                     },
                 ) }
             }
@@ -557,7 +557,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         val format = controller.confirmedFormat()
         if (format == null) {
             controller.update { st -> st.copy(
-                curveNoticeKo = if (controller.state.value.opened == null) {
+                curveNoticeKo = if (controller.baseState.value.opened == null) {
                     "측정을 한 번 시작해야 어느 기기의 보정인지 정해집니다."
                 } else {
                     "어느 마이크로 열렸는지 아직 확인되지 않았습니다. " +
@@ -610,7 +610,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         if (format == null || measured == null) {
             controller.update { st -> st.copy(
                 calibrationNoticeKo = when {
-                    controller.state.value.opened == null -> "먼저 측정을 시작해야 보정할 수 있습니다."
+                    controller.baseState.value.opened == null -> "먼저 측정을 시작해야 보정할 수 있습니다."
                     format == null ->
                         "어느 마이크로 열렸는지 아직 확인되지 않았습니다. " +
                             "확인된 뒤에 보정하십시오 — 지금 저장하면 다른 기기의 " +
