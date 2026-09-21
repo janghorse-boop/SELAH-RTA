@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
+import android.media.AudioTimestamp
 import android.media.AudioRouting
 import android.os.Handler
 import android.os.Looper
@@ -300,6 +301,19 @@ class MicSource(
 
         override fun routedDevice(): InputDeviceInfo? =
             rec.routedDevice?.let { scanner.infoOf(it) }
+
+        /** 재사용한다 — 1초마다 새로 만들면 쓰레기가 쌓인다. */
+        private val ts = AudioTimestamp()
+
+        override fun timestamp(): AudioAnchor? {
+            // 못 주는 기기·상태가 있다. 그때는 null 이고, 그 사실 자체가
+            // 재려는 것의 일부다(녹음 설계 S01).
+            val ok = runCatching {
+                rec.getTimestamp(ts, AudioTimestamp.TIMEBASE_MONOTONIC)
+            }.getOrDefault(AudioRecord.ERROR)
+            if (ok != AudioRecord.SUCCESS) return null
+            return AudioAnchor(ts.framePosition, ts.nanoTime)
+        }
     }
 
     private fun loop(rec: AudioRecord, fmt: OpenedFormat, onBlock: (AudioBlock, BlockStats) -> Unit) {
@@ -313,6 +327,19 @@ class MicSource(
             routeAlreadyConfirmed = { opened?.routeConfirmed == true },
             callbacks = object : CaptureLoopCallbacks {
                 override fun onBlock(block: AudioBlock, stats: BlockStats) = onBlock(block, stats)
+
+                override fun onAnchor(anchor: AudioAnchor, capturedFrames: Long) {
+                    // **탐색용 기록이다.** 실기기에서 getTimestamp 가 실제로
+                    // 무엇을 주는지 재려고 남긴다 — 되는가, 얼마나 자주
+                    // 갱신되는가, 표본 클럭이 공칭과 얼마나 다른가.
+                    // 결과를 문서로 남긴 뒤 이 로그를 뺄지 정한다.
+                    Log.i(
+                        TAG,
+                        "ANCHOR fs=${fmt.sampleRate} capFrames=$capturedFrames" +
+                            " tsFrames=${anchor.framePosition} tsNanos=${anchor.nanoTime}" +
+                            " nowNanos=${System.nanoTime()}",
+                    )
+                }
 
                 override fun onRouteConfirmed(device: InputDeviceInfo) {
                     // 늦게 잡힌 경로다. 열린 형식을 확정하고 알린다.

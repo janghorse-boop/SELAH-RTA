@@ -13,6 +13,20 @@ import java.util.concurrent.atomic.AtomicBoolean
  * 드러나는 것이 아니다. 오히려 기기로는 재현하기 어렵다(독립 재검증
  * F02·L01).
  */
+/**
+ * 하드웨어가 말해 주는 **프레임 ↔ 시각** 한 쌍.
+ *
+ * `AudioRecord.getTimestamp(TIMEBASE_MONOTONIC)` 이 주는 값이다.
+ * [nanoTime] 은 `System.nanoTime()` 과 같은 시계이고, [framePosition] 은
+ * 그 시각에 **장치가 잡은 표본 번호**다.
+ *
+ * **왜 필요한가** — `read()` 가 돌아온 시각은 그 블록 첫 표본의 시각이
+ * 아니다. 한 덩어리가 21.3ms 이고 버퍼 적체·스케줄링 지연이 더해진다.
+ * 녹음과 그래프를 맞추려면 프레임과 시각을 **장치가 맺어 준 자리**에서
+ * 받아야 한다(녹음 설계 S01).
+ */
+data class AudioAnchor(val framePosition: Long, val nanoTime: Long)
+
 interface CaptureRecorder {
     /**
      * PCM 을 읽어 [into] 에 −1..1 로 채운다.
@@ -32,6 +46,14 @@ interface CaptureRecorder {
      * 한 번 더 물어본다(독립 검증 R01).
      */
     fun routedDevice(): InputDeviceInfo?
+
+    /**
+     * 지금의 프레임↔시각 한 쌍. 기기가 못 주면 null.
+     *
+     * **기본 구현은 null 이다** — 가짜 구현이 이것을 몰라도 되게 한다.
+     * 실제 기기에서 무엇을 주는지는 아직 재지 않았다.
+     */
+    fun timestamp(): AudioAnchor? = null
 }
 
 /** 루프가 바깥에 알리는 일들. */
@@ -43,6 +65,15 @@ interface CaptureLoopCallbacks {
 
     /** 캡처가 **스스로** 끝났다. 사람이 멈춘 경우는 오지 않는다. */
     fun onEnded(end: CaptureEnd)
+
+    /**
+     * 프레임↔시각 한 쌍을 얻었다. **측정용이고 기본은 아무것도 안 한다.**
+     *
+     * [capturedFrames] 는 이 루프가 지금까지 읽은 전체 프레임 수다.
+     * 장치가 말하는 [anchor].framePosition 과 견주면 둘의 기준이 같은지
+     * 알 수 있다.
+     */
+    fun onAnchor(anchor: AudioAnchor, capturedFrames: Long) = Unit
 }
 
 /**
@@ -80,6 +111,10 @@ fun runCaptureLoop(
     // 소리가 실제로 들어온 뒤 한 번 더 물어본다.
     var retriedConfirm = false
 
+    // **지금까지 읽은 전체 프레임.** 시각이 아니라 이것이 정확하고 단조롭다.
+    var capturedFrames = 0L
+    var nextAnchorAt = 0L
+
     while (running.get()) {
         val read = recorder.read(floats, framesPerBlock)
 
@@ -109,6 +144,15 @@ fun runCaptureLoop(
         if (!retriedConfirm && !routeAlreadyConfirmed()) {
             retriedConfirm = true
             recorder.routedDevice()?.let { callbacks.onRouteConfirmed(it) }
+        }
+
+        capturedFrames += read
+
+        // **anchor 를 주기적으로 받아 둔다**(약 1초마다). 재는 것뿐이고
+        // 읽기 흐름을 막지 않는다 — 못 주는 기기면 null 이 올 뿐이다.
+        if (capturedFrames >= nextAnchorAt) {
+            nextAnchorAt = capturedFrames + sampleRate
+            recorder.timestamp()?.let { callbacks.onAnchor(it, capturedFrames) }
         }
 
         callbacks.onBlock(AudioBlock(floats, read, sampleRate, ready), blockStats(floats, read))
