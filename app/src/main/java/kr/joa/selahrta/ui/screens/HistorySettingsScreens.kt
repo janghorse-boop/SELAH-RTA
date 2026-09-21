@@ -208,7 +208,7 @@ fun SettingsScreen(
         )
 
         SectionTitle("구간별 권장 범위")
-        ChurchSegment.entries.filter { it.judges }.forEach { seg ->
+        ChurchSegment.entries.forEach { seg ->
             capture.meterSettings.rangeFor(seg)?.let { r ->
                 SegmentRangeCard(
                     segment = seg,

@@ -154,7 +154,6 @@ fun SelahApp() {
                             onStart = vm::start,
                             onStop = vm::stop,
                             onDismissDeviceNotice = vm::dismissDeviceNotice,
-                            onSegment = vm::setSegment,
                         )
                         ViewMode.Rta -> RtaScreen(capture)
                         ViewMode.Feedback -> FeedbackScreen(capture)

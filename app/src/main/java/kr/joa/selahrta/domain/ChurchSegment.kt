@@ -5,22 +5,17 @@ package kr.joa.selahrta.domain
  *
  * 구간마다 알맞은 음량이 다르다. 설교가 찬양만큼 크면 시끄럽고, 찬양이
  * 설교만큼 조용하면 밋밋하다.
+ *
+ * **설교와 찬양 둘뿐이다.** 예전에는 「기도」와 「자유 측정」도 있었는데,
+ * 쓰는 자리가 없어 걷어냈다. 화면 위쪽 칩(설교·찬양)이 곧 구간이므로
+ * **같은 것을 고르는 줄이 둘일 까닭이 없다.**
+ *
+ * 저장된 설정에 옛 이름이 남아 있으면 [ChurchSegment] 로 풀리지 않고
+ * 설교로 돌아간다(`MeterSettings` 가 그렇게 읽는다).
  */
 enum class ChurchSegment(val labelKo: String, val shortKo: String) {
     Sermon("설교 (말씀)", "설교"),
     Worship("찬양", "찬양"),
-    Prayer("기도 / 성경봉독", "기도"),
-
-    /**
-     * 자유 측정. **판정하지 않는다.**
-     *
-     * 예배가 아닌 상황(음향 점검, 장비 비교)에서는 「적정」이라는 말 자체가
-     * 뜻이 없다. 계측값만 본다.
-     */
-    Free("자유 측정", "자유"),
-    ;
-
-    val judges: Boolean get() = this != Free
 }
 
 /**
@@ -63,13 +58,10 @@ data class SegmentRange(
 object DefaultSegmentRanges {
     val sermon = SegmentRange(68.0, 75.0, 78.0, 82.0)
     val worship = SegmentRange(78.0, 85.0, 88.0, 95.0)
-    val prayer = SegmentRange(65.0, 72.0, 75.0, 80.0)
 
-    fun of(s: ChurchSegment): SegmentRange? = when (s) {
+    fun of(s: ChurchSegment): SegmentRange = when (s) {
         ChurchSegment.Sermon -> sermon
         ChurchSegment.Worship -> worship
-        ChurchSegment.Prayer -> prayer
-        ChurchSegment.Free -> null
     }
 }
 
@@ -80,10 +72,6 @@ val ChurchSegment.focusKo: String
             "말이 또렷한지가 먼저입니다. 250Hz~4kHz 가 묻히지 않는지 보십시오."
         ChurchSegment.Worship ->
             "저역이 얼마나 많은지(C−A 차이)와 짧은 최대(MAX)를 함께 보십시오."
-        ChurchSegment.Prayer ->
-            "차분하고 명료한 수준입니다. 너무 작으면 뒷자리에서 안 들립니다."
-        ChurchSegment.Free ->
-            "판정하지 않습니다. 계측값만 봅니다."
     }
 
 /**

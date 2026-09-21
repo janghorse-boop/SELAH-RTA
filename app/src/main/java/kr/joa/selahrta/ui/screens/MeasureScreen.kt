@@ -29,9 +29,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.RoundedCornerShape
-import kr.joa.selahrta.domain.ChurchSegment
 import kr.joa.selahrta.domain.MeasureState
 import kr.joa.selahrta.domain.RangeVerdict
 import kr.joa.selahrta.domain.focusKo
@@ -65,7 +63,6 @@ fun MeasureScreen(
     onStart: () -> Unit,
     onStop: () -> Unit,
     onDismissDeviceNotice: () -> Unit = {},
-    onSegment: (ChurchSegment) -> Unit = {},
 ) {
     val segment = capture.meterSettings.segment
     val range = capture.meterSettings.rangeFor(segment)
@@ -78,8 +75,8 @@ fun MeasureScreen(
     // **참고 범위는 dBA 기준이다.** A 가중일 때만 견준다 — C 나 Z 값을
     // dBA 범위와 견주면 저음이 큰 찬양에서 늘 「높음」이 뜬다.
     // 판정에는 순간값이 아니라 Leq 를 쓴다(범위 자체가 평균 기준이다).
-    // 자유 측정 구간은 아예 판정하지 않는다(명세 10장).
-    val judged = if (weighting == Weighting.A && segment.judges) m.leqLong ?: m.leqShort else null
+    // 이제 구간은 설교·찬양 둘뿐이고 둘 다 판정한다.
+    val judged = if (weighting == Weighting.A) m.leqLong ?: m.leqShort else null
     val verdict = when {
         judged == null || range == null -> RangeVerdict.Unknown
         judged < range.avgLowDb -> RangeVerdict.Low
@@ -185,7 +182,6 @@ fun MeasureScreen(
             Modifier.padding(top = 12.dp),
             unknownLabel = when {
                 !running -> "측정 안 함"
-                !segment.judges -> "자유 측정 — 판정 없음"
                 weighting != Weighting.A -> "판정 보류 — ${weighting.labelKo}"
                 else -> "평균을 모으는 중"
             },
@@ -209,38 +205,9 @@ fun MeasureScreen(
             )
         }
 
-        // 구간 고르기. 위 칩(설교/찬양)에 없는 기도·자유 측정은 여기서만 고른다.
-        Row(
-            Modifier.fillMaxWidth().padding(top = 14.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            ChurchSegment.entries.forEach { seg ->
-                val on = seg == segment
-                Box(
-                    Modifier
-                        .weight(1f)
-                        .background(
-                            if (on) SelahColors.Accent.copy(alpha = 0.2f) else SelahColors.SurfaceVariant,
-                            RoundedCornerShape(8.dp),
-                        )
-                        .border(
-                            1.dp,
-                            if (on) SelahColors.Accent else Color.Transparent,
-                            RoundedCornerShape(8.dp),
-                        )
-                        .clickable { onSegment(seg) }
-                        .padding(vertical = 7.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        seg.shortKo,
-                        color = if (on) SelahColors.Accent else SelahColors.TextSecondary,
-                        fontSize = 12.sp,
-                        fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
-                    )
-                }
-            }
-        }
+        // 구간을 고르는 줄은 **없앴다.** 화면 위쪽 칩(설교·찬양)이 곧
+        // 구간이라, 같은 것을 고르는 줄이 둘이면 어느 쪽이 진짜인지
+        // 알 수 없다. 기도·자유 측정은 쓰는 자리가 없어 걷어냈다.
         Text(
             segment.focusKo,
             color = SelahColors.TextMuted,
@@ -322,28 +289,52 @@ fun MeasureScreen(
             )
         }
 
-        Button(
-            onClick = {
-                when {
-                    !hasPermission -> onRequestPermission()
-                    running -> onStop()
-                    else -> onStart()
+        // **시작과 종료를 함께 보여준다.** 버튼 하나가 말을 바꾸면 지금
+        // 재고 있는지 아닌지를 버튼 글자로 되짚어야 한다. 둘을 나란히 두고
+        // **지금 누를 수 있는 쪽만 살려** 상태가 한눈에 보이게 한다.
+        if (!hasPermission) {
+            Button(
+                onClick = onRequestPermission,
+                modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = SelahColors.Accent,
+                    contentColor = Color(0xFF00201C),
+                ),
+            ) {
+                Text("마이크 권한 허용하기", fontWeight = FontWeight.Bold)
+            }
+        } else {
+            Row(
+                Modifier.fillMaxWidth().padding(top = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Button(
+                    onClick = onStart,
+                    enabled = !running,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = SelahColors.Accent,
+                        contentColor = Color(0xFF00201C),
+                        disabledContainerColor = SelahColors.SurfaceVariant,
+                        disabledContentColor = SelahColors.TextMuted,
+                    ),
+                ) {
+                    Text("측정 시작", fontWeight = FontWeight.Bold)
                 }
-            },
-            modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = if (running) SelahColors.SurfaceVariant else SelahColors.Accent,
-                contentColor = if (running) SelahColors.TextPrimary else Color(0xFF00201C),
-            ),
-        ) {
-            Text(
-                when {
-                    !hasPermission -> "마이크 권한 허용하기"
-                    running -> "측정 멈추기"
-                    else -> "측정 시작"
-                },
-                fontWeight = FontWeight.Bold,
-            )
+                Button(
+                    onClick = onStop,
+                    enabled = running,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = SelahColors.SurfaceVariant,
+                        contentColor = SelahColors.TextPrimary,
+                        disabledContainerColor = SelahColors.SurfaceVariant,
+                        disabledContentColor = SelahColors.TextMuted,
+                    ),
+                ) {
+                    Text("측정 종료", fontWeight = FontWeight.Bold)
+                }
+            }
         }
 
         if (running) {

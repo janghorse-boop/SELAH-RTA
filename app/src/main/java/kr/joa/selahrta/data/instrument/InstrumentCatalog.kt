@@ -72,7 +72,7 @@ object InstrumentCatalog {
             hpf = hpf(30.0, 60.0, alt = 70.0 to 120.0, condition = "독주나 저음을 살릴 때는 30~60, 합주에서 역할에 따라 70~120 을 견줍니다.", caution = "낮은 건반의 기음이 이 부근이라 필터가 음색을 바꿉니다."),
             lpf = lpfBypass("기본은 bypass 입니다. 최상단이 거칠거나 잡음이 있을 때만 12~16 kHz 를 시험합니다.", 12000.0, 16000.0),
             cautions = synthCautions,
-            sourceIds = listOf(Sources.IZOTOPE_EQ_CHEAT_SHEET, Sources.SHURE_CHURCH),
+            sourceIds = listOf(Sources.IZOTOPE_EQ_CHEAT_SHEET, Sources.SHURE_CHURCH, Sources.IZOTOPE_COMPRESSION, Sources.IZOTOPE_NOISE_GATES),
             dynamics = listOf(
                 expander(
                     bypassDefault = true,
@@ -106,7 +106,7 @@ object InstrumentCatalog {
             hpf = hpf(100.0, 200.0, alt = null, condition = "패드가 저역을 맡지 않는다면 100~200 부터 견줍니다.", caution = "느린 fade-in 의 앞부분이 먼저 사라질 수 있습니다."),
             lpf = lpf(8000.0, 14000.0, bypassDefault = true, condition = "기본은 bypass, 최상단이 거칠면 8~14 kHz 를 시험합니다.", caution = "공기감이 함께 사라집니다."),
             cautions = synthCautions,
-            sourceIds = listOf(Sources.IZOTOPE_EQ_CHEAT_SHEET),
+            sourceIds = listOf(Sources.IZOTOPE_EQ_CHEAT_SHEET, Sources.IZOTOPE_COMPRESSION, Sources.IZOTOPE_NOISE_GATES),
             dynamics = listOf(
                 gate(
                     bypassDefault = true,
@@ -131,14 +131,17 @@ object InstrumentCatalog {
             regions = listOf(
                 region("body", 150.0, 600.0, listOf("바디"), emptyList(), "리드의 몸집입니다.", "프레이즈를 반복하며 얇지 않은지 듣습니다.", "과하면 중역이 뭉칩니다."),
                 region("shape", 700.0, 2000.0, listOf("명료도"), emptyList(), "음형이 드러나는 곳입니다.", "빠른 프레이즈에서 음이 구분되는지 듣습니다.", "보컬과 겹칩니다."),
-                region("attack", 2000.0, 5000.0, listOf("어택", "존재감"), listOf("날카로움"), "시작 부분과 존재감입니다.", "센 음에서 귀를 찌르는지 듣습니다.", "2~6 kHz 를 올리면 금세 날카로워집니다."),
+                region("attack", 2000.0, 5000.0, listOf("어택", "존재감"), emptyList(), "시작 부분과 존재감입니다.", "센 음에서 귀를 찌르는지 듣습니다.", "올리면 존재감이 붙지만 날카로워지기 쉽습니다."),
+                // 명세 §4.1 은 성격을 2~5k, 증상을 **2~6k** 로 따로 적는다.
+                // 하나로 합치면 증상 카드의 숫자가 5k 로 잘린다(독립 검증 EQB01).
+                region("harsh", 2000.0, 6000.0, emptyList(), listOf("날카로움"), "날카롭게 들릴 때 조사할 곳입니다.", "센 음을 반복하며 귀를 찌르는지 듣습니다.", "어택과 존재감이 함께 줄어듭니다."),
                 region("nasal", 300.0, 800.0, emptyList(), listOf("답답함", "콧소리"), "답답하거나 콧소리처럼 들릴 때 조사할 곳입니다.", "패치를 바꿔 보고도 남는지 확인합니다.", "이 구간은 바디이기도 해서 과한 컷은 빈약해집니다."),
                 region("bright_harmonics", 8000.0, 12000.0, listOf("밝기"), emptyList(), "밝은 배음입니다.", "길게 끄는 음에서 듣습니다.", "패치 자체의 특성일 수 있습니다."),
             ),
             hpf = hpf(70.0, 150.0, alt = null, condition = "리드가 저역을 맡지 않으면 70~150 을 견줍니다.", caution = "낮은 옥타브를 쓰는 패치라면 음색이 바뀝니다."),
             lpf = lpf(8000.0, 12000.0, bypassDefault = true, condition = "기본은 bypass, 최상단이 거칠면 8~12 kHz 를 시험합니다.", caution = "밝기가 함께 줄어듭니다."),
             cautions = synthCautions,
-            sourceIds = listOf(Sources.IZOTOPE_EQ_CHEAT_SHEET),
+            sourceIds = listOf(Sources.IZOTOPE_EQ_CHEAT_SHEET, Sources.IZOTOPE_COMPRESSION, Sources.IZOTOPE_NOISE_GATES),
             dynamics = listOf(
                 gate(
                     bypassDefault = true,
@@ -173,7 +176,7 @@ object InstrumentCatalog {
             hpf = hpf(20.0, 30.0, alt = null, bypassDefault = true, condition = "기본은 bypass. 서브가 과하면 20~30 부터 견줍니다.", caution = "베이스의 기음을 깎게 되기 쉽습니다."),
             lpf = lpf(3000.0, 8000.0, bypassDefault = true, condition = "질감을 고르는 용도입니다. 필요할 때만 3~8 kHz 를 시험합니다.", caution = "어택과 질감이 함께 사라집니다."),
             cautions = synthCautions,
-            sourceIds = listOf(Sources.IZOTOPE_EQ_CHEAT_SHEET),
+            sourceIds = listOf(Sources.IZOTOPE_EQ_CHEAT_SHEET, Sources.IZOTOPE_COMPRESSION, Sources.IZOTOPE_NOISE_GATES),
             dynamics = listOf(
                 gate(
                     bypassDefault = true,
@@ -202,7 +205,7 @@ object InstrumentCatalog {
             hpf = FilterGuidance(FilterType.HPF, bypassDefault = true, rangeHz = null, conditionKo = "역할을 확인한 뒤에 고릅니다. 기본은 bypass 입니다.", cautionKo = "역할을 모르는 채 거는 필터는 되돌리기 어렵습니다."),
             lpf = FilterGuidance(FilterType.LPF, bypassDefault = true, rangeHz = null, conditionKo = "역할을 확인한 뒤에 고릅니다. 기본은 bypass 입니다.", cautionKo = "역할을 모르는 채 거는 필터는 되돌리기 어렵습니다."),
             cautions = synthCautions + "이 항목에는 범용 정상 곡선이 없습니다. 패치의 역할을 사용자가 기록해야 합니다.",
-            sourceIds = listOf(Sources.IZOTOPE_EQ_CHEAT_SHEET),
+            sourceIds = listOf(Sources.IZOTOPE_EQ_CHEAT_SHEET, Sources.IZOTOPE_COMPRESSION, Sources.IZOTOPE_NOISE_GATES),
             dynamics = listOf(
                 gate(
                     bypassDefault = true,
@@ -254,7 +257,7 @@ object InstrumentCatalog {
             hpf = acousticGuitarHpf,
             lpf = acousticGuitarLpf,
             cautions = acousticGuitarCautions + "펀치는 고정된 대역보다 스트로크 어택과 바디의 균형으로 설명합니다.",
-            sourceIds = listOf(Sources.IZOTOPE_GUITARS, Sources.SHURE_CHURCH),
+            sourceIds = listOf(Sources.IZOTOPE_GUITARS, Sources.SHURE_CHURCH, Sources.IZOTOPE_COMPRESSION, Sources.IZOTOPE_NOISE_GATES),
             dynamics = listOf(
                 expander(
                     bypassDefault = true,
@@ -281,7 +284,7 @@ object InstrumentCatalog {
             hpf = acousticGuitarHpf,
             lpf = acousticGuitarLpf,
             cautions = acousticGuitarCautions,
-            sourceIds = listOf(Sources.IZOTOPE_GUITARS, Sources.SHURE_CHURCH),
+            sourceIds = listOf(Sources.IZOTOPE_GUITARS, Sources.SHURE_CHURCH, Sources.IZOTOPE_COMPRESSION, Sources.IZOTOPE_NOISE_GATES),
             dynamics = listOf(
                 expander(
                     bypassDefault = true,
@@ -333,7 +336,7 @@ object InstrumentCatalog {
             hpf = electricGuitarHpf,
             lpf = lpf(10000.0, 14000.0, bypassDefault = true, condition = "클린은 10~14 kHz 또는 bypass 입니다.", caution = "개방감이 함께 줄어듭니다."),
             cautions = electricGuitarCautions,
-            sourceIds = listOf(Sources.IZOTOPE_GUITARS),
+            sourceIds = listOf(Sources.IZOTOPE_GUITARS, Sources.IZOTOPE_COMPRESSION, Sources.IZOTOPE_NOISE_GATES),
             dynamics = listOf(
                 expander(
                     bypassDefault = true,
@@ -360,22 +363,22 @@ object InstrumentCatalog {
             hpf = electricGuitarHpf,
             lpf = FilterGuidance(
                 FilterType.LPF, bypassDefault = true, rangeHz = null,
-                conditionKo = "기본은 bypass 입니다. 명세는 클린(10~14 kHz)과 하이게인(6~10 kHz)의 값만 주며, 크런치의 숫자는 주지 않았습니다. 그 사이에서 들으며 고릅니다.",
-                cautionKo = "임의의 숫자를 채워 넣지 않았습니다. 게인 정도에 따라 두 값 사이에서 달라집니다.",
+                conditionKo = "공통 시작값을 제시하지 않습니다. bypass 부터 청취하며 조정하세요.",
+                cautionKo = "게인 정도와 캐비닛에 따라 달라집니다. 정답으로 쓸 공통값은 없습니다.",
             ),
-            cautions = electricGuitarCautions + "크런치의 필터·다이내믹스 수치는 명세에 없습니다. 클린과 하이게인 사이에서 들으며 고릅니다.",
-            sourceIds = listOf(Sources.IZOTOPE_GUITARS),
+            cautions = electricGuitarCautions + "크런치는 공통 시작값을 제시하지 않습니다. bypass 부터 청취하며 조정하세요.",
+            sourceIds = listOf(Sources.IZOTOPE_GUITARS, Sources.IZOTOPE_COMPRESSION, Sources.IZOTOPE_NOISE_GATES),
             dynamics = listOf(
                 expander(
                     bypassDefault = true,
-                    usage = "명세가 크런치의 숫자를 주지 않았습니다. bypass 에서 출발하고, 필요하면 클린과 하이게인 값 사이에서 견줍니다.",
-                    cautions = listOf("임의의 숫자를 채워 넣지 않았습니다.", "sustain 과 쉼표의 hiss 중 무엇이 문제인지 먼저 정합니다."),
+                    usage = "공통 시작값을 제시하지 않습니다. bypass 부터 청취하며 조정하세요.",
+                    cautions = listOf("중간값을 정답처럼 제시하지 않습니다.", "sustain 과 쉼표의 hiss 중 무엇이 문제인지 먼저 정합니다."),
                     attack = null, hold = null, release = null, attenuation = null,
                 ),
                 comp(
                     bypassDefault = true,
-                    usage = "명세가 크런치의 숫자를 주지 않았습니다. 클린(2:1~3:1)과 하이게인(1.5:1~2:1) 사이에서 견줍니다.",
-                    cautions = listOf("임의의 숫자를 채워 넣지 않았습니다.", "왜곡 자체가 이미 압축으로 작용합니다."),
+                    usage = "공통 시작값을 제시하지 않습니다. bypass 부터 청취하며 조정하세요.",
+                    cautions = listOf("중간값을 정답처럼 제시하지 않습니다.", "왜곡 자체가 이미 압축으로 작용합니다."),
                     ratio = null, attack = null, release = null, gr = null,
                 ),
             ),
@@ -390,7 +393,7 @@ object InstrumentCatalog {
             hpf = electricGuitarHpf,
             lpf = lpf(6000.0, 10000.0, bypassDefault = false, condition = "하이게인은 6~10 kHz 를 견줍니다.", caution = "fizz 와 함께 어택의 질감도 줄어듭니다."),
             cautions = electricGuitarCautions,
-            sourceIds = listOf(Sources.IZOTOPE_GUITARS),
+            sourceIds = listOf(Sources.IZOTOPE_GUITARS, Sources.IZOTOPE_COMPRESSION, Sources.IZOTOPE_NOISE_GATES),
             dynamics = listOf(
                 gate(
                     bypassDefault = false,
@@ -441,7 +444,7 @@ object InstrumentCatalog {
             hpf = bassHpf,
             lpf = lpf(4000.0, 8000.0, bypassDefault = true, condition = "핑거 톤은 4~8 kHz 를 견줍니다.", caution = "프렛 잡음과 함께 어택도 줄어듭니다."),
             cautions = bassCautions,
-            sourceIds = listOf(Sources.IZOTOPE_EQ_CHEAT_SHEET),
+            sourceIds = listOf(Sources.IZOTOPE_EQ_CHEAT_SHEET, Sources.IZOTOPE_COMPRESSION, Sources.IZOTOPE_NOISE_GATES),
             dynamics = listOf(bassGate(), bassComp(3.0, 4.0, 15.0, 40.0, 80.0, 200.0, 3.0, 5.0, "음정별 레벨을 정리하고 펀치를 유지할 때 씁니다.", listOf("저음에서 release 가 너무 빠르면 거칠어집니다."))),
         ),
         profile(
@@ -454,7 +457,7 @@ object InstrumentCatalog {
             hpf = bassHpf,
             lpf = lpf(8000.0, 12000.0, bypassDefault = true, condition = "피크는 8~12 kHz 또는 bypass 입니다.", caution = "피크 소리의 질감이 함께 줄어듭니다."),
             cautions = bassCautions,
-            sourceIds = listOf(Sources.IZOTOPE_EQ_CHEAT_SHEET),
+            sourceIds = listOf(Sources.IZOTOPE_EQ_CHEAT_SHEET, Sources.IZOTOPE_COMPRESSION, Sources.IZOTOPE_NOISE_GATES),
             dynamics = listOf(bassGate(), bassComp(3.0, 4.0, 15.0, 40.0, 80.0, 200.0, 3.0, 5.0, "음정별 레벨을 정리하고 펀치를 유지할 때 씁니다.", listOf("저음에서 release 가 너무 빠르면 거칠어집니다."))),
         ),
         profile(
@@ -467,7 +470,7 @@ object InstrumentCatalog {
             hpf = bassHpf,
             lpf = lpf(8000.0, 12000.0, bypassDefault = true, condition = "슬랩은 8~12 kHz 또는 bypass 입니다.", caution = "금속 질감이 함께 줄어듭니다."),
             cautions = bassCautions,
-            sourceIds = listOf(Sources.IZOTOPE_EQ_CHEAT_SHEET),
+            sourceIds = listOf(Sources.IZOTOPE_EQ_CHEAT_SHEET, Sources.IZOTOPE_COMPRESSION, Sources.IZOTOPE_NOISE_GATES),
             dynamics = listOf(bassGate(), bassComp(3.0, 5.0, 5.0, 15.0, 60.0, 150.0, 3.0, 6.0, "돌출하는 음을 줄일 때 씁니다.", listOf("타격을 모두 없애지 않도록 합니다."))),
         ),
     )

@@ -42,7 +42,7 @@ internal object DrumsCatalog {
             hpf = hpf(20.0, 30.0, alt = null, bypassDefault = true, condition = "기본은 bypass 또는 20~30 입니다. 파트 설정을 먼저 확인합니다.", caution = "킥의 기반이 이 부근입니다."),
             lpf = FilterGuidance(FilterType.LPF, bypassDefault = true, rangeHz = null, conditionKo = "기본은 bypass 입니다.", cautionKo = "전체 출력에 걸면 심벌의 공기감이 함께 사라집니다."),
             cautions = electronicCautions + "전체 키트를 재면 개별 파트의 원인을 자동으로 지목하지 않습니다. 모듈의 파트 solo 나 분리 출력이 필요합니다.",
-            sourceIds = listOf(Sources.IZOTOPE_DRUMS),
+            sourceIds = listOf(Sources.IZOTOPE_DRUMS, Sources.IZOTOPE_DRUM_COMPRESSION, Sources.IZOTOPE_NOISE_GATES),
             dynamics = listOf(
                 gate(
                     bypassDefault = true,
@@ -73,7 +73,7 @@ internal object DrumsCatalog {
             hpf = hpf(20.0, 35.0, alt = null, condition = "서브를 포함할지 정한 뒤 20~35 를 견줍니다.", caution = "킥의 기반을 깎게 되기 쉽습니다."),
             lpf = lpf(6000.0, 10000.0, bypassDefault = true, condition = "기본은 bypass, 클릭이 거칠면 6~10 kHz 를 시험합니다.", caution = "클릭이 함께 줄어 작은 스피커에서 킥이 사라질 수 있습니다."),
             cautions = electronicCautions,
-            sourceIds = listOf(Sources.IZOTOPE_DRUMS),
+            sourceIds = listOf(Sources.IZOTOPE_DRUMS, Sources.IZOTOPE_DRUM_COMPRESSION, Sources.IZOTOPE_NOISE_GATES),
             dynamics = listOf(edrumPartGate(), edrumPartComp()),
         ),
         profile(
@@ -85,14 +85,16 @@ internal object DrumsCatalog {
             regions = listOf(
                 region("body", 120.0, 250.0, listOf("바디"), emptyList(), "스네어의 몸집입니다.", "단독으로 반복해 듣습니다.", "과하면 둔해집니다."),
                 region("clarity", 1000.0, 3000.0, listOf("명료도"), emptyList(), "스네어가 구분되는 곳입니다.", "합주에서 묻히는지 듣습니다.", "보컬과 겹칩니다."),
-                region("attack", 2000.0, 5000.0, listOf("어택"), listOf("날카로움"), "스틱이 닿는 소리입니다.", "센 타격에서 귀를 찌르는지 듣습니다.", "3~6 kHz 는 금세 날카로워집니다."),
+                region("attack", 2000.0, 5000.0, listOf("어택"), emptyList(), "스틱이 닿는 소리입니다.", "센 타격에서 스틱이 들리는지 듣습니다.", "올리면 어택이 붙지만 날카로워지기 쉽습니다."),
+                // 명세 §4.5 는 성격을 2~5k, 증상을 **3~6k** 로 따로 적는다(독립 검증 EQB01).
+                region("harsh", 3000.0, 6000.0, emptyList(), listOf("날카로움"), "날카롭게 들릴 때 조사할 곳입니다.", "센 타격에서 귀를 찌르는지 듣습니다.", "어택이 함께 줄어듭니다."),
                 region("snap", 6000.0, 12000.0, listOf("스냅"), emptyList(), "스냅의 밝기입니다.", "고스트노트에서 듣습니다.", "잡음도 함께 커집니다."),
                 region("boxy", 300.0, 800.0, emptyList(), listOf("상자 느낌", "울림"), "상자처럼 울릴 때 조사할 곳입니다.", "샘플을 바꿔 보고도 남는지 확인합니다.", "바디와 겹칩니다."),
             ),
             hpf = hpf(70.0, 100.0, alt = null, condition = "킥의 누음을 줄일 때 70~100 을 견줍니다.", caution = "스네어의 바디가 얇아질 수 있습니다."),
             lpf = lpf(10000.0, 14000.0, bypassDefault = true, condition = "기본은 bypass, 최상단이 거칠면 10~14 kHz 를 시험합니다.", caution = "스냅이 함께 줄어듭니다."),
             cautions = electronicCautions,
-            sourceIds = listOf(Sources.IZOTOPE_DRUMS),
+            sourceIds = listOf(Sources.IZOTOPE_DRUMS, Sources.IZOTOPE_DRUM_COMPRESSION, Sources.IZOTOPE_NOISE_GATES),
             dynamics = listOf(edrumPartGate(), edrumPartComp()),
         ),
         profile(
@@ -109,7 +111,7 @@ internal object DrumsCatalog {
             hpf = hpf(30.0, 50.0, alt = 40.0 to 70.0, condition = "플로어탐은 30~50, 랙탐은 40~70 을 견줍니다.", caution = "탐의 몸통이 얇아질 수 있습니다."),
             lpf = lpf(8000.0, 12000.0, bypassDefault = true, condition = "기본은 bypass, 필요하면 8~12 kHz 를 시험합니다.", caution = "어택이 함께 줄어듭니다."),
             cautions = electronicCautions,
-            sourceIds = listOf(Sources.IZOTOPE_DRUMS),
+            sourceIds = listOf(Sources.IZOTOPE_DRUMS, Sources.IZOTOPE_DRUM_COMPRESSION, Sources.IZOTOPE_NOISE_GATES),
             dynamics = listOf(edrumPartGate(), edrumPartComp()),
         ),
         profile(
@@ -119,13 +121,15 @@ internal object DrumsCatalog {
             nameKo = "하이햇",
             roles = listOf("리듬"),
             regions = listOf(
-                region("rhythm", 3000.0, 8000.0, listOf("리듬", "어택"), listOf("거침"), "하이햇의 리듬과 어택입니다.", "8비트를 반복하며 듣습니다.", "오래 들으면 피로해지는 구간입니다."),
+                region("rhythm", 3000.0, 8000.0, listOf("리듬", "어택"), emptyList(), "하이햇의 리듬과 어택입니다.", "8비트를 반복하며 듣습니다.", "올리면 리듬이 또렷해지지만 쉽게 거칠어집니다."),
+                // 명세 §4.5 는 성격을 3~8k, 증상을 **3~7k** 로 따로 적는다(독립 검증 EQB01).
+                region("harsh", 3000.0, 7000.0, emptyList(), listOf("거침"), "거칠게 들릴 때 조사할 곳입니다.", "오래 들었을 때 피로한지로 판단합니다.", "리듬의 또렷함이 함께 줄어듭니다."),
                 region("bright", 8000.0, 14000.0, listOf("밝기"), emptyList(), "하이햇의 밝기입니다.", "오픈 하이햇에서 듣습니다.", "지속음이 끊기기 쉽습니다."),
             ),
             hpf = hpf(150.0, 300.0, alt = null, condition = "다른 파트의 누음을 줄일 때 150~300 을 견줍니다.", caution = "하이햇의 몸통이 사라질 수 있습니다."),
             lpf = lpf(12000.0, 16000.0, bypassDefault = true, condition = "기본은 bypass, 최상단이 거칠면 12~16 kHz 를 시험합니다.", caution = "밝기가 함께 줄어듭니다."),
             cautions = electronicCautions,
-            sourceIds = listOf(Sources.IZOTOPE_DRUMS),
+            sourceIds = listOf(Sources.IZOTOPE_DRUMS, Sources.IZOTOPE_DRUM_COMPRESSION, Sources.IZOTOPE_NOISE_GATES),
             dynamics = listOf(cymbalGate(), cymbalComp()),
         ),
         profile(
@@ -136,13 +140,15 @@ internal object DrumsCatalog {
             roles = listOf("리듬", "악센트"),
             regions = listOf(
                 region("metal_body", 300.0, 1000.0, listOf("금속 몸통"), emptyList(), "심벌의 몸통입니다.", "크래시를 반복하며 듣습니다.", "다른 파트와 겹칩니다."),
-                region("attack", 3000.0, 8000.0, listOf("어택"), listOf("자극"), "스틱이 닿는 소리입니다.", "라이드의 벨에서 듣습니다.", "찌르듯 들리기 쉬운 구간입니다."),
-                region("air", 8000.0, 16000.0, listOf("공기감"), emptyList(), "심벌의 공기감입니다.", "잔향이 남는 구간에서 듣습니다.", "긴 잔향이 누적될 수 있습니다."),
+                region("attack", 3000.0, 8000.0, listOf("어택"), emptyList(), "스틱이 닿는 소리입니다.", "라이드의 벨에서 듣습니다.", "올리면 어택이 붙지만 쉽게 찌르는 소리가 됩니다."),
+                // 명세 §4.5 는 성격을 3~8k, 증상을 **3~7k** 로 따로 적는다(독립 검증 EQB01).
+                region("harsh", 3000.0, 7000.0, emptyList(), listOf("자극", "긴 잔향 누적"), "찌르듯 들리거나 잔향이 쌓일 때 조사할 곳입니다.", "크래시가 이어지는 구간에서 듣습니다.", "스틱의 어택이 함께 줄어듭니다."),
+                region("air", 8000.0, 16000.0, listOf("공기감"), emptyList(), "심벌의 공기감입니다.", "잔향이 남는 구간에서 듣습니다.", "공기감이 줄면 심벌이 답답해집니다."),
             ),
             hpf = hpf(100.0, 250.0, alt = null, condition = "다른 파트의 누음을 줄일 때 100~250 을 견줍니다.", caution = "금속 몸통이 사라질 수 있습니다."),
             lpf = lpf(12000.0, 16000.0, bypassDefault = true, condition = "기본은 bypass, 최상단이 거칠면 12~16 kHz 를 시험합니다.", caution = "공기감이 함께 줄어듭니다."),
             cautions = electronicCautions,
-            sourceIds = listOf(Sources.IZOTOPE_DRUMS),
+            sourceIds = listOf(Sources.IZOTOPE_DRUMS, Sources.IZOTOPE_DRUM_COMPRESSION, Sources.IZOTOPE_NOISE_GATES),
             dynamics = listOf(cymbalGate(), cymbalComp()),
         ),
     )
@@ -204,7 +210,7 @@ internal object DrumsCatalog {
             hpf = FilterGuidance(FilterType.HPF, bypassDefault = true, rangeHz = null, conditionKo = "기본은 bypass 입니다.", cautionKo = "전체에 걸면 킥의 기반이 함께 줄어듭니다."),
             lpf = FilterGuidance(FilterType.LPF, bypassDefault = true, rangeHz = null, conditionKo = "기본은 bypass 입니다.", cautionKo = "전체에 걸면 심벌의 공기감이 함께 줄어듭니다."),
             cautions = acousticCautions + "혼합 신호로 개별 드럼의 원인을 확정하지 않습니다.",
-            sourceIds = listOf(Sources.IZOTOPE_DRUMS, Sources.SHURE_CHURCH),
+            sourceIds = listOf(Sources.IZOTOPE_DRUMS, Sources.SHURE_CHURCH, Sources.IZOTOPE_DRUM_COMPRESSION, Sources.IZOTOPE_NOISE_GATES),
             dynamics = listOf(
                 gate(
                     bypassDefault = true,
@@ -239,7 +245,9 @@ internal object DrumsCatalog {
             listOf(
                 region("body", 120.0, 250.0, listOf("바디"), emptyList(), "스네어의 몸집입니다.", "단독으로 반복해 듣습니다.", "과하면 둔해집니다."),
                 region("clarity", 1000.0, 3000.0, listOf("명료도"), emptyList(), "스네어가 구분되는 곳입니다.", "합주에서 묻히는지 듣습니다.", "보컬과 겹칩니다."),
-                region("attack", 2000.0, 5000.0, listOf("어택"), listOf("자극"), "스틱이 닿는 소리입니다.", "센 타격에서 귀를 찌르는지 듣습니다.", "3~6 kHz 는 금세 자극적으로 들립니다."),
+                region("attack", 2000.0, 5000.0, listOf("어택"), emptyList(), "스틱이 닿는 소리입니다.", "센 타격에서 스틱이 들리는지 듣습니다.", "올리면 어택이 붙지만 자극적으로 들리기 쉽습니다."),
+                // 명세 §4.6 은 성격을 2~5k, 증상을 **3~6k** 로 따로 적는다(독립 검증 EQB01).
+                region("harsh", 3000.0, 6000.0, emptyList(), listOf("자극"), "찌르듯 들릴 때 조사할 곳입니다.", "센 타격에서 귀를 찌르는지 듣습니다.", "어택이 함께 줄어듭니다."),
                 region("wires", 6000.0, 12000.0, listOf("스냅"), emptyList(), "스네어 와이어의 소리입니다.", "고스트노트에서 듣습니다.", "하이햇 누음도 함께 커집니다."),
                 region("ring", 300.0, 900.0, emptyList(), listOf("울림", "박스톤"), "울림과 박스톤의 후보입니다.", "튜닝과 댐핑을 먼저 보고도 남는지 확인합니다.", "바디와 겹칩니다."),
             ),
@@ -278,7 +286,9 @@ internal object DrumsCatalog {
         drumPart(
             "drums.hihat", "하이햇", listOf("리듬"),
             listOf(
-                region("rhythm", 3000.0, 8000.0, listOf("리듬"), listOf("날카로움"), "하이햇의 리듬입니다.", "8비트를 반복하며 듣습니다.", "오래 들으면 피로해지는 구간입니다."),
+                region("rhythm", 3000.0, 8000.0, listOf("리듬"), emptyList(), "하이햇의 리듬입니다.", "8비트를 반복하며 듣습니다.", "올리면 리듬이 또렷해지지만 쉽게 날카로워집니다."),
+                // 명세 §4.6 은 성격을 3~8k, 증상을 **3~7k** 로 따로 적는다(독립 검증 EQB01).
+                region("harsh", 3000.0, 7000.0, emptyList(), listOf("날카로움"), "날카롭게 들릴 때 조사할 곳입니다.", "오래 들었을 때 피로한지로 판단합니다.", "리듬의 또렷함이 함께 줄어듭니다."),
                 region("bright", 8000.0, 14000.0, listOf("밝기"), emptyList(), "하이햇의 밝기입니다.", "오픈 하이햇에서 듣습니다.", "지속음이 끊기기 쉽습니다."),
             ),
             hpf(150.0, 300.0, null, "다른 파트의 누음을 줄일 때 150~300 을 견줍니다.", "하이햇의 몸통이 사라질 수 있습니다."),
@@ -291,7 +301,9 @@ internal object DrumsCatalog {
             "drums.overhead", "오버헤드 / 심벌", listOf("리듬", "악센트"),
             listOf(
                 region("kit_body", 200.0, 800.0, listOf("키트 몸통"), emptyList(), "오버헤드가 담는 키트 전체의 몸통입니다.", "기본 패턴에서 듣습니다.", "다른 파트의 누음이 함께 들어 있습니다."),
-                region("stick", 3000.0, 8000.0, listOf("어택"), listOf("자극"), "스틱이 닿는 소리입니다.", "라이드에서 듣습니다.", "찌르듯 들리기 쉬운 구간입니다."),
+                region("stick", 3000.0, 8000.0, listOf("어택"), emptyList(), "스틱이 닿는 소리입니다.", "라이드에서 듣습니다.", "올리면 스틱이 또렷해지지만 쉽게 찌르는 소리가 됩니다."),
+                // 명세 §4.6 은 성격을 3~8k, 증상을 **3~7k** 로 따로 적는다(독립 검증 EQB01).
+                region("harsh", 3000.0, 7000.0, emptyList(), listOf("자극", "다른 파트 누음"), "찌르듯 들리거나 다른 파트가 함께 커질 때 조사할 곳입니다.", "스네어·하이햇이 오버헤드로 얼마나 들어오는지 함께 듣습니다.", "스틱의 또렷함이 함께 줄어듭니다."),
                 region("air", 8000.0, 16000.0, listOf("공기감"), emptyList(), "심벌의 공기감입니다.", "잔향이 남는 구간에서 듣습니다.", "다른 파트의 누음도 함께 커집니다."),
             ),
             hpf(60.0, 100.0, 150.0 to 250.0, "키트 전체를 담는 역할이면 60~100, 심벌 중심이면 150~250 을 견줍니다.", "키트의 몸통이 함께 사라질 수 있습니다."),
@@ -330,7 +342,7 @@ internal object DrumsCatalog {
         hpf = hpf,
         lpf = lpf,
         cautions = cautions,
-        sourceIds = listOf(Sources.IZOTOPE_DRUMS, Sources.IZOTOPE_DRUM_COMPRESSION),
+        sourceIds = listOf(Sources.IZOTOPE_DRUMS, Sources.IZOTOPE_DRUM_COMPRESSION, Sources.IZOTOPE_NOISE_GATES),
         dynamics = listOf(gate, comp),
     )
 }

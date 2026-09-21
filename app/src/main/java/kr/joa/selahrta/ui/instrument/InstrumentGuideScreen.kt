@@ -6,6 +6,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -380,16 +382,18 @@ private fun TagBadge(text: String, color: androidx.compose.ui.graphics.Color) {
     )
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun <T> ChipRow(items: List<Pair<T, String>>, selected: T, onSelect: (T) -> Unit) {
-    // 좁은 화면에서 줄바꿈되도록 단순한 흐름 배치를 쓴다.
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        items.chunked(3).forEach { row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                row.forEach { (value, label) ->
-                    Chip(label, value == selected) { onSelect(value) }
-                }
-            }
+    // **폭에 맞춰 접힌다.** 예전에는 `chunked(3)` 으로 줄을
+    // 고정해 두고 주석에만 「줄바꿈된다」고 적어 두었다 — 글자가
+    // 커지거나 화면이 좁으면 칩이 밖으로 밀린다(독립 검증 EQB 마무리).
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        items.forEach { (value, label) ->
+            Chip(label, value == selected) { onSelect(value) }
         }
     }
 }
