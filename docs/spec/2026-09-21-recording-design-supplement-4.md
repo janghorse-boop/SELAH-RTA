@@ -90,10 +90,35 @@ leqShort·leqLong·leqLongFull·settled, 31밴드, Peak Hold,
 | 칸 | `PacketSlot(seq, captureFrameStart, frames, epochId, bufferIndex)` 를 **미리 만들어 두고 돌려 씁니다** — 게시할 때 새로 만들지 않습니다 |
 | 게시 | 칸의 필드를 채우고 **쓰기 색인을 release-store** 하는 것이 전부입니다 |
 | 금지 | 자물쇠 대기·용량 대기·interrupt 가능한 API·일반 예외·할당 |
-| 소비 | 읽기 색인을 acquire-load 로 본다 |
+| 소비 | **쓰기 색인을 acquire-load** 한다(아래 순서 참고) |
 
 **producer 가 하나(오디오 스레드), consumer 가 하나(녹음 스레드)** 라서
 색인 두 개면 충분합니다.
+
+### 순서를 정확히 적습니다 (독립 검증 M41)
+
+제가 「소비는 **읽기** 색인을 acquire-load 한다」고 적었는데 **거꾸로**
+였습니다. 소비자가 자기 색인을 acquire 해 봐야 **생산자가 쓴 필드와
+동기화되지 않습니다.** 맞물려야 하는 것은 상대가 게시한 색인입니다:
+
+```
+producer: slot 필드 채움        → writeIndex  release-store
+consumer: writeIndex acquire-load → 게시된 slot 읽기
+consumer: slot 사용을 마침       → readIndex   release-store
+producer: readIndex acquire-load  → 회수된 slot 재사용
+```
+
+### 버퍼를 돌려주는 시점과 칸을 돌려주는 시점은 다릅니다
+
+메타데이터를 소비자가 제 쪽으로 가져왔더라도, **writer 가 그 PCM 을 아직
+쓰고 있으면 버퍼를 풀에 돌려주지 않습니다.**
+
+| 무엇 | 언제 돌려주는가 |
+|---|---|
+| 링 **칸**(PacketSlot) | 메타데이터를 인수한 직후 — `readIndex` 를 올릴 때 |
+| PCM **버퍼** | writer 가 그 PCM 을 **다 쓴 뒤** |
+
+둘을 같은 시점으로 묶으면, 아직 쓰고 있는 PCM 이 다음 블록으로 덮입니다.
 
 ### 왜 실패할 수 없는가
 
@@ -149,8 +174,18 @@ Row(rowIndex,
 - 읽을 때 `raw + 그 epoch 의 offset` 으로 되살리면 **정확히 90dB** 입니다.
 - 재분석은 raw 를 그대로 쓰므로 뜻이 보존됩니다.
 
-**epochId 는 2바이트**면 됩니다(고리 상한 256). 행이 6바이트 늘어납니다 —
-2시간에 약 0.17MB 입니다.
+**epochId 는 2바이트**면 됩니다(고리 상한 256).
+
+크기를 잘못 적었습니다(독립 검증 L41). 2시간이면 `7200 / 0.5 = 14,400`행
+이므로:
+
+| | 바이트/행 | 2시간 |
+|---|---:|---:|
+| 세 필드를 전부 새로 넣는다면 | +6 | **0.086MB** |
+| 2차 설계의 `epochId` 한 개에서 **순증가** | +4 | **0.058MB** |
+
+제가 적은 **0.17MB 는 두 배쯤 크게 잡은 값**입니다. 최종 wire format 이
+정해지면 실제 `recordSize` 로 다시 셉니다.
 
 ### 적어 두어야 할 한계
 

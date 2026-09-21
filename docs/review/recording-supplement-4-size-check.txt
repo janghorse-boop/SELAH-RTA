@@ -1,0 +1,1 @@
+Rows=14400; extraBytesIf6PerRow=86400; decimalMB=0.0864; MiB=0.0823974609375
