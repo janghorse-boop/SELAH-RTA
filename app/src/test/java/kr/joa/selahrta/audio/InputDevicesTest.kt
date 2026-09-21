@@ -144,4 +144,43 @@ class InputDevicesTest {
         // 모르는 주소는 지어내지 않고 그대로 보여 준다.
         assertEquals("sidecar", micPositionKo("sidecar"))
     }
+
+    /**
+     * 「내장 마이크로 전환」 정책은 이름대로 내장을 고른다(독립 검증 R11).
+     *
+     * 예전에는 평소 규칙으로 다시 시작해서, 외부 마이크가 하나 더 꽂혀
+     * 있으면 그쪽으로 열렸다. 정책 이름과 다른 일을 하면 담당자는 내장으로
+     * 재고 있다고 믿는다.
+     */
+    @Test
+    fun `분리 후 전환 정책은 외부가 남아 있어도 내장을 고른다`() {
+        val devices = listOf(usb(2, "iMM-6C"), builtIn(1), usb(3, "다른 USB"))
+
+        val fallback = chooseInput(
+            devices,
+            preferredKey = usb(2, "iMM-6C").stableKey,
+            autoPreferExternal = true,
+            disconnectFallBack = true,
+        )
+        assertEquals(MicKind.BuiltIn, fallback.device?.kind)
+        assertEquals(ChoiceReason.DisconnectFallBack, fallback.reason)
+        assertNotNull("무엇으로 바뀌었는지 알려야 한다", fallback.reason.noticeKo(fallback.device))
+
+        // 평소 규칙이었다면 외부를 골랐을 상황이다 — 그 차이가 이 시험의 요점이다.
+        val normal = chooseInput(devices, null, autoPreferExternal = true)
+        assertEquals(MicKind.Usb, normal.device?.kind)
+    }
+
+    /** 내장이 없는 기기에서도 터지지 않는다. */
+    @Test
+    fun `내장이 없으면 남은 것으로 전환한다`() {
+        val c = chooseInput(
+            listOf(usb(2, "iMM-6C")),
+            preferredKey = null,
+            autoPreferExternal = false,
+            disconnectFallBack = true,
+        )
+        assertEquals(MicKind.Usb, c.device?.kind)
+        assertEquals(ChoiceReason.DisconnectFallBack, c.reason)
+    }
 }

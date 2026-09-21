@@ -93,7 +93,10 @@ fun SegmentRangeCard(
             fontSize = 12.sp,
         )
         Text(
-            "순간 피크 ${range.peakLowDb.toInt()} ~ ${range.peakHighDb.toInt()} dBA",
+            // 「피크」라고만 적으면 PEAK 타일과 견주게 되는데, 그쪽은 가중 전
+            // 파형의 최대라 dBA 가 아니다(독립 검증 R10). 어느 숫자와 견줄
+            // 값인지 이름으로 못박는다.
+            "짧은 최대(MAX) ${range.peakLowDb.toInt()} ~ ${range.peakHighDb.toInt()} dBA",
             color = SelahColors.TextSecondary,
             fontSize = 12.sp,
         )

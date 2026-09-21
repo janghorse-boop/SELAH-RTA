@@ -110,10 +110,26 @@ fun MeasureScreen(
 
             running -> {
                 val f = capture.opened
+                // 시작 직후에는 두 가지가 아직 정해지지 않았다: 어느 마이크로
+                // 붙었는지(R01)와 바늘이 자리를 잡았는지(R07). 둘 다 그 사이의
+                // 숫자를 측정값이라 부르면 안 되는 상태라 먼저 알린다.
+                val warming = when {
+                    f != null && !f.routeConfirmed ->
+                        "어느 마이크로 열렸는지 확인하는 중입니다. 확인되기 전에는 " +
+                            "그 기기의 보정값을 걸지 않습니다."
+                    !capture.meter.settled && capture.meter.currentSpl != null ->
+                        "레벨이 자리를 잡는 중입니다. 시작 직후 잠깐은 실제보다 " +
+                            "낮게 나옵니다."
+                    else -> null
+                }
                 InfoBar(
-                    f?.trustNoteKo ?: "재고 있습니다.",
+                    warming ?: f?.trustNoteKo ?: "재고 있습니다.",
                     Modifier.padding(top = 4.dp, bottom = 12.dp),
-                    tone = if (f?.trustIsWarning == true) SelahColors.Warn else SelahColors.InRange,
+                    tone = when {
+                        warming != null -> SelahColors.Warn
+                        f?.trustIsWarning == true -> SelahColors.Warn
+                        else -> SelahColors.InRange
+                    },
                 )
             }
 
@@ -249,10 +265,16 @@ fun MeasureScreen(
             ValueTile("MAX", formatDb(m.maxSpl), weighting.unitSuffix, Modifier.weight(1f))
             // 잘린 피크는 측정값이 아니라 하한이다. 「≥」를 붙여 그 사실을
             // 숫자 옆에 적는다 — 각주로 미루면 아무도 안 읽는다.
+            //
+            // **단위는 가중과 무관하다.** PEAK 는 가중 전 파형의 최대라
+            // A 로 바꿔도 숫자가 그대로인데, 거기에 dBA 를 붙이면 MAX·Leq 와
+            // 같은 가중의 값처럼 읽힌다. 125Hz 순음에서 A 가중은 16dB 을
+            // 깎지만 PEAK 는 꿈쩍도 안 한다(독립 검증 R10). 클리핑은 입력단의
+            // 사건이라 가중 전에서 재는 것이고, 그래서 표기도 고정이다.
             ValueTile(
                 "PEAK",
                 if (m.peakClipped && m.peakSpl != null) "≥${formatDb(m.peakSpl)}" else formatDb(m.peakSpl),
-                if (m.peakClipped) "잘림" else weighting.unitSuffix,
+                if (m.peakClipped) "잘림 · 가중없음" else "dB 가중없음",
                 Modifier.weight(1f),
             )
         }

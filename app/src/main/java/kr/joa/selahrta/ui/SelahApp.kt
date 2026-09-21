@@ -215,12 +215,26 @@ private fun TopBrandBar(capture: CaptureUiState) {
             )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            // 열리기 전에는 흐리게 둔다. 그럴듯한 PHONE MIC 를 미리 띄우면
-            // 마이크가 실제로 열렸는지 아닌지 구별할 수 없게 된다.
+            // **실제로 열린 기기의 종류를 그린다.** 예전에는 USB 로 열어도
+            // PHONE MIC 가 나왔다(독립 검증 R12).
+            //
+            // 상태가 셋이다: 안 열림(흐린 PHONE MIC — 그럴듯한 배지를 미리
+            // 띄우면 열렸는지 구별할 수 없다), 열렸지만 어느 마이크인지
+            // 아직 확인 못 함(「확인 중」 — 그때의 종류는 요청한 값일 뿐이다),
+            // 확인됨(그 기기의 배지).
+            val opened = capture.opened
             StatusPill(
-                MicKind.BuiltIn.badgeKo,
-                if (openedDeviceLabel != null) SelahColors.Accent else SelahColors.TextMuted,
-                dim = openedDeviceLabel == null,
+                when {
+                    opened == null -> MicKind.BuiltIn.badgeKo
+                    !opened.routeConfirmed -> "입력 확인 중"
+                    else -> opened.micKind.badgeKo
+                },
+                when {
+                    opened == null -> SelahColors.TextMuted
+                    !opened.routeConfirmed -> SelahColors.Warn
+                    else -> SelahColors.Accent
+                },
+                dim = opened == null,
             )
             StatusPill(
                 capture.calibration.state.shortKo,

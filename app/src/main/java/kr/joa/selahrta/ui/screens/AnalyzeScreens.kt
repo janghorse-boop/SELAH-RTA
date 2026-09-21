@@ -57,12 +57,15 @@ fun RtaScreen(capture: CaptureUiState) {
 
         BandMeter(rta, floor, ceil, Modifier.fillMaxWidth())
 
-        if (unresolved != null) {
-            // 흐린 막대가 무슨 뜻인지 적는다. 안 적으면 「저음이 약하다」로 읽힌다.
+        if (unresolved != null && rta != null) {
+            // 흐린 막대가 무슨 뜻인지, **얼마나** 못 믿을지를 함께 적는다.
+            // 참·거짓만 적으면 2dB 과 7dB 을 같은 것으로 읽게 된다.
+            val worst = (0 until unresolved).maxOf { rta.lossDb[it] }
             InfoBar(
                 "${ThirdOctave.label(unresolved)}Hz 아래 밴드는 흐리게 그립니다. " +
-                    "FFT 한 칸이 그 밴드보다 넓어서, 그 값은 이웃에서 새어 온 것이지 " +
-                    "그 대역의 실제 에너지가 아닙니다.",
+                    "FFT 창이 낮은 주파수를 한 밴드 안에 다 담지 못해 에너지가 " +
+                    "이웃으로 새고, 실제보다 최대 ${"%.1f".format(worst)}dB 낮게 " +
+                    "나옵니다.",
                 Modifier.padding(top = 10.dp),
                 tone = SelahColors.TextMuted,
             )

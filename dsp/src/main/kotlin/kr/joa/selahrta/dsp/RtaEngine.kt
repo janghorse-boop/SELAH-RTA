@@ -10,8 +10,15 @@ class RtaFrame(
     val bandsDbfs: DoubleArray,
     /** Peak Hold 로 붙들어 둔 값(dBFS). 길이 31. */
     val holdDbfs: DoubleArray,
-    /** 밴드마다 FFT 로 실제 분해되는가. 안 되는 밴드의 값은 이웃에서 샌 것이다. */
+    /** 밴드마다 FFT 로 실제 분해되는가. 안 되는 밴드의 값은 이웃으로 샌다. */
     val resolved: BooleanArray,
+    /**
+     * 밴드마다 순음 에너지가 얼마나 새어 나가는가(dB).
+     *
+     * 「분해 안 됨」을 참·거짓으로만 말하면 얼마나 못 믿을지를 알 수 없다.
+     * 2dB 과 7dB 은 다른 이야기다(독립 검증 R08).
+     */
+    val lossDb: DoubleArray,
 )
 
 /**
@@ -112,7 +119,7 @@ class RtaEngine(
         val smoothed = smoothing.update(bandPower)
         bands.toBandDbfs(smoothed, bandDb)
         val held = peakHold.update(bandDb)
-        latest = RtaFrame(bandDb.copyOf(), held.copyOf(), bands.bandResolved)
+        latest = RtaFrame(bandDb.copyOf(), held.copyOf(), bands.bandResolved, bands.bandLossDb)
     }
 
     /** 가장 최근 결과. 아직 FFT 를 한 번도 못 돌렸으면 null. */

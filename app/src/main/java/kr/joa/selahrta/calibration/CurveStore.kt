@@ -38,22 +38,32 @@ data class ActiveCurve(
 /**
  * 주파수 보정이 어디까지 걸리는지.
  *
- * **RTA 막대에만 건다. 큰 음압 숫자(dBA 등)에는 걸지 않는다.**
+ * **RTA 막대에만 건다. 큰 음압 숫자(dBA·Leq·MAX·PEAK)에는 걸지 않는다.**
  *
  * 왜 그런가 — 주파수별 보정을 광대역 음압에 제대로 걸려면 시간 영역에서
- * 역응답 필터(FIR)를 통과시켜야 한다. 그 대신 「밴드마다 고쳐서 다시
- * 합치는」 손쉬운 방법을 쓰면 Fast/Slow 시간가중이 깨진다 — 규격이 정의한
- * 것은 시간 영역 신호의 지수 가중이지 밴드 합이 아니기 때문이다.
+ * 역응답 필터(FIR/IIR)를 통과시켜야 한다. 「밴드마다 고쳐서 다시 합치는」
+ * 손쉬운 방법은 쓸 수 없다: 규격이 정의한 Fast/Slow 는 시간 영역 신호의
+ * 지수 가중이지 밴드 합이 아니고, 파형 PEAK 은 아예 밴드로 되살릴 수 없다.
  *
- * 그래서 지금은 걸지 않고, 그 사실을 화면에 적는다. 다행히 이 선택의 대가는
- * 작다: 주파수 보정이 정말 필요한 경우(측정용 마이크)는 응답이 원래 평탄해서
- * (±2dB 안팎) 광대역 값에 미치는 영향이 0.5dB 아래이고, 그 정도는 기준
- * 소음계로 맞춘 전대역 보정이 이미 흡수한다.
+ * **남는 오차를 작다고 말하지 않는다.** 예전에 여기에 「±2dB 마이크면
+ * 광대역 영향이 0.5dB 아래이고 전대역 보정이 흡수한다」고 적었는데, 그것은
+ * 일반적으로 틀리다(독립 검증 R04). 남는 오차는 **보정을 맞춘 주파수의
+ * 응답과 실제 소리가 놓인 주파수의 응답 차이**다:
  *
- * 나중에 FIR 을 넣으면 그때 광대역에도 걸 수 있다.
+ * - 1kHz 에서 맞추고 그 마이크의 125Hz 응답이 +2dB 이면, 저역 위주 소리에서
+ *   광대역 값이 +2dB 만큼 높게 나온다.
+ * - 보정 기준 대역이 −2dB, 측정 대역이 +2dB 이면 차이는 4dB 까지 벌어진다.
+ *
+ * C−A 도 마찬가지다. 전대역 보정값은 양쪽에서 상쇄되지만 마이크 응답의
+ * 기울기는 상쇄되지 않는다.
+ *
+ * 그래서 지금은 걸지 않고, **그 사실과 남는 오차의 크기를 화면에 적는다.**
+ * 나중에 역응답 필터를 넣으면 그때 광대역에도 건다.
  */
 const val FREQUENCY_SCOPE_NOTE: String =
-    "주파수 보정은 RTA 막대에만 적용됩니다. 큰 음압 숫자는 전대역 보정값을 씁니다."
+    "주파수 보정은 RTA 막대에만 적용됩니다. 큰 음압 숫자(dBA·Leq·MAX·PEAK)는 " +
+        "전대역 보정값만 씁니다 — 마이크 응답이 고르지 않으면, 보정을 맞춘 " +
+        "주파수와 실제 소리가 놓인 주파수의 응답 차이만큼 오차가 남습니다."
 
 /**
  * 기기별 주파수 보정 곡선을 저장한다.
@@ -62,6 +72,9 @@ const val FREQUENCY_SCOPE_NOTE: String =
  * 설정 저장소에 문자열로 넣기에는 크고, 원본을 남겨 두면 나중에 다시
  * 해석하거나 내보낼 수 있다.
  */
+/** 곡선 파일 첫 줄에 남기는 주인 표시. 해석기가 건너뛰는 주석이다. */
+const val KEY_COMMENT_PREFIX = "# selah-key: "
+
 class CurveStore(private val context: Context) {
 
     private fun nameKey(k: CalibrationKey) = stringPreferencesKey("${k.storageKey()}|curveFile")
@@ -70,9 +83,27 @@ class CurveStore(private val context: Context) {
 
     private fun curveDir(): File = File(context.filesDir, "curves").apply { mkdirs() }
 
-    /** 파일 이름에 쓸 수 없는 글자를 뺀다. 기기 이름에 슬래시가 들어갈 수 있다. */
+    /**
+     * 열쇠를 파일 이름으로 옮긴다. **해시를 쓴다.**
+     *
+     * 예전에는 쓸 수 없는 글자를 전부 `_` 로 바꿨는데, 그러면 서로 다른
+     * 기기가 같은 파일을 쓴다 — `Mic A` 와 `Mic_A` 가 둘 다
+     * `cal_Usb_Mic_A_...cal` 이 된다(독립 검증 R09). 한쪽 곡선을 저장하면
+     * 다른 쪽이 덮이고, 한쪽을 지우면 다른 쪽 파일이 사라진다. 설정 저장소의
+     * 열쇠는 서로 달라서 화면은 곡선이 있다고 말하는데 파일 내용은 남의
+     * 것이다.
+     *
+     * SHA-256 은 서로 다른 열쇠가 같은 이름이 될 걱정을 없애 준다. 대신
+     * 폴더만 봐서는 어느 기기 것인지 알 수 없으므로, 원래 열쇠를 파일
+     * 첫 줄에 주석으로 남긴다([KEY_COMMENT_PREFIX]).
+     */
     private fun fileFor(k: CalibrationKey): File =
-        File(curveDir(), k.storageKey().replace(Regex("[^A-Za-z0-9._-]"), "_") + ".cal")
+        File(curveDir(), sha256Hex(k.storageKey()) + ".cal")
+
+    private fun sha256Hex(s: String): String =
+        java.security.MessageDigest.getInstance("SHA-256")
+            .digest(s.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
 
     fun watch(key: CalibrationKey): Flow<ActiveCurve?> =
         context.curveDataStore.data
@@ -101,7 +132,10 @@ class CurveStore(private val context: Context) {
         withContext(Dispatchers.IO) {
             val loaded = CalibrationFile.load(text).getOrElse { return@withContext Result.failure(it) }
             runCatching {
-                fileFor(key).writeText(text)
+                // 원래 열쇠를 첫 줄 주석으로 남긴다. 해석기가 건너뛰는 줄이라
+                // 곡선에는 영향이 없고, 폴더만 봐도 어느 기기 것인지 알 수 있다.
+                val body = KEY_COMMENT_PREFIX + key.storageKey() + "\n" + text
+                writeAtomically(fileFor(key), body)
                 context.curveDataStore.edit { p ->
                     p[nameKey(key)] = fileName
                     p[countKey(key)] = loaded.pointCount
@@ -112,6 +146,24 @@ class CurveStore(private val context: Context) {
                 throw IOException("보정 파일을 저장하지 못했습니다: ${it.message}")
             }
         }
+
+    /**
+     * 임시 파일에 쓴 뒤 옮긴다.
+     *
+     * 곧바로 덮어쓰다가 중간에 죽으면 반쯤 쓰인 파일이 남는데, 그 파일은
+     * 해석은 되면서 점이 모자란 곡선이 되기 쉽다 — 「보정이 걸렸다」고
+     * 적히면서 값은 틀린 상태다.
+     */
+    private fun writeAtomically(target: File, text: String) {
+        val tmp = File(target.parentFile, target.name + ".tmp")
+        tmp.writeText(text)
+        if (!tmp.renameTo(target)) {
+            // 같은 폴더 안의 rename 이 실패하는 일은 드물지만, 실패하면
+            // 조용히 넘어가지 않는다.
+            target.writeText(text)
+            tmp.delete()
+        }
+    }
 
     suspend fun clear(key: CalibrationKey) = withContext(Dispatchers.IO) {
         runCatching {

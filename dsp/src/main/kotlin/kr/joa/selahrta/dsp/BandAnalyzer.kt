@@ -1,5 +1,7 @@
 package kr.joa.selahrta.dsp
 
+import kotlin.math.pow
+
 /**
  * FFT 칸을 1/3 옥타브 31밴드로 묶는다(명세 7장).
  *
@@ -11,6 +13,25 @@ package kr.joa.selahrta.dsp
  * 어느 한쪽에 주면, 저역에서 칸 하나가 밴드 폭보다 넓기 때문에 밴드마다
  * 몇 dB 씩 들쭉날쭉해진다.
  */
+/**
+ * 얼마나 새는 것까지 「분해됐다」고 볼 것인가.
+ *
+ * 1dB 은 귀로는 겨우 알아챌까 말까 한 차이지만, 저역 균형을 보고 EQ 를
+ * 만지는 자리에서는 방향을 바꿀 만한 양이다. 규격에서 온 값이 아니라
+ * 우리가 정한 선이므로, 넘는 밴드는 화면이 그 사실을 적는다.
+ */
+const val LEAKAGE_TOLERANCE_DB = 1.0
+
+/**
+ * 밴드 안 어디에 순음을 놓고 재는가(로그 눈금 0~1, 0.5 가 중심).
+ *
+ * **경계에 바싹 붙은 자리는 쓰지 않는다.** 거기서 새는 것의 상당 부분은
+ * 창 때문이 아니라 「그 소리가 두 밴드에 걸쳐 있어서」다 — 경계에 걸친
+ * 칸을 나눠 넣는 것은 의도한 동작이다. 그 둘을 섞으면 창의 한계를
+ * 재는 것이 아니게 된다.
+ */
+private val TEST_POSITIONS = doubleArrayOf(0.25, 0.5, 0.75)
+
 class BandAnalyzer(
     private val fftSize: Int,
     private val sampleRate: Int,
@@ -42,16 +63,69 @@ class BandAnalyzer(
     }
 
     /**
-     * 각 밴드에 FFT 칸이 하나라도 걸리는가.
+     * 밴드마다 순음의 에너지가 **얼마나 새어 나가는가**(dB).
      *
-     * 저역의 좁은 밴드는 칸 하나보다 좁아서 아무 칸도 온전히 담기지 않는다.
-     * 그런 밴드의 값은 이웃에서 새어 온 것이라 **실제 그 대역의 에너지가
-     * 아니다.** 화면이 그 사실을 알릴 수 있도록 내보낸다.
+     * Hann 창을 쓴 FFT 는 순음을 한 칸에 담지 못하고 이웃으로 번지게 한다.
+     * 밴드가 좁으면 번진 부분이 밴드 밖으로 나가 에너지가 실제보다 **낮게**
+     * 잡힌다. 4096점·48kHz 에서 63Hz 중심 순음은 2.19dB, 80Hz 는 1.12dB 이
+     * 빠진다(독립 검증 R08).
+     *
+     * 예전에는 「밴드가 칸 폭보다 넓은가」로 분해 여부를 판정했는데, 그것은
+     * 창의 주파수 응답을 보지 않은 기준이라 위 두 밴드를 「충분히 분해됨」
+     * 으로 표시했다. 이제 실제로 재서 판정한다.
+     *
+     * 밴드 안 세 자리(아래쪽·중심·위쪽)에서 재어 **가장 나쁜 값**을 쓴다 —
+     * 경계 가까이 있는 순음이 가장 많이 샌다.
+     */
+    val bandLossDb: DoubleArray = leakageFor(fftSize, sampleRate)
+
+    /**
+     * 그 밴드의 값을 그 대역의 에너지라고 말해도 되는가.
+     *
+     * [LEAKAGE_TOLERANCE_DB] 를 넘게 새면 아니다. 화면이 그 사실을 알린다.
      */
     val bandResolved: BooleanArray = BooleanArray(ThirdOctave.BAND_COUNT) { band ->
-        val width = ThirdOctave.upperEdge(band) - ThirdOctave.lowerEdge(band)
-        // 밴드가 칸 폭보다 넓어야 그 밴드를 「분해했다」고 말할 수 있다.
-        width >= binWidth && ThirdOctave.upperEdge(band) <= sampleRate / 2.0
+        bandLossDb[band] <= LEAKAGE_TOLERANCE_DB
+    }
+
+    /**
+     * 밴드마다 순음을 넣어 실제로 얼마나 빠지는지 잰다.
+     *
+     * 식으로 어림하지 않고 재는 까닭은, 창·칸 나누기·경계 처리가 모두 섞인
+     * 결과라 어림하면 어디서 틀렸는지 알 수 없기 때문이다.
+     */
+    private fun measureLeakage(): DoubleArray {
+        val spectrum = PowerSpectrum(fftSize)
+        val x = DoubleArray(fftSize)
+        val p = DoubleArray(binCount)
+        val band = DoubleArray(ThirdOctave.BAND_COUNT)
+        val nyquist = sampleRate / 2.0
+
+        return DoubleArray(ThirdOctave.BAND_COUNT) { b ->
+            val lo = ThirdOctave.lowerEdge(b)
+            val hi = ThirdOctave.upperEdge(b)
+            if (hi > nyquist) {
+                // 나이퀴스트를 넘는 밴드는 잴 수 있는 대상이 아니다.
+                Double.POSITIVE_INFINITY
+            } else {
+                var worst = 0.0
+                for (t in TEST_POSITIONS) {
+                    // 로그 눈금으로 밴드 안을 나눈 자리. 1/3 옥타브는 로그 간격이다.
+                    val f = lo * (hi / lo).pow(t)
+                    for (i in x.indices) x[i] = kotlin.math.sin(2 * Math.PI * f * i / sampleRate)
+                    spectrum.compute(x, 0, p)
+                    toBandPower(p, band)
+                    // 진폭 1 사인파의 평균 제곱은 1/2 이다.
+                    val loss = if (band[b] <= 0.0) {
+                        Double.POSITIVE_INFINITY
+                    } else {
+                        -10.0 * kotlin.math.log10(band[b] / 0.5)
+                    }
+                    if (loss > worst) worst = loss
+                }
+                worst
+            }
+        }
     }
 
     /** 이 설정에서 제대로 분해되는 가장 낮은 밴드 번호. */
@@ -87,6 +161,22 @@ class BandAnalyzer(
             }
             out[b] = sum
         }
+    }
+
+    companion object {
+        /**
+         * (FFT 길이, 샘플레이트)마다 한 번만 재고 기억한다.
+         *
+         * 재는 데 FFT 를 93번 돌려 60ms 쯤 걸린다. 측정을 시작할 때마다
+         * 그만큼 멈추면 「시작 버튼이 굼뜨다」로 나타난다. 조합은 기기마다
+         * 한둘뿐이라 기억해 두면 두 번째부터는 공짜다.
+         */
+        private val leakageCache = java.util.concurrent.ConcurrentHashMap<Long, DoubleArray>()
+
+        private fun BandAnalyzer.leakageFor(fftSize: Int, sampleRate: Int): DoubleArray =
+            leakageCache.computeIfAbsent(fftSize.toLong() shl 32 or sampleRate.toLong()) {
+                measureLeakage()
+            }
     }
 
     /** 밴드 전력을 dBFS 로 옮긴다. 전력이므로 10·log10 이다. */

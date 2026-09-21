@@ -161,6 +161,8 @@ data class RtaView(
     val bandsSpl: DoubleArray,
     val holdSpl: DoubleArray,
     val resolved: BooleanArray,
+    /** 밴드마다 순음 에너지가 얼마나 새는가(dB). 얼마나 못 믿을지를 말한다. */
+    val lossDb: DoubleArray,
     /** 주파수 보정이 걸렸는가. 걸렸으면 화면이 그 사실을 적는다. */
     val curveApplied: Boolean = false,
     /** 보정 곡선이 덮지 않아 끝점 값을 늘여 쓴 밴드. */
@@ -314,17 +316,27 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         val key = openingKey ?: return
         val stillThere = now.any { it.stableKey == key }
         if (stillThere) {
-            // 새로 꽂힌 외부 기기가 있고 자동 전환이 켜져 있으면 알린다.
-            // 자동으로 바꾸지는 않는다 — 예배 중에 값이 튀면 안 된다.
+            // 새로 꽂힌 외부 기기를 알린다. **자동으로 바꾸지는 않는다** —
+            // 예배 중에 입력이 바뀌면 그 앞뒤 값이 서로 다른 마이크의 값이 된다.
+            //
+            // 「외부 기기 자동 사용」이 켜져 있어도 그렇다. 그 설정은 **시작할
+            // 때** 무엇을 고르느냐는 규칙이지 재는 도중의 전환이 아니다.
+            // 설정 화면이 그렇게 적고 있으므로 여기서도 같은 말을 한다
+            // (독립 검증 R11).
             val added = now.filter { n -> before.none { it.stableKey == n.stableKey } }
-            val newExternal = added.firstOrNull { it.kind == MicKind.Usb }
-            if (newExternal != null) {
-                _state.value = _state.value.copy(
-                    deviceNoticeKo = "${newExternal.productName} 이(가) 연결됐습니다. " +
-                        "쓰시려면 측정을 멈추고 다시 시작하십시오 — 재는 도중에 " +
-                        "바꾸면 그 앞뒤 값이 서로 다른 마이크의 값이 됩니다.",
-                )
-            }
+            val newExternal = added.firstOrNull { it.kind == MicKind.Usb } ?: return
+            val auto = _state.value.meterSettings.autoPreferExternal
+            _state.value = _state.value.copy(
+                deviceNoticeKo = "${newExternal.productName} 이(가) 연결됐습니다. " +
+                    if (auto) {
+                        "「외부 기기 자동 사용」이 켜져 있지만 재는 도중에는 바꾸지 " +
+                            "않습니다 — 바꾸면 그 앞뒤 값이 서로 다른 마이크의 값이 " +
+                            "됩니다. 멈추고 다시 시작하면 이 마이크로 엽니다."
+                    } else {
+                        "쓰시려면 측정을 멈추고, 설정에서 이 기기를 고른 뒤 다시 " +
+                            "시작하십시오."
+                    },
+            )
             return
         }
 
@@ -341,10 +353,11 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             DisconnectPolicy.FallBack -> {
                 stop()
                 _state.value = _state.value.copy(
-                    deviceNoticeKo = "$name 이(가) 빠져 다른 마이크로 다시 시작합니다. " +
-                        "여기서부터는 다른 마이크·다른 보정값의 값입니다.",
+                    deviceNoticeKo = "$name 이(가) 빠져 내장 마이크로 다시 시작합니다.",
                 )
-                start()
+                // 정책 이름이 「내장 마이크로 전환」이다. 평소 규칙대로 고르면
+                // 외부 마이크가 하나 더 꽂혀 있을 때 그쪽으로 열린다(R11).
+                start(disconnectFallBack = true)
             }
         }
     }
@@ -458,13 +471,18 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     private var captureStartNs = 0L
     private val emitIntervalNs = 66_000_000L
 
-    fun start() {
+    fun start(disconnectFallBack: Boolean = false) {
         if (source != null) return
         _state.value = _state.value.copy(measure = MeasureState.Starting, errorKo = null)
 
         val s0 = _state.value.meterSettings
         val available = scanner.list()
-        val choice = chooseInput(available, s0.preferredInputKey, s0.autoPreferExternal)
+        val choice = chooseInput(
+            available,
+            s0.preferredInputKey,
+            s0.autoPreferExternal,
+            disconnectFallBack,
+        )
         if (choice.device == null) {
             _state.value = _state.value.copy(
                 measure = MeasureState.Failed(FailureReason.NoInputDevice),
@@ -489,8 +507,14 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         when (val r = mic.open(RequestedFormat())) {
             is OpenResult.Failed -> {
                 mic.close()
-                _state.value = CaptureUiState(
+                openingKey = null
+                // **copy 로 고친다.** 예전에는 `CaptureUiState(...)` 로 통째로
+                // 갈아 끼웠는데, 그러면 설정·기기 목록이 기본값으로 돌아간다 —
+                // DataStore 는 같은 값을 다시 내보내지 않으므로 그 상태가 그대로
+                // 남는다. 마이크를 못 연 것과 설정이 사라진 것은 다른 일이다.
+                _state.value = _state.value.copy(
                     measure = MeasureState.Failed(r.reason.toDomain()),
+                    opened = null,
                     errorKo = buildString {
                         append(r.reason.messageKo)
                         r.detail?.let { append("\n($it)") }
@@ -837,6 +861,7 @@ private fun RtaFrame.toView(
     bandsSpl = DoubleArray(bandsDbfs.size) { bandsDbfs[it] + offsetDb },
     holdSpl = DoubleArray(holdDbfs.size) { holdDbfs[it] + offsetDb },
     resolved = resolved,
+    lossDb = lossDb,
     curveApplied = curve != null,
     curveExtrapolated = curve?.bandCovered()?.let { covered ->
         BooleanArray(covered.size) { !covered[it] }

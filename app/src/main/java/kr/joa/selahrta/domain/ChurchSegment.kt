@@ -32,6 +32,13 @@ enum class ChurchSegment(val labelKo: String, val shortKo: String) {
 data class SegmentRange(
     val avgLowDb: Double,
     val avgHighDb: Double,
+    /**
+     * 짧은 최대값의 참고 범위. **화면의 MAX 와 견주는 값이다.**
+     *
+     * PEAK 타일이 아니다 — PEAK 는 가중 전 파형의 최대라 dBA 가 아니고,
+     * 가중치를 바꿔도 숫자가 변하지 않는다(독립 검증 R10). 여기 적힌
+     * dBA 기준과 견줄 수 있는 것은 시간가중 최대인 MAX 뿐이다.
+     */
     val peakLowDb: Double,
     val peakHighDb: Double,
 ) {
@@ -72,7 +79,7 @@ val ChurchSegment.focusKo: String
         ChurchSegment.Sermon ->
             "말이 또렷한지가 먼저입니다. 250Hz~4kHz 가 묻히지 않는지 보십시오."
         ChurchSegment.Worship ->
-            "저역이 얼마나 많은지(C−A 차이)와 순간 피크를 함께 보십시오."
+            "저역이 얼마나 많은지(C−A 차이)와 짧은 최대(MAX)를 함께 보십시오."
         ChurchSegment.Prayer ->
             "차분하고 명료한 수준입니다. 너무 작으면 뒷자리에서 안 들립니다."
         ChurchSegment.Free ->

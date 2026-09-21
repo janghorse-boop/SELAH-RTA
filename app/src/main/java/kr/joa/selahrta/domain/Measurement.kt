@@ -91,7 +91,8 @@ enum class ChurchMode(val labelKo: String) {
 /**
  * 모드별 권장 범위(dBA). 컨셉 화면 4번과 명세 10장의 초기값이다.
  *
- * [avg] 는 시간평균(LAeq) 기준, [peak] 는 순간 피크 기준이다.
+ * [avg] 는 시간평균(LAeq) 기준, [peak] 는 시간가중 최대(MAX) 기준이다.
+ * 가중 전 파형의 최대(PEAK)와는 다른 값이다(독립 검증 R10).
  * 자유 측정은 판정하지 않으므로 범위가 없다.
  */
 data class ReferenceRange(

@@ -99,9 +99,8 @@ class BandAnalyzerTest {
     }
 
     @Test
-    fun `저역 밴드는 칸보다 좁아 분해되지 않는다고 알린다`() {
+    fun `저역 밴드는 새는 양으로 분해 여부를 판정한다`() {
         val ba = BandAnalyzer(n, fs)
-        // 칸 폭 11.72Hz. 20Hz 밴드의 폭은 약 4.6Hz 라 분해할 수 없다.
         assertFalse("20Hz 밴드는 분해 못 한다", ba.bandResolved[0])
         assertFalse("31.5Hz 밴드도 아직 못 한다", ba.bandResolved[2])
         assertTrue("1kHz 는 당연히 된다", ba.bandResolved[17])
@@ -109,6 +108,54 @@ class BandAnalyzerTest {
             "분해 가능한 첫 밴드가 있어야 한다",
             ba.lowestResolvedBand in 1 until ThirdOctave.BAND_COUNT,
         )
+    }
+
+    /**
+     * 63·80Hz 는 「충분히 분해됨」이 아니다(독립 검증 R08).
+     *
+     * 예전 기준은 「밴드가 칸 폭보다 넓은가」였다. 4096점·48kHz 에서
+     * 63Hz 밴드의 폭(14.6Hz)은 칸 폭(11.7Hz)보다 넓어 통과했지만, 실제로는
+     * 중심 부근 순음부터 2dB 넘게 빠진다. 폭은 창의 주파수 응답을 말해
+     * 주지 않는다.
+     */
+    @Test
+    fun `63과 80Hz 는 새는 양이 커서 분해됐다고 하지 않는다`() {
+        val ba = BandAnalyzer(4096, 48_000)
+        val width63 = ThirdOctave.upperEdge(5) - ThirdOctave.lowerEdge(5)
+        assertTrue(
+            "63Hz 밴드는 칸 폭보다 넓다 — 옛 기준은 여기서 통과했다",
+            width63 > 48_000.0 / 4096,
+        )
+
+        assertTrue(
+            "63Hz 는 2dB 넘게 빠진다 (${"%.2f".format(ba.bandLossDb[5])}dB)",
+            ba.bandLossDb[5] > 2.0,
+        )
+        assertTrue(
+            "80Hz 도 1dB 넘게 빠진다 (${"%.2f".format(ba.bandLossDb[6])}dB)",
+            ba.bandLossDb[6] > 1.0,
+        )
+        assertFalse("63Hz 는 분해됐다고 하지 않는다", ba.bandResolved[5])
+        assertFalse("80Hz 도 마찬가지다", ba.bandResolved[6])
+
+        // 중고역은 새는 양이 무시할 수준이다.
+        assertTrue(
+            "1kHz 는 거의 안 샌다 (${"%.3f".format(ba.bandLossDb[17])}dB)",
+            ba.bandLossDb[17] < 0.05,
+        )
+    }
+
+    /** FFT 를 키우면 새는 양이 줄어든다 — 창이 길어지면 주엽이 좁아진다. */
+    @Test
+    fun `FFT 를 키우면 저역이 덜 샌다`() {
+        val small = BandAnalyzer(4096, fs)
+        val big = BandAnalyzer(16384, fs)
+        for (b in 3..8) {
+            assertTrue(
+                "밴드 $b: ${"%.2f".format(small.bandLossDb[b])} → ${"%.2f".format(big.bandLossDb[b])}dB",
+                big.bandLossDb[b] < small.bandLossDb[b],
+            )
+        }
     }
 
     @Test

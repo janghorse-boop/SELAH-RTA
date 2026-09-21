@@ -26,6 +26,7 @@ import kr.joa.selahrta.domain.SEGMENT_CAUTIONS
 import kr.joa.selahrta.domain.SegmentRange
 import kr.joa.selahrta.audio.DisconnectPolicy
 import kr.joa.selahrta.audio.InputDeviceInfo
+import kr.joa.selahrta.domain.MeasureState
 import kr.joa.selahrta.domain.MicKind
 import kr.joa.selahrta.ui.components.SegmentRangeCard
 import kr.joa.selahrta.dsp.TimeWeight
@@ -96,12 +97,16 @@ fun SettingsScreen(
             inputs = capture.inputs,
             selectedKey = capture.meterSettings.preferredInputKey,
             openedLabel = capture.opened?.deviceLabel,
+            // 경로가 확인된 기기만 「사용 중」이라고 말한다.
+            openedKey = capture.opened?.takeIf { it.routeConfirmed }?.deviceKey,
+            running = capture.measure is MeasureState.Running,
             onPick = onPreferredInput,
         )
         ChoiceRow(
             "외부 기기 자동 사용",
-            "USB·유선·블루투스 마이크가 꽂히면 그쪽을 먼저 씁니다. " +
-                "기기를 직접 고르면 이 설정보다 그쪽이 앞섭니다.",
+            "측정을 시작할 때 USB·유선·블루투스 마이크가 꽂혀 있으면 " +
+                "그쪽을 먼저 씁니다. 재는 도중에 꽂아도 바꾸지 않고 알리기만 " +
+                "합니다. 기기를 직접 고르면 이 설정보다 그쪽이 앞섭니다.",
             listOf(true, false),
             capture.meterSettings.autoPreferExternal,
             { if (it) "자동" else "끔" },
@@ -245,6 +250,10 @@ private fun InputDevicePicker(
     inputs: List<InputDeviceInfo>,
     selectedKey: String?,
     openedLabel: String?,
+    /** 지금 실제로 열려 있는 기기의 열쇠. 확인되기 전에는 null 이다. */
+    openedKey: String?,
+    /** 재는 중인가. 재는 중에 고른 기기는 다음 시작에야 쓰인다. */
+    running: Boolean,
     onPick: (String?) -> Unit,
 ) {
     Column(
@@ -268,14 +277,25 @@ private fun InputDevicePicker(
             return@Column
         }
 
-        DeviceRow("자동으로 고르기", null, selectedKey == null, "설정에 따라 알아서", onPick)
+        DeviceRow(
+            "자동으로 고르기",
+            null,
+            selectedKey == null,
+            "설정에 따라 알아서",
+            onPick,
+            // 「자동」은 기기가 아니라 규칙이라 「사용 중」이 될 수 없다.
+            nextStart = running && selectedKey == null && openedKey != null,
+        )
         inputs.forEach { d ->
+            val open = openedKey != null && d.stableKey == openedKey
             DeviceRow(
                 d.displayName,
                 d.stableKey,
                 selectedKey == d.stableKey,
                 if (d.kind == MicKind.Usb) "외부 입력" else "내장",
                 onPick,
+                inUse = open,
+                nextStart = running && !open && selectedKey == d.stableKey,
             )
         }
 
@@ -285,6 +305,18 @@ private fun InputDevicePicker(
                 color = SelahColors.TextMuted,
                 fontSize = 10.sp,
                 modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+        if (running) {
+            // 재는 도중에 고른 기기가 곧바로 쓰이지 않는다는 사실을 적는다.
+            // 안 적으면 고른 마이크로 재고 있다고 믿는다(독립 검증 R11).
+            Text(
+                "재는 도중에는 입력을 바꾸지 않습니다. 바꾸면 그 앞뒤 값이 서로 " +
+                    "다른 마이크의 값이 되기 때문입니다. 멈추고 다시 시작하면 " +
+                    "고르신 기기로 엽니다.",
+                color = SelahColors.Warn,
+                fontSize = 10.sp,
+                lineHeight = 14.sp,
             )
         }
         Text(
@@ -303,6 +335,17 @@ private fun DeviceRow(
     selected: Boolean,
     subtitle: String,
     onPick: (String?) -> Unit,
+    /**
+     * 지금 **실제로 이 기기로 열려 있는가.**
+     *
+     * 고른 것과 열린 것은 다르다. 재는 도중에 기기를 고르면 설정만 바뀌고
+     * 입력은 그대로다 — 예배 중에 입력이 바뀌면 그 앞뒤 값이 서로 다른
+     * 마이크의 값이 되기 때문이다. 그런데 화면은 고른 것에 「사용 중」을
+     * 붙여, 고른 마이크로 재고 있다고 믿게 했다(독립 검증 R11).
+     */
+    inUse: Boolean = false,
+    /** 골라 두었지만 다음 시작에야 쓰이는가. */
+    nextStart: Boolean = false,
 ) {
     Row(
         Modifier
@@ -331,8 +374,25 @@ private fun DeviceRow(
             Text(subtitle, color = SelahColors.TextMuted, fontSize = 10.sp)
         }
         // 색만으로 알리지 않는다(명세 11장).
-        if (selected) {
-            Text("사용 중", color = SelahColors.Accent, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+        when {
+            inUse -> Text(
+                "사용 중",
+                color = SelahColors.Accent,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            nextStart -> Text(
+                "다음 시작에 사용",
+                color = SelahColors.Warn,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            selected -> Text(
+                "선택함",
+                color = SelahColors.Accent,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
         }
     }
 }

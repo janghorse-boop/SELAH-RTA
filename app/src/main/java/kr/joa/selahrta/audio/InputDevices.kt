@@ -111,8 +111,22 @@ fun chooseInput(
     available: List<InputDeviceInfo>,
     preferredKey: String?,
     autoPreferExternal: Boolean,
+    /**
+     * 「내장 마이크로 전환」 정책으로 다시 시작하는 중인가.
+     *
+     * 켜져 있으면 고른 기기도 「외부 자동」도 보지 않고 내장을 고른다.
+     * 그러지 않으면 외부 마이크가 하나 더 꽂혀 있을 때 그쪽으로 열려,
+     * 정책 이름과 다른 일이 벌어진다(독립 검증 R11).
+     */
+    disconnectFallBack: Boolean = false,
 ): InputChoice {
     if (available.isEmpty()) return InputChoice(null, ChoiceReason.NoDevice)
+
+    if (disconnectFallBack) {
+        val builtIn = available.firstOrNull { it.kind == MicKind.BuiltIn }
+        // 내장이 아예 없는 기기도 있다. 그때는 남은 것 중 하나로 연다.
+        return InputChoice(builtIn ?: available.first(), ChoiceReason.DisconnectFallBack)
+    }
 
     // 고른 기기가 지금도 있으면 그것을 쓴다. 사용자의 선택이 가장 앞선다.
     if (preferredKey != null) {
@@ -150,6 +164,15 @@ enum class ChoiceReason {
 
     /** 쓸 수 있는 입력이 없다. */
     NoDevice,
+
+    /**
+     * 쓰던 기기가 빠져 「내장 마이크로 전환」 정책대로 내장을 골랐다.
+     *
+     * 이때는 사용자가 골라 둔 기기나 「외부 자동」 규칙을 따르지 않는다 —
+     * 정책 이름이 「내장 마이크로 전환」인데 다른 외부 마이크를 고르면
+     * 적힌 것과 다른 일을 하는 것이다(독립 검증 R11).
+     */
+    DisconnectFallBack,
     ;
 
     fun noticeKo(chosen: InputDeviceInfo?): String? = when (this) {
@@ -157,6 +180,9 @@ enum class ChoiceReason {
             "골라 두신 마이크가 지금 연결돼 있지 않아 " +
                 "${chosen?.productName ?: "다른 마이크"}로 잽니다. " +
                 "보정값도 그 마이크의 것으로 바뀝니다."
+        DisconnectFallBack ->
+            "${chosen?.productName ?: "내장 마이크"}로 다시 시작했습니다. " +
+                "여기서부터는 다른 마이크·다른 보정값의 값입니다."
         NoDevice -> "쓸 수 있는 입력 기기가 없습니다."
         else -> null
     }
