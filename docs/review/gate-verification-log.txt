@@ -1,0 +1,14 @@
+outputs\GateProbe.kt:25:94: warning: condition is always 'true'.
+    println("STOP_BEFORE current=${before.meter.currentSpl} max=${before.meter.maxSpl} rta=${before.rta != null} frames=${before.diagnostics.frames}")
+                                                                                             ^^^^^^^^^^^^^^^^^^
+JUnit version 4.13.2
+.....................................................................................................................................................................................................................................
+Time: 2.454
+
+OK (229 tests)
+
+Independent verification scratch directory: C:\Users\jangh\AppData\Local\Temp\selah-independent-eb8524f1f7aa46bb8fa645a50b135273
+STOP_BEFORE current=103.01261109988741 max=103.01306644370138 rta=true frames=102400
+STOP_AFTER current=null max=null rta=false frames=0 log=1
+Confirmed stop snapshot regression using unmodified CaptureController and production state composition.
+LATE_SNAPSHOT active=3 published=2 visibleCurrent=null
