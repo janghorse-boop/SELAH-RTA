@@ -43,6 +43,14 @@ class EpochTable(private val max: Int = MAX_EPOCHS) {
 
     /** 넣는다. 넘치면 false — 부르는 쪽이 녹음을 끝낸다. */
     fun add(epoch: RecordingEpoch): Boolean {
+        // **개수 상한이 id 범위를 대신하지 못한다**(독립 검증 RA03).
+        // 256개만 담아도 id 가 65536 이면 파일에서 Short 로 잘려 0 이
+        // 된다. 그러면 재생이 다른 epoch 의 보정을 걸어 90dB 이 70dB 로
+        // 나온다. 범위를 따로 막는다 — 부르는 쪽의 잘못이므로 false 가
+        // 아니라 예외다. 조용히 넘어가면 잘린 id 로 녹음이 이어진다.
+        require(epoch.id in ID_RANGE) {
+            "epoch id 가 범위를 벗어난다: ${epoch.id} (허용 $ID_RANGE)"
+        }
         if (items.size >= max) return false
         require(items.isEmpty() || epoch.startFrame >= items.last().startFrame) {
             "epoch 은 프레임 순서대로 와야 한다"
@@ -55,11 +63,17 @@ class EpochTable(private val max: Int = MAX_EPOCHS) {
     operator fun get(id: Int): RecordingEpoch =
         items.firstOrNull { it.id == id } ?: error("모르는 epoch: $id")
 
+    /** 그 id 의 epoch. 없으면 null — 읽는 쪽이 짐작하지 않게 한다. */
+    fun find(id: Int): RecordingEpoch? = items.firstOrNull { it.id == id }
+
     fun all(): List<RecordingEpoch> = items.toList()
 
     /** 이 프레임에 걸린 epoch. */
     fun at(frame: Long): RecordingEpoch =
         items.lastOrNull { it.startFrame <= frame } ?: error("$frame 에 걸린 epoch 이 없다")
+
+    /** 이 프레임에 걸린 epoch 의 id. 없으면 null. */
+    fun idAt(frame: Long): Int? = items.lastOrNull { it.startFrame <= frame }?.id
 
     /** dBFS 를 그 epoch 의 눈금으로 옮긴다. **유일한 통로다.** */
     fun calibrated(raw: Double, epochId: Int): Double = raw + get(epochId).calibrationOffsetDb
@@ -72,5 +86,14 @@ class EpochTable(private val max: Int = MAX_EPOCHS) {
          * 사실상 없지만, 그 근거를 잰 적은 없다.
          */
         const val MAX_EPOCHS = 256
+
+        /**
+         * 쓸 수 있는 epoch id.
+         *
+         * 파일은 id 를 **2바이트**로 적고, −1 은 「측정 없음」
+         * 전용이다. [MAX_EPOCHS] 개를 담으려면 0..255 면 충분하고,
+         * 넘어가면 잘리므로 여기서 막는다(독립 검증 RA03).
+         */
+        val ID_RANGE = 0..255
     }
 }

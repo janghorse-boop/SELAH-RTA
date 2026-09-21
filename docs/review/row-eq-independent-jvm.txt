@@ -1,0 +1,18 @@
+JUnit version 4.13.2
+....[M32] raw=-30.0 epoch=1 �� 90.0dB
+.....[�ٸ� epoch] max=0 current=1
+..
+Time: 0.116
+
+OK (11 tests)
+
+EPOCH_CROSS accepted=true calibrated=CalibratedValue(db=80.0, isReferenceOnly=false, epochId=0)
+REVERSE current=-20.0 epoch=0
+FINISH first=1 second=2
+PARTIAL_GAP missing=false
+ID_TRUNCATE expected=90 actual=CalibratedValue(db=70.0, isReferenceOnly=false, epochId=0)
+BAD_HEADER accepted=true
+BANDS fs=48000 differences=[125.0]
+BANDS fs=44100 differences=[125.0]
+DENSITY exactCenter=true difference=4.884981308350689E-15
+DENSITY exactCenter=false difference=-0.017240061162444587

@@ -3,7 +3,6 @@ package kr.joa.selahrta.recording
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayInputStream
@@ -66,7 +65,7 @@ class TimelineRoundTripTest {
         val read = r.all()
         assertEquals(1, read.size)
 
-        val max = r.calibratedMax(read[0])!!
+        val max = r.calibratedMax(read[0]) as RowValue.Calibrated
         println("[M32] raw=${read[0].maxRaw} epoch=${read[0].maxEpoch} → ${max.db}dB")
         assertEquals("실제 최대는 90dB 다", 90.0, max.db, 1e-6)
         assertEquals("이긴 쪽은 새 epoch", 1, max.epochId)
@@ -96,8 +95,8 @@ class TimelineRoundTripTest {
 
         assertEquals("최대는 앞 epoch", 0, read.maxEpoch)
         assertEquals("current 는 마지막 조각", 1, read.currentEpoch)
-        assertEquals(80.0, r.calibratedMax(read)!!.db, 1e-6)
-        assertEquals(35.0, r.calibratedCurrent(read)!!.db, 1e-6)
+        assertEquals(80.0, r.calibratedMax(read).dbOrNull!!, 1e-6)
+        assertEquals(35.0, r.calibratedCurrent(read).dbOrNull!!, 1e-6)
         println("[다른 epoch] max=${read.maxEpoch} current=${read.currentEpoch}")
     }
 
@@ -117,7 +116,7 @@ class TimelineRoundTripTest {
         val r = roundTrip(agg.finish(), epochs)
         val read = r.all().single()
         assertEquals(1, read.maxEpoch)
-        assertEquals(85.0, r.calibratedMax(read)!!.db, 1e-6)
+        assertEquals(85.0, r.calibratedMax(read).dbOrNull!!, 1e-6)
     }
 
     /** **마지막 부분 행**도 나와야 한다 — 500ms 를 다 못 채워도. */
@@ -132,7 +131,7 @@ class TimelineRoundTripTest {
         val rows = agg.finish()
         assertEquals("두 행이 나와야 한다", 2, rows.size)
         assertEquals(1, rows[1].rowIndex)
-        assertEquals(60.0, roundTrip(rows, epochs).let { r -> r.all()[1].let { r.calibratedMax(it)!!.db } }, 1e-6)
+        assertEquals(60.0, roundTrip(rows, epochs).let { r -> r.all()[1].let { r.calibratedMax(it).dbOrNull!! } }, 1e-6)
     }
 
     /** **빠진 행을 채운다** — 안 채우면 `위치/500ms` 가 깨진다. */
@@ -151,8 +150,8 @@ class TimelineRoundTripTest {
 
         val r = roundTrip(rows, epochs)
         val read = r.all()
-        assertNull("missing 행은 값을 주지 않는다", r.calibratedMax(read[2]))
-        assertNotNull(r.calibratedMax(read[0]))
+        assertEquals("missing 행은 값을 주지 않는다", RowValue.Missing, r.calibratedMax(read[2]))
+        assertTrue("측정이 있는 행은 값을 준다", r.calibratedMax(read[0]) is RowValue.Calibrated)
     }
 
     /** 미보정 구간은 **그 사실이 따라다녀야** 한다. */
@@ -168,8 +167,8 @@ class TimelineRoundTripTest {
 
         val r = roundTrip(agg.finish(), epochs)
         val read = r.all()
-        assertTrue("첫 행은 미보정", r.calibratedMax(read[0])!!.isReferenceOnly)
-        assertFalse("둘째 행은 보정됨", r.calibratedMax(read[1])!!.isReferenceOnly)
+        assertTrue("첫 행은 미보정", (r.calibratedMax(read[0]) as RowValue.Calibrated).isReferenceOnly)
+        assertFalse("둘째 행은 보정됨", (r.calibratedMax(read[1]) as RowValue.Calibrated).isReferenceOnly)
     }
 
     /** 클리핑은 **그 구간의 것**이어야 한다. 세션 누적이 아니다. */
