@@ -1,0 +1,20 @@
+outputs\FollowupProbe.kt:25:94: warning: condition is always 'true'.
+    println("STOP_BEFORE current=${before.meter.currentSpl} max=${before.meter.maxSpl} rta=${before.rta != null} frames=${before.diagnostics.frames}")
+                                                                                             ^^^^^^^^^^^^^^^^^^
+JUnit version 4.13.2
+.E.........[0.5�� �и�] ��� 23 �� ť 5 �� ���� ������ 20480 (��ó�� 3���)
+[2.0�� �и�] ��� 93 �� ť 23 �� ���� ������ 94208 (��ó�� 1���)
+[5.0�� �и�] ��� 234 �� ť 58 �� ���� ������ 237568 (��ó�� 2���)
+
+Time: 0.775
+There was 1 failure:
+1) ���� ������ �ٽ� �����ص� ��� MAX �� ��Ƴ��´�(kr.joa.selahrta.ui.CaptureControllerOrderingTest)
+java.lang.AssertionError: ���������ٰ� MAX �� �������� �� �ȴ� (�� 88.23666327414799 / �� 56.19546312401414) expected:<88.23666327414799> but was:<56.19546312401414>
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.failNotEquals(Assert.java:835)
+	at org.junit.Assert.assertEquals(Assert.java:555)
+	at kr.joa.selahrta.ui.CaptureControllerOrderingTest.���� ������ �ٽ� �����ص� ��� MAX �� ��Ƴ��´�(CaptureControllerOrderingTest.kt:368)
+
+FAILURES!!!
+Tests run: 10,  Failures: 1
+
