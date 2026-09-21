@@ -280,28 +280,5 @@ class FeedbackDetectorTest {
     }
 }
 
-/**
- * 핑크 잡음(−3dB/옥타브). Voss-McCartney 를 줄여 쓴 것이다.
- *
- * 백색 잡음보다 예배당의 배경음에 가깝고, **저역이 커서 저역 봉우리
- * 오탐을 걸러내는 데 더 엄한 시험**이 된다.
- */
-private class PinkNoise(private val rng: Random) {
-    private val rows = DoubleArray(16)
-    private var counter = 0
-    private var running = 0.0
-
-    fun next(): Double {
-        counter++
-        var k = 0
-        var c = counter
-        while (c and 1 == 0 && k < rows.size - 1) {
-            c = c shr 1
-            k++
-        }
-        running -= rows[k]
-        rows[k] = rng.nextDouble() * 2 - 1
-        running += rows[k]
-        return running / rows.size
-    }
-}
+// 핑크 잡음 생성기는 TestNoise.kt 에 한 벌만 둔다 — 샘플레이트를 견주는
+// 시험이 「두 쪽이 같은 잡음을 본다」에 기대고 있기 때문이다.
