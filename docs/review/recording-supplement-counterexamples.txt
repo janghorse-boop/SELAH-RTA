@@ -1,0 +1,4 @@
+CLOCK: fs=48000 fsEff=48002.4 monotonicSeconds=7199.8 frames=345607679 mediaMs=7200159.97916667 monotonicRow=14399 mediaRow=14400
+PCM16: inputFloat=0.999989986419678 roundedInteger=32768 signed16Wrap=-32768 saturated=32767
+DECIMATION: peak=0.8 last=0.1 peakDb=-1.9382 lastDb=-20
+These are design counterexamples, not executions of a recording implementation.
