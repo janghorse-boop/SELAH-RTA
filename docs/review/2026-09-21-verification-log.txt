@@ -1,0 +1,53 @@
+Codex 독립 검증 실행 로그 (2026-09-21)
+원본: C:\Users\jangh\Documents\Codex\2026-09-21\bash-selah-rta-independent-reviewer-verification\outputs\verification-log.txt
+
+JUnit version 4.13.2
+OK (140 tests)
+
+--- 재현된 실패 ---
+1k tone calibrated: actual=-11.446581814362437 expected=-9.030899869919436 bandCorrection=2.4156809091470293
+Cold start first sample: actual=1.0 expected=2.083311632095075E-5 errorDb=46.81245761268602
+MAX block=-38.52162267838721, samplewise=-37.781874410878785
+
+REGRESSION FAILURE: narrowToneMustUseItsOwnFrequencyCorrection: expected:<-9.030899869919436> but was:<-11.446581814362437>
+REGRESSION FAILURE: coldStartMustUseDeclaredTimeConstant: expected:<2.083311632095075E-5> but was:<1.0>
+REGRESSION FAILURE: maximumMustNotDependOnBlockPartition: expected:<-37.781874410878785> but was:<-38.52162267838721>
+Independent regressions: 1/4 passed
+
+--- 파스발 (창 가중 등식은 통과) ---
+Parseval impulse pos=0    spectral=0.0                  windowWeighted=0.0                  raw=2.44140625E-4
+Parseval impulse pos=2048 spectral=6.512004595648369E-4 windowWeighted=6.512004595648217E-4 raw=2.44140625E-4
+Parseval impulse pos=4095 spectral=0.0                  windowWeighted=0.0                  raw=2.44140625E-4
+1k stationary sine spectrum sum=0.5000000000015539 expected=0.5 relativeError=3.107736290530738E-12
+
+--- 가중 필터 오차 (44.1kHz 가 48kHz 보다 나쁘다) ---
+fs=44100 f=8000  A=-0.7093671822983405   C=-0.7120292805411728
+fs=44100 f=10000 A=-1.4923732156903853   C=-1.5083795674223177
+fs=44100 f=12500 A=-3.3245485276095526   C=-3.348936651684986
+fs=44100 f=16000 A=-8.635823038059181    C=-8.665638097278855
+fs=44100 f=20000 A=-24.58910202493919    C=-24.621242301104605
+fs=48000 f=8000  A=-0.5914064104001344   C=-0.5937186978030322
+fs=48000 f=10000 A=-1.2079402526632443   C=-1.2236448130923838
+fs=48000 f=12500 A=-2.6247309195591706   C=-2.648904992651059
+fs=48000 f=16000 A=-6.5404690383668935   C=-6.570261488918957
+fs=48000 f=20000 A=-15.889263355819299   C=-15.921759958436066
+
+--- 밴드 분해 오차 (resolved=true 인데 63/80Hz 가 크게 틀린다) ---
+f=20.0   resolved=false centerError=-6.289942432629482  strongest=25.0   <- 20Hz 인데 25Hz 밴드가 최대
+f=25.0   resolved=false centerError=-4.9072727930903355 strongest=25.0
+f=31.5   resolved=false centerError=-4.634313982672297  strongest=31.5
+f=40.0   resolved=false centerError=-4.162302524957021  strongest=40.0
+f=50.0   resolved=false centerError=-2.87907799758751   strongest=50.0
+f=63.0   resolved=true  centerError=-2.1875369713908968 strongest=63.0
+f=80.0   resolved=true  centerError=-1.1219728521637213 strongest=80.0
+f=100.0  resolved=true  centerError=-0.39313973546523817 strongest=100.0
+f=125.0  resolved=true  centerError=-0.24628291368046482 strongest=125.0
+f=1000.0 resolved=true  centerError=-1.0352959723515416E-6 strongest=1000.0
+
+--- 보정 파일명 충돌 ---
+Curve path collision: [cal_Usb_Mic_A_usb_1_Unprocessed.cal, cal_Usb_Mic_A_usb_1_Unprocessed.cal]
+
+--- 시간가중 초기화가 시작 위상에 좌우된다 ---
+Cold start 1k phase=0.0                current=-25.775637775862926 max=-25.775637775862926
+Cold start 1k phase=1.5707963267948966 current=-6.0667941938970635 max=-6.0667941938970635
+(정상상태 RMS 는 -9.0309 dBFS. 19.71 dB 차이)
