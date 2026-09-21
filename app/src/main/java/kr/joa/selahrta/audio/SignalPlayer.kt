@@ -38,11 +38,25 @@ enum class SignalLevel(val labelKo: String, val amplitude: Double) {
  * 재생은 **미디어 소리**로 나간다(USAGE_MEDIA). 알림음 경로로 내보내면
  * 기기에 따라 음량이 따로 놀고, 무음 모드에서 안 들린다.
  */
-class SignalPlayer {
+class SignalPlayer(
+    /**
+     * 소리가 **스스로** 끊겼을 때 알린다. 사람이 멈춘 경우는 오지 않는다.
+     *
+     * 알리지 않으면 화면은 「내보내는 중」인데 소리는 안 나는 상태가
+     * 되고, 담당자는 그것을 측정기 탓으로 읽는다(독립 검증 P9-05).
+     */
+    private val onEnded: ((String) -> Unit)? = null,
+) {
 
     private val running = AtomicBoolean(false)
     private var thread: Thread? = null
     private var track: AudioTrack? = null
+
+    /**
+     * 몇 번째 재생인가. 늦게 끝나는 옛 스레드가 새 재생을 정리하지
+     * 못하게 막는다 — 캡처 쪽 [CaptureGeneration] 과 같은 규칙이다.
+     */
+    private var generation = 0L
 
     /** 지금 내보내고 있는 신호. 멈춰 있으면 null. */
     @Volatile
@@ -97,19 +111,29 @@ class SignalPlayer {
             return false
         }
 
+        // play() 도 실패할 수 있다. 생성자만 감싸고 여기를 빼 두면,
+        // 실패했는데 「내보내는 중」으로 남는다(독립 검증 P9-05).
+        val started = runCatching { t.play() }.isSuccess
+        if (!started) {
+            t.release()
+            Log.w(TAG, "play() 가 실패했다")
+            return false
+        }
+
+        generation++
+        val mine = generation
         track = t
         playing = signal
         running.set(true)
-        t.play()
 
-        thread = Thread({ loop(t, signal, level) }, "selah-signal-out").apply {
+        thread = Thread({ loop(t, signal, level, mine) }, "selah-signal-out").apply {
             isDaemon = true
             start()
         }
         return true
     }
 
-    private fun loop(t: AudioTrack, signal: TestSignal, level: SignalLevel) {
+    private fun loop(t: AudioTrack, signal: TestSignal, level: SignalLevel, mine: Long) {
         Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
         val buf = FloatArray(FRAMES)
         val rng = Random(System.nanoTime())
@@ -131,13 +155,34 @@ class SignalPlayer {
             // 막고 쓴다 — 버퍼가 빌 때까지 기다린다. 멈추면 write 가 바로 돌아온다.
             val wrote = t.write(buf, 0, FRAMES, AudioTrack.WRITE_BLOCKING)
             if (wrote < 0) {
-                Log.w(TAG, "write 오류: $wrote")
+                // **조용히 빠져나가지 않는다.** 예전에는 로그만 쓰고
+                // 돌아가서, `running`·`playing` 과 AudioTrack 이 그대로
+                // 남았다 — 소리는 안 나는데 화면은 「내보내는 중」이고
+                // 장치 자원도 잡은 채였다(독립 검증 P9-05).
+                Log.w(TAG, "write 오류로 재생을 끝낸다: $wrote")
+                if (generation == mine) {
+                    running.set(false)
+                    playing = null
+                    track = null
+                    runCatching { t.release() }
+                    onEnded?.invoke(
+                        if (wrote == AudioTrack.ERROR_DEAD_OBJECT) {
+                            "소리 장치와의 연결이 끊겨 내보내기를 멈췄습니다."
+                        } else {
+                            "소리를 내보내지 못해 멈췄습니다."
+                        },
+                    )
+                } else {
+                    // 이미 다음 재생이 시작됐다. 내 것만 놓고 물러난다.
+                    runCatching { t.release() }
+                }
                 return
             }
         }
     }
 
     fun stop() {
+        generation++
         running.set(false)
         playing = null
         track?.let { t ->

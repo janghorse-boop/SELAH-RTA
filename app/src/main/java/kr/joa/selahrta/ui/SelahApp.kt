@@ -104,7 +104,8 @@ fun SelahApp() {
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val obs = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) vm.stop()
+            // 측정과 **소리**를 함께 멈춘다. 소리만 남으면 끌 방법이 없다.
+            if (event == Lifecycle.Event.ON_STOP) vm.onBackground()
         }
         lifecycleOwner.lifecycle.addObserver(obs)
         onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }

@@ -138,6 +138,10 @@ class FeedbackDetectorTest {
         run(d, 3_000) { pink.next() * 0.3 }
         assertEquals("핑크 잡음에서 후보가 나오면 안 된다 (${d.candidates.map { it.hz.toInt() }})",
             FeedbackState.None, d.state)
+        assertTrue(
+            "도중에도 지속이 없어야 한다 (기록 ${d.events.map { it.hz.toInt() }})",
+            d.events.isEmpty(),
+        )
     }
 
     /** 백색 잡음도 마찬가지다. */
@@ -147,19 +151,25 @@ class FeedbackDetectorTest {
         val rng = Random(11)
         run(d, 3_000) { (rng.nextDouble() * 2 - 1) * 0.3 }
         assertEquals(FeedbackState.None, d.state)
+        assertTrue("도중에도 지속이 없어야 한다", d.events.isEmpty())
     }
 
     /**
-     * 말소리는 후보를 만들지 않는다.
+     * 넓고 움직이는 성분은 후보를 만들지 않는다.
      *
-     * **모형이 무엇인가**: 성대 떨림(100Hz 남짓)에 해당하는 펄스열을 만들고
-     * 포먼트 세 개(중심 700·1200·2600Hz, 폭 넓음)를 씌운다. 사람의 말은
-     * 이 포먼트가 끊임없이 움직이는 것이 특징이라, 100ms 마다 포먼트를
-     * 옮긴다. 실제 말소리의 대체물이 아니라 **포먼트가 넓고 움직인다**는
-     * 성질만 가져온 것이다.
+     * **모형이 무엇인가 — 있는 그대로 적는다.** 표본마다 독립인 백색
+     * 잡음에 움직이는 사인 셋을 곱한 것이다. 그뿐이다.
+     *
+     * 예전 주석은 「성대 펄스열과 좁은 포먼트 필터」라고 적었는데 **그런
+     * 것은 구현돼 있지 않다**(독립 검증 P9 보고서가 짚었다). 이 신호는
+     * 유성음의 배음·포먼트 구조를 흉내 내지 못하므로, **말소리에 대한
+     * 오탐 억제를 검증했다고 말할 수 없다.** 여기서 확인하는 것은
+     * 「넓고 움직이는 성분은 좁고 머무는 봉우리로 잡히지 않는다」까지다.
+     *
+     * 실제 설교·찬양 음원으로 재는 것은 현장 확인의 몫이다.
      */
     @Test
-    fun `말소리는 후보를 만들지 않는다`() {
+    fun `넓고 움직이는 성분은 후보를 만들지 않는다`() {
         val d = detector()
         val rng = Random(3)
         run(d, 3_000) { i ->
@@ -175,10 +185,12 @@ class FeedbackDetectorTest {
                 sin(2 * PI * f1 * t) + 0.7 * sin(2 * PI * f2 * t) + 0.4 * sin(2 * PI * f3 * t)
                 )
         }
+        // **마지막 후보만 보지 않는다.** 도중에 「지속」이 떴다가 마지막에
+        // 사라지면 놓친다. 기록은 「지속」까지 간 것만 남으므로, 기록이
+        // 비어 있다는 것이 「한 번도 지속이 아니었다」는 뜻이다.
         assertTrue(
-            "말소리에서 지속 후보가 나오면 안 된다 " +
-                "(${d.candidates.map { "${it.hz.toInt()}Hz/${it.state}" }})",
-            d.candidates.none { it.state == FeedbackState.Persistent },
+            "지속 후보가 한 번도 없어야 한다 (기록 ${d.events.map { "${it.hz.toInt()}Hz" }})",
+            d.events.isEmpty(),
         )
     }
 
@@ -218,6 +230,10 @@ class FeedbackDetectorTest {
                     )
                 }})",
             d.candidates.none { it.state == FeedbackState.Persistent },
+        )
+        assertTrue(
+            "도중에도 지속이 없어야 한다 (기록 ${d.events.map { it.hz.toInt() }})",
+            d.events.isEmpty(),
         )
         assertTrue("후보 자체는 잡혀야 시험이 뜻이 있다", d.candidates.isNotEmpty())
     }

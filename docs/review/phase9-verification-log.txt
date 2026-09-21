@@ -1,0 +1,13 @@
+JUnit version 4.13.2
+..............................................................................................................................................................................
+Time: 1.835
+
+OK (174 tests)
+
+Independent verification scratch directory: C:\Users\jangh\AppData\Local\Temp\selah-independent-71e4f3803ffc40cbb381b734d2422b07
+GAP_TWO_FRAMES candidates=[FeedbackCandidate(hz=1000.1812391993856, levelDbfs=-19.37827421816055, prominenceDb=95.93647703944893, durationMs=2000, firstSeenMs=0, state=Persistent, driftCents=0.0, continuity=1.0, hasHarmonics=false)] events=[FeedbackEvent(hz=1000.1812391993856, peakLevelDbfs=-19.37827421816055, maxProminenceDb=95.93647703944893, startMs=0, endMs=null, durationMs=2000, hasHarmonics=false)]
+PAIR_PEAKS [SpectralPeak(bin=683, hz=7999.82307068213, power=0.011564333348072962, prominenceDb=88.69339347700033, widthBins=2), SpectralPeak(bin=689, hz=8080.000331755535, power=0.009712619068826043, prominenceDb=87.9355510169048, widthBins=2)]
+PAIR_TRACKS [FeedbackCandidate(hz=8044.365993494884, levelDbfs=-19.36879398051011, prominenceDb=88.69339347700033, durationMs=2150, firstSeenMs=0, state=Persistent, driftCents=17.264711335790206, continuity=2.0, hasHarmonics=false)]
+HALF_FRAMES_PAIR [FeedbackCandidate(hz=8044.365949813119, levelDbfs=-19.36879398051011, prominenceDb=88.69339347700033, durationMs=2580, firstSeenMs=0, state=Persistent, driftCents=17.264711335790206, continuity=1.0163934426229508, hasHarmonics=false)]
+DRIFT_EVENT [FeedbackEvent(hz=1012.1567606053296, peakLevelDbfs=-19.37827421816055, maxProminenceDb=95.93647703944893, startMs=0, endMs=5160, durationMs=3870, hasHarmonics=false)]
+PROBES confirmed three residual detector defects; not Android/device tests

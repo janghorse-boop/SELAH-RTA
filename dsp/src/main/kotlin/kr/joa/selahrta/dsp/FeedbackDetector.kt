@@ -214,27 +214,55 @@ class FeedbackDetector(
         // 기음과 **동시에** 서기 때문이다.
         val harmonic = markHarmonics(peaks)
 
+        // **끊긴 것을 먼저 버린다.** 짝짓기보다 뒤에 하면, 오래 비었다가
+        // 다시 나타난 봉우리가 `lastSeenMs` 를 덮어써서 공백 검사를
+        // 통과한다 — 관측 두 장뿐인데 2초를 「이어졌다」로 세는 일이
+        // 그래서 생겼다(독립 검증 P9-03).
+        val stale = tracks.filter { nowMs - it.lastSeenMs > gapMs }
+        for (t in stale) t.close()
+        tracks.removeAll(stale)
+
+        // **한 프레임에서 한 track 은 한 번만 갱신한다.** 예전에는 가까운
+        // 두 봉우리(8000Hz·8080Hz, 17cent 차이)가 같은 track 을 두 번
+        // 갱신해 연속성이 2.0 까지 올라갔고, 주파수도 둘 사이로 뭉개졌다
+        // (독립 검증 P9-02).
+        //
+        // 솟은 것부터 짝지어, 가장 센 봉우리가 제 track 을 가져간다.
+        val taken = HashSet<Track>()
         for ((i, p) in peaks.withIndex()) {
-            val t = tracks.firstOrNull { it.matches(p.hz) }
+            val t = tracks.firstOrNull { it !in taken && it.matches(p.hz) }
             if (t == null) {
-                tracks.add(Track(p, nowMs, frame, harmonic[i]))
+                val fresh = Track(p, nowMs, frame, harmonic[i])
+                tracks.add(fresh)
+                taken.add(fresh)
             } else {
                 t.update(p, nowMs, harmonic[i])
+                taken.add(t)
             }
         }
 
         // 「지속」까지 간 것을 기록한다. 화면의 후보는 사라져도 기록은 남는다.
         for (t in tracks) t.record(nowMs)
 
-        // 끊긴 것을 버린다. 기록해 둔 것은 그때 마무리한다.
-        val dead = tracks.filter { nowMs - it.lastSeenMs > gapMs }
-        for (t in dead) t.close()
-        tracks.removeAll(dead)
-
         candidates = tracks
             .map { it.toCandidate(nowMs) }
             .filter { it.state != FeedbackState.None }
             .sortedByDescending { it.prominenceDb }
+    }
+
+    /**
+     * 측정이 끝났다. **열린 기록을 모두 닫고 내놓는다.**
+     *
+     * 닫지 않으면 멈춘 뒤에도 「울리는 중」으로 남아, 지금 하울링이
+     * 나고 있는 것처럼 읽힌다. 끝난 시각은 **마지막으로 본 때**다 —
+     * 멈춘 시각으로 적으면 소리가 그친 뒤 조용했던 시간까지 울린 것으로
+     * 센다(독립 검증 P9-01).
+     */
+    fun finish(): List<FeedbackEvent> {
+        for (t in tracks) t.close()
+        tracks.clear()
+        candidates = emptyList()
+        return events
     }
 
     fun reset() {
@@ -303,24 +331,31 @@ class FeedbackDetector(
         }
 
         /**
-         * 「지속」이면 기록을 만들거나 갱신한다.
+         * 기록을 만들거나 갱신한다.
          *
-         * **「의심」은 기록하지 않는다.** 스쳐 가는 소리까지 남기면 목록이
-         * 잡음으로 덮여, 정작 봐야 할 것이 묻힌다.
+         * **만드는 기준과 갱신하는 기준이 다르다.** 만드는 것은 「지속」이
+         * 됐을 때뿐이다 — 스쳐 가는 소리까지 남기면 목록이 잡음으로 덮인다.
+         * 그러나 **한 번 만든 뒤에는 등급과 무관하게 갱신한다.** 예전에는
+         * 「지속」이 아니면 곧바로 돌아갔고, 그래서 판정이 내려간 뒤의
+         * 시간과 최대값이 빠져 `start=0 · end=5160 · duration=3870` 처럼
+         * 셋이 어긋났다(독립 검증 P9-04).
          */
         fun record(now: Long) {
             val c = toCandidate(now)
-            if (c.state != FeedbackState.Persistent) return
+            val old = event
+            if (old == null && c.state != FeedbackState.Persistent) return
+
             val updated = FeedbackEvent(
                 hz = c.hz,
                 peakLevelDbfs = c.levelDbfs,
                 maxProminenceDb = c.prominenceDb,
                 startMs = firstSeenMs,
                 endMs = null,
+                // **마지막으로 본 때까지**다. 지금 시각으로 적으면 소리가
+                // 그친 뒤 조용했던 구간까지 울린 것으로 센다.
                 durationMs = lastSeenMs - firstSeenMs,
                 hasHarmonics = c.hasHarmonics,
             )
-            val old = event
             if (old == null) {
                 log.addLast(updated)
                 if (log.size > MAX_EVENTS) log.removeFirst()
@@ -331,11 +366,18 @@ class FeedbackDetector(
             event = updated
         }
 
-        /** 소리가 끊겼다. 기록을 마무리한다. */
+        /**
+         * 소리가 끊겼다. 기록을 마무리한다.
+         *
+         * 끝난 시각은 **마지막으로 본 때**이고, 이어진 시간은 언제나
+         * `end − start` 다. 셋이 서로 맞아야 나중에 리포트에 실어도 된다.
+         */
         fun close() {
             val e = event ?: return
             val i = log.indexOf(e)
-            if (i >= 0) log[i] = e.copy(endMs = lastSeenMs)
+            if (i >= 0) {
+                log[i] = e.copy(endMs = lastSeenMs, durationMs = lastSeenMs - e.startMs)
+            }
             event = null
         }
 

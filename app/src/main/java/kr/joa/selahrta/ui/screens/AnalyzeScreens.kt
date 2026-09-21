@@ -183,16 +183,24 @@ fun FeedbackScreen(capture: CaptureUiState) {
         if (top != null) {
             InfoBar(
                 buildString {
-                    append("이 대역을 조금 내려 보십시오. ")
+                    // **「의심」에는 EQ 를 만지라고 하지 않는다.** 아직 짧게
+                    // 스친 소리일 수 있는데 먼저 깎으라고 하면, 예배 중에
+                    // 멀쩡한 악기 소리를 깎게 된다(독립 검증 P9 판단 2번).
+                    // 먼저 귀로 확인하도록 안내한다.
+                    if (top.state == FeedbackState.Persistent) {
+                        append("소리를 들어 확인하신 뒤, 하울링이 맞으면 이 대역을 조금 내려 보십시오. ")
+                    } else {
+                        append("아직 짧습니다. 먼저 소리를 들어 보십시오. ")
+                    }
                     if (top.hasHarmonics) {
                         append(
-                            "다만 2·3배 주파수가 함께 서 있어 **악기나 목소리일 수 있습니다** — " +
+                            "2·3배 주파수가 함께 서 있어 악기나 목소리일 수 있습니다 — " +
                                 "하울링은 대개 홀로 섭니다.",
                         )
                     } else {
                         append("배음 없이 홀로 선 소리라 하울링에 가깝습니다.")
                     }
-                }.replace("**", ""),
+                },
                 Modifier.padding(top = 12.dp),
                 tone = if (top.hasHarmonics) SelahColors.Warn else SelahColors.TextMuted,
             )

@@ -17,7 +17,6 @@ import kr.joa.selahrta.audio.CaptureGeneration
 import kr.joa.selahrta.audio.TestSignal
 import kr.joa.selahrta.audio.SignalLevel
 import kr.joa.selahrta.audio.SignalPlayer
-import kr.joa.selahrta.audio.SyntheticSource
 import kr.joa.selahrta.audio.OpenFailure
 import kr.joa.selahrta.audio.OpenResult
 import kr.joa.selahrta.audio.OpenedFormat
@@ -165,13 +164,6 @@ data class CaptureUiState(
      * 있는데, 예전에는 거기에 새 곡선의 이름표를 붙였다(독립 재검증 F06).
      */
     val curveGeneration: Long = 0,
-    /**
-     * 디버그 빌드에서 마이크 대신 쓸 합성 신호(명세 16장). null 이면 마이크.
-     *
-     * 화면에는 **실제 마이크가 아님이 드러나야 한다** — 기기 이름에
-     * 「합성 신호」가 들어간다(명세 0장).
-     */
-    val debugSignal: TestSignal? = null,
     /** 지금 스피커로 내보내고 있는 시험 신호. 안 내보내면 null. */
     val playingSignal: TestSignal? = null,
     /** 내보내는 세기. */
@@ -327,7 +319,14 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     private val scanner = InputDeviceScanner(app)
 
     /** 시험 신호를 스피커로 내보내는 쪽. 측정과는 따로 논다. */
-    private val player = SignalPlayer()
+    private val player = SignalPlayer(
+        onEnded = { reason ->
+            // 오디오 스레드에서 온다. 상태는 주 스레드만 쓴다.
+            onMainThread {
+                _state.value = _state.value.copy(playingSignal = null, signalNoticeKo = reason)
+            }
+        },
+    )
     private var calibrationJob: Job? = null
     private var curveJob: Job? = null
     private var settingsJob: Job? = null
@@ -627,6 +626,18 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         _state.value = _state.value.copy(playingSignal = null)
     }
 
+    /**
+     * 앱이 뒤로 갈 때 부른다. **측정과 소리를 함께 멈춘다.**
+     *
+     * 예전에는 측정만 멈추고 소리는 남았다. 예배당에서 4kHz 순음을 켜 놓고
+     * 앱을 나가면 **멈출 방법이 화면에 없었다** — 앱을 다시 열거나 강제
+     * 종료해야 했고, PA 에 물려 있으면 회중이 듣는다.
+     */
+    fun onBackground() {
+        stopSignal()
+        stop()
+    }
+
     /** 세기를 바꾼다. 내보내는 중이면 그 자리에서 바꿔 끼운다. */
     fun setSignalLevel(level: SignalLevel) {
         _state.value = _state.value.copy(signalLevel = level)
@@ -635,18 +646,6 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
 
     fun dismissSignalNotice() {
         _state.value = _state.value.copy(signalNoticeKo = null)
-    }
-
-    /**
-     * 마이크 대신 합성 신호로 잰다(명세 16장, 디버그 빌드 전용).
-     *
-     * 돌고 있으면 멈추고 다시 연다 — 입력을 바꾸는 일이라 새 측정이다.
-     */
-    fun setTestSignal(signal: TestSignal?) {
-        val wasRunning = active != null
-        if (wasRunning) stop()
-        _state.value = _state.value.copy(debugSignal = signal)
-        if (wasRunning) start()
     }
 
     fun dismissDeviceNotice() {
@@ -683,9 +682,6 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     fun start(disconnectFallBack: Boolean = false) {
         if (active != null) return
         _state.value = _state.value.copy(measure = MeasureState.Starting, errorKo = null)
-
-        // 합성 신호가 골라져 있으면 마이크 대신 그것으로 연다(명세 16장).
-        _state.value.debugSignal?.let { return startSynthetic(it) }
 
         val s0 = _state.value.meterSettings
         val available = scanner.list()
@@ -834,43 +830,6 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             feedback = session.feedback.candidates,
             feedbackLog = session.feedback.events,
         )
-    }
-
-    /**
-     * 합성 신호로 연다. **디버그 빌드에서만 고를 수 있다.**
-     *
-     * 실제 마이크 경로와 **같은 자리**를 지난다 — 같은 엔진, 같은 세션,
-     * 같은 합성 로직. 그래야 여기서 확인한 것이 실제에서도 맞는다.
-     */
-    private fun startSynthetic(signal: TestSignal) {
-        val mySession = generation.begin()
-        val src = SyntheticSource(signal)
-        val r = src.open(RequestedFormat())
-        if (r !is OpenResult.Opened) {
-            generation.end()
-            return
-        }
-        val session = CaptureSession(mySession, src, r.format.sampleRate, _state.value.meterSettings)
-        session.startedNs = System.nanoTime()
-        active = session
-        openingKey = r.format.deviceKey
-        _measurement.value = null
-        _state.value = _state.value.copy(
-            measure = MeasureState.Running(System.nanoTime()),
-            opened = r.format,
-            session = mySession,
-            meter = MeterReading(),
-            rta = null,
-            feedback = emptyList(),
-            diagnostics = CaptureDiagnostics(),
-            calibration = ActiveCalibration.assumed,
-            curve = null,
-            curveGeneration = 0,
-            errorKo = null,
-            deviceNoticeKo = "합성 신호(${signal.labelKo})로 재고 있습니다. " +
-                "마이크가 아니라 앱이 만든 소리입니다 — 실제 음압이 아닙니다.",
-        )
-        src.start { block, stats -> onBlock(session, block, stats) }
     }
 
     /**
@@ -1085,6 +1044,13 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         active = null
         generation.end()
 
+        // **기록을 여기서 손에 쥔다.** 열린 것은 닫는다 — 멈춘 뒤에도
+        // 「울리는 중」으로 남으면 지금 하울링이 나는 것처럼 읽힌다.
+        //
+        // 오디오 스레드는 이미 `active !== session` 에서 걸려 이 객체를
+        // 건드리지 않는다. 그래서 여기서 읽어도 경합하지 않는다.
+        val log = ending?.feedback?.finish() ?: _state.value.feedbackLog
+
         ending?.source?.close()
         ending?.commands?.clear()
         openingKey = null
@@ -1104,9 +1070,12 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             curve = null,
             curveGeneration = 0,
             // 멈춘 뒤에도 후보 목록이 남으면 「지금 하울링 중」으로 읽힌다.
-            // **기록(feedbackLog)은 지우지 않는다** — 멈춘 뒤에 보려고
-            // 남기는 것이다. 새 측정을 시작할 때 비운다.
             feedback = emptyList(),
+            // **기록은 옮겨 담는다.** 예전에는 「지우지 않는다」고 주석만
+            // 달아 놓고 실제로는 옮기지 않아, 멈추는 순간 통째로 사라졌다 —
+            // 화면 상태의 기록은 스냅샷에서만 오는데 그 스냅샷을 비웠기
+            // 때문이다(독립 검증 P9-01). 주석이 거짓 안심을 줬다.
+            feedbackLog = log,
             // **세션 번호를 지운다.** 늦게 도착하는 경로 확인·오류가 검사를
             // 통과해 방금 지운 보정을 되살리거나, 정상 종료를 실패로 뒤집는
             // 일을 막는다(독립 재검증 F04). 화면 쪽 사본이며, 실제 판정은
