@@ -21,6 +21,19 @@ import java.util.concurrent.atomic.AtomicBoolean
 private const val TAG = "MicSource"
 
 /**
+ * anchor 탐색 기록을 켤 것인가. **평소에는 끈다.**
+ *
+ * 1초에 한 줄이라 예배 두 시간이면 7,200줄이 쌓인다. 그 기록으로 이미
+ * 잴 것은 쟀고(`docs/spec/2026-09-21-anchor-exploration.md`), 지금은
+ * 그저 로그를 채울 뿐이다.
+ *
+ * **지우지 않고 남겨 둔다.** 다른 기기·다른 샘플레이트에서 같은 것을
+ * 다시 재야 할 때가 온다 — 그때 이 값 하나만 true 로 바꾼다. 재고
+ * 나서는 반드시 되돌린다.
+ */
+private const val ANCHOR_LOG = false
+
+/**
  * 마이크 입력(명세 2장).
  *
  * **내장과 USB 를 한 클래스로 연다.** 명세는 BuiltInMicSource 와
@@ -329,10 +342,16 @@ class MicSource(
                 override fun onBlock(block: AudioBlock, stats: BlockStats) = onBlock(block, stats)
 
                 override fun onAnchor(anchor: AudioAnchor, capturedFrames: Long) {
-                    // **탐색용 기록이다.** 실기기에서 getTimestamp 가 실제로
-                    // 무엇을 주는지 재려고 남긴다 — 되는가, 얼마나 자주
-                    // 갱신되는가, 표본 클럭이 공칭과 얼마나 다른가.
-                    // 결과를 문서로 남긴 뒤 이 로그를 뺄지 정한다.
+                    // **탐색용 기록이다. 평소에는 꺼 둔다.**
+                    //
+                    // 실기기에서 `getTimestamp` 가 실제로 무엇을 주는지 재려고
+                    // 남겼고, 그 결과는 문서로 옮겼다(docs/spec/2026-09-21-
+                    // anchor-exploration.md). 이제는 화면이 뒤로 가도 측정이
+                    // 이어지므로 **예배 두 시간이면 7,200줄**이 쌓인다.
+                    //
+                    // 지우지 않고 스위치로 둔다 — 다른 기기에서 같은 것을
+                    // 다시 재야 할 때 [ANCHOR_LOG] 하나만 켜면 된다.
+                    if (!ANCHOR_LOG) return
                     Log.i(
                         TAG,
                         "ANCHOR fs=${fmt.sampleRate} capFrames=$capturedFrames" +
