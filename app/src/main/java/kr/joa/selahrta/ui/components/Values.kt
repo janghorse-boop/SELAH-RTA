@@ -19,7 +19,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kr.joa.selahrta.domain.RangeVerdict
 import kr.joa.selahrta.ui.theme.SelahColors
 
 /**
@@ -69,40 +68,6 @@ fun ValueTile(
             color = if (hasValue) SelahColors.TextPrimary else SelahColors.TextMuted,
         )
         Text(unit, fontSize = 11.sp, color = SelahColors.TextSecondary)
-    }
-}
-
-/**
- * 판정 배지. **색과 글자를 함께 쓴다**(명세 11장).
- *
- * 색만으로 알리면 색각 이상이 있는 사람에게는 아무 뜻이 없고, 어두운
- * 예배당에서는 누구에게나 구별이 어려워진다.
- */
-@Composable
-fun VerdictBadge(
-    verdict: RangeVerdict,
-    modifier: Modifier = Modifier,
-    /** 판정할 수 없을 때 그 까닭을 대신 적는다. 「측정 안 함」과 「판정 보류」는 다르다. */
-    unknownLabel: String = "측정 안 함",
-) {
-    val color = when (verdict) {
-        RangeVerdict.Low -> SelahColors.Low
-        RangeVerdict.InRange -> SelahColors.InRange
-        RangeVerdict.High -> SelahColors.High
-        RangeVerdict.Unknown -> SelahColors.TextMuted
-    }
-    Box(
-        modifier = modifier
-            .background(color.copy(alpha = 0.16f), RoundedCornerShape(999.dp))
-            .border(1.dp, color.copy(alpha = 0.5f), RoundedCornerShape(999.dp))
-            .padding(horizontal = 16.dp, vertical = 6.dp),
-    ) {
-        Text(
-            if (verdict == RangeVerdict.Unknown) unknownLabel else verdict.labelKo,
-            color = color,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.SemiBold,
-        )
     }
 }
 

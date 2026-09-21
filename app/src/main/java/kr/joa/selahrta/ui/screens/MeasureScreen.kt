@@ -1,5 +1,9 @@
 package kr.joa.selahrta.ui.screens
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -36,7 +40,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import kr.joa.selahrta.domain.MeasureState
-import kr.joa.selahrta.domain.RangeVerdict
 import kr.joa.selahrta.domain.focusKo
 import kr.joa.selahrta.dsp.Weighting
 import kr.joa.selahrta.ui.CaptureUiState
@@ -45,7 +48,6 @@ import kr.joa.selahrta.ui.components.InfoBar
 import kr.joa.selahrta.ui.components.InputLevelBar
 import kr.joa.selahrta.ui.components.NO_VALUE
 import kr.joa.selahrta.ui.components.ValueTile
-import kr.joa.selahrta.ui.components.VerdictBadge
 import kr.joa.selahrta.ui.components.formatDb
 import kr.joa.selahrta.ui.components.levelColor
 import kr.joa.selahrta.ui.nav.ViewMode
@@ -78,24 +80,16 @@ fun MeasureScreen(
     val weighting = capture.meterSettings.weighting
     val uncalibrated = capture.calibration.isReferenceOnly
 
+    // **판정은 계기 바의 색 하나로 말한다.** 예전에는 「낮음/적정/높음」
+    // 배지를 함께 띄웠는데, 바가 이미 같은 말을 하고 있어 지웠다.
+    //
     // **참고 범위는 dBA 기준이다.** A 가중일 때만 견준다 — C 나 Z 값을
-    // dBA 범위와 견주면 저음이 큰 찬양에서 늘 「높음」이 뜬다.
-    // 판정에는 순간값이 아니라 Leq 를 쓴다(범위 자체가 평균 기준이다).
-    // 이제 구간은 설교·찬양 둘뿐이고 둘 다 판정한다.
-    val judged = if (weighting == Weighting.A) m.leqLong ?: m.leqShort else null
-    val verdict = when {
-        judged == null || range == null -> RangeVerdict.Unknown
-        judged < range.avgLowDb -> RangeVerdict.Low
-        judged > range.avgHighDb -> RangeVerdict.High
-        else -> RangeVerdict.InRange
-    }
-
-    // **큰 숫자 자체도 물들인다.** 색이 곧 「지금 볼륨이 어디쯤인가」다.
-    // 다만 **판정 배지와는 다른 양**이다 — 배지는 평균(Leq)을, 숫자는
-    // 지금 값을 견준다. 그래서 둘의 색이 잠깐 어긋날 수 있고, 그게 맞다.
-    // A 가중일 때만 칠한다(같은 까닭으로 판정도 그렇다).
+    // dBA 범위와 견주면 저음이 큰 찬양에서 늘 빨강이 된다. 그때는 색을
+    // 칠하지 않고 **그 까닭을 글자로 적는다**(명세 11장: 색만으로 알리지
+    // 않는다).
+    val canJudge = weighting == Weighting.A && range != null
     val liveColor = levelColor(
-        if (weighting == Weighting.A) m.currentSpl else null,
+        if (canJudge) m.currentSpl else null,
         range?.avgLowDb,
         range?.avgHighDb,
     )
@@ -209,31 +203,16 @@ fun MeasureScreen(
                         else -> SelahColors.TextPrimary
                     },
                 )
+                // **「참고용」 글자는 뺐다.** 미보정 상태는 화면 오른쪽 위의
+                // 「미보정」 배지가 말하고 있어 같은 말이 두 번 나왔다.
+                // 다만 **색은 남긴다** — 단위가 주황이면 그 숫자가 아직
+                // 짐작임을 배지와 같은 색으로 잇는다(명세 1장).
                 Text(
-                    if (uncalibrated) "${weighting.unitSuffix} · 참고용" else weighting.unitSuffix,
+                    weighting.unitSuffix,
                     fontSize = 14.sp,
                     color = if (uncalibrated) SelahColors.Warn else SelahColors.TextSecondary,
                 )
             }
-        }
-
-        // **범위 안이면 배지를 띄우지 않는다.** 초록 바가 이미 그 말을 하고
-        // 있어 「적정」은 같은 말을 두 번 하는 것이다.
-        //
-        // 명세 11장은 「색만으로 알리지 않고 늘 글자를 함께 쓴다」고 한다.
-        // 그래서 **알려야 할 것에는 글자를 남긴다** — 낮음·높음, 그리고
-        // 판정할 수 없는 까닭. 지우는 것은 「괜찮다」 하나뿐이고, 그것은
-        // 경고의 부재로도 읽힌다.
-        if (verdict != RangeVerdict.InRange) {
-            VerdictBadge(
-                verdict,
-                Modifier.padding(top = 12.dp),
-                unknownLabel = when {
-                    !running -> "측정 안 함"
-                    weighting != Weighting.A -> "판정 보류 — ${weighting.labelKo}"
-                    else -> "평균을 모으는 중"
-                },
-            )
         }
 
         if (range != null) {
@@ -245,13 +224,21 @@ fun MeasureScreen(
                 fontSize = 13.sp,
                 modifier = Modifier.padding(top = 10.dp),
             )
-            Text(
-                "보편적 기준이 아니라 참고값입니다. 설정에서 바꿀 수 있습니다.",
-                color = SelahColors.TextMuted,
-                fontSize = 11.sp,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(top = 2.dp),
-            )
+            // **색을 칠하지 않는 까닭은 글자로 적는다.** 배지를 없앤 뒤로
+            // 판정은 바의 색 하나로만 말하는데, 색이 안 들어오는 상태를
+            // 설명하지 않으면 고장처럼 보인다(명세 11장).
+            if (running && !canJudge) {
+                Text(
+                    "지금은 ${weighting.labelKo} 라 범위와 견주지 않습니다. " +
+                        "설정에서 dBA 로 바꾸면 계기에 색이 들어옵니다.",
+                    color = SelahColors.Warn,
+                    fontSize = 11.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+            // 「보편적 기준이 아니라 참고값입니다」는 뺐다. 같은 말이
+            // 설정 화면의 「구간별 권장 범위」 아래에 그대로 있다.
         }
 
         // 구간을 고르는 줄은 **없앴다.** 화면 위쪽 칩(설교·찬양)이 곧
@@ -396,6 +383,24 @@ private fun GaugeArc(
     modifier: Modifier = Modifier,
     color: Color = SelahColors.InRange,
 ) {
+    // **미끄러지게 한다.** 화면은 66ms 마다 한 번 새 값을 받는데, 그때마다
+    // 바가 툭툭 건너뛰면 눈이 따라가기 어렵다. 그 사이를 이어 그린다.
+    //
+    // **이것은 보기용이지 측정이 아니다.** 실제로 소리를 느리게 보고 싶다면
+    // 설정의 「응답 속도」를 Slow 로 두어야 한다 — 그쪽은 시간가중 자체를
+    // 바꾸고, 이쪽은 이미 정해진 값 사이를 이을 뿐이다. 그래서 이 시간을
+    // 길게 잡지 않는다. 길면 화면이 실제보다 뒤처진다.
+    val target = fraction?.coerceIn(0f, 1f) ?: 0f
+    val shown by animateFloatAsState(
+        targetValue = target,
+        animationSpec = tween(durationMillis = GAUGE_GLIDE_MS, easing = LinearEasing),
+        label = "gauge",
+    )
+    val shownColor by animateColorAsState(
+        targetValue = color,
+        animationSpec = tween(durationMillis = GAUGE_GLIDE_MS, easing = LinearEasing),
+        label = "gaugeColor",
+    )
     Canvas(modifier) {
         val stroke = 14.dp.toPx()
         val w = size.width
@@ -416,9 +421,9 @@ private fun GaugeArc(
 
         if (fraction != null) {
             drawArc(
-                color = color,
+                color = shownColor,
                 startAngle = 180f,
-                sweepAngle = 180f * fraction.coerceIn(0f, 1f),
+                sweepAngle = 180f * shown,
                 useCenter = false,
                 topLeft = topLeft,
                 size = arcSize,
@@ -427,3 +432,12 @@ private fun GaugeArc(
         }
     }
 }
+
+/**
+ * 계기 바가 다음 값으로 넘어가는 데 걸리는 시간(ms).
+ *
+ * 화면이 값을 받는 간격(66ms)보다 길면 바가 실제보다 뒤처진다.
+ * 그보다 짧게 잡아 **끊김만 이어 준다.** 소리를 정말 느리게
+ * 보고 싶으면 설정의 「응답 속도」를 Slow 로 두어야 한다.
+ */
+private const val GAUGE_GLIDE_MS = 90

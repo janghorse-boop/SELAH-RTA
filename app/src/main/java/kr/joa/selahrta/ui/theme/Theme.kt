@@ -60,7 +60,7 @@ object SelahColors {
      * **범위보다 낮으면 노랑**이다. 예전에는 파랑이었는데, 신호등처럼
      * 노랑→초록→빨강으로 읽히는 편이 한눈에 들어온다.
      */
-    val Low = Color(0xFFFFB74D)
+    val Low = Color(0xFFFFE04D)
     val InRange = Color(0xFF4CAF50)
     val High = Color(0xFFFF6B6B)
     val Warn = Color(0xFFFFB74D)
