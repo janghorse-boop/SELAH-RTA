@@ -66,13 +66,29 @@ class CaptureController(
 ) {
     private val _state = MutableStateFlow(CaptureUiState())
 
-    /** 주 스레드만 쓰는 상태. 설정·보정·기기·안내문이 여기 있다. */
+    /**
+     * 주 스레드만 쓰는 **바탕** 상태. 설정·보정·기기·안내문이 여기 있다.
+     *
+     * **측정 결과는 여기 없다.** SPL·Leq·MAX·Peak·RTA·진단은
+     * [measurement] 에서 오고, 둘을 합쳐야 화면이 보는 값이 된다
+     * ([composed]). 이 구별을 놓쳐 멈출 때 측정 결과가 통째로 사라진 적이
+     * 있다(독립 검증 G01) — 화면에 보이는 값을 읽으려면 [composed] 를
+     * 쓴다.
+     */
     val state: StateFlow<CaptureUiState> = _state.asStateFlow()
 
     private val _measurement = MutableStateFlow<MeasurementSnapshot?>(null)
 
     /** 오디오 스레드가 내는 측정 결과. */
     val measurement: StateFlow<MeasurementSnapshot?> = _measurement.asStateFlow()
+
+    /**
+     * 지금 **화면에 보이는** 값. 바탕 상태에 측정 결과를 합친 것이다.
+     *
+     * ViewModel 이 흘려보내는 것과 같은 합성이다 — 한 자리에서만 합치므로
+     * 「바탕만 읽어 놓고 합쳐진 값인 줄 아는」 일이 생기지 않는다.
+     */
+    fun composed(): CaptureUiState = _state.value.withMeasurement(_measurement.value)
 
     /** 바깥(ViewModel)이 설정·보정·안내문을 고쳐 넣는 자리. */
     fun update(mutate: (CaptureUiState) -> CaptureUiState) {
@@ -447,7 +463,7 @@ class CaptureController(
 
         // **여기서 화면 상태를 읽지도 쓰지도 않는다.** 잰 것만 내놓고,
         // 보정·설정을 입히는 일은 주 스레드가 한다.
-        _measurement.value = MeasurementSnapshot(
+        val snapshot = MeasurementSnapshot(
             session = session.id,
             diagnostics = CaptureDiagnostics(
                 blocks = session.blocks,
@@ -465,6 +481,17 @@ class CaptureController(
             feedback = session.feedback.candidates,
             feedbackLog = session.feedback.events,
         )
+
+        // **받아들이는 것은 주 스레드다.** 입구 검사는 **뒤에 오는**
+        // 콜백만 막는다 — 이미 지나 들어와 있던 옛 콜백은 멈추고 다시
+        // 시작한 뒤에 여기 닿을 수 있고, 그러면 새 세션이 내놓은 값을
+        // 옛 세대의 값으로 덮는다. 소비 측은 세대가 안 맞으면 「마지막
+        // 유효한 값」이 아니라 기본 상태를 돌려주므로 **화면이 빈다**
+        // (독립 검증 G02).
+        //
+        // 그래서 세대를 **넣을 때가 아니라 받을 때** 본다. 세션을 갈아
+        // 끼우는 것도 이 스레드라, 여기서는 경합할 상대가 없다.
+        post { if (active === session) _measurement.value = snapshot }
     }
 
     fun stop() {
@@ -472,7 +499,13 @@ class CaptureController(
         // 있다. 다만 **지금 보정으로 계산한 값을 굳혀서** 남긴다. 그러지
         // 않고 보정만 지우면, 화면의 숫자가 아무 일도 없었는데 갑자기
         // 튀어 오른다. 세션을 무효로 만들기 **전에** 읽어야 한다.
-        val frozen = state.value
+        //
+        // **합친 상태를 읽어야 한다.** `state` 는 측정 스냅샷을 합치기
+        // **전**의 기본 상태다 — ViewModel 안에 있을 때는 같은 이름이
+        // 합쳐진 흐름을 가리켰는데, 여기로 옮기면서 같은 표현의 뜻이
+        // 바뀌었다. 그것을 못 보고 그대로 옮겨, 멈추는 순간 SPL·MAX·
+        // Leq·Peak·RTA·진단이 통째로 기본값으로 돌아갔다(독립 검증 G01).
+        val frozen = composed()
 
         // **세션부터 무효로 만든다.** 닫기보다 먼저다 — 닫는 동안에도
         // 캡처 콜백이 한두 번 더 올 수 있는데, 그때 이 검사에 걸려야
@@ -484,8 +517,11 @@ class CaptureController(
         // **기록을 여기서 손에 쥔다.** 열린 것은 닫는다 — 멈춘 뒤에도
         // 「울리는 중」으로 남으면 지금 하울링이 나는 것처럼 읽힌다.
         //
-        // 오디오 스레드는 이미 `active !== session` 에서 걸려 이 객체를
-        // 건드리지 않는다. 그래서 여기서 읽어도 경합하지 않는다.
+        // **입구 검사가 지켜 주는 것이 아니다.** `active !== session` 은
+        // 뒤에 오는 콜백만 막고, 이미 들어와 있는 콜백은 못 막는다 —
+        // 그렇게 믿고 적었던 주석이 C01 을 낳았다. 여기서 안전한 까닭은
+        // `FeedbackDetector` 가 `process` 와 `finish` 를 제 자물쇠로
+        // 직렬화하기 때문이다.
         val log = ending?.feedback?.finish() ?: _state.value.feedbackLog
 
         ending?.source?.close()
