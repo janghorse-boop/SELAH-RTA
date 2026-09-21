@@ -1,0 +1,4 @@
+Independent verification scratch directory: C:\Users\jangh\AppData\Local\Temp\selah-independent-1d0bc54c3a104840b8c5dff274345ba5
+TIMEOUT_RETAINED=3 after 3 sequential start/stop cycles; playing=null
+RELEASE_DURING_STOP=true
+PARTIAL_NEXT_SAMPLE=0.04330127; expected_after_128=-0.04330127; skipped=896
