@@ -300,16 +300,27 @@ class SignalPlayer(
     /** 내보내기가 오류로 끝났다. **아직 내가 현재 재생일 때만** 알린다. */
     private fun endWithError(pb: Playback, wrote: Int) {
         pb.running.set(false)
+        // **떼어 내기와 종료 추적 등록은 한 전환이다.**
+        //
+        // 둘을 나눠 두면 그 사이에 새 재생이 끼어들 수 있다 — `current` 는
+        // 이미 비었고 목록에는 아직 없으니, 그 재생을 **어느 쪽에서도 보지
+        // 못해** 상한을 넘겨 연다(독립 검증 RC02 잔여 경합: 열림 3 ·
+        // pending 3 · 상한 2). 목록 자물쇠는 멀쩡했고, 문제는 **목록과
+        // `current` 사이의 이전**이 따로 일어난 것이었다.
+        //
+        // 이 안에서는 등록과 상태 갱신만 한다. 실제 `release`·`stop`·`join`
+        // 은 밖에서 한다.
         val mine = synchronized(lock) {
-            if (current === pb) {
+            val isCurrent = current === pb
+            if (isCurrent) {
                 current = null
                 playing = null
-                true
-            } else {
-                false
             }
+            stuck.addIfPending(pb) { it.isSlotFree }
+            isCurrent
         }
-        settle(pb)
+        pb.releaseOnce()
+        if (pb.isSlotFree) stuck.remove(pb)
         if (!mine) return
 
         onEnded?.invoke(
@@ -343,19 +354,20 @@ class SignalPlayer(
             thread = null
             playing = null
             pb?.running?.set(false)
+            // 떼어 내는 것과 종료 추적 등록을 **한 전환으로** 한다
+            // (독립 검증 RC02 잔여 경합).
+            pb?.let { p -> stuck.addIfPending(p) { it.isSlotFree } }
         }
         if (pb == null) return
 
         pb.stopSink()
         t?.join(JOIN_MS)
+        // 등록은 위 임계구역에서 이미 했다. 여기서는 정리만 한다.
         if (t == null || !t.isAlive) {
-            settle(pb)
-        } else {
-            // 아직 끝나지 않았다. 두고 간다 — 깨어나면 제 손으로 놓는다.
-            // **넣을지 말지를 같은 자물쇠 안에서 본다** — 밖에서 보고 넣으면
-            // 보는 사이에 끝난 것이 남아 세는 수가 커진다(검증자 후속 점검).
-            stuck.addIfPending(pb) { it.isSlotFree }
+            pb.releaseOnce()
+            if (pb.isSlotFree) stuck.remove(pb)
         }
+        // 아직 끝나지 않았으면 그대로 두고 간다 — 깨어나면 제 손으로 놓는다.
     }
 
     companion object {
