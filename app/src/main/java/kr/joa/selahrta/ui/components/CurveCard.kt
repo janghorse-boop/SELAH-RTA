@@ -16,6 +16,11 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -105,6 +110,44 @@ fun CurveCard(
                 color = SelahColors.TextSecondary,
                 fontSize = 11.sp,
             )
+
+            // **파일이 스스로 밝힌 것을 그대로 보인다**(USB 오디오 지시서 9.3).
+            //
+            // 둘째 열이 「응답」인지 「보정값」인지는 여기 적힌 열 이름으로만
+            // 가릴 수 있고, 어느 마이크의 것인지도 보통 여기 있다. 우리가
+            // 해석해서 「이 마이크다」라고 말하지 않는다 — 짚어낸 이름이
+            // 틀리면 그게 더 나쁘다.
+            if (curve.headerLines.isNotEmpty()) {
+                var showHeader by remember(curve.fileName) { mutableStateOf(false) }
+                TextButton(
+                    onClick = { showHeader = !showHeader },
+                    contentPadding = PaddingValues(0.dp),
+                ) {
+                    Text(
+                        if (showHeader) "파일 정보 접기" else "파일 정보",
+                        color = SelahColors.Accent,
+                        fontSize = 12.sp,
+                    )
+                }
+                if (showHeader) {
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .background(SelahColors.Background, RoundedCornerShape(8.dp))
+                            .padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        curve.headerLines.forEach {
+                            Text(
+                                it,
+                                color = SelahColors.TextSecondary,
+                                fontSize = 11.sp,
+                                lineHeight = 15.sp,
+                            )
+                        }
+                    }
+                }
+            }
 
             // **끄는 것과 지우는 것을 가른다.** 보정 전·후를 견주려면
             // 껐다 켜야 하는데, 그때마다 파일을 다시 가져오게 하면

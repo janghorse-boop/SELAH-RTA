@@ -32,6 +32,14 @@ data class ActiveCurve(
     /** 가져온 파일 이름. 어느 파일인지 화면에 적는다. */
     val fileName: String,
     val pointCount: Int,
+    /**
+     * 파일 앞의 머리글. **보정 부호를 가를 단서이고, 마이크가
+     * 무엇인지도 보통 여기 적혀 있다.**
+     *
+     * 화면에 그대로 보인다 — 우리가 해석해 「이 마이크다」라고 말하지
+     * 않는다. 짓어낸 이름이 틀리면 그것이 더 나쁘다.
+     */
+    val headerLines: List<String> = emptyList(),
     val importedAtEpochMs: Long,
     /**
      * 지금 **걸려 있는가.** 꺼도 파일은 그대로 둔다.
@@ -152,6 +160,7 @@ class CurveStore(private val context: Context) {
                     curve = loaded.curve,
                     fileName = name,
                     pointCount = prefs[countKey(key)] ?: loaded.pointCount,
+                    headerLines = loaded.headerLines,
                     importedAtEpochMs = prefs[atKey(key)] ?: 0L,
                     enabled = prefs[onKey(key)] != "false",
                 )
@@ -179,7 +188,13 @@ class CurveStore(private val context: Context) {
                     // 있으면 「가져왔는데 아무 일도 안 일어난다」가 된다.
                     p.remove(onKey(key))
                 }
-                ActiveCurve(loaded.curve, fileName, loaded.pointCount, System.currentTimeMillis())
+                ActiveCurve(
+                    curve = loaded.curve,
+                    fileName = fileName,
+                    pointCount = loaded.pointCount,
+                    headerLines = loaded.headerLines,
+                    importedAtEpochMs = System.currentTimeMillis(),
+                )
             }.recoverCatching {
                 throw IOException("보정 파일을 저장하지 못했습니다: ${it.message}")
             }
