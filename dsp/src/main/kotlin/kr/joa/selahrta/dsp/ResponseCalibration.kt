@@ -316,3 +316,28 @@ fun calibrateResponse(
         settings = settings,
     )
 }
+
+/**
+ * 믿을 수 있는 점들이 **이어지는 토막**들. 화면이 선을 그릴 단위다.
+ *
+ * **끊어 그리려고 있는 것이다.** 믿을 수 없는 점을 건너뛰고 이어 그리면,
+ * 잰 적 없는 대역에 선이 지나가 **잰 것처럼 보인다.** 그 자리가 곧
+ * 「보정이 걸리지 않는 곳」인데 그래프는 반대로 말하게 된다.
+ *
+ * **점 하나짜리 토막도 남긴다.** 선은 못 그어도 점은 찍을 수 있고,
+ * 세어 보는 쪽에서는 그것도 하나다.
+ */
+fun validSegments(valid: BooleanArray): List<IntRange> {
+    val out = mutableListOf<IntRange>()
+    var start = -1
+    for (i in valid.indices) {
+        if (valid[i]) {
+            if (start < 0) start = i
+        } else if (start >= 0) {
+            out += start..(i - 1)
+            start = -1
+        }
+    }
+    if (start >= 0) out += start..(valid.size - 1)
+    return out
+}
