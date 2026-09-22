@@ -51,6 +51,8 @@ import kr.joa.selahrta.audio.NO_SIGNAL_HOLD_MS
 import kr.joa.selahrta.audio.inputSignalNoticeKo
 import kr.joa.selahrta.audio.inputSignalState
 import kr.joa.selahrta.dsp.CLIP_THRESHOLD
+import kr.joa.selahrta.audio.externalReadiness
+import kr.joa.selahrta.ui.components.ReadinessCard
 import kr.joa.selahrta.ui.components.DiagnosticsPanel
 import kr.joa.selahrta.ui.components.InfoBar
 import kr.joa.selahrta.ui.components.InputLevelBar
@@ -415,6 +417,21 @@ fun MeasureScreen(
                 }
             }
         }
+
+        // **외부 마이크일 때만 나온다.** 내장 마이크에는 팬텀전원도
+        // GAIN 도 없어 빈 목록이 오고, 카드는 아무것도 그리지 않는다.
+        ReadinessCard(
+            externalReadiness(
+                opened = capture.opened,
+                signalSeen = capture.diagnostics.quietMs < NO_SIGNAL_HOLD_MS &&
+                    capture.diagnostics.blocks > 0,
+                clipping = capture.diagnostics.lastPeakAbs >= CLIP_THRESHOLD,
+                // **파일이 있는 것과 걸려 있는 것은 다르다.** 꺼 두었으면
+                // 「보정 적용됨」이 아니다.
+                curveApplied = capture.curve?.enabled == true,
+            ),
+            Modifier.padding(top = 16.dp),
+        )
 
         capture.inputForDisplay?.let {
             DiagnosticsPanel(it, capture.diagnostics, Modifier.padding(top = 16.dp, bottom = 24.dp))
