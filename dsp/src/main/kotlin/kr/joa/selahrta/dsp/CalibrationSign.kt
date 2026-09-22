@@ -68,8 +68,11 @@ fun signEvidenceOf(headerLines: List<String>): SignEvidence {
  */
 fun signNoticeKo(evidence: SignEvidence): String? = when (evidence) {
     SignEvidence.LooksLikeResponse, SignEvidence.Unknown -> null
+    // **화면에 그대로 나가는 문장이다.** 마크다운 강조(`**`)를 쓰지 않는다 —
+    // 이 자리는 서식 없는 Text 라 별표가 글자 그대로 보인다. 기기에서
+    // 확인하기 전에는 몰랐다(2026-09-22 실기기).
     SignEvidence.LooksLikeCorrection ->
         "이 파일의 머리글이 「보정값(correction)」으로 읽힙니다. 앱은 둘째 열을 " +
-            "**마이크의 응답**으로 보고 측정값에서 빼는데, 이미 뒤집힌 값이라면 " +
+            "「마이크의 응답」으로 보고 측정값에서 빼는데, 이미 뒤집힌 값이라면 " +
             "보정이 반대로 두 배 걸립니다. 제조사 설명을 확인하십시오."
 }
