@@ -10,6 +10,7 @@ import kr.joa.selahrta.audio.DisconnectPolicy
 import kr.joa.selahrta.audio.InputDeviceInfo
 import kr.joa.selahrta.audio.InputDeviceScanner
 import kr.joa.selahrta.audio.MicSource
+import kr.joa.selahrta.audio.MicrophoneProbe
 import kr.joa.selahrta.audio.chooseInput
 import kr.joa.selahrta.audio.CaptureDiagnostics
 import kr.joa.selahrta.audio.CaptureEnd
@@ -173,6 +174,14 @@ data class CaptureUiState(
     val signalLevel: SignalLevel = SignalLevel.Low,
     /** 신호 발생기에 관해 알릴 것. */
     val signalNoticeKo: String? = null,
+    /**
+     * 내장 마이크 탐색 결과. 아직 안 돌렸으면 null.
+     *
+     * **저장하지 않는다.** 앞을 다시 켰을 때 지난 판정을 그대로
+     * 보이면, OS 가 올라가거나 기기 구성이 바뀜 상황에서도 옵날 말을
+     * 한다(지시서 6장: 재시작 시 현재 상태와 다시 대조).
+     */
+    val micProbe: kr.joa.selahrta.audio.MicrophoneProbe.Report? = null,
 ) {
     /**
      * 지금 숫자를 그 기기의 측정값이라 불러도 되는가.
@@ -730,6 +739,29 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                     onFailure = { it.message ?: "보정 파일을 읽지 못했습니다." },
                 ),
             ) }
+        }
+    }
+
+    /**
+     * 내장 마이크가 **정말 갈라지는지** 기기에 물어본다
+     * (S23 개별 자동교정 지시서 2장).
+     *
+     * **재는 중에는 돌리지 않는다.** 후보마다 마이크를 열었다
+     * 닫으므로, 돌고 있는 측정을 가로채거나 끊어 버린다.
+     */
+    fun probeMicrophones() {
+        if (controller.running) {
+            controller.update { st -> st.copy(
+                deviceNoticeKo = "측정을 멈춘 뒤에 탐색하십시오. 탐색은 마이크를 " +
+                    "여러 번 열었다 닫아 재는 중이면 측정이 끊깁니다.",
+            ) }
+            return
+        }
+        viewModelScope.launch {
+            val report = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                MicrophoneProbe(getApplication()).run()
+            }
+            controller.update { st -> st.copy(micProbe = report) }
         }
     }
 

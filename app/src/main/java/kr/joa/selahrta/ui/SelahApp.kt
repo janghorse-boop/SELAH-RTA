@@ -286,6 +286,7 @@ fun SelahApp() {
                         onLeqWindow = vm::setLeqWindow,
                         onPreferredInput = vm::setPreferredInput,
                         onInputChannel = vm::setInputChannel,
+                        onProbeMicrophones = vm::probeMicrophones,
                         onAutoPreferExternal = vm::setAutoPreferExternal,
                         onDisconnectPolicy = vm::setDisconnectPolicy,
                         // 확장자를 못 믿는 제공자가 많아 형식을 넓게 받는다.

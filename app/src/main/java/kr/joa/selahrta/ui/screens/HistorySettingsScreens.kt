@@ -30,6 +30,7 @@ import kr.joa.selahrta.audio.SignalLevel
 import kr.joa.selahrta.audio.TestSignal
 import kr.joa.selahrta.domain.MeasureState
 import kr.joa.selahrta.domain.MicKind
+import kr.joa.selahrta.ui.components.MicProbeCard
 import kr.joa.selahrta.ui.components.SegmentRangeCard
 import kr.joa.selahrta.dsp.TimeWeight
 import kr.joa.selahrta.dsp.Weighting
@@ -86,6 +87,8 @@ fun SettingsScreen(
     onPreferredInput: (String?) -> Unit,
     /** 기기별로 재는 채널을 고른다. */
     onInputChannel: (String, Int) -> Unit,
+    /** 내장 마이크가 갈라지는지 기기에 물어본다. */
+    onProbeMicrophones: () -> Unit,
     onAutoPreferExternal: (Boolean) -> Unit,
     onDisconnectPolicy: (DisconnectPolicy) -> Unit,
     onPickCurveFile: () -> Unit,
@@ -124,6 +127,16 @@ fun SettingsScreen(
             it.stableKey == capture.meterSettings.preferredInputKey
         } ?: capture.inputs.firstOrNull { it.stableKey == capture.opened?.deviceKey }
         val maxChannels = chosenDevice?.channelCounts?.maxOrNull() ?: 1
+        // **갈리는지부터 묻는다**(S23 개별 자동교정 지시서 2·7장).
+        // 기기 목록 바로 아래에 둔다 — 어느 마이크를 고를 수 있는가의
+        // 바로 다음 물음이 「그게 정말 갈라지는가」이기 때문이다.
+        MicProbeCard(
+            report = capture.micProbe,
+            running = capture.measure is MeasureState.Running,
+            onProbe = onProbeMicrophones,
+            modifier = Modifier.padding(top = 10.dp),
+        )
+
         // **내장 마이크에는 띄우지 않는다.** 갤럭시 S23 은 내장 마이크도
         // `ch=1,2` 를 알린다(실측). 그건 「입력이 둘」이 아니라 스테레오로도
         // 열 수 있다는 뜻인데, 거기에 「Input 1 / Input 2」를 띄우면 사람은
