@@ -21,14 +21,29 @@ data class CalibrationKey(
      */
     val deviceKey: String,
     val source: CaptureSource,
+    /**
+     * 여러 채널을 주는 기기에서 **어느 입력으로 재고 있는가**.
+     *
+     * 오디오 인터페이스는 Input 1 과 Input 3 에 서로 다른 마이크가
+     * 꽂혀 있을 수 있고, 그러면 보정값도 다르다(USB 오디오 지시서 9.2).
+     *
+     * **모노면 null 이다.** 그래야 지금까지 저장된 내장 마이크 보정값이
+     * 그대로 살아 있다 — 열쇠에 `|ch0` 을 붙이면 전부 잃는다.
+     */
+    val channelIndex: Int? = null,
 ) {
     /** 저장소 열쇠 문자열. 사람이 읽을 수 있게 두어 진단에도 쓴다. */
-    fun storageKey(): String = "cal|$deviceKey|${source.name}"
+    fun storageKey(): String = buildString {
+        append("cal|").append(deviceKey).append('|').append(source.name)
+        channelIndex?.let { append("|ch").append(it) }
+    }
 
     companion object {
         fun of(format: OpenedFormat) = CalibrationKey(
             deviceKey = format.deviceKey,
             source = format.audioSource,
+            // 모노로 열렸으면 고를 것이 없었다 — 열쇠에 넣지 않는다.
+            channelIndex = format.channelIndex.takeIf { format.channelCount > 1 },
         )
     }
 }

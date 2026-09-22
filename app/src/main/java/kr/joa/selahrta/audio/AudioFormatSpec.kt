@@ -7,13 +7,33 @@ import kr.joa.selahrta.domain.MicKind
 /**
  * 우리가 **바라는** 캡처 형식(명세 5장).
  *
- * 48kHz mono 를 기본 목표로 한다. 기기가 48kHz 로 돌고 있으면 리샘플링이
+ * 48kHz 를 기본 목표로 한다. 기기가 48kHz 로 돌고 있으면 리샘플링이
  * 끼지 않아 주파수 축이 흔들리지 않는다.
+ *
+ * **채널은 수와 번호를 따로 말한다.** 오디오 인터페이스(UMC404HD 등)는
+ * 여러 채널을 한꺼번에 주는데, 측정은 그중 **한 채널**로만 한다. 몇
+ * 채널로 열지와 그중 어느 것을 쓸지는 다른 물음이다.
  */
 data class RequestedFormat(
     val sampleRate: Int = 48_000,
-    val channelMask: Int = AudioFormat.CHANNEL_IN_MONO,
-)
+    /**
+     * 몇 채널로 열어 달라고 할 것인가. 내장 마이크는 1 이다.
+     *
+     * **받아들여진다는 보장이 없다.** 실제로 몇으로 열렸는지는
+     * [OpenedFormat.channelCount] 에 적힌다 — 이 프로젝트가 요청과 결과를
+     * 갈라 두는 까닭과 같다.
+     */
+    val channelCount: Int = 1,
+    /** 그중 **측정에 쓸** 채널(0부터). */
+    val channelIndex: Int = 0,
+) {
+    init {
+        require(channelCount >= 1) { "채널 수가 1보다 작다: $channelCount" }
+        require(channelIndex in 0 until channelCount) {
+            "채널 번호가 범위를 벗어난다: $channelIndex / $channelCount"
+        }
+    }
+}
 
 /**
  * 실제로 **열린** 형식.
@@ -29,6 +49,16 @@ data class OpenedFormat(
     /** 내장인가 USB 인가. 보정값이 이것으로 갈린다 — 감도가 수십 dB 다르다. */
     val micKind: MicKind,
     val sampleRate: Int,
+    /**
+     * 실제로 열린 채널 수. **요청값이 아니다.**
+     *
+     * 안드로이드는 4채널을 달라고 해도 2채널만 열어 주는 일이 흔하다.
+     * 그걸 모르면 **어느 마이크의 소리를 재고 있는지 말할 수 없다**
+     * (USB 오디오 지시서 5·8장).
+     */
+    val channelCount: Int = 1,
+    /** 그중 측정에 쓰는 채널(0부터). */
+    val channelIndex: Int = 0,
     val encoding: PcmEncoding,
     val audioSource: CaptureSource,
     /** AudioRecord 가 잡은 버퍼 크기(바이트). 진단에 쓴다. */

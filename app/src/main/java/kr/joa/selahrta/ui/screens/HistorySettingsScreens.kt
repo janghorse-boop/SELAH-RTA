@@ -84,6 +84,8 @@ fun SettingsScreen(
     onTimeWeight: (TimeWeight) -> Unit,
     onLeqWindow: (LeqWindow) -> Unit,
     onPreferredInput: (String?) -> Unit,
+    /** 기기별로 재는 채널을 고른다. */
+    onInputChannel: (String, Int) -> Unit,
     onAutoPreferExternal: (Boolean) -> Unit,
     onDisconnectPolicy: (DisconnectPolicy) -> Unit,
     onPickCurveFile: () -> Unit,
@@ -111,6 +113,34 @@ fun SettingsScreen(
             running = capture.measure is MeasureState.Running,
             onPick = onPreferredInput,
         )
+        // **여러 채널을 주는 기기에서만 나온다.** 내장 마이크에서는 고를
+        // 것이 없으므로 화면을 어지럽히지 않는다.
+        //
+        // **몇 개를 그릴지는 기기가 알린 값으로 정한다** — 4채널을
+        // 하드코딩하지 않는다(USB 오디오 지시서 5장).
+        val chosenDevice = capture.inputs.firstOrNull {
+            it.stableKey == capture.meterSettings.preferredInputKey
+        } ?: capture.inputs.firstOrNull { it.stableKey == capture.opened?.deviceKey }
+        val maxChannels = chosenDevice?.channelCounts?.maxOrNull() ?: 1
+        if (chosenDevice != null && maxChannels > 1) {
+            val picked = capture.meterSettings.inputChannels[chosenDevice.stableKey] ?: 0
+            ChoiceRow(
+                "측정 입력 채널",
+                "여러 입력을 주는 기기입니다. 잴 채널 하나를 고르십시오. " +
+                    "섞지 않습니다 — 채널마다 다른 마이크가 꽂혀 있을 수 있고, " +
+                    "보정값은 마이크마다 다릅니다." +
+                    if (capture.opened != null && capture.opened.channelCount > 1) {
+                        " 지금은 ${capture.opened.channelCount}채널로 열려 " +
+                            "${capture.opened.channelIndex + 1}번을 재고 있습니다."
+                    } else {
+                        ""
+                    },
+                (0 until maxChannels).toList(),
+                picked.coerceIn(0, maxChannels - 1),
+                { "Input ${it + 1}" },
+                { onInputChannel(chosenDevice.stableKey, it) },
+            )
+        }
         ChoiceRow(
             "외부 기기 자동 사용",
             "USB·유선·블루투스 마이크가 꽂히면 그쪽을 먼저 씁니다. 재는 " +

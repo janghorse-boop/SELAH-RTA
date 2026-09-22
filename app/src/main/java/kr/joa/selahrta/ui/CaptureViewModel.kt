@@ -443,6 +443,16 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { settingsStore.setPreferredInput(key) }
     }
 
+    /**
+     * 그 기기로 재는 채널을 고른다. **기기마다 따로 기억한다.**
+     *
+     * 다음번에 열 때부터 적용된다 — 재는 도중에 바꾸면 그 앞뒤가
+     * 서로 다른 마이크의 값인데 평균은 하나로 합쳐진다.
+     */
+    fun setInputChannel(deviceKey: String, index: Int) {
+        viewModelScope.launch { settingsStore.setInputChannel(deviceKey, index) }
+    }
+
     fun setAutoPreferExternal(on: Boolean) {
         viewModelScope.launch { settingsStore.setAutoPreferExternal(on) }
     }

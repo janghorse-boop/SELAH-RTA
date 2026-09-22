@@ -24,6 +24,15 @@ data class InputDeviceInfo(
      * 이름이 둘 다 기기 모델명이라 이것 없이는 구별되지 않는다.
      */
     val address: String = "",
+    /**
+     * 기기가 **열 수 있다고 알리는** 채널 수 목록. 비어 있으면 「모름」이다.
+     *
+     * **열리는 값이 아니다.** 오디오 인터페이스가 4 를 알려도 안드로이드가
+     * 2 로 열어 주는 일이 흔하다. 화면은 이 값으로 고를 수 있는 것을 그리되,
+     * 재는 것은 [OpenedFormat.channelCount] 를 따른다(USB 오디오 지시서 5장:
+     * 「4채널을 하드코딩하지 않는다」).
+     */
+    val channelCounts: List<Int> = emptyList(),
 ) {
     /**
      * 기기를 다시 찾을 때 쓰는 열쇠.

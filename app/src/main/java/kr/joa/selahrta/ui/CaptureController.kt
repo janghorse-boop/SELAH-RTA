@@ -11,6 +11,7 @@ import kr.joa.selahrta.audio.OpenResult
 import kr.joa.selahrta.audio.OpenedFormat
 import kr.joa.selahrta.audio.RequestedFormat
 import kr.joa.selahrta.audio.chooseInput
+import kr.joa.selahrta.audio.planChannels
 import kr.joa.selahrta.calibration.ActiveCalibration
 import kr.joa.selahrta.domain.FailureReason
 import kr.joa.selahrta.domain.MeasureState
@@ -473,7 +474,19 @@ class CaptureController(
                 onCaptureEnded = { end -> post { onCaptureEnded(mySession, end) } },
             ),
         )
-        when (val r = mic.open(RequestedFormat())) {
+        // **몇 채널로 열지를 기기가 알린 것으로 정한다.** 4채널을
+        // 하드코딩하지 않는다(USB 오디오 지시서 5장). 고른 번호가
+        // 들어가는 가장 작은 수를 고른다.
+        val plan = planChannels(
+            choice.device.channelCounts,
+            s0.inputChannels[choice.device.stableKey] ?: 0,
+        )
+
+        when (
+            val r = mic.open(
+                RequestedFormat(channelCount = plan.count, channelIndex = plan.index),
+            )
+        ) {
             is OpenResult.Failed -> {
                 mic.close()
                 openingKey = null

@@ -5,6 +5,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -43,6 +44,14 @@ data class MeterSettings(
     val leqWindow: LeqWindow = LeqWindow.OneMinute,
     /** 사용자가 고른 입력 기기의 열쇠. null 이면 자동. */
     val preferredInputKey: String? = null,
+    /**
+     * 기기별로 고른 **측정 채널**(0부터). 없으면 0번이다.
+     *
+     * **기기마다 따로 기억한다.** 하나로 두면 4채널 인터페이스에서
+     * 3번을 쓰다가 내장 마이크로 바꿈 때 엉뚱한 값이 따라다닌다
+     * (USB 오디오 지시서 9.2: 「UMC404HD / Input 1 / EMM-6」을 각각 관리).
+     */
+    val inputChannels: Map<String, Int> = emptyMap(),
     /** 외부 기기가 꽂히면 자동으로 그쪽을 쓸 것인가(명세 2장). */
     val autoPreferExternal: Boolean = true,
     /** 쓰던 기기가 빠졌을 때(명세 2장). */
@@ -71,6 +80,9 @@ class MeterSettingsStore(private val context: Context) {
     private val timeWeightKey = stringPreferencesKey("timeWeight")
     private val leqWindowKey = longPreferencesKey("leqWindowMs")
     private val preferredInputKey = stringPreferencesKey("preferredInput")
+
+    /** 기기 열쇠가 길고 임의라 접두어로 모아 둔다. */
+    private fun channelKey(deviceKey: String) = intPreferencesKey("$CHANNEL_PREFIX$deviceKey")
     private val autoExternalKey = stringPreferencesKey("autoPreferExternal")
     private val disconnectKey = stringPreferencesKey("disconnectPolicy")
     private val segmentKey = stringPreferencesKey("segment")
@@ -96,6 +108,13 @@ class MeterSettingsStore(private val context: Context) {
                 } ?: LeqWindow.OneMinute,
                 // 빈 문자열은 「자동」을 뜻한다. DataStore 에 null 을 넣을 수 없어서다.
                 preferredInputKey = p[preferredInputKey]?.takeIf { it.isNotEmpty() },
+                inputChannels = p.asMap().mapNotNull { (k, v) ->
+                    if (!k.name.startsWith(CHANNEL_PREFIX)) return@mapNotNull null
+                    val idx = v as? Int ?: return@mapNotNull null
+                    // 음수는 저장된 것이 상한다 — 무시한다.
+                    if (idx < 0) return@mapNotNull null
+                    k.name.removePrefix(CHANNEL_PREFIX) to idx
+                }.toMap(),
                 autoPreferExternal = p[autoExternalKey] != "false",
                 disconnectPolicy = p[disconnectKey]?.let { n ->
                     DisconnectPolicy.entries.firstOrNull { it.name == n }
@@ -122,6 +141,10 @@ class MeterSettingsStore(private val context: Context) {
     suspend fun setTimeWeight(t: TimeWeight) = write { it[timeWeightKey] = t.name }
     suspend fun setLeqWindow(w: LeqWindow) = write { it[leqWindowKey] = w.millis }
     suspend fun setPreferredInput(key: String?) = write { it[preferredInputKey] = key ?: "" }
+
+    /** 그 기기로 쟰 때 쓸 채널을 기억한다. */
+    suspend fun setInputChannel(deviceKey: String, index: Int) =
+        write { it[channelKey(deviceKey)] = index.coerceAtLeast(0) }
     suspend fun setAutoPreferExternal(on: Boolean) = write { it[autoExternalKey] = on.toString() }
     suspend fun setDisconnectPolicy(p: DisconnectPolicy) = write { it[disconnectKey] = p.name }
     suspend fun setSegment(s: ChurchSegment) = write { it[segmentKey] = s.name }
@@ -151,3 +174,6 @@ class MeterSettingsStore(private val context: Context) {
         runCatching { context.meterDataStore.edit(block) }
     }
 }
+
+/** 채널 설정을 모아 두는 접두어. 기기 열쇠가 뒤에 붙는다. */
+private const val CHANNEL_PREFIX = "inputChannel|"

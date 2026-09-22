@@ -130,6 +130,17 @@ fun DiagnosticsPanel(
             warn = !opened.effects.aec.disabled,
         )
         DiagRow("샘플레이트", "${opened.sampleRate} Hz", warn = opened.sampleRate != 48_000)
+        // **몇 채널로 열렸고 어느 것을 재는가.** 오디오 인터페이스를
+        // 꼽았을 때 이 줄이 없으면 **어느 마이크를 재고 있는지 문서로 남지
+        // 않는다**(USB 오디오 지시서 8장 진단 화면).
+        DiagRow(
+            "채널",
+            if (opened.channelCount <= 1) {
+                "1 (모노)"
+            } else {
+                "${opened.channelCount} 중 ${opened.channelIndex + 1}번"
+            },
+        )
         DiagRow("샘플 형식", opened.encoding.bitsLabel)
         DiagRow("버퍼", "${opened.bufferSizeBytes} 바이트")
         DiagRow("받은 덩어리 / 프레임", "${diag.blocks} / ${diag.frames}")

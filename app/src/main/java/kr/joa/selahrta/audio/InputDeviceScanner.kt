@@ -109,6 +109,7 @@ private fun AudioDeviceInfo.toInfo(): InputDeviceInfo? {
         // 뜨면 담당자는 무엇을 고르는지 알 수 없다.
         typeKo = micPositionKo(addr)?.let { "$typeKo ($it)" } ?: typeKo,
         sampleRates = sampleRates?.toList() ?: emptyList(),
+        channelCounts = channelCounts?.toList()?.filter { it > 0 }?.sorted() ?: emptyList(),
         address = addr,
     )
 }

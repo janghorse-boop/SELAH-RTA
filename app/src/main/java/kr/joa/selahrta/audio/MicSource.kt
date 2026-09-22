@@ -121,15 +121,36 @@ class MicSource(
         return am.getProperty(AudioManager.PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED) == "true"
     }
 
+    /**
+     * 요청한 채널 수를 안드로이드가 알아듣는 형태로 옮긴다.
+     *
+     * 1·2 채널은 위치 마스크(MONO/STEREO)가 있다. 그보다 많으면 위치
+     * 이름이 없으므로 **색인 마스크**를 쓴다 — 「0번부터 n번까지 전부」를
+     * 비트로 적는 방식이고, 오디오 인터페이스의 Input 1~4 가 바로 그것이다.
+     *
+     * **색인 마스크는 실기기로 확인하지 못했다.** 장비가 없다. 그래서
+     * 실패하면 그대로 다음 후보로 내려가고, 결국 모노로 열린다 —
+     * 무엇으로 열렸는지는 [OpenedFormat.channelCount] 에 남는다.
+     */
     private fun tryOpen(
         requested: RequestedFormat,
         source: CaptureSource,
         encoding: PcmEncoding,
         unprocessedSupported: Boolean,
     ): OpenResult {
+        val want = requested.channelCount
+        val positionalMask = when (want) {
+            1 -> AudioFormat.CHANNEL_IN_MONO
+            2 -> AudioFormat.CHANNEL_IN_STEREO
+            else -> null
+        }
+
+        // 버퍼 크기는 위치 마스크가 있을 때만 물어볼 수 있다. 색인 마스크는
+        // 스테레오 최소값을 채널 수만큼 늘려 어림잡는다 — 모자라면
+        // AudioRecord 가 거절하므로 조용히 틀릴 일은 없다.
         val minBytes = AudioRecord.getMinBufferSize(
             requested.sampleRate,
-            requested.channelMask,
+            positionalMask ?: AudioFormat.CHANNEL_IN_STEREO,
             encoding.androidValue,
         )
         if (minBytes <= 0) {
@@ -141,18 +162,35 @@ class MicSource(
 
         // 최소의 네 배를 잡는다. 최소값으로 잡으면 화면이 잠깐 바빠지기만 해도
         // 프레임이 버려진다. 너무 키우면 반응이 굼떠지므로 그 사이를 고른다.
-        val bufferBytes = minBytes * 4
+        val bufferBytes = if (positionalMask != null) minBytes * 4 else minBytes * 2 * want
 
         val rec = try {
             @Suppress("MissingPermission") // 위에서 확인했다
-            AudioRecord(
-                source.androidValue,
-                requested.sampleRate,
-                requested.channelMask,
-                encoding.androidValue,
-                bufferBytes,
-            )
+            if (positionalMask != null) {
+                AudioRecord(
+                    source.androidValue,
+                    requested.sampleRate,
+                    positionalMask,
+                    encoding.androidValue,
+                    bufferBytes,
+                )
+            } else {
+                AudioRecord.Builder()
+                    .setAudioSource(source.androidValue)
+                    .setAudioFormat(
+                        AudioFormat.Builder()
+                            .setEncoding(encoding.androidValue)
+                            .setSampleRate(requested.sampleRate)
+                            // 「0번부터 want−1번까지」를 비트로 적는다.
+                            .setChannelIndexMask((1 shl want) - 1)
+                            .build(),
+                    )
+                    .setBufferSizeInBytes(bufferBytes)
+                    .build()
+            }
         } catch (e: IllegalArgumentException) {
+            return OpenResult.Failed(OpenFailure.Unsupported, "${source.name}/${encoding.name}: ${e.message}")
+        } catch (e: UnsupportedOperationException) {
             return OpenResult.Failed(OpenFailure.Unsupported, "${source.name}/${encoding.name}: ${e.message}")
         } catch (e: SecurityException) {
             return OpenResult.Failed(OpenFailure.PermissionDenied, e.message)
@@ -182,6 +220,11 @@ class MicSource(
 
         // 요청한 값이 아니라 **열린 값**을 읽는다. 이 한 줄이 이 클래스의 요점이다.
         val actualRate = rec.sampleRate
+        // **채널도 마찬가지다.** 4를 달라고 해도 2 로 열리는 일이 흔하다.
+        val actualChannels = rec.channelCount.coerceAtLeast(1)
+        // 열린 수보다 큰 번호를 고르고 있었으면 있는 것으로 내린다 —
+        // 그 사실은 화면이 `channelCount` 로 알려 준다.
+        val actualIndex = requested.channelIndex.coerceIn(0, actualChannels - 1)
         val actualEncoding = if (rec.audioFormat == AudioFormat.ENCODING_PCM_FLOAT) {
             PcmEncoding.Float
         } else {
@@ -201,6 +244,8 @@ class MicSource(
         val fmt = OpenedFormat(
             micKind = target?.kind ?: MicKind.BuiltIn,
             sampleRate = actualRate,
+            channelCount = actualChannels,
+            channelIndex = actualIndex,
             encoding = actualEncoding,
             audioSource = source,
             bufferSizeBytes = bufferBytes,
@@ -290,26 +335,48 @@ class MicSource(
     /**
      * `AudioRecord` 를 [CaptureRecorder] 로 감싼다.
      *
-     * 안드로이드에 붙어 있는 부분은 여기까지다 — 16비트 변환과 실제 읽기.
-     * 순서를 지키는 일은 [runCaptureLoop] 이 하고, 그쪽은 기기 없이 시험한다.
+     * 안드로이드에 붙어 있는 부분은 여기까지다 — 16비트 변환, 실제 읽기,
+     * 그리고 **여러 채널이 섞여 오면 고른 것만 뽑는 일**. 순서를 지키는
+     * 일은 [runCaptureLoop] 이 하고, 그쪽은 기기 없이 시험한다.
+     *
+     * ## 프레임과 표본
+     *
+     * 읽는 쪽은 **프레임**(시각 하나)으로 생각하는데 `AudioRecord` 는
+     * **표본**으로 주고받는다. 4채널이면 프레임 하나에 표본이 넷이다.
+     * 이 둘을 헷갈리면 네 배 긴 버퍼를 달라고 하거나 4분의 1만 읽는다.
      */
     private inner class RecordAdapter(
         private val rec: AudioRecord,
         encoding: PcmEncoding,
+        /** 실제로 열린 채널 수. 요청값이 아니다. */
+        private val channelCount: Int,
+        /** 그중 측정에 쓸 채널. */
+        private val channelIndex: Int,
     ) : CaptureRecorder {
-        private val shorts = if (encoding == PcmEncoding.Int16) ShortArray(1024) else null
+        private val shorts = if (encoding == PcmEncoding.Int16) ShortArray(1024 * channelCount) else null
 
-        override fun read(into: FloatArray, frames: Int): Int {
-            // read() 는 READ_BLOCKING 이라 **데이터가 찰 때까지 기다린다.**
-            if (shorts == null) return rec.read(into, 0, frames, AudioRecord.READ_BLOCKING)
-            val n = rec.read(shorts, 0, frames, AudioRecord.READ_BLOCKING)
-            if (n > 0) {
-                // 16비트 정수를 -1..1 로 옮긴다. 32768 로 나눈다 —
-                // 32767 로 나누면 최소값(-32768)이 1.0 을 넘어
-                // 멀쩡한 신호가 클리핑으로 잡힌다.
-                for (i in 0 until n) into[i] = shorts[i] / 32768f
+        /** 여러 채널이 섞인 float 를 받는 자리. 모노면 쓰지 않는다. */
+        private val mixed = if (channelCount > 1) FloatArray(1024 * channelCount) else null
+
+        override fun read(into: FloatArray, frames: Int): Int = readOneChannel(
+            into = into,
+            frames = frames,
+            channelCount = channelCount,
+            channelIndex = channelIndex,
+            mixed = mixed,
+        ) { dst, wantSamples ->
+            if (shorts == null) {
+                rec.read(dst, 0, wantSamples, AudioRecord.READ_BLOCKING)
+            } else {
+                val n = rec.read(shorts, 0, wantSamples, AudioRecord.READ_BLOCKING)
+                if (n > 0) {
+                    // 16비트 정수를 -1..1 로 옮긴다. 32768 로 나눈다 —
+                    // 32767 로 나누면 최소값(-32768)이 1.0 을 넘어
+                    // 멀쩡한 신호가 클리핑으로 잡힌다.
+                    for (i in 0 until n) dst[i] = shorts[i] / 32768f
+                }
+                n
             }
-            return n
         }
 
         override fun routedDevice(): InputDeviceInfo? =
@@ -334,7 +401,7 @@ class MicSource(
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
 
         runCaptureLoop(
-            recorder = RecordAdapter(rec, fmt.encoding),
+            recorder = RecordAdapter(rec, fmt.encoding, fmt.channelCount, fmt.channelIndex),
             sampleRate = fmt.sampleRate,
             running = running,
             routeAlreadyConfirmed = { opened?.routeConfirmed == true },
