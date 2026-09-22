@@ -569,6 +569,12 @@ class CaptureController(
         session.frames += block.frames
         if (block.frames == 0) session.readErrors++
         if (stats.clipped) session.clippedBlocks++
+        session.lastRms = stats.rms
+
+        // **버린 덩어리는 조용한 것으로 세지 않는다.** 읽기 오류가 쌓이면
+        // 「신호가 없다」가 되어 케이블을 보라는 말이 뜬다 — 문제는
+        // 케이블이 아니라 읽기다.
+        if (block.frames > 0) session.silence.update(stats.peakAbs, block.monotonicNs)
 
         // 버린 덩어리(frames=0)는 엔진에 넣지 않는다. 넣으면 읽기 오류가
         // 「아주 조용한 구간」으로 둔갑한다.
@@ -602,6 +608,8 @@ class CaptureController(
                 readErrors = session.readErrors,
                 clippedBlocks = session.clippedBlocks,
                 lastPeakAbs = stats.peakAbs,
+                lastRmsAbs = stats.rms,
+                quietMs = session.silence.quietMs,
                 lastProcessMs = processMs,
                 blockDurationMs = blockMs,
                 audioLagMs = lagMs,

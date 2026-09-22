@@ -46,6 +46,11 @@ import kr.joa.selahrta.domain.MeasureState
 import kr.joa.selahrta.domain.focusKo
 import kr.joa.selahrta.dsp.Weighting
 import kr.joa.selahrta.ui.CaptureUiState
+import kr.joa.selahrta.audio.InputSignalState
+import kr.joa.selahrta.audio.NO_SIGNAL_HOLD_MS
+import kr.joa.selahrta.audio.inputSignalNoticeKo
+import kr.joa.selahrta.audio.inputSignalState
+import kr.joa.selahrta.dsp.CLIP_THRESHOLD
 import kr.joa.selahrta.ui.components.DiagnosticsPanel
 import kr.joa.selahrta.ui.components.InfoBar
 import kr.joa.selahrta.ui.components.InputLevelBar
@@ -381,8 +386,34 @@ fun MeasureScreen(
         if (running) {
             InputLevelBar(
                 capture.diagnostics.lastPeakAbs,
+                capture.diagnostics.lastRmsAbs,
                 Modifier.fillMaxWidth().padding(top = 18.dp),
             )
+
+            // **입력 자체가 이상하면 여기서 말한다.** 값이 아니라 입력의
+            // 상태다 — 잘리고 있으면 그 구간 값이 실제보다 낮고, 아무것도
+            // 안 들어오면 그 뒤 숫자는 전부 뜻이 없다.
+            //
+            // 할 말은 기기 종류에 따라 다르다. 내장 마이크에는 GAIN 노브도
+            // 팬텀전원도 없다(USB 오디오 지시서 6·7·14장).
+            val opened = capture.opened
+            if (opened != null) {
+                val state = inputSignalState(
+                    clipping = capture.diagnostics.lastPeakAbs >= CLIP_THRESHOLD,
+                    noSignal = capture.diagnostics.quietMs >= NO_SIGNAL_HOLD_MS,
+                )
+                inputSignalNoticeKo(state, opened.micKind, opened.deviceLabel)?.let {
+                    InfoBar(
+                        it,
+                        Modifier.padding(top = 10.dp),
+                        tone = if (state == InputSignalState.Clipping) {
+                            SelahColors.High
+                        } else {
+                            SelahColors.Warn
+                        },
+                    )
+                }
+            }
         }
 
         capture.inputForDisplay?.let {

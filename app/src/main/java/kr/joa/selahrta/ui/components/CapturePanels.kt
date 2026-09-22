@@ -22,24 +22,29 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kr.joa.selahrta.audio.CaptureDiagnostics
 import kr.joa.selahrta.audio.OpenedFormat
+import kr.joa.selahrta.dsp.CLIP_THRESHOLD
+import kr.joa.selahrta.dsp.SILENCE_FLOOR_DBFS
+import kr.joa.selahrta.dsp.dbfs
 import kr.joa.selahrta.ui.theme.SelahColors
 import kotlin.math.log10
 
 /**
- * 입력 레벨 막대.
+ * 입력 레벨(dBFS). **음압이 아니다** — 마이크에 소리가 들어오는지 본다.
  *
- * **이것은 음압이 아니다.** 마이크에 들어온 신호가 풀스케일의 몇 퍼센트인지를
- * 보여줄 뿐이라 dBFS 조차 아니다. 소리를 내면 움직이는지 눈으로 확인하는
- * 용도이며, 그렇게 이름 붙인다. SPL 은 보정을 거쳐야 나온다(Phase 3).
+ * **Peak 와 RMS 를 함께 적는다**(USB 오디오 지시서 6장). Peak 만 보면
+ * 툭 튄 소리 하나로 「크다」고 읽히고, RMS 만 보면 잘리고 있는데도
+ * 「여유 있다」고 읽힌다. 둘의 차이가 곧 헤드룸이다.
  */
 @Composable
-fun InputLevelBar(peakAbs: Double, modifier: Modifier = Modifier) {
+fun InputLevelBar(peakAbs: Double, rmsAbs: Double, modifier: Modifier = Modifier) {
     // 선형 비율을 그대로 그리면 사람 말소리(0.01~0.1)가 거의 안 보인다.
     // 귀가 로그로 듣는 것과 같은 이유로 여기서도 로그 축을 쓴다.
     // -60dBFS 를 바닥으로 잡는다.
-    val db = if (peakAbs > 0) 20.0 * log10(peakAbs) else -120.0
+    val db = dbfs(peakAbs)
+    val rmsDb = dbfs(rmsAbs)
     val fraction = ((db + 60.0) / 60.0).coerceIn(0.0, 1.0).toFloat()
-    val clipping = peakAbs >= 0.999
+    val rmsFraction = ((rmsDb + 60.0) / 60.0).coerceIn(0.0, 1.0).toFloat()
+    val clipping = peakAbs >= CLIP_THRESHOLD
 
     Column(modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(
@@ -48,7 +53,11 @@ fun InputLevelBar(peakAbs: Double, modifier: Modifier = Modifier) {
         ) {
             Text("입력 레벨", color = SelahColors.TextSecondary, fontSize = 11.sp)
             Text(
-                if (clipping) "잘림!" else "${"%.1f".format(db)} dBFS",
+                if (clipping) {
+                    "잘림!"
+                } else {
+                    "Peak ${fmtDbfs(db)} · RMS ${fmtDbfs(rmsDb)}"
+                },
                 color = if (clipping) SelahColors.High else SelahColors.TextSecondary,
                 fontSize = 11.sp,
                 fontWeight = if (clipping) FontWeight.Bold else FontWeight.Normal,
@@ -60,22 +69,39 @@ fun InputLevelBar(peakAbs: Double, modifier: Modifier = Modifier) {
                 .height(10.dp)
                 .background(SelahColors.SurfaceVariant, RoundedCornerShape(5.dp)),
         ) {
+            // **RMS 를 먼저, 그 위에 Peak 를 옅게 얹는다.** 두 값을 막대
+            // 하나에 겹쳐 두면 평소 레벨과 순간 최대가 한눈에 갈린다.
             if (fraction > 0f) {
                 drawRoundRect(
-                    color = if (clipping) SelahColors.High else SelahColors.InRange,
+                    color = (if (clipping) SelahColors.High else SelahColors.InRange)
+                        .copy(alpha = 0.35f),
                     topLeft = Offset.Zero,
                     size = Size(size.width * fraction, size.height),
                     cornerRadius = CornerRadius(size.height / 2f),
                 )
             }
+            if (rmsFraction > 0f) {
+                drawRoundRect(
+                    color = if (clipping) SelahColors.High else SelahColors.InRange,
+                    topLeft = Offset.Zero,
+                    size = Size(size.width * rmsFraction, size.height),
+                    cornerRadius = CornerRadius(size.height / 2f),
+                )
+            }
         }
         Text(
-            "음압(dB SPL)이 아닙니다. 마이크에 소리가 들어오는지 보는 눈금입니다.",
+            "음압(dB SPL)이 아닙니다. 마이크에 소리가 들어오는지 보는 눈금입니다. " +
+                "짙은 쪽이 RMS, 옅은 쪽이 Peak 입니다.",
             color = SelahColors.TextMuted,
             fontSize = 10.sp,
+            lineHeight = 14.sp,
         )
     }
 }
+
+/** −120dBFS 는 「사실상 없음」이다. 숫자로 적으면 자리만 먹는다. */
+private fun fmtDbfs(db: Double): String =
+    if (db <= SILENCE_FLOOR_DBFS) "—" else "%.1f dBFS".format(db)
 
 /**
  * 캡처 진단(명세 16장).

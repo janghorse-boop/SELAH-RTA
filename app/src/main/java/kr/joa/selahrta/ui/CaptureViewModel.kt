@@ -36,6 +36,7 @@ import kr.joa.selahrta.domain.MeasureState
 import kr.joa.selahrta.domain.ChurchSegment
 import kr.joa.selahrta.domain.MicKind
 import kr.joa.selahrta.domain.SegmentRange
+import kr.joa.selahrta.dsp.SilenceWatch
 import kr.joa.selahrta.dsp.BlockStats
 import kr.joa.selahrta.dsp.CalibrationCurve
 import kr.joa.selahrta.dsp.CalibrationFile
@@ -286,6 +287,18 @@ class CaptureSession(
     var frames = 0L
     var readErrors = 0L
     var clippedBlocks = 0L
+
+    /**
+     * 입력이 **죽어 있는지** 지켜본다. 캐퍼 스레드만 만진다.
+     *
+     * 팬텀전원이 꺼져 있거나 케이블이 빠진 것과 **조용한 대목**을
+     * 가른다. 가르지 못하면 설교 중 숫는 사이마다 경고가 뜨고,
+     * 그러면 아무도 안 읽는다.
+     */
+    val silence = SilenceWatch()
+
+    /** 최근 덩어리의 RMS. 진단 화면이 dBFS 로 적는다. */
+    var lastRms = 0.0
     var lastEmitNs = 0L
     var startedNs = 0L
 }
