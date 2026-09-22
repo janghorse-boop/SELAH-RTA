@@ -26,6 +26,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -50,6 +53,8 @@ import kr.joa.selahrta.ui.components.NO_VALUE
 import kr.joa.selahrta.ui.components.ValueTile
 import kr.joa.selahrta.ui.components.formatDb
 import kr.joa.selahrta.ui.components.levelColor
+import kr.joa.selahrta.ui.components.levelSpeechKo
+import kr.joa.selahrta.ui.components.levelStateKo
 import kr.joa.selahrta.ui.nav.ViewMode
 import kr.joa.selahrta.ui.theme.SelahColors
 
@@ -179,7 +184,27 @@ fun MeasureScreen(
             }
         }
 
-        Box(contentAlignment = Alignment.Center) {
+        // **색이 말하는 것을 읽어 주는 쪽에도 남긴다.** 화면의
+        // 「낮음/적정/높음」 배지는 지웠지만, 배지를 지우는 것과 뜻을 지우는
+        // 것은 다르다 — 색을 못 보는 사람에게는 바가 아무 말도 하지 않게 된다
+        // (독립 검증 지적).
+        val speech = levelSpeechKo(
+            m.currentSpl,
+            if (canJudge) range?.avgLowDb else null,
+            if (canJudge) range?.avgHighDb else null,
+            weighting.unitSuffix,
+        )
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier.semantics(mergeDescendants = true) {
+                contentDescription = speech
+                levelStateKo(
+                    m.currentSpl,
+                    if (canJudge) range?.avgLowDb else null,
+                    if (canJudge) range?.avgHighDb else null,
+                )?.let { stateDescription = it }
+            },
+        ) {
             // 눈금은 40~110 dB. 예배당에서 실제로 오가는 범위다.
             GaugeArc(
                 fraction = m.currentSpl?.let { ((it - 40.0) / 70.0).toFloat() },

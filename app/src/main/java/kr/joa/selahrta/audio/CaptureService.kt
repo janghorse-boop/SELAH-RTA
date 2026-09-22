@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -73,6 +74,29 @@ class CaptureService : Service() {
         return START_NOT_STICKY
     }
 
+    /**
+     * **최근 앱에서 밀어냈다.** 측정도 서비스도 끝낸다.
+     *
+     * `onCleared` 하나에 기대지 않는 까닭(독립 검증 지적): 액티비티가
+     * 정상적으로 끝나면 ViewModel 이 정리되지만, 최근 앱에서 밀어내는
+     * 경로는 그 보장을 주지 않는다. 그러면 **아무도 보고 있지 않은
+     * 마이크가 알림만 달고 남는다.**
+     *
+     * **재는 중에도 끝낸다.** 최근 앱에서 밀어내는 것은 「이 앱을 닫는다」는
+     * 분명한 뜻이고, 이 서비스의 방침(`START_NOT_STICKY` — 사용자가 시작한
+     * 측정만 돈다)과 같다. 음악 앱이라면 반대로 두겠지만, 이것은 **사람이
+     * 값을 보려고 켜 둔 계기**다.
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        // **이 줄이 있어야 확인된다.** 없으면 「밀어냈는데 서비스가
+        // 없다」는 사실이 **여기가 한 일인지 프로세스가 죽은 덕인지** 가려지지
+        // 않는다 — 기기에서 둘 다 사라졌고, 이 줄로서야 불린 것을 봤다.
+        Log.i(TAG, "최근 앱에서 밀어냈다 — 측정과 서비스를 끝낸다")
+        CaptureServiceBridge.requestStop()
+        stopSelf()
+        super.onTaskRemoved(rootIntent)
+    }
+
     private fun ensureChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val mgr = getSystemService(NotificationManager::class.java) ?: return
@@ -121,6 +145,7 @@ class CaptureService : Service() {
     }
 
     companion object {
+        private const val TAG = "CaptureService"
         private const val CHANNEL_ID = "capture"
         private const val NOTIFICATION_ID = 1001
         private const val ACTION_STOP = "kr.joa.selahrta.STOP_CAPTURE"

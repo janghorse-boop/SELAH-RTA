@@ -1,6 +1,7 @@
 package kr.joa.selahrta.instrument
 
 import kr.joa.selahrta.data.instrument.InstrumentCatalog
+import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
@@ -51,7 +52,16 @@ class EqbBoundaryProbeTest {
             if (actual != expected) mismatches++
             println("$id/$rid symptom expected=$expected actual=$actual match=${actual == expected} symptomTags=${r.symptomTags}")
         }
-        println("SPEC_BOUNDARY_MISMATCHES=$mismatches/${cases.size}")
+        // **이름을 바꿨다.** 예전 이름은 `SPEC_BOUNDARY_MISMATCHES` 였는데,
+        // 고친 뒤에도 7/7 이 나와 「아직 안 고쳐졌다」로 읽혔다(검증자 지적).
+        // 이 수는 **성격 영역을 즌상 기대값과 견준 옫 비교**일 뿐이다 —
+        // 둘을 갈라 놓았으니 안 맞는 것이 맞다.
+        println("LEGACY_SYMPTOM_EXPECTATION_MISMATCH=$mismatches/${cases.size} (갈라 놓았으므로 당연히 안 맞는다)")
         println("STILL_MERGED=$stillMerged/${cases.size}")
+
+        // **진짜 계약은 이것이다.** 성격 영역에 즌상 태그가 남아 있으면
+        // 둘이 아직 붙어 있는 것이다. probe 에 단언이 하나도 없어 통과가
+        // 아무 뜻도 없었는데, 그것도 같이 고쳐 둔다.
+        assertEquals("성격 영역에 즌상 태그가 남아 있다", 0, stillMerged)
     }
 }
