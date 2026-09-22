@@ -30,6 +30,7 @@ import kr.joa.selahrta.audio.SignalLevel
 import kr.joa.selahrta.audio.TestSignal
 import kr.joa.selahrta.domain.MeasureState
 import kr.joa.selahrta.domain.MicKind
+import kr.joa.selahrta.audio.builtInMicNoticeKo
 import kr.joa.selahrta.ui.components.MicProbeCard
 import kr.joa.selahrta.ui.components.SegmentRangeCard
 import kr.joa.selahrta.dsp.TimeWeight
@@ -118,6 +119,18 @@ fun SettingsScreen(
             running = capture.measure is MeasureState.Running,
             onPick = onPreferredInput,
         )
+
+        // **케이스가 막은 것을 마이크의 응답으로 적지 않게 한다.**
+        //
+        // 폰 케이스는 후면 마이크 구멍을 막거나 좁힌다. 하단은 대개 트여
+        // 있다. 그 차이를 모르고 재면 케이스가 만든 감쇠가 보정에 들어가고,
+        // 케이스를 바꾸는 순간 그 보정이 틀린 값이 된다(S23 지시서 6장).
+        builtInMicNoticeKo(
+            capture.inputs.firstOrNull { it.stableKey == capture.meterSettings.preferredInputKey },
+            capture.micProbe?.verdict?.state,
+        )?.let {
+            InfoBar(it, Modifier.padding(top = 10.dp), tone = SelahColors.Warn)
+        }
         // **여러 채널을 주는 기기에서만 나온다.** 내장 마이크에서는 고를
         // 것이 없으므로 화면을 어지럽히지 않는다.
         //
