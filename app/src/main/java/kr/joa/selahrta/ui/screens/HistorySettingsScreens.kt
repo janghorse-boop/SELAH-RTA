@@ -122,7 +122,14 @@ fun SettingsScreen(
             it.stableKey == capture.meterSettings.preferredInputKey
         } ?: capture.inputs.firstOrNull { it.stableKey == capture.opened?.deviceKey }
         val maxChannels = chosenDevice?.channelCounts?.maxOrNull() ?: 1
-        if (chosenDevice != null && maxChannels > 1) {
+        // **내장 마이크에는 띄우지 않는다.** 갤럭시 S23 은 내장 마이크도
+        // `ch=1,2` 를 알린다(실측). 그건 「입력이 둘」이 아니라 스테레오로도
+        // 열 수 있다는 뜻인데, 거기에 「Input 1 / Input 2」를 띄우면 사람은
+        // 마이크가 둘 달린 것으로 읽는다. 고르는 것은 외부 입력일 때뿐이다.
+        val multiInput = chosenDevice != null &&
+            chosenDevice.kind != MicKind.BuiltIn &&
+            maxChannels > 1
+        if (chosenDevice != null && multiInput) {
             val picked = capture.meterSettings.inputChannels[chosenDevice.stableKey] ?: 0
             ChoiceRow(
                 "측정 입력 채널",

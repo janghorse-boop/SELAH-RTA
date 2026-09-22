@@ -30,8 +30,16 @@ class InputDeviceScanner(context: Context) {
         val raw = audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS)
         // 무엇이 보이는지 그대로 남긴다(명세 16장 진단). 기기마다 목록이
         // 크게 달라서, 문제가 생겼을 때 이 줄이 없으면 짐작밖에 할 수 없다.
+        //
+        // **채널 수와 샘플레이트도 적는다.** 오디오 인터페이스를 처음
+        // 꽂을 때 **안드로이드가 무엇을 알려 주는지**가 가장 먼저 알아야 할
+        // 일인데, 그걸 볼 자리가 여기뿐이다. 4채널을 알리는지 2채널만
+        // 알리는지에 따라 채널 선택의 설계가 갈린다(USB 오디오 지시서 5장).
         Log.i(TAG, "입력 기기 ${raw.size}개: " + raw.joinToString(" | ") {
-            "id=${it.id} type=${it.type} name='${it.productName}' addr='${it.addressOrEmpty()}'"
+            "id=${it.id} type=${it.type} name='${it.productName}'" +
+                " addr='${it.addressOrEmpty()}'" +
+                " ch=${it.channelCounts?.joinToString(",") ?: "?"}" +
+                " fs=${it.sampleRates?.joinToString(",") ?: "?"}"
         })
         return raw.mapNotNull { it.toInfo() }.dedupeByKey()
     }
