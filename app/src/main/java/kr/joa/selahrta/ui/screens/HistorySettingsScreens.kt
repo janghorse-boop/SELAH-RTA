@@ -90,6 +90,7 @@ fun SettingsScreen(
     onDisconnectPolicy: (DisconnectPolicy) -> Unit,
     onPickCurveFile: () -> Unit,
     onClearCurve: () -> Unit,
+    onToggleCurve: (Boolean) -> Unit,
     onDismissCurveNotice: () -> Unit,
     onSaveRange: (ChurchSegment, SegmentRange) -> Unit,
     onResetRange: (ChurchSegment) -> Unit,
@@ -203,6 +204,7 @@ fun SettingsScreen(
             canImport = capture.opened != null,
             onPickFile = onPickCurveFile,
             onClear = onClearCurve,
+            onToggleEnabled = onToggleCurve,
             onDismissNotice = onDismissCurveNotice,
             modifier = Modifier.padding(top = 10.dp),
         )

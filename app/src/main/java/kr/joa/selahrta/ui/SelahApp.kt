@@ -292,6 +292,7 @@ fun SelahApp() {
                         // 내용으로 판별하므로 잘못 고른 파일은 파서가 거른다.
                         onPickCurveFile = { pickCurve.launch(arrayOf("*/*")) },
                         onClearCurve = vm::clearCurve,
+                        onToggleCurve = vm::setCurveEnabled,
                         onDismissCurveNotice = vm::dismissCurveNotice,
                         onSaveRange = vm::setRange,
                         onResetRange = vm::resetRange,

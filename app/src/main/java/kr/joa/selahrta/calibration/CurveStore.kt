@@ -33,6 +33,13 @@ data class ActiveCurve(
     val fileName: String,
     val pointCount: Int,
     val importedAtEpochMs: Long,
+    /**
+     * 지금 **걸려 있는가.** 꺼도 파일은 그대로 둔다.
+     *
+     * 보정 전·후를 견주려면 꺼봤다 켜봐야 하는데, 그때마다 파일을
+     * 다시 가져오게 하면 아무도 견주지 않는다(USB 오디오 지시서 11장).
+     */
+    val enabled: Boolean = true,
 )
 
 /**
@@ -80,6 +87,14 @@ class CurveStore(private val context: Context) {
     private fun nameKey(k: CalibrationKey) = stringPreferencesKey("${k.storageKey()}|curveFile")
     private fun countKey(k: CalibrationKey) = intPreferencesKey("${k.storageKey()}|curvePoints")
     private fun atKey(k: CalibrationKey) = longPreferencesKey("${k.storageKey()}|curveAt")
+
+    /**
+     * 걸어 둔 것을 사람이 꺼 두었는가.
+     *
+     * **없으면 켜진 것으로 본다.** 지금까지 저장된 곱선은 이 값이 없는데,
+     * 그걸 「꺼짐」으로 읽으면 앱을 올리는 순간 보정이 조용히 풀린다.
+     */
+    private fun onKey(k: CalibrationKey) = stringPreferencesKey("${k.storageKey()}|curveOn")
 
     private fun curveDir(): File = File(context.filesDir, "curves").apply { mkdirs() }
 
@@ -138,6 +153,7 @@ class CurveStore(private val context: Context) {
                     fileName = name,
                     pointCount = prefs[countKey(key)] ?: loaded.pointCount,
                     importedAtEpochMs = prefs[atKey(key)] ?: 0L,
+                    enabled = prefs[onKey(key)] != "false",
                 )
             }
 
@@ -159,6 +175,9 @@ class CurveStore(private val context: Context) {
                     p[nameKey(key)] = fileName
                     p[countKey(key)] = loaded.pointCount
                     p[atKey(key)] = System.currentTimeMillis()
+                    // 새로 가져오면 켜진다. 꺼 두고 가져왔는데 그대로 꺼져
+                    // 있으면 「가져왔는데 아무 일도 안 일어난다」가 된다.
+                    p.remove(onKey(key))
                 }
                 ActiveCurve(loaded.curve, fileName, loaded.pointCount, System.currentTimeMillis())
             }.recoverCatching {
@@ -187,6 +206,19 @@ class CurveStore(private val context: Context) {
         }
     }
 
+    /**
+     * 걸기를 켜거나 끔다. **파일은 그대로 둔다.**
+     *
+     * 지우는 것과 다르다 — 지우면 다시 가져와야 하고, 그러면 보정
+     * 전·후를 견주지 못한다.
+     */
+    suspend fun setEnabled(key: CalibrationKey, on: Boolean) = withContext(Dispatchers.IO) {
+        runCatching {
+            context.curveDataStore.edit { p -> p[onKey(key)] = on.toString() }
+        }
+        Unit
+    }
+
     suspend fun clear(key: CalibrationKey) = withContext(Dispatchers.IO) {
         runCatching {
             fileFor(key).delete()
@@ -194,6 +226,7 @@ class CurveStore(private val context: Context) {
                 p.remove(nameKey(key))
                 p.remove(countKey(key))
                 p.remove(atKey(key))
+                p.remove(onKey(key))
             }
         }
         Unit

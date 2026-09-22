@@ -1,5 +1,6 @@
 package kr.joa.selahrta.ui.components
 
+import androidx.compose.material3.Switch
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -42,6 +43,8 @@ fun CurveCard(
     canImport: Boolean,
     onPickFile: () -> Unit,
     onClear: () -> Unit,
+    /** 걸기를 켜고 끈다. **파일은 건드리지 않는다.** */
+    onToggleEnabled: (Boolean) -> Unit,
     onDismissNotice: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -65,8 +68,18 @@ fun CurveCard(
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                if (curve != null) "적용됨" else "없음",
-                color = if (curve != null) SelahColors.InRange else SelahColors.TextMuted,
+                when {
+                    curve == null -> "없음"
+                    // **「꺼 둠」과 「없음」은 다른 상태다.** 파일은 그대로 있고,
+                    // 다시 켤 때 가져올 필요가 없다.
+                    !curve.enabled -> "꺼 둠"
+                    else -> "적용됨"
+                },
+                color = when {
+                    curve == null -> SelahColors.TextMuted
+                    !curve.enabled -> SelahColors.Warn
+                    else -> SelahColors.InRange
+                },
                 fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold,
             )
@@ -92,6 +105,37 @@ fun CurveCard(
                 color = SelahColors.TextSecondary,
                 fontSize = 11.sp,
             )
+
+            // **끄는 것과 지우는 것을 가른다.** 보정 전·후를 견주려면
+            // 껐다 켜야 하는데, 그때마다 파일을 다시 가져오게 하면
+            // 아무도 견주지 않는다(USB 오디오 지시서 11장).
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "이 보정을 적용",
+                        color = SelahColors.TextPrimary,
+                        fontSize = 13.sp,
+                    )
+                    Text(
+                        if (curve.enabled) {
+                            "끄면 파일은 그대로 두고 원본 값만 봅니다."
+                        } else {
+                            "지금은 원본 값을 보고 있습니다. 파일은 그대로 있습니다."
+                        },
+                        color = SelahColors.TextMuted,
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp,
+                    )
+                }
+                Switch(
+                    checked = curve.enabled,
+                    onCheckedChange = onToggleEnabled,
+                )
+            }
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

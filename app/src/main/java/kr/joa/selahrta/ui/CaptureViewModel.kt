@@ -622,7 +622,9 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 // 보정은 **엔진 안에서 FFT 칸마다** 걸린다. 칸 계수는 곡선이
                 // 바뀔 때 한 번만 계산한다 — 초당 15번 2049개 칸을 보간하면
                 // 그것만으로 폰이 더워진다.
-                controller.postToCapture { session -> session.rta.setCurve(c?.curve) }
+                // **꺼 두면 걸지 않는다.** 파일은 그대로 있고 화면에도 남지만,
+                // 엔진에는 넘기지 않는다 — 그래야 보정 전·후를 견준다.
+                controller.postToCapture { session -> session.rta.setCurve(c?.curve?.takeIf { c.enabled }) }
                 controller.update { st -> st.copy(
                     curve = c,
                     curveGeneration = controller.baseState.value.curveGeneration + 1,
@@ -706,6 +708,17 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 ),
             ) }
         }
+    }
+
+    /**
+     * 주파수 보정을 켜거나 끔다. **파일은 지우지 않는다.**
+     *
+     * 지우는 것과 가른다 — 보정 전·후를 견주려면 꺼다 켠다 해야 하는데,
+     * 그때마다 파일을 다시 가져오게 하면 아무도 견주지 않는다.
+     */
+    fun setCurveEnabled(on: Boolean) {
+        val format = controller.confirmedFormat() ?: return
+        viewModelScope.launch { curveStore.setEnabled(CalibrationKey.of(format), on) }
     }
 
     fun clearCurve() {
@@ -849,7 +862,10 @@ internal fun CaptureUiState.withMeasurement(m: MeasurementSnapshot?): CaptureUiS
         feedbackLog = m.feedbackLog,
         rta = m.rta?.toView(
             offsetDb = offset.db,
-            curve = curve?.curve?.takeIf { m.rta.curveGeneration == curveGeneration },
+            // 꺼 둔 곱선은 그리지도 않는다 — 엔진이 안 걸고 있는데 그리면
+            // 「걸려 있다」고 읽힌다.
+            curve = curve?.curve
+                ?.takeIf { curve.enabled && m.rta.curveGeneration == curveGeneration },
         ) ?: rta,
     )
 }
