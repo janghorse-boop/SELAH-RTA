@@ -64,7 +64,12 @@ class CurveEnabledTest {
     /** 기본값은 **켜짐**이다. 지금까지 저장된 곡선이 조용히 풀리면 안 된다. */
     @Test
     fun `기본값은 켜짐이다`() {
-        val c = ActiveCurve(curve, "x.cal", 3, importedAtEpochMs = 0L)
+        val c = ActiveCurve(
+            curve = curve,
+            fileName = "x.cal",
+            pointCount = 3,
+            importedAtEpochMs = 0L,
+        )
         assertNotNull(toEngine(c))
     }
 }

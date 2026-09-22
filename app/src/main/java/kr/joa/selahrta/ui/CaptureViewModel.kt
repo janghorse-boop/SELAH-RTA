@@ -734,6 +734,17 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * 이 보정이 어느 마이크의 것인지 적어 둔다. **측정에는 영향이 없다.**
+     *
+     * 오디오 인터페이스는 채널마다 다른 마이크가 꽂힐 수 있는데, 무엇이
+     * 꽂혀 있는지는 꽂은 사람만 안다(USB 오디오 지시서 9.2).
+     */
+    fun setCurveMicName(name: String) {
+        val format = controller.confirmedFormat() ?: return
+        viewModelScope.launch { curveStore.setMicName(CalibrationKey.of(format), name) }
+    }
+
+    /**
      * 주파수 보정을 켜거나 끈다. **파일은 지우지 않는다.**
      *
      * 지우는 것과 가른다 — 보정 전·후를 견주려면 껐다 켰다 해야 하는데,

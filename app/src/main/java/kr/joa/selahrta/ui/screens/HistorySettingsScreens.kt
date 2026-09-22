@@ -91,6 +91,7 @@ fun SettingsScreen(
     onPickCurveFile: () -> Unit,
     onClearCurve: () -> Unit,
     onToggleCurve: (Boolean) -> Unit,
+    onCurveMicName: (String) -> Unit,
     onDismissCurveNotice: () -> Unit,
     onSaveRange: (ChurchSegment, SegmentRange) -> Unit,
     onResetRange: (ChurchSegment) -> Unit,
@@ -205,6 +206,7 @@ fun SettingsScreen(
             onPickFile = onPickCurveFile,
             onClear = onClearCurve,
             onToggleEnabled = onToggleCurve,
+            onMicName = onCurveMicName,
             onDismissNotice = onDismissCurveNotice,
             modifier = Modifier.padding(top = 10.dp),
         )

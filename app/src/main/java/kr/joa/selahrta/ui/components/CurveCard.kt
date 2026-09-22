@@ -21,6 +21,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,6 +53,8 @@ fun CurveCard(
     onClear: () -> Unit,
     /** 걸기를 켜고 끈다. **파일은 건드리지 않는다.** */
     onToggleEnabled: (Boolean) -> Unit,
+    /** 어느 마이크의 보정인지 사람이 적은 것을 저장한다. */
+    onMicName: (String) -> Unit,
     onDismissNotice: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -109,6 +114,28 @@ fun CurveCard(
                     "${(curve.curve.highestHz / 1000).toInt()}kHz",
                 color = SelahColors.TextSecondary,
                 fontSize = 11.sp,
+            )
+
+            // **어느 마이크의 보정인지는 사람이 적는다**(USB 오디오 지시서 9.2).
+            //
+            // 파일 머리글에서 이름을 뽑아 「이 마이크다」라고 말하지 않는다 —
+            // 오디오 인터페이스는 채널마다 다른 마이크가 꽂힐 수 있고, 무엇이
+            // 꽂혀 있는지는 꽂은 사람만 안다. 짚어낸 이름이 틀리면 그게 더 나쁘다.
+            var micName by remember(curve.fileName) { mutableStateOf(curve.micName) }
+            OutlinedTextField(
+                value = micName,
+                onValueChange = { micName = it },
+                label = { Text("마이크 (직접 적기)", fontSize = 12.sp) },
+                placeholder = {
+                    Text("예: Dayton EMM-6 #123456", fontSize = 12.sp)
+                },
+                singleLine = true,
+                textStyle = LocalTextStyle.current.copy(fontSize = 13.sp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    // 적고 나서 다른 데를 누르면 저장한다. 글자마다 저장하면
+                    // 누를 때마다 파일을 쓴다.
+                    .onFocusChanged { if (!it.isFocused) onMicName(micName) },
             )
 
             // **파일이 스스로 밝힌 것을 그대로 보인다**(USB 오디오 지시서 9.3).

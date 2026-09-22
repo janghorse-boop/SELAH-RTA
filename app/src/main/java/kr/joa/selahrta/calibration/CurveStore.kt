@@ -31,6 +31,15 @@ data class ActiveCurve(
     val curve: CalibrationCurve,
     /** 가져온 파일 이름. 어느 파일인지 화면에 적는다. */
     val fileName: String,
+    /**
+     * 이 보정이 **어느 마이크의 것인지.** 사람이 적는다. 비어 있을 수 있다.
+     *
+     * **짓어내지 않는다.** 파일 머리글에 적혀 있기도 하지만, 거기서
+     * 이름을 뽑아내 「이 마이크다」라고 말하면 틀렸을 때 더 나쁘다.
+     * 오디오 인터페이스는 채널마다 다른 마이크가 꽂힐 수 있어, 어느 것이
+     * 뭐인지는 꽂은 사람만 안다(USB 오디오 지시서 9.2).
+     */
+    val micName: String = "",
     val pointCount: Int,
     /**
      * 파일 앞의 머리글. **보정 부호를 가를 단서이고, 마이크가
@@ -104,6 +113,9 @@ class CurveStore(private val context: Context) {
      */
     private fun onKey(k: CalibrationKey) = stringPreferencesKey("${k.storageKey()}|curveOn")
 
+    /** 사람이 적은 마이크 이름. */
+    private fun micNameKey(k: CalibrationKey) = stringPreferencesKey("${k.storageKey()}|micName")
+
     private fun curveDir(): File = File(context.filesDir, "curves").apply { mkdirs() }
 
     /**
@@ -163,6 +175,7 @@ class CurveStore(private val context: Context) {
                     headerLines = loaded.headerLines,
                     importedAtEpochMs = prefs[atKey(key)] ?: 0L,
                     enabled = prefs[onKey(key)] != "false",
+                    micName = prefs[micNameKey(key)].orEmpty(),
                 )
             }
 
@@ -234,6 +247,18 @@ class CurveStore(private val context: Context) {
         Unit
     }
 
+    /**
+     * 어느 마이크의 보정인지 적어 둔다. 빈 문자열이면 지운다.
+     *
+     * 측정에는 아무 영향이 없다 — 사람이 뒤에 보고 알아보려고 두는 것이다.
+     */
+    suspend fun setMicName(key: CalibrationKey, name: String) = withContext(Dispatchers.IO) {
+        runCatching {
+            context.curveDataStore.edit { p -> p[micNameKey(key)] = name.trim() }
+        }
+        Unit
+    }
+
     suspend fun clear(key: CalibrationKey) = withContext(Dispatchers.IO) {
         runCatching {
             fileFor(key).delete()
@@ -242,6 +267,7 @@ class CurveStore(private val context: Context) {
                 p.remove(countKey(key))
                 p.remove(atKey(key))
                 p.remove(onKey(key))
+                p.remove(micNameKey(key))
             }
         }
         Unit

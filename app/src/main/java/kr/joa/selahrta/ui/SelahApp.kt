@@ -293,6 +293,7 @@ fun SelahApp() {
                         onPickCurveFile = { pickCurve.launch(arrayOf("*/*")) },
                         onClearCurve = vm::clearCurve,
                         onToggleCurve = vm::setCurveEnabled,
+                        onCurveMicName = vm::setCurveMicName,
                         onDismissCurveNotice = vm::dismissCurveNotice,
                         onSaveRange = vm::setRange,
                         onResetRange = vm::resetRange,
