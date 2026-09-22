@@ -23,7 +23,18 @@ object CalibrationFile {
         val skippedLines: Int,
         /** 건너뛴 줄의 예. 무엇 때문에 실패했는지 보여 준다. */
         val skippedSamples: List<String>,
+        /**
+         * 숫자가 아닌 줄 중 **앞에 있는 몇 줄**. 열 이름이 여기 적혀 있다.
+         *
+         * 보정 부호를 가를 유일한 단서일 때가 있어 버리지 않고 들고 온다
+         * ([signEvidenceOf]). 버리면 「응답인가 보정값인가」를 물을 근거가
+         * 아무 데도 안 남는다.
+         */
+        val headerLines: List<String> = emptyList(),
     )
+
+    /** 머리글로 볼 줄 수의 상한. 이보다 길면 열 이름이 아니라 설명문이다. */
+    private const val MAX_HEADER_LINES = 8
 
     private val COMMENT_PREFIXES = listOf("*", "#", ";", "//")
 
@@ -34,11 +45,17 @@ object CalibrationFile {
         val points = mutableListOf<CurvePoint>()
         var skipped = 0
         val samples = mutableListOf<String>()
+        // 머리글은 앞에만 있다. 숫자 줄이 한 번이라도 나오면 더 모으지 않는다 —
+        // 파일 끝의 주석까지 끌어모으면 어느 것이 열 이름인지 흐려진다.
+        val headers = mutableListOf<String>()
 
         for (rawLine in text.lineSequence()) {
             val line = rawLine.trim().removeSurrounding("﻿")
             if (line.isEmpty()) continue
-            if (COMMENT_PREFIXES.any { line.startsWith(it) }) continue
+            if (COMMENT_PREFIXES.any { line.startsWith(it) }) {
+                if (points.isEmpty() && headers.size < MAX_HEADER_LINES) headers += line
+                continue
+            }
 
             val parts = line
                 .replace("\"", "")
@@ -46,6 +63,7 @@ object CalibrationFile {
                 .filter { it.isNotBlank() }
 
             if (parts.size < 2) {
+                if (points.isEmpty() && headers.size < MAX_HEADER_LINES) headers += line
                 skipped++
                 if (samples.size < 3) samples += line
                 continue
@@ -57,6 +75,7 @@ object CalibrationFile {
             val hz = parts[0].toDoubleOrNull()
             val db = parts[1].toDoubleOrNull()
             if (hz == null || db == null || hz <= 0.0) {
+                if (points.isEmpty() && headers.size < MAX_HEADER_LINES) headers += line
                 skipped++
                 if (samples.size < 3) samples += line
                 continue
@@ -64,7 +83,7 @@ object CalibrationFile {
             points += CurvePoint(hz, db)
         }
 
-        return ParseResult(points, skipped, samples)
+        return ParseResult(points, skipped, samples, headers)
     }
 
     /**
@@ -91,6 +110,7 @@ object CalibrationFile {
                 curve = curve,
                 pointCount = parsed.points.size,
                 skippedLines = parsed.skippedLines,
+                headerLines = parsed.headerLines,
             ),
         )
     }
@@ -99,13 +119,22 @@ object CalibrationFile {
         val curve: CalibrationCurve,
         val pointCount: Int,
         val skippedLines: Int,
+        /** 파일 앞의 머리글. 보정 부호를 가를 단서다. */
+        val headerLines: List<String> = emptyList(),
     ) {
         /**
          * 파일이 수상한지 알린다. 거부하지는 않는다 —
          * 특이한 마이크가 있을 수 있고, 판단은 사람이 한다.
          */
+        /** 부호 규약에 대한 단서. 정하지 않고 보이기만 한다. */
+        val signEvidence: SignEvidence get() = signEvidenceOf(headerLines)
+
         val warningKo: String?
             get() = when {
+                // **부호가 먼저다.** 아래 ±30dB 검사로는 못 잡는다 —
+                // 실제 측정 마이크 파일은 대개 ±5dB 안쪽이라 부호가
+                // 반대여도 조용히 통과한다.
+                signNoticeKo(signEvidence) != null -> signNoticeKo(signEvidence)
                 curve.maxAbsGainDb > 30.0 ->
                     "보정량이 최대 ${"%.1f".format(curve.maxAbsGainDb)}dB 입니다. " +
                         "보통 마이크 보정 파일은 ±10dB 안쪽입니다 — " +

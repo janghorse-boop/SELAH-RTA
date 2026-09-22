@@ -711,7 +711,17 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                     onSuccess = { c ->
                         // 파일이 수상해도 거부하지 않는다. 다만 무엇이 수상한지
                         // 함께 적어 사람이 판단하게 한다.
-                        val warn = CalibrationFile.load(text).getOrNull()?.warningKo
+                        val loaded = CalibrationFile.load(text).getOrNull()
+                        val warn = loaded?.warningKo
+                        // **머리글을 그대로 남긴다.** 보정 부호가 응답인지
+                        // 보정값인지는 이 줄들로만 가릴 수 있는데(9.4), 화면에
+                        // 다 띄우기에는 길다. 처음 보는 마이크를 물릴 때
+                        // 이 줄이 없으면 짐작밖에 할 수 없다.
+                        android.util.Log.i(
+                            "CurveImport",
+                            "$fileName header=${loaded?.headerLines} " +
+                                "sign=${loaded?.signEvidence} points=${c.pointCount}",
+                        )
                         buildString {
                             append("${c.fileName} 을(를) 적용했습니다. 점 ${c.pointCount}개.")
                             warn?.let { append(" ").append(it) }
@@ -724,9 +734,9 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * 주파수 보정을 켜거나 끔다. **파일은 지우지 않는다.**
+     * 주파수 보정을 켜거나 끈다. **파일은 지우지 않는다.**
      *
-     * 지우는 것과 가른다 — 보정 전·후를 견주려면 꺼다 켠다 해야 하는데,
+     * 지우는 것과 가른다 — 보정 전·후를 견주려면 껐다 켰다 해야 하는데,
      * 그때마다 파일을 다시 가져오게 하면 아무도 견주지 않는다.
      */
     fun setCurveEnabled(on: Boolean) {
