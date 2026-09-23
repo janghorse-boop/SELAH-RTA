@@ -17,6 +17,7 @@ import kr.joa.selahrta.dsp.qualityFromSession
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -572,6 +573,58 @@ class ProfileCodecTest {
         val why = back.unsupportedReasonsKo()
         assertFalse("상한을 단언하면 안 된다: $why", why.any { it.contains("상한") })
         assertTrue("모른다고 말해야 한다: $why", why.any { it.contains("까닭 정보 없음") })
+    }
+
+    /**
+     * **「모른다」를 다시 적을 때 없는 사실을 지어내지 않는다.**
+     *
+     * 표시 없는 파일을 읽어 그대로 다시 적으면 여전히 표시가 없어야
+     * 한다 — 빈 배열을 적으면 「상한 아님」이라는 **없던 단언**이 생긴다.
+     */
+    @Test
+    fun `모르는 것을 다시 적어도 모르는 채로 둔다`() {
+        val o = limitedOutcome()
+        val text = encodeCurves(o).lineSequence()
+            .filterNot { it.startsWith("correction.limited=") }.joinToString("\n")
+        val legacy = decodeCurves(text).getOrThrow()
+
+        assertNull(legacy.limitedByMaxCorrection)
+        assertFalse(
+            "없던 표시를 지어내면 안 된다",
+            encodeCurves(legacy).contains("correction.limited="),
+        )
+    }
+
+    /** 길이가 맞는 **전부 0** 은 null 과 다르다 — 「상한 아님」을 안다는 뜻이다. */
+    @Test
+    fun `전부 0 인 표시는 모른다가 아니라 상한 아님이다`() {
+        val o = limitedOutcome()
+        val text = encodeCurves(o).lineSequence().joinToString("\n") {
+            if (it.startsWith("correction.limited=")) {
+                "correction.limited=" + "0".repeat(o.correction.size)
+            } else {
+                it
+            }
+        }
+        val back = decodeCurves(text).getOrThrow()
+
+        assertNotNull("null 이 아니어야 한다", back.limitedByMaxCorrection)
+        assertFalse("전부 false 여야 한다", back.limitedByMaxCorrection!!.any { it })
+        val why = back.unsupportedReasonsKo()
+        assertFalse("모른다고 하면 안 된다: $why", why.any { it.contains("까닭 정보 없음") })
+    }
+
+    /** 빈 값·짧은 값·`0`/`1` 이 아닌 글자는 모두 거절한다. */
+    @Test
+    fun `망가진 까닭 표시는 거절한다`() {
+        val o = limitedOutcome()
+        val cases = listOf("", "1", "2".repeat(o.correction.size))
+        for (value in cases) {
+            val text = encodeCurves(o).lineSequence().joinToString("\n") {
+                if (it.startsWith("correction.limited=")) "correction.limited=$value" else it
+            }
+            assertTrue("「$value」는 거절해야 한다", decodeCurves(text).isFailure)
+        }
     }
 
     @Test
