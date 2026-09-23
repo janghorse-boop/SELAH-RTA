@@ -25,11 +25,25 @@ import org.junit.Test
  */
 class BoundaryProbeTest {
 
+    /**
+     * 세션을 **그 CAL 범위로** 만든다.
+     *
+     * 이제 기준 장이 CAL 증거를 달고 다니고, 승인이 본 범위와 실제로 건
+     * 범위가 다르면 거절한다 — 그래서 관측마다 세션을 다시 만든다.
+     */
+    private fun sessionWith(range: ClosedFloatingPointRange<Double>): SessionResult {
+        val s = CalibrationSession()
+        repeat(8) {
+            for (step in MeasureStep.entries) {
+                s.putFrame(step, DoubleArray(31) { 70.0 }, calRangeHz = range)
+            }
+        }
+        return s.result()!!
+    }
+
     @Test
     fun probe() {
-        val s = CalibrationSession(referenceCalApplied = true)
-        repeat(8) { for (step in MeasureStep.entries) s.record(step, DoubleArray(31) { 70.0 }) }
-        val r = s.result()!!
+        val r = sessionWith(20.0..1300.0)
         val q0 = qualityFromSession(
             r, DoubleArray(31) { 0.0 }, DoubleArray(31) { 0.0 },
             referenceCalRangeHz = 20.0..1300.0, dspVerifiedBySignal = true,
@@ -46,12 +60,13 @@ class BoundaryProbeTest {
         for (lo in 0..12) {
             for (hi in 18..30) {
                 val range = (ThirdOctave.exactCenter(lo) * 0.999)..(ThirdOctave.exactCenter(hi) * 1.001)
+                val rr = sessionWith(range)
                 val q = qualityFromSession(
-                    r, DoubleArray(31) { 0.0 }, DoubleArray(31) { 0.0 },
+                    rr, DoubleArray(31) { 0.0 }, DoubleArray(31) { 0.0 },
                     referenceCalRangeHz = range, dspVerifiedBySignal = true,
                 )
                 val os = listOf(6, 12, 24).map {
-                    calibrateFromSession(r, q, CalibrationSettings(pointsPerOctave = it)).getOrNull()
+                    calibrateFromSession(rr, q, CalibrationSettings(pointsPerOctave = it)).getOrNull()
                 }
                 if (os.any { it == null }) continue
                 val counts = os.map { it!!.supportedBands.size }

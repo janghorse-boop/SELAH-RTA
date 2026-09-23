@@ -26,8 +26,8 @@ class ApprovalProbeTest {
     fun probe() {
         val n = ThirdOctave.BAND_COUNT
         fun flat(x: Double) = DoubleArray(n) { x }
-        val s = CalibrationSession(referenceCalApplied = true)
-        repeat(8) { for (step in MeasureStep.entries) s.record(step, flat(70.0)) }
+        val s = CalibrationSession()
+        repeat(8) { for (step in MeasureStep.entries) s.putFrame(step, flat(70.0)) }
         val r = s.result()!!
         val targetNoise = DoubleArray(n) { if (it <= 18 || it == 30) 40.0 else 70.0 }
         val refNoise = DoubleArray(n) { if (it >= 12) 40.0 else 70.0 }

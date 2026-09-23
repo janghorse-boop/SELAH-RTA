@@ -3,17 +3,15 @@ package kr.joa.selahrta.calibration
 import kr.joa.selahrta.audio.CaptureSource
 import kr.joa.selahrta.audio.MicSeparation
 import kr.joa.selahrta.domain.MicKind
+import kr.joa.selahrta.dsp.BandNoise
 import kr.joa.selahrta.dsp.CalibrationOutcome
-import kr.joa.selahrta.dsp.CalibrationSession
 import kr.joa.selahrta.dsp.CurvePoint
-import kr.joa.selahrta.dsp.MeasureStep
+import kr.joa.selahrta.dsp.QualityReport
 import kr.joa.selahrta.dsp.QualityVerdict
 import kr.joa.selahrta.dsp.ResponseCurve
 import kr.joa.selahrta.dsp.ThirdOctave
-import kr.joa.selahrta.dsp.calibrateFromSession
 import kr.joa.selahrta.dsp.calibrateResponse
 import kr.joa.selahrta.dsp.judgeCalibration
-import kr.joa.selahrta.dsp.qualityFromSession
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -493,23 +491,28 @@ class ProfileCodecTest {
     // L01-R — 왕복이 까닭을 잃지 않는다 (독립 검증 2026-09-23)
     // ------------------------------------------------------------------
 
-    /** 상한이 실제로 자른 결과. 톱니형 기준이 상한을 넘게 만든다. */
+    /**
+     * 상한이 실제로 자른 결과. 톱니형 기준이 상한을 넘게 만든다.
+     *
+     * **세션을 거치지 않고 [calibrateResponse] 로 바로 만든다.**
+     * 기준 장을 세션에 넣으려면 `CalibratedReferenceSpectrum` 이
+     * 필요한데 그 생성자는 dsp 모듈 안쪽이라 여기서 만들 수 없다 —
+     * **그것이 보증의 요점이다.** app 의 제품 코드도 못 만든다.
+     * 이 시험이 재려는 것은 codec 왕복이지 세션이 아니다.
+     */
     private fun limitedOutcome(): CalibrationOutcome {
-        val ref = DoubleArray(31) {
-            if (it < 2 || it > 28) 70.0 else if (it % 2 == 0) 100.0 else 40.0
+        val ref = (0 until 31).map {
+            val db = if (it < 2 || it > 28) 70.0 else if (it % 2 == 0) 100.0 else 40.0
+            CurvePoint(ThirdOctave.exactCenter(it), db)
         }
-        val s = CalibrationSession(referenceCalApplied = true)
-        repeat(8) {
-            s.record(MeasureStep.ReferenceBefore, ref)
-            s.record(MeasureStep.ReferenceAfter, ref)
-            s.record(MeasureStep.Target, DoubleArray(31) { 70.0 })
-        }
-        val r = s.result()!!
-        val q = qualityFromSession(
-            r, DoubleArray(31) { 0.0 }, DoubleArray(31) { 0.0 },
-            referenceCalRangeHz = 20.0..20_000.0, dspVerifiedBySignal = true,
-        )
-        return calibrateFromSession(r, q).getOrThrow()
+        val target = (0 until 31).map { CurvePoint(ThirdOctave.exactCenter(it), 70.0) }
+        return calibrateResponse(ref, target)
+    }
+
+    /** 상한을 넘지 않는 결과 — 기준과 대상이 같은 모양이다. */
+    private fun unlimitedOutcome(): CalibrationOutcome {
+        val pts = (0 until 31).map { CurvePoint(ThirdOctave.exactCenter(it), 70.0) }
+        return calibrateResponse(pts, pts)
     }
 
     /**
@@ -538,16 +541,7 @@ class ProfileCodecTest {
     /** CAL 만 좁은 결과는 왕복해도 **상한을 탓하지 않는다.** */
     @Test
     fun `상한이 없던 결과는 왕복해도 상한이 생기지 않는다`() {
-        val s = CalibrationSession(referenceCalApplied = true)
-        repeat(8) {
-            for (step in MeasureStep.entries) s.record(step, DoubleArray(31) { 70.0 })
-        }
-        val r = s.result()!!
-        val q = qualityFromSession(
-            r, DoubleArray(31) { 0.0 }, DoubleArray(31) { 0.0 },
-            referenceCalRangeHz = 20.0..1_300.0, dspVerifiedBySignal = true,
-        )
-        val o = calibrateFromSession(r, q).getOrThrow()
+        val o = unlimitedOutcome()
         assertFalse("상한이 자른 점이 없어야 한다", o.limitedByMaxCorrection!!.any { it })
 
         val back = decodeCurves(encodeCurves(o)).getOrThrow()
@@ -641,21 +635,19 @@ class ProfileCodecTest {
     /** 왕복이 **판정**을 바꾸지 않는 것도 함께 본다. */
     @Test
     fun `왕복해도 판정이 같다`() {
-        val ref = DoubleArray(31) {
-            if (it < 2 || it > 28) 70.0 else if (it % 2 == 0) 100.0 else 40.0
-        }
-        val s = CalibrationSession(referenceCalApplied = true)
-        repeat(8) {
-            s.record(MeasureStep.ReferenceBefore, ref)
-            s.record(MeasureStep.ReferenceAfter, ref)
-            s.record(MeasureStep.Target, DoubleArray(31) { 70.0 })
-        }
-        val r = s.result()!!
-        val q = qualityFromSession(
-            r, DoubleArray(31) { 0.0 }, DoubleArray(31) { 0.0 },
-            referenceCalRangeHz = 20.0..20_000.0, dspVerifiedBySignal = true,
+        // 판정에는 품질 보고도 필요하다 — 세션 없이 만들 수 있는 최소한만
+        // 채운다. 이 시험이 재는 것은 「왕복이 판정을 바꾸는가」다.
+        val o = limitedOutcome()
+        val q = QualityReport(
+            bands = (0 until 31).map { BandNoise(ThirdOctave.exactCenter(it), 70.0, 0.0) },
+            repeatSpreadDb = 0.5,
+            referenceDriftDb = 0.0,
+            referenceBandDriftDb = 0.0,
+            minFramesPerStep = 16,
+            referenceBands = (0 until 31).map { BandNoise(ThirdOctave.exactCenter(it), 70.0, 0.0) },
+            referenceCalRangeHz = 20.0..20_000.0,
+            dspVerifiedBySignal = true,
         )
-        val o = calibrateFromSession(r, q).getOrThrow()
         val back = decodeCurves(encodeCurves(o)).getOrThrow()
         assertEquals(judgeCalibration(q, o).verdict, judgeCalibration(q, back).verdict)
     }

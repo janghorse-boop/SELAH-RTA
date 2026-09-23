@@ -26,20 +26,20 @@ class RecheckProbeTest {
         val n = ThirdOctave.BAND_COUNT
         fun flat(x: Double) = DoubleArray(n) { x }
         fun session(ref: DoubleArray, target: DoubleArray): SessionResult {
-            val s = CalibrationSession(referenceCalApplied = true)
+            val s = CalibrationSession()
             repeat(8) {
-                s.record(MeasureStep.ReferenceBefore, ref)
-                s.record(MeasureStep.ReferenceAfter, ref)
+                s.putFrame(MeasureStep.ReferenceBefore, ref)
+                s.putFrame(MeasureStep.ReferenceAfter, ref)
                 s.record(MeasureStep.Target, target)
             }
             return s.result()!!
         }
 
-        val s = CalibrationSession(referenceCalApplied = true)
+        val s = CalibrationSession()
         for (step in MeasureStep.entries) {
-            repeat(3) { s.record(step, flat(0.0)) }
-            repeat(2) { s.record(step, flat(50.0)) }
-            repeat(3) { s.record(step, flat(100.0)) }
+            repeat(3) { s.putFrame(step, flat(0.0)) }
+            repeat(2) { s.putFrame(step, flat(50.0)) }
+            repeat(3) { s.putFrame(step, flat(100.0)) }
         }
         val r = s.result()!!
         val q = qualityFromSession(r, flat(0.0), dspVerifiedBySignal = true)

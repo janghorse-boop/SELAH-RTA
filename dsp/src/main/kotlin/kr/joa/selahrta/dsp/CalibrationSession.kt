@@ -106,13 +106,12 @@ data class SessionResult(
     /** 앞뒤 기준을 에너지 평균한 것. 이것이 「기준」이다. */
     val referenceMeanDb: DoubleArray,
     /**
-     * 기준 장에 **칸 단위로** CAL 이 이미 걸려 있는가(독립 검증 CP04).
+     * 기준 장에 칸 단위로 CAL 을 건 **증거**(독립 검증 CP04). 없으면 null.
      *
-     * 밴드 레벨에서 중심주파수 응답만 빼는 것은 밴드 안에서 CAL 이
-     * 일정할 때만 옳다. 그래서 CAL 은 FFT 칸에서 걸어야 하고, 그 일은
-     * 여기가 아니라 스펙트럼을 만드는 쪽이 한다.
+     * [applyReferenceCalibration] 만 만들 수 있으므로, 이것이 있다는
+     * 것은 실제로 걸렸다는 뜻이다 — 선언이 아니다.
      */
-    val referenceCalApplied: Boolean,
+    val referenceProof: ReferenceCalibrationProof?,
 )
 
 /**
@@ -125,25 +124,58 @@ class CalibrationSession(
     val bandCount: Int = ThirdOctave.BAND_COUNT,
     /** 이만큼 넘게 벗어난 장은 버린다. */
     private val maxFrameDeviationDb: Double = 3.0,
-    /**
-     * 넣는 기준 장에 **칸 단위로** CAL 이 이미 걸려 있는가
-     * (독립 검증 CP04).
-     *
-     * 걸지 않은 채로 [calibrateFromSession] 을 부르면 **거절한다.**
-     * 밴드 레벨에서 중심 응답을 빼는 것으로는 일반적으로 못 고친다 —
-     * 이 저장소는 그 교훈을 이미 적어 두었다
-     * ([CalibrationCurve.bandCenterResponseDb] KDoc, 독립 검증 R05).
-     */
-    val referenceCalApplied: Boolean = false,
 ) {
     private val frames = mutableMapOf<MeasureStep, MutableList<DoubleArray>>()
 
-    /** 한 장을 넣는다. */
+    /**
+     * 기준 장들이 들고 온 증거. 처음 넣을 때 정해지고, **그 뒤로는 같은
+     * 것만 받는다.**
+     */
+    var referenceProof: ReferenceCalibrationProof? = null
+        private set
+
+    /**
+     * **대상** 마이크의 장 하나를 넣는다.
+     *
+     * 기준 장은 이 함수로 못 넣는다 — [recordReference] 를 쓴다.
+     * 그래야 CAL 을 걸지 않은 기준이 들어올 길이 없다(독립 검증 CP04).
+     */
     fun record(step: MeasureStep, bandsDb: DoubleArray) {
+        require(step == MeasureStep.Target) {
+            "기준 장은 recordReference 로 넣는다 — CAL 을 건 증거가 있어야 한다: $step"
+        }
         require(bandsDb.size == bandCount) {
             "밴드 수가 다르다: ${bandsDb.size} != $bandCount"
         }
         frames.getOrPut(step) { mutableListOf() }.add(bandsDb.copyOf())
+    }
+
+    /**
+     * **기준** 마이크의 장 하나를 넣는다.
+     *
+     * [CalibratedReferenceSpectrum] 은 [applyReferenceCalibration] 만
+     * 만들 수 있으므로, **CAL 을 칸 단위로 걸지 않고는 여기 닿을 수
+     * 없다.** 「걸었다」고 선언하던 Boolean 을 이것으로 바꿨다.
+     *
+     * 세션 안에서 **증거가 어긋나면 막는다** — 다른 CAL 이나 다른 분석
+     * 설정으로 잰 장들이 섞이면 평균이 어느 쪽도 아닌 값이 된다.
+     */
+    fun recordReference(step: MeasureStep, spectrum: CalibratedReferenceSpectrum) {
+        require(step != MeasureStep.Target) {
+            "대상 장은 record 로 넣는다: $step"
+        }
+        require(spectrum.bandsDb.size == bandCount) {
+            "밴드 수가 다르다: ${spectrum.bandsDb.size} != $bandCount"
+        }
+        val known = referenceProof
+        if (known == null) {
+            referenceProof = spectrum.proof
+        } else {
+            require(known.sameSetupAs(spectrum.proof)) {
+                "기준 장들의 CAL·분석 설정이 다르다: $known vs ${spectrum.proof}"
+            }
+        }
+        frames.getOrPut(step) { mutableListOf() }.add(spectrum.bandsDb.copyOf())
     }
 
     fun frameCount(step: MeasureStep): Int = frames[step]?.size ?: 0
@@ -152,7 +184,11 @@ class CalibrationSession(
     val complete: Boolean
         get() = MeasureStep.entries.all { frameCount(it) > 0 }
 
-    fun reset() = frames.clear()
+    /** 처음으로. **증거도 함께 지운다** — 남겨 두면 다음 세션이 물려받는다. */
+    fun reset() {
+        frames.clear()
+        referenceProof = null
+    }
 
     /** 셈한다. 한 단계라도 비었으면 null. */
     fun result(): SessionResult? {
@@ -198,7 +234,7 @@ class CalibrationSession(
             minKeptFramesPerStep = steps.minOf { it.keptFrames },
             minTotalFramesPerStep = steps.minOf { it.totalFrames },
             referenceMeanDb = refMean,
-            referenceCalApplied = referenceCalApplied,
+            referenceProof = referenceProof,
         )
     }
 
@@ -275,14 +311,30 @@ fun calibrateFromSession(
     quality: QualityReport,
     settings: CalibrationSettings = CalibrationSettings(),
 ): Result<CalibrationOutcome> {
-    if (!session.referenceCalApplied) {
-        return Result.failure(
+    val proof = session.referenceProof
+        ?: return Result.failure(
             IllegalStateException(
                 "기준 측정에 CAL 이 걸리지 않았습니다. 밴드 레벨에서 빼는 것으로는 " +
                     "고칠 수 없으니(FFT 칸에서 걸어야 합니다) 보정을 만들지 않습니다.",
             ),
         )
+
+    // **승인이 본 CAL 범위와 실제로 건 범위가 같아야 한다.**
+    //
+    // 다르면 둘 중 하나는 거짓이고 어느 쪽인지 모른다. **안 적은 것도
+    // 어긋남이다** — 품질이 범위를 모르면 승인이 CAL 제한을 보지 못해
+    // 좁은 CAL 이 그대로 통과한다(독립 검증 RCP-F01 이 그 구멍이었다).
+    if (quality.referenceCalRangeHz != proof.rangeHz) {
+        val declared = quality.referenceCalRangeHz
+        return Result.failure(
+            IllegalStateException(
+                "품질 보고의 CAL 범위와 실제로 건 범위가 다릅니다: " +
+                    (declared?.let { "${it.start.toInt()}~${it.endInclusive.toInt()}Hz" } ?: "적지 않음") +
+                    " vs ${proof.rangeHz.start.toInt()}~${proof.rangeHz.endInclusive.toInt()}Hz.",
+            ),
+        )
     }
+
     require(quality.bands.size == session.referenceMeanDb.size) {
         "품질 보고의 대역 수가 다르다: ${quality.bands.size} != ${session.referenceMeanDb.size}"
     }

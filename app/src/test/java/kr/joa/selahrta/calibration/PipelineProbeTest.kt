@@ -1,26 +1,15 @@
 package kr.joa.selahrta.calibration
 
-import kr.joa.selahrta.dsp.CalibrationCurve
-import kr.joa.selahrta.dsp.CalibrationSession
 import kr.joa.selahrta.dsp.CurvePoint
-import kr.joa.selahrta.dsp.MeasureStep
 import kr.joa.selahrta.dsp.ThirdOctave
-import kr.joa.selahrta.dsp.calibrateFromSession
-import kr.joa.selahrta.dsp.judgeQuality
-import kr.joa.selahrta.dsp.qualityFromSession
+import kr.joa.selahrta.dsp.calibrateResponse
 import org.junit.Test
-import kotlin.math.abs
-import kotlin.math.ln
 
 /**
- * **Codex 가 보낸 `Calibration-PipelineProbe.kt` 의 관측점들**
+ * **Codex 가 보낸 `Calibration-PipelineProbe.kt` 의 관측점 중 codec 쪽**
  * (`docs/review/Calibration-PipelineProbe.kt`, 2026-09-23 검토서 CP01~CP04).
  *
- * ## 이 파일은 회귀 시험이 아니다
- *
- * 결함을 **관측**하는 도구다. 지금의 값을 정답으로 못 박지 않는다 —
- * 회귀는 `CalibrationSessionTest`·`CalibrationQualityTest`·
- * `ProfileCodecTest` 가 잰다.
+ * **회귀 시험이 아니라 관측 도구다.**
  *
  * ## 고치기 전 (본문 그대로 옮겨 재현한 값)
  *
@@ -32,73 +21,34 @@ import kotlin.math.ln
  * CENTER_CAL expected=0.0 actual=3.2554237993212123 centerGain=0.0
  * ```
  *
- * 다섯 줄 모두 검토서의 값과 일치했다.
+ * ## 세션 관측 넷은 dsp 로 옮겨 갔다
  *
- * ## 고친 뒤
+ * CP04 후속 고침으로 기준 장이 `CalibratedReferenceSpectrum` 이어야
+ * 하는데, 그 생성자는 dsp 모듈 안쪽이라 app 시험에서는 세션을 만들 수
+ * 없다 — **그것이 보증의 요점이다**(app 의 제품 코드도 못 만든다).
  *
- * API 가 바뀌어 본문 그대로는 더 이상 컴파일되지 않는다(그것이 CP04 의
- * 고침이다 — `applyMicCalibration` 이 사라졌다). **관측점은 그대로 두고**
- * 새 API 로 겨누었다. 값은 실행이 찍는다.
+ * 그 관측들은 dsp 쪽 probe 가 이어서 찍는다:
+ * `RecheckProbeTest`(불안정 기준·모양 변화), `ApprovalProbeTest`(교집합),
+ * `PostLimitProbeTest`(상한 결손), `BoundaryProbeTest`(CAL 경계).
+ * `CENTER_CAL` 이 재던 「칸에 걸지 않으면 거절하는가」는 이제 **타입이
+ * 막으므로** `CalibrationSessionTest.기준 장을 대상 경로로 넣을 수 없다`
+ * 가 잰다.
+ *
+ * 여기 남는 것은 **손상된 곡선 파일**(CODEC_NAN)이다 — codec 이 app 에
+ * 있기 때문이다.
  */
 class PipelineProbeTest {
 
     @Test
     fun probe() {
         val n = ThirdOctave.BAND_COUNT
-        fun flat(x: Double) = DoubleArray(n) { x }
-
-        // ── CP01 ① 기준 단계가 통째로 불안정한 경우 ────────────────────
-        val s = CalibrationSession(referenceCalApplied = true)
-        for (step in listOf(MeasureStep.ReferenceBefore, MeasureStep.ReferenceAfter)) {
-            s.record(step, flat(40.0)); s.record(step, flat(90.0))
+        // 고역이 6dB 낮은 대상 — 보정이 생기는 평범한 곡선이면 된다.
+        val reference = (0 until n).map { CurvePoint(ThirdOctave.exactCenter(it), 70.0) }
+        val internal = (0 until n).map {
+            CurvePoint(ThirdOctave.exactCenter(it), if (it >= 24) 64.0 else 70.0)
         }
-        repeat(4) { s.record(MeasureStep.Target, flat(60.0)) }
-        val r = s.result()!!
-        println(
-            "UNSTABLE_REFERENCE spread=${r.referenceBefore.levelSpreadDb} " +
-                "kept=${r.referenceBefore.keptFrames} dropped=${r.referenceBefore.droppedFrames} " +
-                "noStable=${r.referenceBefore.noStableFrames} " +
-                "verdict=${judgeQuality(qualityFromSession(r, flat(10.0), dspVerifiedBySignal = true)).verdict}",
-        )
+        val c = calibrateResponse(reference, internal)
 
-        // ── CP01 ② 광대역은 같은데 모양이 변한 경우 ────────────────────
-        val s2 = CalibrationSession(referenceCalApplied = true)
-        val a = flat(50.0); a[20] = 60.0
-        val b = flat(50.0); b[24] = 60.0
-        repeat(4) {
-            s2.record(MeasureStep.ReferenceBefore, a)
-            s2.record(MeasureStep.ReferenceAfter, b)
-            s2.record(MeasureStep.Target, a)
-        }
-        val r2 = s2.result()!!
-        val q2 = qualityFromSession(r2, flat(10.0), dspVerifiedBySignal = true)
-        val out2 = calibrateFromSession(r2, q2)
-        println(
-            "SPECTRAL_DRIFT drift=${r2.referenceDriftDb} bandDrift=${r2.referenceBandDriftDb} " +
-                "verdict=${judgeQuality(q2).verdict} " +
-                "correctionMax=${out2.getOrNull()?.correction?.db?.maxOf { abs(it) } ?: "-"}",
-        )
-
-        // ── CP02 SNR 마스크와 CAL 범위가 보정으로 넘어가는가 ───────────
-        val noise = flat(10.0); noise[20] = a[20]
-        // 기준 경로 배경도 준다 — 안 주면 보정 자체를 거절하므로(RCP02)
-        // 이 관측점이 재려던 것을 볼 수 없다.
-        val cal = CalibrationCurve.of(
-            listOf(CurvePoint(200.0, 0.0), CurvePoint(10000.0, 0.0)),
-        ).getOrThrow()
-        val q = qualityFromSession(
-            r2, noise, referenceNoiseDb = flat(10.0),
-            referenceCalRangeHz = cal.rangeHz, dspVerifiedBySignal = true,
-        )
-        val c = calibrateFromSession(r2, q).getOrThrow()
-        val ix = c.correction.hz.indices.minBy { abs(ln(c.correction.hz[it] / ThirdOctave.exactCenter(20))) }
-        val lo = c.correction.hz.indices.minBy { abs(c.correction.hz[it] - 30.0) }
-        println(
-            "MASK quality=${judgeQuality(q).verdict} snrUsable=${q.usable[20]} " +
-                "correctionValid=${c.correction.valid[ix]} calOutside30HzValid=${c.correction.valid[lo]}",
-        )
-
-        // ── CP03 손상된 곡선 파일 ───────────────────────────────────────
         val text = encodeCurves(c)
         val bad = text.lineSequence().map {
             if (it.startsWith("correction.db=")) {
@@ -114,22 +64,6 @@ class PipelineProbeTest {
                     d.correction.db.indices.count { d.correction.valid[it] && d.correction.db[it].isNaN() }
                 } ?: "-"
             }",
-        )
-
-        // ── CP04 CAL 을 밴드 중심에서 빼던 자리 ────────────────────────
-        // 그 함수(applyMicCalibration)는 사라졌다. 이제 확인할 것은
-        // 「칸에 걸지 않은 기준으로는 보정을 만들지 않는가」다.
-        val s3 = CalibrationSession(referenceCalApplied = false)
-        repeat(8) {
-            s3.record(MeasureStep.ReferenceBefore, flat(70.0))
-            s3.record(MeasureStep.Target, flat(70.0))
-            s3.record(MeasureStep.ReferenceAfter, flat(70.0))
-        }
-        val r3 = s3.result()!!
-        val out3 = calibrateFromSession(r3, qualityFromSession(r3, flat(40.0)))
-        println(
-            "CENTER_CAL refusedWhenCalNotApplied=${out3.isFailure} " +
-                "why=${out3.exceptionOrNull()?.message?.take(40)}",
         )
     }
 }
