@@ -37,6 +37,7 @@ import kr.joa.selahrta.dsp.CalibrationOutcome
 import kr.joa.selahrta.dsp.CurvePoint
 import kr.joa.selahrta.dsp.CurveReading
 import kr.joa.selahrta.dsp.CurveShape
+import kr.joa.selahrta.dsp.MeasureStep
 import kr.joa.selahrta.dsp.QualityReport
 import kr.joa.selahrta.dsp.QualityResult
 import kr.joa.selahrta.dsp.ThirdOctave
@@ -77,6 +78,15 @@ fun CalibrationWizardScreen(
     onChooseReading: (CurveReading) -> Unit,
     onPhantom: (Boolean) -> Unit,
     onRunInputCheck: () -> Unit,
+    /** 마이크 탐색이 도는 중인가. 재는 중에는 돌릴 수 없다. */
+    probingMics: Boolean,
+    onProbeMics: () -> Unit,
+    onCaseRemoved: (Boolean?) -> Unit,
+    /** 지금 열린 입력의 열쇠. 어느 마이크로 재는지 화면에 적는다. */
+    openedDeviceKey: String?,
+    framesOf: (MeasureStep) -> Int,
+    onMeasure: (MeasureStep) -> Unit,
+    onRestartMeasurement: () -> Unit,
     onNext: () -> Unit,
     onBack: () -> Unit,
     onGoTo: (WizardStep) -> Unit,
@@ -142,6 +152,23 @@ fun CalibrationWizardScreen(
                 busyKo = busyKo,
                 canRun = canMeasure,
                 onRun = onRunInputCheck,
+            )
+
+            WizardStep.MicJudgement -> MicJudgementStep(
+                state = state,
+                probing = probingMics,
+                onProbe = onProbeMics,
+                onCaseRemoved = onCaseRemoved,
+            )
+
+            WizardStep.Measure -> MeasureStepPanel(
+                state = state,
+                busyKo = busyKo,
+                canRun = canMeasure,
+                openedDeviceKey = openedDeviceKey,
+                framesOf = framesOf,
+                onMeasure = onMeasure,
+                onRestart = onRestartMeasurement,
             )
 
             WizardStep.Review -> ReviewStep(outcome, judged, showingExample, onToggleExample)
@@ -515,4 +542,218 @@ fun dspNumbersKo(dsp: kr.joa.selahrta.dsp.DspProbeResult): String {
     val shape = dsp.bandShapeDriftDb?.let { "%.1f".format(it) } ?: "모름"
     return "장 ${dsp.framesUsed}개 · 본 대역 ${dsp.bandsConsidered}개 · " +
         "이득 변화 ${drift}dB · 모양 변화 ${shape}dB"
+}
+
+// ----------------------------------------------------------------------
+// 3단계
+// ----------------------------------------------------------------------
+
+@Composable
+private fun MicJudgementStep(
+    state: WizardState,
+    probing: Boolean,
+    onProbe: () -> Unit,
+    onCaseRemoved: (Boolean?) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .background(SelahColors.Surface, RoundedCornerShape(12.dp))
+                .border(1.dp, SelahColors.Outline, RoundedCornerShape(12.dp))
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                "물리 마이크 판정",
+                color = SelahColors.TextPrimary,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                MIC_PROBE_HOW_KO,
+                color = SelahColors.TextSecondary,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+                style = TextStyle(lineBreak = LineBreak.Paragraph),
+            )
+
+            val sep = state.separation
+            if (sep != null) {
+                Text(
+                    "${sep.state.name} · ${sep.reasonKo}",
+                    color = if (sep.mayNamePhysicalPosition) {
+                        SelahColors.TextSecondary
+                    } else {
+                        SelahColors.Warn
+                    },
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                    style = TextStyle(lineBreak = LineBreak.Paragraph),
+                )
+            }
+
+            TextButton(onClick = onProbe, enabled = !probing) {
+                Text(
+                    when {
+                        probing -> "탐색 중…"
+                        state.separation == null -> "탐색하기"
+                        else -> "다시 탐색하기"
+                    },
+                )
+            }
+        }
+
+        CaseRow(state.caseRemoved, onCaseRemoved)
+    }
+}
+
+const val MIC_PROBE_HOW_KO: String =
+    "이 폰이 후면·하단 마이크를 따로 열어 주는지 실제로 녹음해 확인합니다. " +
+        "기기 목록에 둘로 보이는 것만으로는 갈린다고 할 수 없습니다. " +
+        "재는 중에는 돌릴 수 없으니 측정을 잠시 멈춰야 할 수 있습니다."
+
+/**
+ * 케이스 상태. **확인이 아니라 듣는 것이다.**
+ *
+ * 후면 마이크는 케이스에 막혀 응답이 크게 달라진다. 그런데 앱은 케이스가
+ * 있는지 알 수 없어, 적어 두고 나중에 걸 때 물어보는 것이 전부다.
+ */
+@Composable
+private fun CaseRow(removed: Boolean?, onChange: (Boolean?) -> Unit) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(SelahColors.Surface, RoundedCornerShape(12.dp))
+            .border(1.dp, SelahColors.Outline, RoundedCornerShape(12.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            "케이스",
+            color = SelahColors.TextPrimary,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            CASE_NOTE_KO,
+            color = SelahColors.TextMuted,
+            fontSize = 11.sp,
+            lineHeight = 16.sp,
+            style = TextStyle(lineBreak = LineBreak.Paragraph),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            TextButton(onClick = { onChange(true) }) {
+                Text(if (removed == true) "· 벗김" else "벗김")
+            }
+            TextButton(onClick = { onChange(false) }) {
+                Text(if (removed == false) "· 씌움" else "씌움")
+            }
+        }
+    }
+}
+
+const val CASE_NOTE_KO: String =
+    "후면 마이크는 케이스에 막혀 응답이 크게 달라집니다. 앱은 케이스가 " +
+        "있는지 알 수 없으니, 지금 상태를 골라 두면 나중에 이 보정을 걸 때 " +
+        "같은 상태인지 물어볼 수 있습니다."
+
+// ----------------------------------------------------------------------
+// 4단계
+// ----------------------------------------------------------------------
+
+/**
+ * 기준 → 대상 → 기준(지시서 4.2).
+ *
+ * **기기는 사람이 바꾼다.** 어차피 마이크를 물리적으로 옮겨 놓아야 하므로
+ * 앱이 입력을 자동으로 갈아 끼우지 않는다. 대신 각 단계에서 지금 열린
+ * 입력을 적어 두고, 어긋나면 막는다.
+ */
+@Composable
+private fun MeasureStepPanel(
+    state: WizardState,
+    busyKo: String?,
+    canRun: Boolean,
+    openedDeviceKey: String?,
+    framesOf: (MeasureStep) -> Int,
+    onMeasure: (MeasureStep) -> Unit,
+    onRestart: () -> Unit,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(SelahColors.Surface, RoundedCornerShape(12.dp))
+            .border(1.dp, SelahColors.Outline, RoundedCornerShape(12.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            "기준 → 대상 → 기준",
+            color = SelahColors.TextPrimary,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            MEASURE_HOW_KO,
+            color = SelahColors.TextSecondary,
+            fontSize = 11.sp,
+            lineHeight = 16.sp,
+            style = TextStyle(lineBreak = LineBreak.Paragraph),
+        )
+        Text(
+            "지금 열린 입력: ${openedDeviceKey ?: "없음"}",
+            color = SelahColors.TextMuted,
+            fontSize = 11.sp,
+        )
+
+        if (!canRun) InfoBar(NOT_MEASURING_KO, tone = SelahColors.Warn)
+        if (busyKo != null) InfoBar(busyKo, tone = SelahColors.InRange)
+
+        MeasureStep.entries.forEach { step ->
+            MeasureRow(
+                step = step,
+                frames = framesOf(step),
+                enabled = canRun && busyKo == null,
+                onMeasure = { onMeasure(step) },
+            )
+        }
+
+        TextButton(onClick = onRestart) { Text("처음부터 다시 재기") }
+    }
+}
+
+const val MEASURE_HOW_KO: String =
+    "기준 마이크와 대상 마이크를 같은 자리에 두고 차례로 잽니다. 기준을 " +
+        "앞뒤로 두 번 재서 그사이 스피커와 방이 얼마나 변했는지 함께 봅니다. " +
+        "단계마다 마이크를 옮기고, 입력도 그 마이크로 바꾼 뒤 누르십시오."
+
+@Composable
+private fun MeasureRow(
+    step: MeasureStep,
+    frames: Int,
+    enabled: Boolean,
+    onMeasure: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                kr.joa.selahrta.ui.stepNameKo(step),
+                color = if (frames > 0) SelahColors.InRange else SelahColors.TextSecondary,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                if (frames > 0) "장 ${frames}개 모음" else "아직 재지 않음",
+                color = SelahColors.TextMuted,
+                fontSize = 11.sp,
+            )
+        }
+        TextButton(onClick = onMeasure, enabled = enabled) {
+            Text(if (frames > 0) "다시" else "재기")
+        }
+    }
 }

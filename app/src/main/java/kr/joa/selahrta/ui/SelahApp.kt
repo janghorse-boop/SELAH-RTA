@@ -102,6 +102,12 @@ fun SelahApp() {
     val wizardBusy by wizard.busyKo.collectAsStateWithLifecycle()
     val wizardCapture = remember(vm) { WizardCaptureBridge(vm) }
 
+    // 마이크 탐색은 이미 설정 화면이 돌린다. 마법사는 **그 결과를 받아만**
+    // 둔다 — 여기서 다시 판정하면 두 규칙이 갈라진다.
+    LaunchedEffect(capture.micProbe) {
+        wizard.noteSeparation(capture.micProbe?.verdict)
+    }
+
     // **칩을 저장된 구간에 맞춘다.** 구간을 고르는 줄을 없앤 뒤로 칩이
     // 곧 구간인데, 칩은 늘 「설교」로 시작하고 구간은 지난번에 고른 것이
     // 저장돼 있다. 맞추지 않으면 칩은 「설교」인데 범위는 「찬양 78~85」인
@@ -366,6 +372,24 @@ fun SelahApp() {
                             onPickCalFile = { pickWizardCal.launch(arrayOf("*/*")) },
                             onChooseReading = wizard::chooseReading,
                             onPhantom = wizard::acknowledgePhantom,
+                            probingMics = capture.measure != MeasureState.Idle,
+                            onProbeMics = vm::probeMicrophones,
+                            onCaseRemoved = wizard::noteCaseRemoved,
+                            openedDeviceKey = capture.opened?.deviceKey,
+                            framesOf = wizard::framesFor,
+                            onRestartMeasurement = wizard::restartMeasurement,
+                            onMeasure = { step ->
+                                val spec = vm.rtaSpec()
+                                if (spec != null) {
+                                    wizard.measureStep(
+                                        step = step,
+                                        capture = wizardCapture,
+                                        fftSize = spec.first,
+                                        sampleRate = spec.second,
+                                        tick = { kotlinx.coroutines.delay(30) },
+                                    )
+                                }
+                            },
                             onRunInputCheck = {
                                 val spec = vm.rtaSpec()
                                 if (spec != null) {

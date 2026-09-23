@@ -163,6 +163,10 @@ data class WizardState(
 
     // 4단계
     val session: SessionResult? = null,
+    /** 기준을 잰 입력의 열쇠. 마지막 기준 측정이 이것과 같아야 한다. */
+    val referenceDeviceKey: String? = null,
+    /** 대상을 잰 입력의 열쇠. 기준과 **달라야** 한다. */
+    val targetDeviceKey: String? = null,
 
     // 5단계
     val outcome: CalibrationOutcome? = null,
