@@ -29,6 +29,19 @@ class CalibrationCurve private constructor(
     val highestHz: Double get() = points.last().hz
 
     /**
+     * 이 파일이 **실제로 잰** 주파수 범위.
+     *
+     * [gainDbAt] 은 이 범위 밖에서도 끝점 값을 돌려주므로 **숫자가
+     * 나온다는 것이 잰 적이 있다는 뜻이 아니다.** 보정에 쓸 자리를
+     * 고를 때는 숫자가 아니라 이 범위를 봐야 한다(독립 검증 CP02:
+     * CAL 을 200Hz~10kHz 로 두었는데 30Hz 의 보정이 valid=true 였다).
+     */
+    val rangeHz: ClosedFloatingPointRange<Double> get() = lowestHz..highestHz
+
+    /** [hz] 를 이 파일이 실제로 쟀는가. 밖이면 보정 근거가 없다. */
+    fun covers(hz: Double): Boolean = hz >= lowestHz && hz <= highestHz
+
+    /**
      * [hz] 에서 마이크의 응답(dB).
      *
      * **주파수는 로그로, dB 는 선형으로 보간한다.** 주파수를 선형으로 보간하면

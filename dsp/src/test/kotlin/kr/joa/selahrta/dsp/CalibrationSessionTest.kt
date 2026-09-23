@@ -31,18 +31,27 @@ class CalibrationSessionTest {
             }
         }
 
+    /**
+     * 기본 8장은 [QualityPolicy.minFramesPerStep] 의 바닥이다 — 그보다
+     * 적으면 반복성을 말할 수 없어 관문이 막는다(독립 검증 CP01).
+     */
     private fun sessionOf(
         before: DoubleArray,
         target: DoubleArray,
         after: DoubleArray,
-        repeats: Int = 4,
+        repeats: Int = 8,
+        calApplied: Boolean = true,
     ): SessionResult {
-        val s = CalibrationSession()
+        val s = CalibrationSession(referenceCalApplied = calApplied)
         repeat(repeats) { s.record(MeasureStep.ReferenceBefore, before) }
         repeat(repeats) { s.record(MeasureStep.Target, target) }
         repeat(repeats) { s.record(MeasureStep.ReferenceAfter, after) }
         return s.result()!!
     }
+
+    /** 보정 곡선에서 [hz] 에 가장 가까운 자리. */
+    private fun nearest(c: ResponseCurve, hz: Double): Int =
+        c.hz.indices.minByOrNull { abs(c.hz[it] - hz) }!!
 
     // ------------------------------------------------------------------
     // 순서
@@ -150,14 +159,14 @@ class CalibrationSessionTest {
     }
 
     /**
-     * **다 버려지면 안 버린 셈 친다.**
+     * **다 버려지면 전부 쓰되, 그랬다고 적는다**(독립 검증 CP01).
      *
-     * 장이 둘뿐이고 서로 멀면 중앙값이 그 가운데라 둘 다 벗어난다. 그때
-     * 빈손으로 돌려주면 세션이 통째로 사라진다 — 대신 전부 쓰고, 벌어짐을
-     * 그대로 남겨 품질 관문이 잡게 둔다.
+     * 장이 둘뿐이고 서로 멀면 중앙값이 그 가운데라 둘 다 벗어난다. 빈손으로
+     * 돌려주면 세션이 통째로 사라지므로 전부 쓴다 — 다만 `droppedFrames`
+     * 만 보면 0 이라 **「다 안정적이었다」로 읽힌다.** 정반대다.
      */
     @Test
-    fun `다 버려지면 전부 쓰고 벌어짐을 남긴다`() {
+    fun `다 버려지면 전부 쓰되 그랬다고 적는다`() {
         val s = CalibrationSession()
         s.record(MeasureStep.ReferenceBefore, flat(70.0))
         s.record(MeasureStep.Target, flat(40.0))
@@ -166,24 +175,95 @@ class CalibrationSessionTest {
 
         val t = s.result()!!.target
         assertEquals("빈손으로 돌려주지 않는다", 2, t.keptFrames)
-        assertEquals(0, t.droppedFrames)
-        assertEquals("벌어짐이 그대로 남아야 한다", 50.0, t.levelSpreadDb, 1e-9)
+        assertEquals("버린 것은 정말 없다", 0, t.droppedFrames)
+        assertTrue("안정된 장이 없었다고 적어야 한다", t.noStableFrames)
+        assertEquals("벌어짐이 그대로 남아야 한다", 50.0, t.levelSpreadDb!!, 1e-9)
     }
 
+    /**
+     * **CP01 반례 ①** — 기준 단계만 불안정하고 대상은 얌전한 경우.
+     *
+     * 예전에는 `repeatSpreadDb` 에 대상의 벌어짐만 담겨서, 기준이 50dB
+     * 출렁여도 **Pass** 가 나왔다.
+     */
     @Test
-    fun `대상의 벌어짐이 반복 편차가 된다`() {
-        val s = CalibrationSession()
-        s.record(MeasureStep.ReferenceBefore, flat(70.0))
-        s.record(MeasureStep.Target, flat(69.0))
-        s.record(MeasureStep.Target, flat(71.0))
-        s.record(MeasureStep.ReferenceAfter, flat(70.0))
-        assertEquals(2.0, s.result()!!.repeatSpreadDb, 1e-9)
+    fun `기준 단계가 불안정하면 막는다`() {
+        val s = CalibrationSession(referenceCalApplied = true)
+        for (step in listOf(MeasureStep.ReferenceBefore, MeasureStep.ReferenceAfter)) {
+            repeat(4) { s.record(step, flat(40.0)); s.record(step, flat(90.0)) }
+        }
+        repeat(8) { s.record(MeasureStep.Target, flat(60.0)) }
+        val r = s.result()!!
+
+        assertTrue("기준이 안정되지 않았다", r.noStableFrames)
+        val judged = judgeQuality(qualityFromSession(r, flat(10.0), dspVerifiedBySignal = true))
+        assertEquals(QualityVerdict.Fail, judged.verdict)
+        assertTrue(
+            "안정된 구간이 없었다고 말해야 한다: ${judged.reasonsKo}",
+            judged.reasonsKo.any { it.contains("안정된 구간") },
+        )
     }
 
+    /**
+     * **CP01 반례 ②** — 광대역은 같은데 **모양**이 변한 경우.
+     *
+     * 한 대역이 오르고 다른 대역이 내리면 광대역 차이는 0 이다. 예전에는
+     * 그것만 보아 Pass 를 주었고, 그 모양 변화가 **6.73dB 의 보정**으로
+     * 기록되었다 — 환경 변화가 마이크 특성이 된다.
+     */
     @Test
-    fun `장이 하나면 벌어짐은 0 이다`() {
+    fun `광대역이 같아도 모양이 변하면 막는다`() {
+        val a = flat(50.0).also { it[20] = 60.0 }
+        val b = flat(50.0).also { it[24] = 60.0 }
+        val r = sessionOf(a, a, b)
+
+        assertEquals("광대역은 변하지 않았다", 0.0, r.referenceDriftDb, 1e-9)
+        assertTrue(
+            "대역별로는 10dB 움직였다: ${r.referenceBandDriftDb}",
+            r.referenceBandDriftDb > 9.9,
+        )
+
+        val judged = judgeQuality(qualityFromSession(r, flat(10.0), dspVerifiedBySignal = true))
+        assertEquals(QualityVerdict.Fail, judged.verdict)
+        assertTrue(
+            "모양이 변했다고 말해야 한다: ${judged.reasonsKo}",
+            judged.reasonsKo.any { it.contains("모양") },
+        )
+    }
+
+    /** 세 단계 중 **가장 나쁜** 벌어짐을 쓴다 — 대상만 보지 않는다. */
+    @Test
+    fun `세 단계 중 가장 나쁜 벌어짐을 쓴다`() {
+        val s = CalibrationSession(referenceCalApplied = true)
+        repeat(4) { s.record(MeasureStep.ReferenceBefore, flat(70.0)) }
+        repeat(4) { s.record(MeasureStep.ReferenceBefore, flat(71.5)) } // 1.5dB
+        repeat(8) { s.record(MeasureStep.Target, flat(60.0)) } // 0dB
+        repeat(4) { s.record(MeasureStep.ReferenceAfter, flat(70.0)) }
+        repeat(4) { s.record(MeasureStep.ReferenceAfter, flat(70.5)) } // 0.5dB
+
+        assertEquals("기준 앞단의 1.5dB 가 이겨야 한다", 1.5, s.result()!!.repeatSpreadDb!!, 1e-9)
+    }
+
+    /** **장이 하나면 「0」이 아니라 「모른다」다.** */
+    @Test
+    fun `장이 하나면 벌어짐을 모른다`() {
         val r = sessionOf(flat(70.0), flat(68.0), flat(70.0), repeats = 1)
-        assertEquals(0.0, r.repeatSpreadDb, 1e-9)
+        assertNull("0 이 아니라 null 이어야 한다", r.target.levelSpreadDb)
+        assertNull(r.repeatSpreadDb)
+
+        val judged = judgeQuality(qualityFromSession(r, flat(40.0), dspVerifiedBySignal = true))
+        assertTrue("통과시키면 안 된다", judged.verdict != QualityVerdict.Pass)
+    }
+
+    @Test
+    fun `장이 모자라면 막는다`() {
+        val r = sessionOf(flat(70.0), flat(68.0), flat(70.0), repeats = 3)
+        val judged = judgeQuality(qualityFromSession(r, flat(40.0), dspVerifiedBySignal = true))
+        assertEquals(QualityVerdict.Fail, judged.verdict)
+        assertTrue(
+            "몇 개인지 말해야 한다: ${judged.reasonsKo}",
+            judged.reasonsKo.any { it.contains("3개") },
+        )
     }
 
     // ------------------------------------------------------------------
@@ -205,99 +285,138 @@ class CalibrationSessionTest {
     }
 
     // ------------------------------------------------------------------
-    // ★ 기준 마이크 보정 — 이 파일의 요점
+    // ★ 기준 CAL 은 밴드가 아니라 FFT 칸에 건다 (독립 검증 CP04)
     // ------------------------------------------------------------------
 
-    @Test
-    fun `보정이 없으면 그대로 돌려준다`() {
-        val src = flat(70.0)
-        val out = applyMicCalibration(src, null)
-        assertEquals(70.0, out[0], 1e-9)
-        assertFalse("복사본이어야 한다", out === src)
-    }
+    private fun goodQuality(r: SessionResult) =
+        qualityFromSession(r, flat(40.0), dspVerifiedBySignal = true)
 
-    /** [CalibrationCurve] 규약대로 **뺀다**. */
+    /**
+     * **칸 단위로 걸지 않았으면 만들지 않는다.**
+     *
+     * 예전에는 밴드 레벨에서 중심주파수 응답만 빼는 `applyMicCalibration`
+     * 이 있었는데, 그건 밴드 안에서 CAL 이 일정할 때만 맞다. 이 저장소가
+     * 이미 적어 둔 교훈을(R05) 새 경로에서 되살렸던 자리다.
+     */
     @Test
-    fun `기준 마이크의 응답을 뺀다`() {
-        val curve = CalibrationCurve.of(
-            listOf(CurvePoint(20.0, 3.0), CurvePoint(20_000.0, 3.0)),
-        ).getOrThrow()
-        val out = applyMicCalibration(flat(70.0), curve)
-        assertEquals("더하는 게 아니라 빼야 한다", 67.0, out[0], 1e-9)
+    fun `기준 CAL 을 칸에 걸지 않았으면 거절한다`() {
+        val r = sessionOf(flat(70.0), flat(70.0), flat(70.0), calApplied = false)
+        val out = calibrateFromSession(r, goodQuality(r), null)
+        assertTrue("거절해야 한다", out.isFailure)
+        assertTrue(
+            "까닭을 말해야 한다: ${out.exceptionOrNull()?.message}",
+            out.exceptionOrNull()?.message?.contains("칸") == true,
+        )
     }
 
     /**
-     * ## 이 시험이 잡는 것
+     * ## 기준에 CAL 이 걸려 있으면 보정은 0 이다
      *
-     * EMM-6 는 고역을 **더 크게** 잡는다(실측 20kHz 에서 +4.1dB). 그
-     * 곡선을 그대로 「참값」으로 쓰면, 내장 마이크가 멀쩡해도 「고역이
-     * 4dB 모자라다」로 보인다 → **없던 보정을 4dB 걸게 된다.**
-     *
-     * 여기서는 방도 휴대폰도 완전히 평탄하게 두고, EMM-6 만 고역에서
-     * +4dB 더 잡게 한다. **옳은 답은 보정 0dB 다.**
+     * EMM-6 는 고역을 더 크게 잡는다(실측 20kHz 에서 +4.1dB). 칸에서
+     * 그 응답을 걷어낸 기준을 넣으면 **휴대폰이 멀쩡할 때 보정 0** 이
+     * 나와야 하고, 걷어내지 않은 기준을 넣으면 그 응답만큼 **없던 보정**
+     * 이 걸린다.
      */
     @Test
-    fun `기준 마이크 보정을 빠뜨리면 없던 보정이 걸린다`() {
+    fun `기준에서 마이크 응답을 걷어내지 않으면 없던 보정이 걸린다`() {
         val riseDb = 4.0
-        // EMM-6 의 응답: 5kHz 까지 평탄, 10kHz 위로 +4dB.
-        val emm6 = CalibrationCurve.of(
-            listOf(
-                CurvePoint(20.0, 0.0),
-                CurvePoint(5_000.0, 0.0),
-                CurvePoint(10_000.0, riseDb),
-                CurvePoint(20_000.0, riseDb),
-            ),
-        ).getOrThrow()
-
-        // 방도 휴대폰도 평탄. EMM-6 가 잰 것은 「방 + 자기 응답」.
         val room = 70.0
-        val measuredByEmm6 = rising(room, 5_000.0, 10_000.0, riseDb)
-        val measuredByPhone = flat(room)
+        // 칸에서 CAL 을 건 뒤의 기준 = 방 그대로.
+        val corrected = flat(room)
+        // 걷어내지 않은 기준 = 방 + EMM-6 의 고역 상승.
+        val uncorrected = rising(room, 5_000.0, 10_000.0, riseDb)
+        val phone = flat(room)
 
-        val session = sessionOf(measuredByEmm6, measuredByPhone, measuredByEmm6)
+        val right = sessionOf(corrected, phone, corrected)
+        val wrong = sessionOf(uncorrected, phone, uncorrected)
 
-        val right = calibrateFromSession(session, emm6)
-        val wrong = calibrateFromSession(session, null) // CAL 을 빠뜨린 경우
+        val rightOut = calibrateFromSession(right, goodQuality(right), null).getOrThrow()
+        val wrongOut = calibrateFromSession(wrong, goodQuality(wrong), null).getOrThrow()
 
-        fun at(o: CalibrationOutcome, hz: Double): Double {
-            val i = o.correction.hz.indices.minByOrNull { abs(o.correction.hz[it] - hz) }!!
-            return o.correction.db[i]
-        }
-
-        val rightAt14k = at(right, 14_000.0)
-        val wrongAt14k = at(wrong, 14_000.0)
+        val rightAt14k = rightOut.correction.db[nearest(rightOut.correction, 14_000.0)]
+        val wrongAt14k = wrongOut.correction.db[nearest(wrongOut.correction, 14_000.0)]
         println(
-            "CAL_MISSING 14kHz 보정: CAL 적용=${"%.2f".format(rightAt14k)}dB  " +
-                "CAL 빠뜨림=${"%.2f".format(wrongAt14k)}dB",
+            "CAL_MISSING 14kHz 보정: 걷어냄=${"%.2f".format(rightAt14k)}dB  " +
+                "안 걷어냄=${"%.2f".format(wrongAt14k)}dB",
         )
 
         assertEquals("휴대폰이 멀쩡하므로 보정은 0 이어야 한다", 0.0, rightAt14k, 0.3)
+        assertTrue("안 걷어내면 없던 보정이 걸린다 ($wrongAt14k)", wrongAt14k > riseDb - 1.0)
+    }
+
+    // ------------------------------------------------------------------
+    // ★ 못 믿는 대역은 보정으로 넘어가지 않는다 (독립 검증 CP02)
+    // ------------------------------------------------------------------
+
+    /**
+     * **CP02 반례 ①** — 전체 비율은 통과하는데 한 대역만 SNR 미달.
+     *
+     * 예전에는 품질 화면이 「이 대역은 못 믿는다」고 하는데 보정 곡선은
+     * `valid=true` 라 그 자리에도 보정이 걸렸다.
+     */
+    @Test
+    fun `SNR 미달 대역은 보정에서 빠진다`() {
+        val signal = flat(70.0)
+        val r = sessionOf(signal, signal, signal)
+        // 20번 대역만 배경이 신호와 같다 → SNR 0.
+        val noise = flat(40.0).also { it[20] = signal[20] }
+        val q = qualityFromSession(r, noise, dspVerifiedBySignal = true)
+
+        assertFalse("그 대역은 못 쓴다", q.usable[20])
+        assertTrue("나머지는 쓸 수 있어 전체는 통과한다", q.usableRatio > 0.9)
+
+        val out = calibrateFromSession(r, q, null).getOrThrow()
+        val i = nearest(out.correction, ThirdOctave.exactCenter(20))
+        assertFalse(
+            "못 믿는 대역에 보정이 남으면 안 된다",
+            out.correction.valid[i],
+        )
+        // 이웃한 믿을 만한 자리는 살아 있어야 한다 — 전부 꺼 버리면 뜻이 없다.
+        val far = nearest(out.correction, ThirdOctave.exactCenter(10))
+        assertTrue("멀쩡한 대역은 살아 있어야 한다", out.correction.valid[far])
+    }
+
+    /**
+     * **CP02 반례 ②** — 기준 CAL 이 덮지 않는 주파수.
+     *
+     * `gainDbAt` 은 범위 밖에서 끝점 값을 돌려주므로 **숫자가 나온다는
+     * 것이 잰 적이 있다는 뜻이 아니다.** CAL 을 200Hz~10kHz 로 두었는데
+     * 30Hz 의 보정이 valid=true 였다.
+     */
+    @Test
+    fun `기준 CAL 이 덮지 않는 주파수는 보정에서 빠진다`() {
+        val r = sessionOf(flat(70.0), flat(70.0), flat(70.0))
+        val q = goodQuality(r)
+        val out = calibrateFromSession(r, q, 200.0..10_000.0).getOrThrow()
+
+        val low = nearest(out.correction, 30.0)
+        val high = nearest(out.correction, 18_000.0)
+        val mid = nearest(out.correction, 1_000.0)
+        assertFalse("CAL 아래쪽 밖", out.correction.valid[low])
+        assertFalse("CAL 위쪽 밖", out.correction.valid[high])
+        assertTrue("CAL 안쪽은 살아 있어야 한다", out.correction.valid[mid])
+    }
+
+    @Test
+    fun `믿을 수 있는 대역이 없으면 거절한다`() {
+        val r = sessionOf(flat(70.0), flat(70.0), flat(70.0))
+        val q = qualityFromSession(r, noiseDb = null) // 배경 미측정 → SNR 0
+        val out = calibrateFromSession(r, q, null)
+        assertTrue("거절해야 한다", out.isFailure)
         assertTrue(
-            "CAL 을 빠뜨리면 없던 보정이 걸린다 ($wrongAt14k)",
-            wrongAt14k > riseDb - 1.0,
+            "${out.exceptionOrNull()?.message}",
+            out.exceptionOrNull()?.message?.contains("믿을 수 있는 대역") == true,
         )
     }
 
-    /** 중역(정규화 대역)은 어느 쪽이든 0 이다 — 차이가 고역에만 있다는 확인. */
+    /** 평활을 지나도 **무효 구간이 살아 있어야** 한다. */
     @Test
-    fun `중역에서는 두 경우가 같다`() {
-        val emm6 = CalibrationCurve.of(
-            listOf(
-                CurvePoint(20.0, 0.0),
-                CurvePoint(5_000.0, 0.0),
-                CurvePoint(10_000.0, 4.0),
-                CurvePoint(20_000.0, 4.0),
-            ),
-        ).getOrThrow()
-        val measured = rising(70.0, 5_000.0, 10_000.0, 4.0)
-        val session = sessionOf(measured, flat(70.0), measured)
-
-        fun at(o: CalibrationOutcome, hz: Double): Double {
-            val i = o.correction.hz.indices.minByOrNull { abs(o.correction.hz[it] - hz) }!!
-            return o.correction.db[i]
-        }
-        assertEquals(0.0, at(calibrateFromSession(session, emm6), 1_000.0), 0.1)
-        assertEquals(0.0, at(calibrateFromSession(session, null), 1_000.0), 0.1)
+    fun `평활 뒤에도 무효 구간이 남는다`() {
+        val r = sessionOf(flat(70.0), flat(70.0), flat(70.0))
+        val q = goodQuality(r)
+        val out = calibrateFromSession(r, q, 200.0..10_000.0).getOrThrow()
+        assertTrue("무효 구간이 있어야 한다", out.correction.valid.any { !it })
+        assertTrue("유효 구간도 있어야 한다", out.correction.valid.any { it })
     }
 
     // ------------------------------------------------------------------
@@ -314,8 +433,10 @@ class CalibrationSessionTest {
         val r = s.result()!!
 
         val q = qualityFromSession(r, noiseDb = flat(40.0))
-        assertEquals(r.repeatSpreadDb, q.repeatSpreadDb!!, 1e-9)
+        assertEquals(r.repeatSpreadDb!!, q.repeatSpreadDb!!, 1e-9)
         assertEquals(r.referenceDriftDb, q.referenceDriftDb!!, 1e-9)
+        assertEquals(r.referenceBandDriftDb, q.referenceBandDriftDb!!, 1e-9)
+        assertEquals(r.minFramesPerStep, q.minFramesPerStep)
         assertEquals(n, q.bands.size)
         assertEquals("1kHz 밴드의 중심주파수", 1000.0, q.bands[17].hz, 1e-9)
         assertTrue("SNR 이 넉넉하면 다 쓸 수 있다", q.usableRatio > 0.99)

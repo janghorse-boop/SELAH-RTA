@@ -85,9 +85,28 @@ private fun log2(x: Double) = ln(x) / ln(2.0)
  * **잰 범위 밖은 늘이지 않는다.** 끝점 값을 그대로 이어 붙이면 그럴듯한
  * 그래프가 나오지만, 그 대역은 잰 적이 없다. `valid = false` 로 둔다.
  */
-fun interpolateToAxis(points: List<CurvePoint>, axis: DoubleArray): ResponseCurve {
+fun interpolateToAxis(
+    points: List<CurvePoint>,
+    axis: DoubleArray,
+    /**
+     * 점마다 **그 값을 믿어도 되는가**. [points] 와 같은 길이다.
+     * null 이면 전부 믿는다.
+     *
+     * **못 믿는 점을 가로질러 보간하지 않는다**(독립 검증 CP02). SNR 이
+     * 모자라 버린 대역 위로 선을 이으면 그 자리에 「잰 값」이 생기고
+     * 보정까지 걸린다 — 품질 화면은 「이 대역은 못 믿는다」고 말하는데
+     * 계산은 반대로 간다.
+     */
+    pointValid: BooleanArray? = null,
+): ResponseCurve {
     require(points.size >= 2) { "점이 둘 이상 있어야 한다: ${points.size}" }
-    val sorted = points.sortedBy { it.hz }
+    require(pointValid == null || pointValid.size == points.size) {
+        "유효 표시 길이가 다르다: ${pointValid?.size} != ${points.size}"
+    }
+    // 정렬하면서 유효 표시도 **같이** 옮긴다. 따로 정렬하면 짝이 어긋난다.
+    val order = points.indices.sortedBy { points[it].hz }
+    val sorted = order.map { points[it] }
+    val sortedValid = pointValid?.let { pv -> BooleanArray(order.size) { pv[order[it]] } }
     val lo = sorted.first().hz
     val hi = sorted.last().hz
 
@@ -111,7 +130,8 @@ fun interpolateToAxis(points: List<CurvePoint>, axis: DoubleArray): ResponseCurv
             val t = (log10(f) - log10(a.hz)) / (log10(b.hz) - log10(a.hz))
             a.gainDb + t * (b.gainDb - a.gainDb)
         }
-        valid[i] = true
+        // **양끝이 다 믿을 만할 때만** 그 사이를 믿는다.
+        valid[i] = sortedValid == null || (sortedValid[j] && sortedValid[j + 1])
     }
     return ResponseCurve(axis, db, valid)
 }
@@ -283,10 +303,17 @@ fun calibrateResponse(
     referencePoints: List<CurvePoint>,
     internalPoints: List<CurvePoint>,
     settings: CalibrationSettings = CalibrationSettings(),
+    /**
+     * 기준 점마다 믿어도 되는가. **기준 마이크 CAL 이 덮지 않는 주파수와
+     * 기준 경로의 SNR 미달 대역**이 여기서 빠진다(독립 검증 CP02).
+     */
+    referenceValid: BooleanArray? = null,
+    /** 대상 점마다 믿어도 되는가. **SNR 미달 대역**이 여기서 빠진다. */
+    internalValid: BooleanArray? = null,
 ): CalibrationOutcome {
     val axis = logAxis(settings.axisFromHz, settings.axisToHz, settings.pointsPerOctave)
-    val reference = interpolateToAxis(referencePoints, axis)
-    val internalRaw = interpolateToAxis(internalPoints, axis)
+    val reference = interpolateToAxis(referencePoints, axis, referenceValid)
+    val internalRaw = interpolateToAxis(internalPoints, axis, internalValid)
 
     // **기준도 대상도 같은 대역에서 맞춘다.** 한쪽만 맞추면 그 차이가
     // 그대로 보정값이 된다.

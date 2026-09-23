@@ -21,6 +21,36 @@ class CalibrationQualityTest {
         BandNoise(hz, signalDb = 80.0, noiseDb = 80.0 - snrDb)
     }
 
+    /**
+     * **반복성 쪽은 멀쩡한** 보고. SNR 만 보는 시험들이 쓴다.
+     *
+     * 따로 둔 까닭: 반복성을 말할 근거가 없는 보고는 이제 Pass 가 되지
+     * 않는다(독립 검증 CP01). 그건 의도된 것이라, 관문을 느슨하게 하는
+     * 대신 **표본을 온전하게** 만든다 — 장을 충분히 모았고 세 단계가
+     * 모두 안정적이었고 기준이 흐르지 않은 경우다.
+     */
+    private fun report(
+        bands: List<BandNoise>,
+        policy: QualityPolicy = QualityPolicy(),
+        dspVerifiedBySignal: Boolean = true,
+        repeatSpreadDb: Double? = 0.5,
+        referenceDriftDb: Double? = 0.2,
+        referenceBandDriftDb: Double? = 0.4,
+        noStableFrames: Boolean = false,
+        minFramesPerStep: Int? = 16,
+        clipped: Boolean = false,
+    ) = QualityReport(
+        bands = bands,
+        repeatSpreadDb = repeatSpreadDb,
+        referenceDriftDb = referenceDriftDb,
+        referenceBandDriftDb = referenceBandDriftDb,
+        noStableFrames = noStableFrames,
+        minFramesPerStep = minFramesPerStep,
+        clipped = clipped,
+        dspVerifiedBySignal = dspVerifiedBySignal,
+        policy = policy,
+    )
+
     @Test
     fun `SNR 은 신호에서 배경을 뺀 값이다`() {
         assertEquals(20.0, BandNoise(1000.0, 80.0, 60.0).snrDb, 1e-9)
@@ -55,7 +85,7 @@ class CalibrationQualityTest {
 
     @Test
     fun `조용한 조건은 통과한다`() {
-        val r = judgeQuality(QualityReport(bands(snrDb = 25.0), dspVerifiedBySignal = true))
+        val r = judgeQuality(report(bands(snrDb = 25.0)))
         assertEquals(QualityVerdict.Pass, r.verdict)
         assertTrue(r.maySave)
         assertTrue(r.mayAutoApply)
@@ -142,14 +172,58 @@ class CalibrationQualityTest {
     @Test
     fun `허용 안이면 통과한다`() {
         val r = judgeQuality(
-            QualityReport(
-                bands(25.0),
-                repeatSpreadDb = 1.0,
-                referenceDriftDb = 0.4,
-                dspVerifiedBySignal = true,
-            ),
+            report(bands(25.0), repeatSpreadDb = 1.0, referenceDriftDb = 0.4),
         )
         assertEquals(QualityVerdict.Pass, r.verdict)
+    }
+
+    // ------------------------------------------------------------------
+    // 반복성 — 「모른다」를 「괜찮다」로 바꾸지 않는다 (독립 검증 CP01)
+    // ------------------------------------------------------------------
+
+    /**
+     * **광대역이 같아도 모양은 변했을 수 있다.**
+     *
+     * 이걸 안 보면 환경 변화가 마이크 특성으로 기록된다 — 반례에서
+     * 광대역 흐름 0dB 에 6.73dB 의 보정이 생겼다.
+     */
+    @Test
+    fun `기준이 대역별로 크게 달라지면 버린다`() {
+        val r = judgeQuality(
+            report(bands(25.0), referenceDriftDb = 0.0, referenceBandDriftDb = 6.0),
+        )
+        assertEquals(QualityVerdict.Fail, r.verdict)
+        assertTrue("${r.reasonsKo}", r.reasonsKo.any { it.contains("모양") })
+    }
+
+    @Test
+    fun `안정된 장이 하나도 없으면 버린다`() {
+        val r = judgeQuality(report(bands(25.0), noStableFrames = true))
+        assertEquals(QualityVerdict.Fail, r.verdict)
+        assertTrue("${r.reasonsKo}", r.reasonsKo.any { it.contains("안정된 구간") })
+    }
+
+    @Test
+    fun `장이 모자라면 버린다`() {
+        val r = judgeQuality(report(bands(25.0), minFramesPerStep = 2))
+        assertEquals(QualityVerdict.Fail, r.verdict)
+        assertTrue("${r.reasonsKo}", r.reasonsKo.any { it.contains("2개") })
+    }
+
+    /** **모르는 것은 통과시키지 않는다** — 0 도 아니고 Pass 도 아니다. */
+    @Test
+    fun `벌어짐을 모르면 통과시키지 않는다`() {
+        val r = judgeQuality(report(bands(25.0), repeatSpreadDb = null))
+        assertEquals(QualityVerdict.Degraded, r.verdict)
+        assertFalse("자동 적용은 막는다", r.mayAutoApply)
+        assertTrue("${r.reasonsKo}", r.reasonsKo.any { it.contains("재지 못했") })
+    }
+
+    @Test
+    fun `장 수를 모르면 통과시키지 않는다`() {
+        val r = judgeQuality(report(bands(25.0), minFramesPerStep = null))
+        assertEquals(QualityVerdict.Degraded, r.verdict)
+        assertTrue("${r.reasonsKo}", r.reasonsKo.any { it.contains("모은 장 수") })
     }
 
     // ------------------------------------------------------------------
@@ -202,7 +276,7 @@ class CalibrationQualityTest {
     @Test
     fun `쓴 기준을 함께 남긴다`() {
         val p = QualityPolicy(minBandSnrDb = 15.0, minUsableBandRatio = 0.8)
-        val r = judgeQuality(QualityReport(bands(20.0), policy = p, dspVerifiedBySignal = true))
+        val r = judgeQuality(report(bands(20.0), policy = p))
         assertEquals(15.0, r.report.policy.minBandSnrDb, 0.0)
         assertEquals(0.8, r.report.policy.minUsableBandRatio, 0.0)
         assertEquals("20dB 는 15dB 문턱을 넘는다", QualityVerdict.Pass, r.verdict)
@@ -214,7 +288,7 @@ class CalibrationQualityTest {
         val b = bands(20.0)
         assertEquals(
             QualityVerdict.Pass,
-            judgeQuality(QualityReport(b, dspVerifiedBySignal = true)).verdict,
+            judgeQuality(report(b)).verdict,
         )
         assertEquals(
             QualityVerdict.Fail,

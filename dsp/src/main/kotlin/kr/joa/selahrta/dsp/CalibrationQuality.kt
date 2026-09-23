@@ -74,17 +74,59 @@ data class QualityPolicy(
     val minUsableBandRatio: Double = 0.6,
     /** 반복 측정이 이보다 벌어지면 버린다. */
     val maxRepeatSpreadDb: Double = 2.0,
-    /** 기준 전후 재측정이 이보다 벌어지면 버린다(스피커·환경이 변했다). */
+    /** 기준 전후 재측정의 **광대역** 차이가 이보다 크면 버린다. */
     val maxReferenceDriftDb: Double = 1.0,
+    /**
+     * 기준 전후 재측정의 **대역별** 차이가 이보다 크면 버린다.
+     *
+     * **광대역만 보면 모양 변화가 상쇄된다**(독립 검증 CP01). 20번 밴드가
+     * 오르고 24번 밴드가 내리면 광대역 차이는 0 인데, 그 모양 변화가
+     * 그대로 마이크 보정으로 기록된다 — 반례에서 **6.73dB** 의 보정이
+     * 생겼다.
+     *
+     * 광대역보다 느슨한 것은 대역 하나의 우연한 흔들림이 광대역보다 크기
+     * 때문이다.
+     */
+    val maxReferenceBandDriftDb: Double = 2.0,
+    /**
+     * 한 단계에 적어도 이만큼의 장이 있어야 반복성을 말할 수 있다.
+     *
+     * **장이 하나면 벌어짐이 0 으로 나오는데, 그것은 「흔들리지 않았다」가
+     * 아니라 「모른다」다**(독립 검증 CP01). 이 값은 **바닥이지 충분함의
+     * 증명이 아니다** — 실제 세션은 수초 분량으로 훨씬 많이 모은다.
+     */
+    val minFramesPerStep: Int = 8,
 )
 
 /** 한 번의 교정 측정에서 나온 품질 지표들. */
 data class QualityReport(
     val bands: List<BandNoise>,
-    /** 같은 조건을 되풀이해 잰 값들의 벌어짐(dB). 한 번만 쟀으면 null. */
+    /**
+     * 같은 조건을 되풀이해 잰 값들의 벌어짐(dB).
+     *
+     * **세 단계 중 가장 나쁜 것**이다 — 기준이 흔들렸으면 대상이
+     * 얌전해도 그 세션은 못 쓴다(독립 검증 CP01). `null` 은 「흔들리지
+     * 않았다」가 아니라 **「알 수 없다」**(장이 모자랐다).
+     */
     val repeatSpreadDb: Double? = null,
-    /** 기준 측정 → 대상 측정 → 기준 재측정 의 앞뒤 차이(dB). 안 쟀으면 null. */
+    /** 기준 측정 → 대상 측정 → 기준 재측정 의 **광대역** 차이(dB). 안 쟀으면 null. */
     val referenceDriftDb: Double? = null,
+    /**
+     * 앞뒤 기준의 **대역별** 차이 중 가장 큰 것(dB).
+     *
+     * 광대역 차이가 0 이어도 이 값은 클 수 있다 — 그때 변한 것은 음량이
+     * 아니라 **모양**이고, 그 모양이 마이크 보정으로 기록된다(CP01).
+     */
+    val referenceBandDriftDb: Double? = null,
+    /**
+     * 어느 단계에서든 **안정된 장을 하나도 못 골랐는가**.
+     *
+     * 그때 세션은 걸러내기를 포기하고 전부 쓴다. 기록에는 「버린 장 0」
+     * 으로 남지만 실제로 일어난 일은 정반대다 — 그래서 따로 적는다.
+     */
+    val noStableFrames: Boolean = false,
+    /** 한 단계에 모인 장 수 중 가장 적은 것. 모르면 null. */
+    val minFramesPerStep: Int? = null,
     /** 재는 동안 잘린 적이 있는가. */
     val clipped: Boolean = false,
     /**
@@ -175,6 +217,38 @@ fun judgeQuality(report: QualityReport): QualityResult {
                 "(허용 ${"%.1f".format(p.maxReferenceDriftDb)}dB). " +
                 "재는 동안 스피커나 환경이 변했습니다."
         }
+    }
+
+    // **광대역이 같아도 모양은 변했을 수 있다**(독립 검증 CP01).
+    // 이것을 보지 않으면 환경 변화가 마이크 특성으로 기록된다.
+    report.referenceBandDriftDb?.let {
+        if (it > p.maxReferenceBandDriftDb) {
+            fails += "기준 재측정이 어떤 대역에서 앞과 ${"%.1f".format(it)}dB 다릅니다" +
+                "(허용 ${"%.1f".format(p.maxReferenceBandDriftDb)}dB). " +
+                "전체 음량은 같아도 소리의 「모양」이 변했다는 뜻입니다 — " +
+                "스피커·마이크 위치나 주변 소리가 달라졌는지 보십시오."
+        }
+    }
+
+    // **안정된 장을 하나도 못 골랐다면 반복성을 말할 수 없다.**
+    // 걸러내기를 포기하고 전부 쓴 것이므로, 그 평균은 「잰 값」이 아니다.
+    if (report.noStableFrames) {
+        fails += "안정된 구간을 하나도 찾지 못했습니다. 재는 동안 소리가 " +
+            "계속 변했다는 뜻입니다 — 조용해진 뒤 다시 재십시오."
+    }
+
+    // **장이 하나면 벌어짐이 0 으로 나오지만 그것은 「모른다」다.**
+    when (val n = report.minFramesPerStep) {
+        null -> degrades += "모은 장 수를 기록하지 않아 반복성을 말할 수 없습니다."
+        else -> if (n < p.minFramesPerStep) {
+            fails += "한 단계에 모인 장이 ${n}개뿐입니다" +
+                "(적어도 ${p.minFramesPerStep}개). 더 길게 재십시오."
+        }
+    }
+
+    // 벌어짐을 아예 재지 못한 경우도 **통과로 넘기지 않는다.**
+    if (report.repeatSpreadDb == null) {
+        degrades += "반복 측정의 벌어짐을 재지 못했습니다. 흔들리지 않았다는 뜻이 아닙니다."
     }
 
     // **DSP 를 신호로 확인하지 않았으면 자동 적용까지는 못 간다.**

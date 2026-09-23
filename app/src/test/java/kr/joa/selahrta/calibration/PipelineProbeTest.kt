@@ -5,30 +5,40 @@ import kr.joa.selahrta.dsp.CalibrationSession
 import kr.joa.selahrta.dsp.CurvePoint
 import kr.joa.selahrta.dsp.MeasureStep
 import kr.joa.selahrta.dsp.ThirdOctave
-import kr.joa.selahrta.dsp.applyMicCalibration
 import kr.joa.selahrta.dsp.calibrateFromSession
 import kr.joa.selahrta.dsp.judgeQuality
 import kr.joa.selahrta.dsp.qualityFromSession
 import org.junit.Test
 import kotlin.math.abs
 import kotlin.math.ln
-import kotlin.math.log10
-import kotlin.math.pow
 
 /**
- * **Codex 가 보낸 `Calibration-PipelineProbe.kt` 를 본문 그대로 옮긴 것.**
- * (`docs/review/Calibration-PipelineProbe.kt`, 2026-09-23 검토서 CP01~CP04)
+ * **Codex 가 보낸 `Calibration-PipelineProbe.kt` 의 관측점들**
+ * (`docs/review/Calibration-PipelineProbe.kt`, 2026-09-23 검토서 CP01~CP04).
  *
- * 바꾼 것은 JUnit 껍데기와 import, 그리고 **한 줄**뿐이다. 계산과 출력
- * 줄은 손대지 않았다 — 고치기 전 숫자가 검토서의 값과 같은지부터 봐야 한다.
+ * ## 이 파일은 회귀 시험이 아니다
  *
- * 바꾼 한 줄: `CODEC_NAN` 에서 `decoded.getOrThrow()` 를 `getOrNull()` 로
- * 했다. 성공일 때 값이 같으므로 **고치기 전 출력은 그대로**이고, 고친
- * 뒤에는 decode 가 실패를 돌려주어야 하는데 `getOrThrow()` 면 probe 가
- * 예외로 죽어 아무것도 못 보게 된다.
+ * 결함을 **관측**하는 도구다. 지금의 값을 정답으로 못 박지 않는다 —
+ * 회귀는 `CalibrationSessionTest`·`CalibrationQualityTest`·
+ * `ProfileCodecTest` 가 잰다.
  *
- * **이 파일은 회귀 시험이 아니다.** 지금 있는 결함을 **관측**하는 도구다.
- * 고친 뒤에는 관측값이 바뀌고, 그때 제대로 된 회귀 시험을 따로 쓴다.
+ * ## 고치기 전 (본문 그대로 옮겨 재현한 값)
+ *
+ * ```
+ * UNSTABLE_REFERENCE spread=50.0 kept=2 dropped=0 verdict=Pass
+ * SPECTRAL_DRIFT drift=0.0 verdict=Pass correctionMax=6.73374204940048
+ * MASK quality=Pass snrUsable=false correctionValid=true calOutside30HzValid=true
+ * CODEC_NAN success=true validNan=120
+ * CENTER_CAL expected=0.0 actual=3.2554237993212123 centerGain=0.0
+ * ```
+ *
+ * 다섯 줄 모두 검토서의 값과 일치했다.
+ *
+ * ## 고친 뒤
+ *
+ * API 가 바뀌어 본문 그대로는 더 이상 컴파일되지 않는다(그것이 CP04 의
+ * 고침이다 — `applyMicCalibration` 이 사라졌다). **관측점은 그대로 두고**
+ * 새 API 로 겨누었다. 값은 실행이 찍는다.
  */
 class PipelineProbeTest {
 
@@ -37,7 +47,8 @@ class PipelineProbeTest {
         val n = ThirdOctave.BAND_COUNT
         fun flat(x: Double) = DoubleArray(n) { x }
 
-        val s = CalibrationSession()
+        // ── CP01 ① 기준 단계가 통째로 불안정한 경우 ────────────────────
+        val s = CalibrationSession(referenceCalApplied = true)
         for (step in listOf(MeasureStep.ReferenceBefore, MeasureStep.ReferenceAfter)) {
             s.record(step, flat(40.0)); s.record(step, flat(90.0))
         }
@@ -46,10 +57,12 @@ class PipelineProbeTest {
         println(
             "UNSTABLE_REFERENCE spread=${r.referenceBefore.levelSpreadDb} " +
                 "kept=${r.referenceBefore.keptFrames} dropped=${r.referenceBefore.droppedFrames} " +
+                "noStable=${r.referenceBefore.noStableFrames} " +
                 "verdict=${judgeQuality(qualityFromSession(r, flat(10.0), dspVerifiedBySignal = true)).verdict}",
         )
 
-        val s2 = CalibrationSession()
+        // ── CP01 ② 광대역은 같은데 모양이 변한 경우 ────────────────────
+        val s2 = CalibrationSession(referenceCalApplied = true)
         val a = flat(50.0); a[20] = 60.0
         val b = flat(50.0); b[24] = 60.0
         repeat(4) {
@@ -58,18 +71,21 @@ class PipelineProbeTest {
             s2.record(MeasureStep.Target, a)
         }
         val r2 = s2.result()!!
+        val q2 = qualityFromSession(r2, flat(10.0), dspVerifiedBySignal = true)
+        val out2 = calibrateFromSession(r2, q2, null)
         println(
-            "SPECTRAL_DRIFT drift=${r2.referenceDriftDb} " +
-                "verdict=${judgeQuality(qualityFromSession(r2, flat(10.0), dspVerifiedBySignal = true)).verdict} " +
-                "correctionMax=${calibrateFromSession(r2, null).correction.db.maxOf { abs(it) }}",
+            "SPECTRAL_DRIFT drift=${r2.referenceDriftDb} bandDrift=${r2.referenceBandDriftDb} " +
+                "verdict=${judgeQuality(q2).verdict} " +
+                "correctionMax=${out2.getOrNull()?.correction?.db?.maxOf { abs(it) } ?: "-"}",
         )
 
+        // ── CP02 SNR 마스크와 CAL 범위가 보정으로 넘어가는가 ───────────
         val noise = flat(10.0); noise[20] = a[20]
         val q = qualityFromSession(r2, noise, dspVerifiedBySignal = true)
-        val c = calibrateFromSession(
-            r2,
-            CalibrationCurve.of(listOf(CurvePoint(200.0, 0.0), CurvePoint(10000.0, 0.0))).getOrThrow(),
-        )
+        val cal = CalibrationCurve.of(
+            listOf(CurvePoint(200.0, 0.0), CurvePoint(10000.0, 0.0)),
+        ).getOrThrow()
+        val c = calibrateFromSession(r2, q, cal.rangeHz).getOrThrow()
         val ix = c.correction.hz.indices.minBy { abs(ln(c.correction.hz[it] / ThirdOctave.exactCenter(20))) }
         val lo = c.correction.hz.indices.minBy { abs(c.correction.hz[it] - 30.0) }
         println(
@@ -77,6 +93,7 @@ class PipelineProbeTest {
                 "correctionValid=${c.correction.valid[ix]} calOutside30HzValid=${c.correction.valid[lo]}",
         )
 
+        // ── CP03 손상된 곡선 파일 ───────────────────────────────────────
         val text = encodeCurves(c)
         val bad = text.lineSequence().map {
             if (it.startsWith("correction.db=")) {
@@ -94,15 +111,20 @@ class PipelineProbeTest {
             }",
         )
 
-        val center = ThirdOctave.exactCenter(17)
-        val centerCurve = CalibrationCurve.of(
-            listOf(CurvePoint(900.0, 6.0), CurvePoint(center, 0.0), CurvePoint(1100.0, -6.0)),
-        ).getOrThrow()
-        val integrated = 10 * log10((10.0.pow(6.0 / 10) + 10.0.pow(-6.0 / 10)) / 2)
-        val bandSample = flat(0.0); bandSample[17] = integrated
+        // ── CP04 CAL 을 밴드 중심에서 빼던 자리 ────────────────────────
+        // 그 함수(applyMicCalibration)는 사라졌다. 이제 확인할 것은
+        // 「칸에 걸지 않은 기준으로는 보정을 만들지 않는가」다.
+        val s3 = CalibrationSession(referenceCalApplied = false)
+        repeat(8) {
+            s3.record(MeasureStep.ReferenceBefore, flat(70.0))
+            s3.record(MeasureStep.Target, flat(70.0))
+            s3.record(MeasureStep.ReferenceAfter, flat(70.0))
+        }
+        val r3 = s3.result()!!
+        val out3 = calibrateFromSession(r3, qualityFromSession(r3, flat(40.0)), null)
         println(
-            "CENTER_CAL expected=0.0 actual=${applyMicCalibration(bandSample, centerCurve)[17]} " +
-                "centerGain=${centerCurve.gainDbAt(center)}",
+            "CENTER_CAL refusedWhenCalNotApplied=${out3.isFailure} " +
+                "why=${out3.exceptionOrNull()?.message?.take(40)}",
         )
     }
 }
