@@ -317,8 +317,13 @@ data class CalibrationOutcome(
      * CAL 범위·SNR·축 경계도 지원을 줄이므로, 이것 없이 상한을 탓하면
      * **사람이 엉뚱한 재측정을 한다** — 실제로 보정값이 전부 0dB 인
      * 경우에도 「상한을 넘는 자리가 많다」고 말하고 있었다.
+     *
+     * **`null` 은 「상한 아님」이 아니라 「모른다」다**(독립 검증 L01-R).
+     * 이 표시를 담지 않은 곡선 파일에서 되읽으면 null 이 된다. 그때
+     * 전부 false 로 두면 **상한이 원인인 결과를 SNR·CAL 탓으로 바꿔
+     * 말하게 된다** — 왕복 한 번에 까닭이 뒤바뀌었다.
      */
-    val limitedByMaxCorrection: BooleanArray = BooleanArray(correction.size),
+    val limitedByMaxCorrection: BooleanArray? = null,
 ) {
     /**
      * 두 곡선이 **함께 믿을 만했던** 정규화 대역 안의 점 수.
@@ -390,9 +395,11 @@ data class CalibrationOutcome(
      * 경우에도 그랬다.
      */
     fun unsupportedReasonsKo(): List<String> {
+        val limited = limitedByMaxCorrection
         var offAxis = 0
         var byLimit = 0
         var byMask = 0
+        var unknown = 0
         val supported = supportedBands.toSet()
         for (b in 0 until ThirdOctave.BAND_COUNT) {
             if (b in supported) continue
@@ -401,7 +408,11 @@ data class CalibrationOutcome(
             val inBand = correction.hz.indices.filter { correction.hz[it] in lo..hi }
             when {
                 inBand.isEmpty() -> offAxis++
-                inBand.any { limitedByMaxCorrection[it] } -> byLimit++
+                // **표시가 없으면 「상한 아님」이 아니라 「모른다」다.**
+                // 예전에는 없는 것을 false 로 읽어, 왕복 한 번에 상한이
+                // 원인인 결과가 SNR·CAL 탓으로 바뀌었다(L01-R).
+                limited == null -> unknown++
+                inBand.any { limited[it] } -> byLimit++
                 else -> byMask++
             }
         }
@@ -410,6 +421,7 @@ data class CalibrationOutcome(
             if (byLimit > 0) {
                 add("보정량이 상한(${"%.0f".format(settings.maxCorrectionDb)}dB)을 넘음 ${byLimit}대역")
             }
+            if (unknown > 0) add("까닭 정보 없음 ${unknown}대역")
             if (offAxis > 0) add("분석 축 범위 밖 ${offAxis}대역")
         }
     }

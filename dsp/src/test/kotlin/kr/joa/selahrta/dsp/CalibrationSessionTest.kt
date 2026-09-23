@@ -687,7 +687,7 @@ class CalibrationSessionTest {
             "보정값이 전부 0dB 여야 이 시험에 뜻이 있다",
             0.0, out.correction.db.maxOf { abs(it) }, 1e-9,
         )
-        assertFalse("상한이 자른 점이 없어야 한다", out.limitedByMaxCorrection.any { it })
+        assertFalse("상한이 자른 점이 없어야 한다", out.limitedByMaxCorrection!!.any { it })
         assertTrue("그런데 지원은 모자라다", out.supportedBandRatio < 0.6)
 
         val final = judgeCalibration(q, out)
@@ -710,7 +710,7 @@ class CalibrationSessionTest {
         )
         val out = calibrateFromSession(r, q).getOrThrow()
 
-        assertTrue("상한이 실제로 잘랐어야 한다", out.limitedByMaxCorrection.any { it })
+        assertTrue("상한이 실제로 잘랐어야 한다", out.limitedByMaxCorrection!!.any { it })
 
         val band = judgeCalibration(q, out).reasonsKo
             .first { it.contains("계산을 마친 뒤 보정이 걸리는 대역") }
@@ -736,6 +736,41 @@ class CalibrationSessionTest {
         val out = calibrateFromSession(r, goodQuality(r)).getOrThrow()
         assertEquals(n, out.supportedBands.size)
         assertTrue(out.unsupportedReasonsKo().isEmpty())
+    }
+
+    /**
+     * **최종 유효점이 0개인 결과는 실제 경로로 만들어진다.**
+     *
+     * 직전 회신서에서 「`calibrateFromSession` 이 먼저 거절하므로 그런
+     * outcome 을 만들 수 없다」고 적었는데 **틀렸다.** 그 함수가 보는
+     * 정규화 지원 점은 **상한 적용 전**의 것이라, 상한이 최종 보정을
+     * 전부 무효로 만들어도 정규화 점은 남는다.
+     *
+     * 아주 작은 상한은 현장 값이 아니라 **그 분기에 닿기 위한 설정**이다.
+     */
+    @Test
+    fun `최종 유효점이 없으면 막는다`() {
+        val ref = DoubleArray(n) {
+            if (it < 2 || it > 28) 70.0 else if (it % 2 == 0) 100.0 else 40.0
+        }
+        val r = sessionOf(ref, flat(70.0))
+        val q = qualityFromSession(
+            r, flat(0.0), referenceNoiseDb = flat(0.0),
+            referenceCalRangeHz = 20.0..20_000.0, dspVerifiedBySignal = true,
+        )
+        val out = calibrateFromSession(r, q, CalibrationSettings(maxCorrectionDb = 0.000001))
+            .getOrThrow()
+
+        // **전제부터 확인한다** — 정말 그 분기에 닿았는가.
+        assertTrue("정규화 점은 남아 있다", out.normalizeSupportPoints > 0)
+        assertEquals("최종 유효점은 하나도 없다", 0, out.correction.validCount)
+
+        val final = judgeCalibration(q, out)
+        assertEquals(QualityVerdict.Fail, final.verdict)
+        assertTrue(
+            "자리가 남지 않았다고 말해야 한다: ${final.reasonsKo}",
+            final.reasonsKo.any { it.contains("보정이 걸리는 자리가 하나도") },
+        )
     }
 
     /** 멀쩡한 평탄 입력은 **그대로 통과해야** 한다 — 관문이 과하지 않게. */

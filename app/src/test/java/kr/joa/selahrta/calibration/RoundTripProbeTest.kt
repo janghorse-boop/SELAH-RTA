@@ -12,7 +12,9 @@ import org.junit.Test
  * **Codex 가 보낸 `L01-RoundTripProbe.kt` 를 본문 그대로 옮긴 것**
  * (`docs/review/L01-RoundTripProbe.kt`, 2026-09-23 재검토 L01-R).
  *
- * 바꾼 것은 JUnit 껍데기와 import 뿐이다.
+ * 바꾼 것은 JUnit 껍데기와 import, 그리고 `limitedByMaxCorrection` 의
+ * 안전 호출(`?.`) 뿐이다 — 그 필드가 nullable 이 된 것이 L01-R 의
+ * 고침이라, 본문 그대로는 더 이상 컴파일되지 않는다.
  *
  * **회귀 시험이 아니라 관측 도구다.**
  *
@@ -49,8 +51,8 @@ class RoundTripProbeTest {
         val o = calibrateFromSession(r, q).getOrThrow()
         val decoded = decodeCurves(encodeCurves(o)).getOrThrow()
         println(
-            "ROUNDTRIP flags=${o.limitedByMaxCorrection.count { it }}->" +
-                "${decoded.limitedByMaxCorrection.count { it }} " +
+            "ROUNDTRIP flags=${o.limitedByMaxCorrection?.count { it }}->" +
+                "${decoded.limitedByMaxCorrection?.count { it }} " +
                 "maskEqual=${o.correction.valid.contentEquals(decoded.correction.valid)} " +
                 "beforeLimit=${o.unsupportedReasonsKo().any { it.contains("상한") }} " +
                 "afterLimit=${decoded.unsupportedReasonsKo().any { it.contains("상한") }} " +

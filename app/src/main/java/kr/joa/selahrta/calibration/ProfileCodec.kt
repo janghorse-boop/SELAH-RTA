@@ -82,6 +82,9 @@ private class Reader(private val map: Map<String, String>) {
     fun str(key: String): String = map[key] ?: run { missing += key; "" }
     fun strOrNull(key: String): String? = map[key]
 
+    /** 그 열쇠가 **적혀 있기라도 한가.** 「없음」과 「빈 값」을 가른다. */
+    fun has(key: String): Boolean = map.containsKey(key)
+
     fun int(key: String): Int = num(key) { it.toIntOrNull() } ?: 0
     fun intOrNull(key: String): Int? = map[key]?.let { v ->
         v.toIntOrNull() ?: run { malformed += key; null }
@@ -380,6 +383,12 @@ fun encodeCurves(o: CalibrationOutcome): String = buildString {
     // 곡선이 같은 값을 쓰므로 위에 적은 것으로 갈음한다.
     put("refNormalized.offsetDb", o.referenceNormalized.offsetDb)
     put("refNormalized.pointsUsed", o.referenceNormalized.pointsUsed)
+    // **상한이 자른 자리도 적는다**(독립 검증 L01-R). 이것 없이 되읽으면
+    // 「상한 아님」으로 읽혀, 같은 결과의 까닭이 SNR·CAL 로 바뀐다.
+    // 없으면 아예 적지 않는다 — 「모른다」와 「상한 아님」은 다르다.
+    o.limitedByMaxCorrection?.let { flags ->
+        put("correction.limited", flags.joinToString("") { if (it) "1" else "0" })
+    }
     putCurve("correction", o.correction)
     putCurve("corrected", o.corrected)
     put("settings.axisFromHz", o.settings.axisFromHz)
@@ -459,6 +468,15 @@ fun decodeCurves(text: String): Result<CalibrationOutcome> {
     val refOffsetDb = r.dbl("refNormalized.offsetDb")
     val refPointsUsed = r.int("refNormalized.pointsUsed")
 
+    // **없으면 null(모른다), 있으면 길이를 맞춰 본다**(독립 검증 L01-R).
+    val limitedFlags = if (r.has("correction.limited")) {
+        r.flags("correction.limited")?.also {
+            r.check("correction.limited", it.size == axis.size, "축 ${axis.size} · 표시 ${it.size}")
+        }
+    } else {
+        null
+    }
+
     // 두 곡선은 **같은 자리**에서 맞춘다(독립 검증 RCP01). 다른 수가
     // 적혀 있으면 그 파일은 다른 규칙으로 만들어진 것이다.
     r.check(
@@ -490,6 +508,7 @@ fun decodeCurves(text: String): Result<CalibrationOutcome> {
             correction = correction!!,
             corrected = corrected!!,
             settings = settings,
+            limitedByMaxCorrection = limitedFlags,
         ),
     )
 }

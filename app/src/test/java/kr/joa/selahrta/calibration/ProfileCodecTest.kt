@@ -3,11 +3,17 @@ package kr.joa.selahrta.calibration
 import kr.joa.selahrta.audio.CaptureSource
 import kr.joa.selahrta.audio.MicSeparation
 import kr.joa.selahrta.domain.MicKind
+import kr.joa.selahrta.dsp.CalibrationOutcome
+import kr.joa.selahrta.dsp.CalibrationSession
 import kr.joa.selahrta.dsp.CurvePoint
+import kr.joa.selahrta.dsp.MeasureStep
 import kr.joa.selahrta.dsp.QualityVerdict
 import kr.joa.selahrta.dsp.ResponseCurve
 import kr.joa.selahrta.dsp.ThirdOctave
+import kr.joa.selahrta.dsp.calibrateFromSession
 import kr.joa.selahrta.dsp.calibrateResponse
+import kr.joa.selahrta.dsp.judgeCalibration
+import kr.joa.selahrta.dsp.qualityFromSession
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -480,6 +486,125 @@ class ProfileCodecTest {
         )
         val e = runCatching { encodeCurves(o.copy(correction = shifted)) }.exceptionOrNull()
         assertTrue("$e", e?.message?.contains("correction") == true)
+    }
+
+    // ------------------------------------------------------------------
+    // L01-R — 왕복이 까닭을 잃지 않는다 (독립 검증 2026-09-23)
+    // ------------------------------------------------------------------
+
+    /** 상한이 실제로 자른 결과. 톱니형 기준이 상한을 넘게 만든다. */
+    private fun limitedOutcome(): CalibrationOutcome {
+        val ref = DoubleArray(31) {
+            if (it < 2 || it > 28) 70.0 else if (it % 2 == 0) 100.0 else 40.0
+        }
+        val s = CalibrationSession(referenceCalApplied = true)
+        repeat(8) {
+            s.record(MeasureStep.ReferenceBefore, ref)
+            s.record(MeasureStep.ReferenceAfter, ref)
+            s.record(MeasureStep.Target, DoubleArray(31) { 70.0 })
+        }
+        val r = s.result()!!
+        val q = qualityFromSession(
+            r, DoubleArray(31) { 0.0 }, DoubleArray(31) { 0.0 },
+            referenceCalRangeHz = 20.0..20_000.0, dspVerifiedBySignal = true,
+        )
+        return calibrateFromSession(r, q).getOrThrow()
+    }
+
+    /**
+     * **왕복 한 번에 까닭이 뒤바뀌었다.**
+     *
+     * 상한 표시가 적히지 않아 되읽으면 전부 false 가 되고, 그것을
+     * 「상한 아님」으로 읽어 SNR·CAL 탓으로 분류했다.
+     */
+    @Test
+    fun `상한 원인이 왕복에서 살아남는다`() {
+        val o = limitedOutcome()
+        // 전제: 정말 상한이 잘랐는가.
+        val before = o.limitedByMaxCorrection!!.count { it }
+        assertTrue("상한이 자른 점이 있어야 한다", before > 0)
+        assertTrue("까닭에 상한이 있어야 한다", o.unsupportedReasonsKo().any { it.contains("상한") })
+
+        val back = decodeCurves(encodeCurves(o)).getOrThrow()
+        assertEquals("표시 수가 같아야 한다", before, back.limitedByMaxCorrection!!.count { it })
+        assertArrayEquals(o.limitedByMaxCorrection, back.limitedByMaxCorrection)
+        assertTrue(
+            "까닭도 살아남아야 한다: ${back.unsupportedReasonsKo()}",
+            back.unsupportedReasonsKo().any { it.contains("상한") },
+        )
+    }
+
+    /** CAL 만 좁은 결과는 왕복해도 **상한을 탓하지 않는다.** */
+    @Test
+    fun `상한이 없던 결과는 왕복해도 상한이 생기지 않는다`() {
+        val s = CalibrationSession(referenceCalApplied = true)
+        repeat(8) {
+            for (step in MeasureStep.entries) s.record(step, DoubleArray(31) { 70.0 })
+        }
+        val r = s.result()!!
+        val q = qualityFromSession(
+            r, DoubleArray(31) { 0.0 }, DoubleArray(31) { 0.0 },
+            referenceCalRangeHz = 20.0..1_300.0, dspVerifiedBySignal = true,
+        )
+        val o = calibrateFromSession(r, q).getOrThrow()
+        assertFalse("상한이 자른 점이 없어야 한다", o.limitedByMaxCorrection!!.any { it })
+
+        val back = decodeCurves(encodeCurves(o)).getOrThrow()
+        assertFalse(
+            "왕복 뒤에도 상한을 탓하면 안 된다: ${back.unsupportedReasonsKo()}",
+            back.unsupportedReasonsKo().any { it.contains("상한") },
+        )
+    }
+
+    /**
+     * **까닭을 안 적은 파일은 「상한 아님」이 아니라 「모른다」다.**
+     *
+     * 없는 것을 false 로 읽으면 없는 사실을 단언하게 된다.
+     */
+    @Test
+    fun `까닭을 적지 않은 곡선은 모른다로 읽는다`() {
+        val o = limitedOutcome()
+        val text = encodeCurves(o).lineSequence()
+            .filterNot { it.startsWith("correction.limited=") }.joinToString("\n")
+        val back = decodeCurves(text).getOrThrow()
+
+        assertNull("표시가 없으면 null 이어야 한다", back.limitedByMaxCorrection)
+        val why = back.unsupportedReasonsKo()
+        assertFalse("상한을 단언하면 안 된다: $why", why.any { it.contains("상한") })
+        assertTrue("모른다고 말해야 한다: $why", why.any { it.contains("까닭 정보 없음") })
+    }
+
+    @Test
+    fun `까닭 표시 길이가 축과 다르면 실패한다`() {
+        val o = limitedOutcome()
+        val short = "0".repeat(o.correction.size - 3)
+        val text = encodeCurves(o).lineSequence().joinToString("\n") {
+            if (it.startsWith("correction.limited=")) "correction.limited=$short" else it
+        }
+        val e = decodeCurves(text).exceptionOrNull()
+        assertTrue("$e", e?.message?.contains("correction.limited") == true)
+    }
+
+    /** 왕복이 **판정**을 바꾸지 않는 것도 함께 본다. */
+    @Test
+    fun `왕복해도 판정이 같다`() {
+        val ref = DoubleArray(31) {
+            if (it < 2 || it > 28) 70.0 else if (it % 2 == 0) 100.0 else 40.0
+        }
+        val s = CalibrationSession(referenceCalApplied = true)
+        repeat(8) {
+            s.record(MeasureStep.ReferenceBefore, ref)
+            s.record(MeasureStep.ReferenceAfter, ref)
+            s.record(MeasureStep.Target, DoubleArray(31) { 70.0 })
+        }
+        val r = s.result()!!
+        val q = qualityFromSession(
+            r, DoubleArray(31) { 0.0 }, DoubleArray(31) { 0.0 },
+            referenceCalRangeHz = 20.0..20_000.0, dspVerifiedBySignal = true,
+        )
+        val o = calibrateFromSession(r, q).getOrThrow()
+        val back = decodeCurves(encodeCurves(o)).getOrThrow()
+        assertEquals(judgeCalibration(q, o).verdict, judgeCalibration(q, back).verdict)
     }
 
     /** 실패는 **예외가 새는 게 아니라** `Result.failure` 로 돌아와야 한다. */
