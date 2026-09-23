@@ -88,9 +88,17 @@ private class Reader(private val map: Map<String, String>) {
     }
 
     fun long(key: String): Long = num(key) { it.toLongOrNull() } ?: 0L
-    fun dbl(key: String): Double = num(key) { it.toDoubleOrNull() } ?: 0.0
+
+    /**
+     * **`NaN`·`Infinity` 는 숫자로 받지 않는다**(독립 검증 CP03).
+     *
+     * `toDoubleOrNull` 은 그 둘을 **성공으로** 해석한다. 그대로 두면
+     * 손상된 파일이 「길이가 맞는 정상 곡선」으로 읽혀 NaN 이 계산과
+     * 그래프로 번진다 — 그래프는 조용히 비고, 보정값은 조용히 사라진다.
+     */
+    fun dbl(key: String): Double = num(key) { it.toFiniteOrNull() } ?: 0.0
     fun dblOrNull(key: String): Double? = map[key]?.let { v ->
-        v.toDoubleOrNull() ?: run { malformed += key; null }
+        v.toFiniteOrNull() ?: run { malformed += key; null }
     }
 
     fun bool(key: String): Boolean = when (map[key]) {
@@ -118,10 +126,15 @@ private class Reader(private val map: Map<String, String>) {
         val parts = v.split(',')
         val out = DoubleArray(parts.size)
         for (i in parts.indices) {
-            val d = parts[i].toDoubleOrNull() ?: run { malformed += key; return null }
+            val d = parts[i].toFiniteOrNull() ?: run { malformed += key; return null }
             out[i] = d
         }
         return out
+    }
+
+    /** 값이 조건을 어기면 깨진 것으로 적는다. 까닭을 열쇠 옆에 붙인다. */
+    fun check(key: String, ok: Boolean, whyKo: String) {
+        if (!ok) malformed += "$key($whyKo)"
     }
 
     /** `0`·`1` 만 들어 있는 줄. 참/거짓 배열이다. */
@@ -145,6 +158,14 @@ private class Reader(private val map: Map<String, String>) {
         else -> null
     }
 }
+
+/**
+ * 유한한 수일 때만 돌려준다.
+ *
+ * `"NaN"`·`"Infinity"`·`"-Infinity"` 는 `toDoubleOrNull` 이 **성공으로**
+ * 읽는다. 여기서 막지 않으면 그 값이 곡선이 되어 나간다(CP03).
+ */
+private fun String.toFiniteOrNull(): Double? = toDoubleOrNull()?.takeIf { it.isFinite() }
 
 private fun StringBuilder.put(key: String, value: Any?) {
     if (value == null) return // 없는 것은 **적지 않는다**. 빈 값과 다르다.
@@ -275,6 +296,38 @@ fun decodeProfile(text: String): Result<MeasuredProfile> {
         enabled = r.bool("enabled"),
     )
 
+    // **길이와 꼴이 맞는 것과 뜻이 맞는 것은 다르다**(독립 검증 CP03).
+    // 여기서 보지 않으면 sampleRate 0 이나 채널 번호가 채널 수보다 큰
+    // 프로파일이 정상으로 읽혀, 경로 재대조가 엉뚱한 값을 견준다.
+    r.check("env.sampleRate", environment.sampleRate > 0, "0 이하")
+    r.check("env.channelCount", environment.channelCount >= 1, "1 미만")
+    r.check(
+        "env.channelIndex",
+        environment.channelIndex in 0 until environment.channelCount.coerceAtLeast(1),
+        "채널 수 밖",
+    )
+    r.check("algorithmVersion", profile.algorithmVersion >= 1, "1 미만")
+    r.check("createdAtEpochMs", profile.createdAtEpochMs > 0, "0 이하")
+    r.check("updatedAtEpochMs", profile.updatedAtEpochMs >= profile.createdAtEpochMs, "만든 때보다 이르다")
+    r.check("id", profile.id.isNotBlank(), "비어 있음")
+    r.check("curvesFileName", profile.curvesFileName.isNotBlank(), "비어 있음")
+    r.check("quality.usableBandRatio", profile.quality.usableBandRatio in 0.0..1.0, "0~1 밖")
+    r.check("normalizeBandHighHz", profile.normalizeBandHighHz > profile.normalizeBandLowHz, "낮은 쪽보다 작다")
+    r.check("normalizeBandLowHz", profile.normalizeBandLowHz > 0.0, "0 이하")
+    r.check("smoothingFraction", profile.smoothingFraction > 0.0, "0 이하")
+    r.check("maxCorrectionDb", profile.maxCorrectionDb > 0.0, "0 이하")
+    // 유효 범위는 **둘 다 있거나 둘 다 없어야** 한다. 한쪽만 있으면
+    // 「어디부터 믿을 수 있는지」를 말할 수 없다.
+    r.check(
+        "validFromHz/validToHz",
+        (profile.validFromHz == null) == (profile.validToHz == null),
+        "한쪽만 있다",
+    )
+    if (profile.validFromHz != null && profile.validToHz != null) {
+        r.check("validFromHz", profile.validFromHz > 0.0, "0 이하")
+        r.check("validToHz", profile.validToHz > profile.validFromHz, "아래끝보다 작다")
+    }
+
     // **판정을 기본값으로 메우지 않는다.** 빠진 것이 있으면 실패다 —
     // Fail 로 채워 두면 「품질 미달」로 보여 사람이 엉뚱한 곳을 고친다.
     r.problem()?.let { return Result.failure(IllegalArgumentException("프로파일을 읽지 못했습니다. $it")) }
@@ -297,6 +350,21 @@ private fun StringBuilder.putCurve(prefix: String, c: ResponseCurve) {
  * 같은 축 위에 있다.
  */
 fun encodeCurves(o: CalibrationOutcome): String = buildString {
+    // **축이 같다는 것을 적기 전에 확인한다**(독립 검증 CP03).
+    // calibrateResponse 는 늘 같은 축을 쓰지만 CalibrationOutcome 과
+    // ResponseCurve 는 공개 타입이고 배열은 바뀔 수 있다. 길이만으로는
+    // 모든 호출 경로를 보증하지 못한다 — 어긋난 채 적히면 되읽을 때
+    // 길이 검사를 통과해 **없던 자리에 값이 놓인다.**
+    val axis = o.reference.hz
+    listOf(
+        "internalRaw" to o.internalRaw,
+        "internalNormalized" to o.internalNormalized.curve,
+        "correction" to o.correction,
+        "corrected" to o.corrected,
+    ).forEach { (name, c) ->
+        require(c.hz.contentEquals(axis)) { "$name 이 기준과 다른 축 위에 있다" }
+    }
+
     append(CURVES_HEADER).append(" v").append(PROFILE_SCHEMA_VERSION).append('\n')
     put("schemaVersion", PROFILE_SCHEMA_VERSION)
     put("axis", o.reference.hz.joinToString(","))
@@ -338,6 +406,20 @@ fun decodeCurves(text: String): Result<CalibrationOutcome> {
     val axis = r.doubles("axis")
     if (axis == null || axis.isEmpty()) {
         return Result.failure(IllegalArgumentException("곡선을 읽지 못했습니다. 주파수 축이 없습니다."))
+    }
+    // **축은 양수이고 엄격히 커져야 한다**(CP03). 보간과 평활이 그 전제
+    // 위에 서 있다 — 뒤섞인 축으로도 길이 검사는 통과한다.
+    if (axis[0] <= 0.0) {
+        return Result.failure(IllegalArgumentException("곡선을 읽지 못했습니다. 주파수 축에 0 이하가 있습니다."))
+    }
+    for (i in 1 until axis.size) {
+        if (axis[i] <= axis[i - 1]) {
+            return Result.failure(
+                IllegalArgumentException(
+                    "곡선을 읽지 못했습니다. 주파수 축이 커지지 않습니다($i 번째: ${axis[i - 1]} → ${axis[i]}).",
+                ),
+            )
+        }
     }
 
     fun curve(prefix: String): ResponseCurve? {

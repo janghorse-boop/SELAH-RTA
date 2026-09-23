@@ -5,6 +5,7 @@ import kr.joa.selahrta.audio.MicSeparation
 import kr.joa.selahrta.domain.MicKind
 import kr.joa.selahrta.dsp.CurvePoint
 import kr.joa.selahrta.dsp.QualityVerdict
+import kr.joa.selahrta.dsp.ResponseCurve
 import kr.joa.selahrta.dsp.ThirdOctave
 import kr.joa.selahrta.dsp.calibrateResponse
 import org.junit.Assert.assertArrayEquals
@@ -340,5 +341,161 @@ class ProfileCodecTest {
     fun `곡선 파일이 아니면 실패한다`() {
         val e = decodeCurves("아무 글이나").exceptionOrNull()
         assertTrue("$e", e?.message?.contains("판 번호") == true)
+    }
+
+    // ------------------------------------------------------------------
+    // CP03 — 길이가 맞는 것과 뜻이 맞는 것은 다르다 (독립 검증 2026-09-23)
+    // ------------------------------------------------------------------
+
+    private fun curvesWith(key: String, value: String): String =
+        encodeCurves(outcome()).lineSequence().joinToString("\n") {
+            if (it.startsWith("$key=")) "$key=$value" else it
+        }
+
+    /**
+     * **`toDoubleOrNull` 은 `NaN` 을 성공으로 읽는다.**
+     *
+     * Codex probe 가 잡은 자리다 — 손상된 파일이 「길이가 맞는 정상
+     * 곡선」으로 읽혀 valid=true 인 NaN 점 120개를 돌려주었다.
+     */
+    @Test
+    fun `NaN 은 곡선으로 받지 않는다`() {
+        val n = outcome().correction.db.size
+        val r = decodeCurves(curvesWith("correction.db", List(n) { "NaN" }.joinToString(",")))
+        assertTrue("실패해야 한다", r.isFailure)
+        assertTrue("$r", r.exceptionOrNull()?.message?.contains("correction.db") == true)
+    }
+
+    @Test
+    fun `무한대는 곡선으로 받지 않는다`() {
+        val n = outcome().correction.db.size
+        for (bad in listOf("Infinity", "-Infinity")) {
+            val line = (List(n - 1) { "0.0" } + bad).joinToString(",")
+            val r = decodeCurves(curvesWith("correction.db", line))
+            assertTrue("$bad 는 실패해야 한다: $r", r.isFailure)
+        }
+    }
+
+    @Test
+    fun `프로파일의 숫자도 NaN 과 무한대를 받지 않는다`() {
+        for (bad in listOf("NaN", "Infinity", "-Infinity")) {
+            val text = encodeProfile(profile())
+                .replace(Regex("(?m)^levelOffsetDb=.*$"), "levelOffsetDb=$bad")
+            val r = decodeProfile(text)
+            assertTrue("$bad 는 실패해야 한다", r.isFailure)
+            assertTrue("$r", r.exceptionOrNull()?.message?.contains("levelOffsetDb") == true)
+        }
+    }
+
+    /** 축이 뒤섞여 있어도 **길이 검사는 통과한다.** 그래서 따로 본다. */
+    @Test
+    fun `축이 커지지 않으면 실패한다`() {
+        val n = outcome().reference.hz.size
+        val rising = List(n) { (it + 1).toDouble() }
+        val cases = mapOf(
+            "역순" to rising.reversed().joinToString(","),
+            // 5번과 6번을 같은 값으로 — 같은 주파수가 두 번 나온다.
+            "중복" to rising.toMutableList().also { it[5] = it[4] }.joinToString(","),
+        )
+        for ((why, axis) in cases) {
+            val r = decodeCurves(curvesWith("axis", axis))
+            assertTrue("$why 축은 실패해야 한다: $r", r.isFailure)
+            assertTrue("$why: $r", r.exceptionOrNull()?.message?.contains("커지지 않") == true)
+        }
+    }
+
+    @Test
+    fun `축에 0 이하가 있으면 실패한다`() {
+        val n = outcome().reference.hz.size
+        val axis = (0 until n).map { it.toDouble() }.joinToString(",") // 첫 점이 0.0
+        val r = decodeCurves(curvesWith("axis", axis))
+        assertTrue("$r", r.exceptionOrNull()?.message?.contains("0 이하") == true)
+    }
+
+    @Test
+    fun `말이 안 되는 프로파일 값은 실패한다`() {
+        val cases = mapOf(
+            "env.sampleRate" to "0",
+            "env.channelCount" to "0",
+            "quality.usableBandRatio" to "1.5",
+            "smoothingFraction" to "0.0",
+            "maxCorrectionDb" to "0.0",
+            "algorithmVersion" to "0",
+        )
+        for ((key, value) in cases) {
+            val text = encodeProfile(profile()).replace(Regex("(?m)^$key=.*$"), "$key=$value")
+            val r = decodeProfile(text)
+            assertTrue("$key=$value 는 실패해야 한다", r.isFailure)
+            assertTrue("$key: $r", r.exceptionOrNull()?.message?.contains(key) == true)
+        }
+    }
+
+    /** 채널 번호가 채널 수 밖이면 어느 입력으로 쟀는지 말할 수 없다. */
+    @Test
+    fun `채널 번호가 채널 수 밖이면 실패한다`() {
+        val text = encodeProfile(profile(env().copy(channelCount = 2, channelIndex = 5)))
+        val r = decodeProfile(text)
+        assertTrue("$r", r.exceptionOrNull()?.message?.contains("env.channelIndex") == true)
+    }
+
+    /** 「어디부터 믿을 수 있는지」는 **둘 다 있거나 둘 다 없어야** 한다. */
+    @Test
+    fun `유효 범위가 한쪽만 있으면 실패한다`() {
+        val text = encodeProfile(profile()).lineSequence()
+            .filterNot { it.startsWith("validToHz=") }.joinToString("\n")
+        val r = decodeProfile(text)
+        assertTrue("$r", r.exceptionOrNull()?.message?.contains("한쪽만") == true)
+    }
+
+    @Test
+    fun `유효 범위가 뒤집혀 있으면 실패한다`() {
+        val text = encodeProfile(profile(validFromHz = 16_000.0, validToHz = 50.0))
+        val r = decodeProfile(text)
+        assertTrue("$r", r.exceptionOrNull()?.message?.contains("validToHz") == true)
+    }
+
+    @Test
+    fun `고친 때가 만든 때보다 이르면 실패한다`() {
+        val text = encodeProfile(profile())
+            .replace(Regex("(?m)^updatedAtEpochMs=.*$"), "updatedAtEpochMs=1")
+        val r = decodeProfile(text)
+        assertTrue("$r", r.exceptionOrNull()?.message?.contains("updatedAtEpochMs") == true)
+    }
+
+    /**
+     * **적기 전에 축이 같은지 본다.**
+     *
+     * `calibrateResponse` 는 늘 같은 축을 쓰지만 `CalibrationOutcome` 은
+     * 공개 타입이다. 길이만 같고 값이 다른 축이 적히면, 되읽을 때 길이
+     * 검사를 통과해 **없던 자리에 값이 놓인다.**
+     */
+    @Test
+    fun `길이만 같고 다른 축은 적지 않는다`() {
+        val o = outcome()
+        val n = o.reference.hz.size
+        val shifted = ResponseCurve(
+            DoubleArray(n) { o.reference.hz[it] * 1.01 },
+            o.correction.db.copyOf(),
+            o.correction.valid.copyOf(),
+        )
+        val e = runCatching { encodeCurves(o.copy(correction = shifted)) }.exceptionOrNull()
+        assertTrue("$e", e?.message?.contains("correction") == true)
+    }
+
+    /** 실패는 **예외가 새는 게 아니라** `Result.failure` 로 돌아와야 한다. */
+    @Test
+    fun `망가진 입력에 예외가 새지 않는다`() {
+        val broken = listOf(
+            "",
+            "schemaVersion=1",
+            "schemaVersion=1\naxis=",
+            "schemaVersion=1\naxis=1,2,3\nreference.db=1,2",
+            encodeCurves(outcome()).replace(",", ";"),
+        )
+        for (text in broken) {
+            val r = runCatching { decodeCurves(text) }
+            assertTrue("예외가 새면 안 된다: $text", r.isSuccess)
+            assertTrue("실패로 돌아와야 한다: $text", r.getOrThrow().isFailure)
+        }
     }
 }
