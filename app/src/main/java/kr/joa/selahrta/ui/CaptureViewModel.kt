@@ -868,7 +868,11 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      * 지금 읽고 있는 dBFS 를 기준으로 삼는다. 소리가 안정된 상태에서
      * 눌러야 맞는 값이 나오며, 그렇지 않으면 저장소가 거부한다.
      */
-    fun saveSimpleCalibration(referenceDb: Double) {
+    fun saveSimpleCalibration(
+        referenceDb: Double,
+        source: kr.joa.selahrta.calibration.CalibrationSource =
+            kr.joa.selahrta.calibration.CalibrationSource.Meter,
+    ) {
         val format = controller.confirmedFormat()
         val measured = state.value.meter.currentDbfs
         if (format == null || measured == null) {
@@ -889,6 +893,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             savedAtEpochMs = System.currentTimeMillis(),
             referenceDb = referenceDb,
             measuredDbfs = measured,
+            source = source,
         )
         viewModelScope.launch {
             val notice = when (val r = store.save(CalibrationKey.of(format), cal)) {

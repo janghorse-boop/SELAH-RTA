@@ -229,7 +229,16 @@ fun SelahApp() {
         val running = capture.measure is MeasureState.Running
         AlertDialog(
             onDismissRequest = { askExit = false },
-            containerColor = SelahColors.Surface,
+            // **배경과 뚜렷이 갈라 놓는다.** 예전에는 Surface 를 썼는데 앱
+            // 배경과 밝기가 거의 같아 창이 떠 있는지 구별되지 않았다.
+            containerColor = SelahColors.DialogSurface,
+            tonalElevation = 0.dp,
+            shape = RoundedCornerShape(20.dp),
+            modifier = Modifier.border(
+                1.dp,
+                SelahColors.Outline,
+                RoundedCornerShape(20.dp),
+            ),
             title = { Text("앱을 닫을까요?", color = SelahColors.TextPrimary) },
             // **재고 있을 때만 본문을 둔다.** 안 재고 있을 때 「SELAH RTA 를
             // 닫습니다」는 제목을 한 번 더 말하는 것뿐이라 지웠다. 재고 있을

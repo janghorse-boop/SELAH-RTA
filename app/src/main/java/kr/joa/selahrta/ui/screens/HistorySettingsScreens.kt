@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kr.joa.selahrta.calibration.CalibrationSource
 import kr.joa.selahrta.domain.ChurchSegment
 import kr.joa.selahrta.domain.SEGMENT_CAUTIONS
 import kr.joa.selahrta.domain.SegmentRange
@@ -80,7 +81,7 @@ fun HistoryScreen() {
 @Composable
 fun SettingsScreen(
     capture: CaptureUiState,
-    onSaveCalibration: (Double) -> Unit,
+    onSaveCalibration: (Double, CalibrationSource) -> Unit,
     onClearCalibration: () -> Unit,
     onDismissCalibrationNotice: () -> Unit,
     onWeighting: (Weighting) -> Unit,

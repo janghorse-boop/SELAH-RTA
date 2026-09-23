@@ -47,6 +47,17 @@ object SelahColors {
     val SurfaceVariant = Color(0xFF1B2128)
     val Outline = Color(0xFF2A333D)
 
+    /**
+     * 대화상자 바탕. **앱 배경보다 뚜렷이 밝아야 한다.**
+     *
+     * 예전에는 [Surface](0xFF12171C)를 썼는데, 배경(0xFF0B0E11)과 밝기가
+     * 거의 같아 **창이 떠 있는지 화면이 그냥 그런지 구별되지 않았다**
+     * (담당자 지적). 어두운 앱에서는 기본 스크림도 눈에 띄지 않는다.
+     *
+     * 그래서 한 단계 더 밝은 색을 따로 둔다. 테두리도 함께 두른다.
+     */
+    val DialogSurface = Color(0xFF283340)
+
     val TextPrimary = Color(0xFFE6EDF3)
     val TextSecondary = Color(0xFF9FB0C0)
     /** 값이 아직 없을 때 쓰는 색. 실제 값보다 뚜렷하게 흐려야 한다. */
