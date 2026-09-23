@@ -83,9 +83,40 @@ class RtaEngine(
 
     private var latest: RtaFrame? = null
 
-    /** FFT 한 장마다 받아 갈 곳. 하울링 탐지기가 여기 붙는다. */
+    /**
+     * FFT 한 장마다 받아 갈 곳들. 하울링 탐지기와 교정 측정이 여기 붙는다.
+     *
+     * ## 왜 하나가 아닌가
+     *
+     * 예전에는 `var spectrumSink` 하나였고 하울링 탐지기가 이미 차지하고
+     * 있었다. 교정이 **같은 스펙트럼**을 받으려고 그 자리에 대입하면
+     * **하울링 탐지가 조용히 꺼진다** — 빌드도 시험도 통과하고, 화면에서
+     * 후보가 안 뜨는 것으로만 드러난다. 그것도 예배 중에.
+     *
+     * 그래서 자리를 여럿으로 열고, **대입이 아니라 더하기**로 바꿨다.
+     *
+     * ## 오디오 스레드에서 읽는다
+     *
+     * 붙이고 떼는 것은 주 스레드, 부르는 것은 오디오 스레드다. 목록을
+     * 고칠 때마다 **새 배열을 만들어 갈아 끼운다** — 오디오 스레드는 참조
+     * 하나만 읽으므로 잠금도, 한창 고쳐지는 중인 목록을 보는 일도 없다.
+     */
     @Volatile
-    var spectrumSink: SpectrumSink? = null
+    private var sinks: Array<SpectrumSink> = emptyArray()
+
+    private val sinkLock = Any()
+
+    /** 같은 것을 두 번 붙이지 않는다 — 두 번 불리면 장 수가 두 배로 세어진다. */
+    fun addSpectrumSink(sink: SpectrumSink) = synchronized(sinkLock) {
+        if (sinks.none { it === sink }) sinks = sinks + sink
+    }
+
+    fun removeSpectrumSink(sink: SpectrumSink) = synchronized(sinkLock) {
+        sinks = sinks.filter { it !== sink }.toTypedArray()
+    }
+
+    /** 붙어 있는 수. 시험이 「정말 떨어졌는가」를 보는 데 쓴다. */
+    val spectrumSinkCount: Int get() = sinks.size
 
     /**
      * 마이크 보정 곡선을 칸마다 걸 계수. 없으면 보정하지 않는다.
@@ -155,7 +186,10 @@ class RtaEngine(
         // 하울링 탐지는 **보정 전 스펙트럼**을 본다. 봉우리가 둘레보다
         // 얼마나 솟았는지를 보는 것이라, 마이크 응답을 되돌리는 보정은
         // 솟은 정도를 거의 바꾸지 않으면서 계산만 늘린다.
-        spectrumSink?.onSpectrum(power)
+        // 배열 참조를 **한 번만** 읽는다. 읽는 사이에 갈아 끼워져도 이 장은
+        // 일관된 목록으로 끝난다.
+        val current = sinks
+        for (i in current.indices) current[i].onSpectrum(power)
 
         // 보정은 **밴드로 묶기 전에** 칸마다 건다(독립 검증 R05).
         bands.toBandPower(power, bandPower, binCorrection)

@@ -113,7 +113,7 @@ class RejectionReasonTest {
         var detected = false
         var blockMs = 0L
 
-        rta.spectrumSink = SpectrumSink { power ->
+        rta.addSpectrumSink { power ->
             frames++
             // **production 의 finder 로 그 프레임의 값을 잰다.**
             val peak = finder.find(power, MIN_PROMINENCE_DB)

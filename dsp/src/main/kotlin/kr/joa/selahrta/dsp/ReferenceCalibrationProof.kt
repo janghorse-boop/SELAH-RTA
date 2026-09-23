@@ -105,20 +105,61 @@ fun applyReferenceCalibration(
     sampleRate: Int,
     calFileName: String? = null,
     calSha256: String? = null,
-): CalibratedReferenceSpectrum {
-    val correction = curve.binCorrectionLinear(fftSize, sampleRate)
-    val bandPower = DoubleArray(ThirdOctave.BAND_COUNT)
-    analyzer.toBandPower(binPower, bandPower, correction)
-    val bandsDb = DoubleArray(ThirdOctave.BAND_COUNT)
-    analyzer.toBandDbfs(bandPower, bandsDb)
-    return CalibratedReferenceSpectrum(
-        bandsDb = bandsDb,
-        proof = ReferenceCalibrationProof.create(
-            calFileName = calFileName,
-            calSha256 = calSha256,
-            rangeHz = curve.rangeHz,
-            fftSize = fftSize,
-            sampleRate = sampleRate,
-        ),
+): CalibratedReferenceSpectrum =
+    ReferenceCalibrator(curve, analyzer, fftSize, sampleRate, calFileName, calSha256)
+        .spectrum(binPower)
+
+/**
+ * 장을 **여러 번** 보정할 때 쓴다.
+ *
+ * ## 왜 따로 있는가
+ *
+ * [applyReferenceCalibration] 은 부를 때마다 칸 보정 계수를 새로 만든다
+ * (FFT 4096 이면 2049개짜리 배열이다). 한 장이면 아무 문제 없지만,
+ * 측정은 **오디오 스레드에서 초당 스물몇 장**을 처리한다. 거기서 장마다
+ * 배열을 새로 만드는 것은 하지 않는 편이 낫다.
+ *
+ * 그래서 계수와 증거는 한 번만 만들고, [spectrum] 은 묶는 일만 한다.
+ *
+ * ## 증거는 여전히 못 꾸민다
+ *
+ * 이 클래스도 **곡선을 받아야** 만들어지고, [ReferenceCalibrationProof] 의
+ * 생성자는 여전히 닫혀 있다. 지름길이 생긴 것이 아니라, 같은 길을 여러 번
+ * 지날 때 짐을 덜어 둔 것이다.
+ *
+ * @param analyzer [fftSize]·[sampleRate] 와 **같은 설정**으로 만든 것.
+ */
+class ReferenceCalibrator(
+    curve: CalibrationCurve,
+    private val analyzer: BandAnalyzer,
+    fftSize: Int,
+    sampleRate: Int,
+    calFileName: String? = null,
+    calSha256: String? = null,
+) {
+    private val correction = curve.binCorrectionLinear(fftSize, sampleRate)
+    private val bandPower = DoubleArray(ThirdOctave.BAND_COUNT)
+
+    /** 이 보정기로 만든 모든 장이 달고 나갈 증거. 설정이 같으니 하나면 된다. */
+    val proof: ReferenceCalibrationProof = ReferenceCalibrationProof.create(
+        calFileName = calFileName,
+        calSha256 = calSha256,
+        rangeHz = curve.rangeHz,
+        fftSize = fftSize,
+        sampleRate = sampleRate,
     )
+
+    /**
+     * 칸 전력 한 장에 CAL 을 걸어 묶는다.
+     *
+     * **밴드 배열은 장마다 새로 만든다.** 돌려쓰면 부르는 쪽이 모아 둔
+     * 장들이 전부 같은 배열을 가리켜, 마지막 장 하나가 여러 번 들어 있는
+     * 꼴이 된다 — 그러고도 길이와 모양은 멀쩡해 보인다.
+     */
+    fun spectrum(binPower: DoubleArray): CalibratedReferenceSpectrum {
+        analyzer.toBandPower(binPower, bandPower, correction)
+        val bandsDb = DoubleArray(ThirdOctave.BAND_COUNT)
+        analyzer.toBandDbfs(bandPower, bandsDb)
+        return CalibratedReferenceSpectrum(bandsDb = bandsDb, proof = proof)
+    }
 }

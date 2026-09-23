@@ -285,7 +285,7 @@ class CaptureSession(
     init {
         // FFT 한 장이 나올 때마다 탐지기에 넘긴다. 시각은 덩어리를 받은
         // 시각으로 쓴다 — 오디오 스레드에서만 건드리므로 안전하다.
-        rta.spectrumSink = SpectrumSink { power -> feedback.process(power, spectrumMs) }
+        rta.addSpectrumSink { power -> feedback.process(power, spectrumMs) }
     }
 
     /** 지금 처리 중인 덩어리의 시각(ms). 탐지기에 넘길 값이다. */

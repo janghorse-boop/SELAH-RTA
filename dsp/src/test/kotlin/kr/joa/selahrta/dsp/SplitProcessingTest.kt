@@ -87,7 +87,7 @@ class SplitProcessingTest {
         val rta = RtaEngine(FS)
         val det = FeedbackDetector(rta.fftSize, FS)
         var blockMs = 0L
-        rta.spectrumSink = SpectrumSink { p -> det.process(p, blockMs) }
+        rta.addSpectrumSink { p -> det.process(p, blockMs) }
 
         val frames = ArrayList<MultiWeightFrame>()
         var i = 0
@@ -217,7 +217,7 @@ class SplitProcessingTest {
             val rta = RtaEngine(FS)
             val det = FeedbackDetector(rta.fftSize, FS)
             var ms = 0L
-            rta.spectrumSink = SpectrumSink { p -> det.process(p, ms) }
+            rta.addSpectrumSink { p -> det.process(p, ms) }
             var i = 0
             var fed = 0L
             var c = 0

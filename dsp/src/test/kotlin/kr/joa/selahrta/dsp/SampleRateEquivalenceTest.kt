@@ -73,7 +73,7 @@ class SampleRateEquivalenceTest {
         private var fed = 0L
 
         init {
-            rta.spectrumSink = SpectrumSink { power -> detector.process(power, blockMs) }
+            rta.addSpectrumSink { power -> detector.process(power, blockMs) }
         }
 
         /** 지금까지 흘려 넣은 시간(ms). */
