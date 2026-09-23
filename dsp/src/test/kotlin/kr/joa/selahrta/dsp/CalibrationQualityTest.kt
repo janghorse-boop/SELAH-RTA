@@ -15,10 +15,18 @@ import org.junit.Test
  */
 class CalibrationQualityTest {
 
-    /** 1/3옥타브 31밴드 비슷하게. */
-    private fun bands(snrDb: Double, n: Int = 31) = (0 until n).map {
-        val hz = 20.0 * Math.pow(2.0, it / 3.0)
-        BandNoise(hz, signalDb = 80.0, noiseDb = 80.0 - snrDb)
+    /**
+     * 1/3옥타브 31밴드.
+     *
+     * **실제 중심주파수를 쓴다.** 예전에는 `20 * 2^(i/3)` 이라는 호칭
+     * 격자를 썼는데, 제품 경로(`qualityFromSession`)는
+     * [ThirdOctave.exactCenter] 를 쓴다. 격자가 다르면 CAL 범위를 걸었을
+     * 때 **대역 수가 달라진다** — 20~1300Hz 가 호칭 격자에서는 19개인데
+     * 실제 격자에서는 18개다(밴드 0 의 실제 중심이 19.95Hz 로 20 미만).
+     * 독립 검증이 짚어 준 자리다.
+     */
+    private fun bands(snrDb: Double, n: Int = ThirdOctave.BAND_COUNT) = (0 until n).map {
+        BandNoise(ThirdOctave.exactCenter(it), signalDb = 80.0, noiseDb = 80.0 - snrDb)
     }
 
     /**
@@ -105,7 +113,7 @@ class CalibrationQualityTest {
     @Test
     fun `저역만 나쁘면 범위를 좁혀 적는다`() {
         val b = (0 until 31).map {
-            val hz = 20.0 * Math.pow(2.0, it / 3.0)
+            val hz = ThirdOctave.exactCenter(it)
             // 200Hz 아래는 배경이 세다.
             val snr = if (hz < 200.0) 5.0 else 25.0
             BandNoise(hz, 80.0, 80.0 - snr)
@@ -196,7 +204,7 @@ class CalibrationQualityTest {
      */
     @Test
     fun `각각은 충분해도 교집합이 모자라면 막는다`() {
-        val hz = { i: Int -> 20.0 * Math.pow(2.0, i / 3.0) }
+        val hz = { i: Int -> ThirdOctave.exactCenter(i) }
         // 대상은 0~18 과 30 이 좋고, 기준은 12~30 이 좋다 → 겹치는 것은 12~18.
         val target = (0 until 31).map {
             BandNoise(hz(it), 70.0, if (it <= 18 || it == 30) 40.0 else 70.0)
@@ -240,8 +248,11 @@ class CalibrationQualityTest {
     /** 조금 좁은 정도면 막지는 않되 **범위를 알린다.** */
     @Test
     fun `CAL 이 조금 좁으면 범위를 알린다`() {
-        // 20~1300Hz 는 19/31 = 61.3% — 비율 관문(60%)은 넘고 위끝은 8kHz 미만이다.
-        val r = judgeQuality(report(bands(25.0), referenceCalRangeHz = 20.0..1_300.0))
+        // **실제 중심주파수 격자**에서 19~1300Hz 는 밴드 0~18 = 19/31 =
+        // 61.3% 다 — 비율 관문(60%)은 넘고 위끝(1258.9Hz)은 8kHz 미만이다.
+        // 20Hz 부터로 잡으면 밴드 0(19.95Hz)이 빠져 18/31 = 58% 로 Fail 이
+        // 된다. 독립 검증이 짚어 준 자리다.
+        val r = judgeQuality(report(bands(25.0), referenceCalRangeHz = 19.0..1_300.0))
         assertEquals(QualityVerdict.Degraded, r.verdict)
         assertTrue(
             "${r.reasonsKo}",
@@ -258,7 +269,7 @@ class CalibrationQualityTest {
 
     @Test
     fun `교집합이 0 이면 막는다`() {
-        val hz = { i: Int -> 20.0 * Math.pow(2.0, i / 3.0) }
+        val hz = { i: Int -> ThirdOctave.exactCenter(i) }
         val target = (0 until 31).map { BandNoise(hz(it), 70.0, if (it < 15) 40.0 else 70.0) }
         val reference = (0 until 31).map { BandNoise(hz(it), 70.0, if (it >= 15) 40.0 else 70.0) }
         val rep = report(target, referenceBands = reference)

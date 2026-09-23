@@ -665,6 +665,79 @@ class CalibrationSessionTest {
         )
     }
 
+    /**
+     * **L01 반례** — 보정값이 전부 0dB 인데 상한을 탓했다.
+     *
+     * 지원을 줄이는 것은 상한만이 아니다. CAL 을 20~1300Hz 로 좁히면
+     * 보정은 한 점도 상한을 넘지 않는데(전부 0dB), 예전 문구는 「보정량이
+     * 상한(12dB)을 넘는 자리가 많다」고 말했다 — CAL 이 원인인데 레벨을
+     * 고치러 가게 만든다.
+     */
+    @Test
+    fun `상한을 넘지 않았으면 상한을 탓하지 않는다`() {
+        val r = sessionOf(flat(70.0), flat(70.0))
+        val q = qualityFromSession(
+            r, flat(0.0), referenceNoiseDb = flat(0.0),
+            referenceCalRangeHz = 20.0..1_300.0, dspVerifiedBySignal = true,
+        )
+        val out = calibrateFromSession(r, q).getOrThrow()
+
+        // **전제부터 확인한다** — 정말 상한을 넘은 점이 없는가.
+        assertEquals(
+            "보정값이 전부 0dB 여야 이 시험에 뜻이 있다",
+            0.0, out.correction.db.maxOf { abs(it) }, 1e-9,
+        )
+        assertFalse("상한이 자른 점이 없어야 한다", out.limitedByMaxCorrection.any { it })
+        assertTrue("그런데 지원은 모자라다", out.supportedBandRatio < 0.6)
+
+        val final = judgeCalibration(q, out)
+        assertEquals(QualityVerdict.Fail, final.verdict)
+        val band = final.reasonsKo.first { it.contains("계산을 마친 뒤 보정이 걸리는 대역") }
+        assertFalse("상한을 탓하면 안 된다: $band", band.contains("상한"))
+        assertTrue("실제 까닭을 말해야 한다: $band", band.contains("SNR·CAL"))
+    }
+
+    /** 반대로 **정말 상한에 걸렸으면** 그렇게 말해야 한다. */
+    @Test
+    fun `상한에 걸렸으면 상한을 짚는다`() {
+        val ref = DoubleArray(n) {
+            if (it < 2 || it > 28) 70.0 else if (it % 2 == 0) 100.0 else 40.0
+        }
+        val r = sessionOf(ref, flat(70.0))
+        val q = qualityFromSession(
+            r, flat(0.0), referenceNoiseDb = flat(0.0),
+            referenceCalRangeHz = 20.0..20_000.0, dspVerifiedBySignal = true,
+        )
+        val out = calibrateFromSession(r, q).getOrThrow()
+
+        assertTrue("상한이 실제로 잘랐어야 한다", out.limitedByMaxCorrection.any { it })
+
+        val band = judgeCalibration(q, out).reasonsKo
+            .first { it.contains("계산을 마친 뒤 보정이 걸리는 대역") }
+        assertTrue("상한을 짚어야 한다: $band", band.contains("상한"))
+    }
+
+    /** 까닭은 **일어난 것만** 적는다 — 없는 까닭을 나열하지 않는다. */
+    @Test
+    fun `일어나지 않은 까닭은 적지 않는다`() {
+        val r = sessionOf(flat(70.0), flat(70.0))
+        val q = qualityFromSession(
+            r, flat(0.0), referenceNoiseDb = flat(0.0),
+            referenceCalRangeHz = 20.0..1_300.0, dspVerifiedBySignal = true,
+        )
+        val why = calibrateFromSession(r, q).getOrThrow().unsupportedReasonsKo()
+        assertEquals("한 가지 까닭만 있어야 한다: $why", 1, why.size)
+    }
+
+    /** 다 지원되면 까닭이 없다. */
+    @Test
+    fun `전부 지원되면 까닭이 비어 있다`() {
+        val r = sessionOf(flat(70.0), flat(70.0))
+        val out = calibrateFromSession(r, goodQuality(r)).getOrThrow()
+        assertEquals(n, out.supportedBands.size)
+        assertTrue(out.unsupportedReasonsKo().isEmpty())
+    }
+
     /** 멀쩡한 평탄 입력은 **그대로 통과해야** 한다 — 관문이 과하지 않게. */
     @Test
     fun `평탄한 입력은 최종 승인을 받는다`() {

@@ -421,9 +421,13 @@ fun judgeCalibration(report: QualityReport, outcome: CalibrationOutcome): Qualit
                 append("계산을 마친 뒤 보정이 걸리는 대역이 ")
                 append("$supported/${ThirdOctave.BAND_COUNT}")
                 append("(${"%.0f".format(outcome.supportedBandRatio * 100)}%)뿐입니다 — ")
-                append("${"%.0f".format(p.minUsableBandRatio * 100)}% 는 되어야 합니다. ")
-                append("보정량이 상한(${"%.0f".format(outcome.settings.maxCorrectionDb)}dB)을 ")
-                append("넘는 자리가 많다는 뜻입니다.")
+                append("${"%.0f".format(p.minUsableBandRatio * 100)}% 는 되어야 합니다.")
+                // **까닭을 단정하지 않는다**(독립 검증 L01). 지원을 줄이는
+                // 것은 상한만이 아니다 — CAL 범위·SNR·축 경계도 줄인다.
+                // 예전에는 보정값이 전부 0dB 인 경우에도 상한을 탓해서,
+                // CAL 이 원인인데 레벨을 고치러 가게 만들었다.
+                val why = outcome.unsupportedReasonsKo()
+                if (why.isNotEmpty()) append(" 까닭: ${why.joinToString(" · ")}.")
             }
         }
 

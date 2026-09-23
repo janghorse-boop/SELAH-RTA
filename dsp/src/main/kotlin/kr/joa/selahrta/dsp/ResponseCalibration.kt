@@ -310,6 +310,15 @@ data class CalibrationOutcome(
     /** 보정을 적용한 뒤의 대상 응답. 기준과 얼마나 붙었는지 본다. */
     val corrected: ResponseCurve,
     val settings: CalibrationSettings,
+    /**
+     * **보정 상한에서 잘려 무효가 된** 축 점들(독립 검증 L01).
+     *
+     * 지원 대역이 모자랄 때 까닭이 상한인지 아닌지를 여기서 가른다.
+     * CAL 범위·SNR·축 경계도 지원을 줄이므로, 이것 없이 상한을 탓하면
+     * **사람이 엉뚱한 재측정을 한다** — 실제로 보정값이 전부 0dB 인
+     * 경우에도 「상한을 넘는 자리가 많다」고 말하고 있었다.
+     */
+    val limitedByMaxCorrection: BooleanArray = BooleanArray(correction.size),
 ) {
     /**
      * 두 곡선이 **함께 믿을 만했던** 정규화 대역 안의 점 수.
@@ -363,6 +372,47 @@ data class CalibrationOutcome(
     /** 계산을 마친 뒤 보정이 걸리는 밴드의 비율. */
     val supportedBandRatio: Double
         get() = supportedBands.size.toDouble() / ThirdOctave.BAND_COUNT
+
+    /**
+     * 지원되지 못한 대역들이 **왜** 빠졌는가 — 실제로 일어난 것만
+     * (독립 검증 L01).
+     *
+     * 지원을 줄이는 길은 셋이다:
+     *
+     * | 까닭 | 어떻게 아는가 |
+     * |---|---|
+     * | 축 범위 밖 | 그 밴드 경계 안에 축 점이 하나도 없다 |
+     * | 보정 상한 | 그 밴드의 어떤 점이 [limitedByMaxCorrection] 이다 |
+     * | SNR·CAL | 상한 이전에 이미 무효였다 |
+     *
+     * **하나로 단정하지 않는다.** 예전에는 늘 상한을 탓해서, CAL 범위가
+     * 원인인데 레벨을 고치러 가게 만들었다 — 보정값이 전부 0dB 인
+     * 경우에도 그랬다.
+     */
+    fun unsupportedReasonsKo(): List<String> {
+        var offAxis = 0
+        var byLimit = 0
+        var byMask = 0
+        val supported = supportedBands.toSet()
+        for (b in 0 until ThirdOctave.BAND_COUNT) {
+            if (b in supported) continue
+            val lo = ThirdOctave.lowerEdge(b)
+            val hi = ThirdOctave.upperEdge(b)
+            val inBand = correction.hz.indices.filter { correction.hz[it] in lo..hi }
+            when {
+                inBand.isEmpty() -> offAxis++
+                inBand.any { limitedByMaxCorrection[it] } -> byLimit++
+                else -> byMask++
+            }
+        }
+        return buildList {
+            if (byMask > 0) add("SNR·CAL 범위 밖 ${byMask}대역")
+            if (byLimit > 0) {
+                add("보정량이 상한(${"%.0f".format(settings.maxCorrectionDb)}dB)을 넘음 ${byLimit}대역")
+            }
+            if (offAxis > 0) add("분석 축 범위 밖 ${offAxis}대역")
+        }
+    }
 
     /**
      * 정규화에 쓰인 점들이 **원래 몇 개의 1/3옥타브 밴드**에서 왔는가.
@@ -440,6 +490,12 @@ fun calibrateResponse(
         correction = limited,
         corrected = corrected,
         settings = settings,
+        // **상한이 실제로 무효화한 자리.** 평활까지는 믿을 만했는데
+        // 상한에서 잘린 점들이다 — 그래야 「왜 지원이 모자란가」를
+        // 상한 탓으로 돌려도 되는지 가릴 수 있다(독립 검증 L01).
+        limitedByMaxCorrection = BooleanArray(axis.size) {
+            smoothed.valid[it] && !limited.valid[it]
+        },
     )
 }
 
