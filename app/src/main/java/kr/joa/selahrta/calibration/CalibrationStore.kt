@@ -29,6 +29,9 @@ class CalibrationStore(private val context: Context) {
     private fun measuredKey(k: CalibrationKey) = doublePreferencesKey("${k.storageKey()}|measured")
     private fun savedAtKey(k: CalibrationKey) = longPreferencesKey("${k.storageKey()}|savedAt")
 
+    /** 교정할 때의 입력 잡음 바닥(dBFS). 옛 기록에는 없다(독립 검토 R06). */
+    private fun noiseKey(k: CalibrationKey) = doublePreferencesKey("${k.storageKey()}|noiseFloor")
+
     /**
      * 이 조합의 보정값을 지켜본다. 없으면 null 이 흐른다.
      *
@@ -45,6 +48,10 @@ class CalibrationStore(private val context: Context) {
                     savedAtEpochMs = prefs[savedAtKey(key)] ?: 0L,
                     referenceDb = prefs[refKey(key)] ?: Double.NaN,
                     measuredDbfs = prefs[measuredKey(key)] ?: Double.NaN,
+                    // 옛 기록에는 없다. **없는 것을 0 으로 채우지 않는다** —
+                    // 0dBFS 잡음은 말이 안 되고, 그 값으로 견주면 늘
+                    // 「이득이 바뀌었다」가 된다.
+                    noiseFloorDbfs = prefs[noiseKey(key)],
                 )
             }
 
@@ -76,6 +83,10 @@ class CalibrationStore(private val context: Context) {
                 p[refKey(key)] = cal.referenceDb
                 p[measuredKey(key)] = cal.measuredDbfs
                 p[savedAtKey(key)] = cal.savedAtEpochMs
+                // **모르면 적지 않는다.** 0 으로 채우면 나중에 견줄 때
+                // 늘 「이득이 바뀌었다」가 된다.
+                val noise = cal.noiseFloorDbfs
+                if (noise != null && noise.isFinite()) p[noiseKey(key)] = noise else p.remove(noiseKey(key))
             }
             SaveResult.Saved
         } catch (e: IOException) {

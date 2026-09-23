@@ -62,6 +62,14 @@ data class GlobalCalibration(
     val referenceDb: Double,
     /** 그때 우리가 읽은 dBFS. 위 둘의 차이가 offsetDb 다. */
     val measuredDbfs: Double,
+    /**
+     * 그때의 **입력 잡음 바닥**(dBFS). 없으면 null(옛 기록).
+     *
+     * 이득의 그림자다 — gain 노브를 돌리면 전기 잡음도 함께 오르내린다.
+     * 앱은 노브를 읽을 수 없으므로(독립 검토 R06) 이 값이 그 자리를
+     * 대신한다. **증거가 아니라 단서다**: [judgeGainDrift] 참고.
+     */
+    val noiseFloorDbfs: Double? = null,
 ) {
     fun toOffset() = CalibrationOffset(offsetDb)
 }
