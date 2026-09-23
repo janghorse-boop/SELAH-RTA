@@ -461,6 +461,23 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.Main.immediate) { block() }
     }
 
+    /**
+     * 교정 측정이 스펙트럼을 받아 갈 통로를 **오디오 스레드에서** 붙인다.
+     *
+     * 대입이 아니라 더하기라 하울링 탐지기가 밀려나지 않는다. 재는 중이
+     * 아니면 아무 일도 일어나지 않는다 — 붙일 세션이 없다.
+     */
+    fun installMeasurementTap(tap: kr.joa.selahrta.dsp.MeasurementTap) {
+        controller.postToCapture { session -> session.rta.addSpectrumSink(tap) }
+    }
+
+    fun removeMeasurementTap(tap: kr.joa.selahrta.dsp.MeasurementTap) {
+        controller.postToCapture { session -> session.rta.removeSpectrumSink(tap) }
+    }
+
+    /** 지금 도는 분석기의 (FFT 길이, 샘플레이트). 안 돌면 null. */
+    fun rtaSpec(): Pair<Int, Int>? = controller.rtaSpec()
+
     fun setPreferredInput(key: String?) {
         viewModelScope.launch { settingsStore.setPreferredInput(key) }
     }
@@ -490,8 +507,10 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      * 스피커에서 나온 소리가 제 마이크로 돌아오므로 하울링 탐지를 확인할
      * 수 있다.
      */
-    fun playSignal(signal: TestSignal) {
-        val gen = player.start(signal, controller.baseState.value.signalLevel)
+    fun playSignal(signal: TestSignal, level: SignalLevel? = null) {
+        // 레벨을 받으면 그것으로 튼다. 교정 측정은 저장된 「작게」가 아니라
+        // 제 쓰임에 맞는 레벨이 필요하다(독립 검토 뒤 실기기에서 조정).
+        val gen = player.start(signal, level ?: controller.baseState.value.signalLevel)
         playGeneration = gen
         val ok = gen != SignalPlayer.NONE
         controller.update { st -> st.copy(

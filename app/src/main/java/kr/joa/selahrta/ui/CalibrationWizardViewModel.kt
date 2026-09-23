@@ -12,6 +12,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kr.joa.selahrta.calibration.CalInfo
+import kr.joa.selahrta.calibration.RunOutcome
+import kr.joa.selahrta.calibration.WizardRunner
 import kr.joa.selahrta.calibration.WizardState
 import kr.joa.selahrta.calibration.WizardStep
 import kr.joa.selahrta.calibration.nextStep
@@ -20,6 +22,7 @@ import kr.joa.selahrta.dsp.CalibrationCurve
 import kr.joa.selahrta.dsp.CalibrationFile
 import kr.joa.selahrta.dsp.CurveReading
 import kr.joa.selahrta.dsp.CurveShape
+import kr.joa.selahrta.dsp.MeasurementTap
 import kr.joa.selahrta.dsp.ReadingStakes
 import kr.joa.selahrta.dsp.decideReading
 import kr.joa.selahrta.dsp.shapeOf
@@ -106,6 +109,74 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
 
     fun acknowledgePhantom(on: Boolean) {
         _state.update { it.copy(phantomAcknowledged = on) }
+    }
+
+    // ------------------------------------------------------------------
+    // 2단계 — 입력 · DSP 점검
+    // ------------------------------------------------------------------
+
+    /** 지금 무엇을 하는 중인가. 화면이 「돌아가는 중」을 그릴 수 있어야 한다. */
+    private val _busyKo = MutableStateFlow<String?>(null)
+    val busyKo: StateFlow<String?> = _busyKo.asStateFlow()
+
+    /**
+     * 잡음 바닥을 재고, 이어서 잔여 DSP 를 검사한다(지시서 3장).
+     *
+     * **둘을 한 단추에 묶는다.** 따로 두면 잡음을 안 잰 채로 점검을 눌러,
+     * 「신호가 묻혔는지」를 판단하지 못하는 결과가 나온다 — 그러고도
+     * 판정은 나오므로 사람은 잰 줄 안다.
+     *
+     * @param capture 실제 캡처. [WizardCaptureBridge] 가 들어온다.
+     * @param tick 한 번 기다리는 방법. 화면이 실제 시간을 넣는다.
+     */
+    fun runInputCheck(
+        capture: kr.joa.selahrta.calibration.WizardCapture,
+        fftSize: Int,
+        sampleRate: Int,
+        tick: suspend () -> Unit,
+    ) {
+        if (_busyKo.value != null) return
+        viewModelScope.launch {
+            val tap = MeasurementTap(fftSize, sampleRate)
+            val runner = WizardRunner(capture, tick)
+            capture.installTap(tap)
+            try {
+                _busyKo.value = "주변 소리를 재는 중입니다. 잠시 조용히 해 주십시오."
+                val noise = when (val r = runner.measureNoiseFloor(tap)) {
+                    is RunOutcome.Failed -> {
+                        _noticeKo.value = r.reasonKo
+                        return@launch
+                    }
+
+                    is RunOutcome.Done -> r.value
+                }
+                _state.update { it.copy(noiseFloorDb = noise) }
+
+                _busyKo.value = "소리를 틀고 점검하는 중입니다."
+                when (val r = runner.checkDsp(tap, noiseFloorDb = noise)) {
+                    // **지난 판정을 지운다.** 남겨 두면 실패 문구 옆에 옛
+                    // 수치가 그대로 붙어 있어, 방금 잰 것처럼 읽힌다 —
+                    // 그 상태로 관문도 통과한다(기기에서 확인했다).
+                    is RunOutcome.Failed -> {
+                        _noticeKo.value = r.reasonKo
+                        _state.update { it.copy(dsp = null) }
+                    }
+
+                    is RunOutcome.Done -> _state.update {
+                        it.copy(dsp = r.value, clipped = capture.clippedSinceMark)
+                    }
+                }
+            } finally {
+                _busyKo.value = null
+                capture.removeTap(tap)
+                capture.stopSignal()
+            }
+        }
+    }
+
+    /** API 가 알려 준 AGC/NS/AEC 상태. **설정값일 뿐이라** 신호 검사와 따로 둔다. */
+    fun noteEffects(allClear: Boolean) {
+        _state.update { it.copy(effectsAllClear = allClear) }
     }
 
     /** 다음 단계로. **관문이 막으면 아무 일도 안 일어난다.** */

@@ -99,6 +99,8 @@ fun SelahApp() {
     val wizard: CalibrationWizardViewModel = viewModel()
     val wizardState by wizard.state.collectAsStateWithLifecycle()
     val wizardNotice by wizard.noticeKo.collectAsStateWithLifecycle()
+    val wizardBusy by wizard.busyKo.collectAsStateWithLifecycle()
+    val wizardCapture = remember(vm) { WizardCaptureBridge(vm) }
 
     // **칩을 저장된 구간에 맞춘다.** 구간을 고르는 줄을 없앤 뒤로 칩이
     // 곧 구간인데, 칩은 늘 「설교」로 시작하고 구간은 지난번에 고른 것이
@@ -354,6 +356,8 @@ fun SelahApp() {
                             state = wizardState,
                             shape = wizard.shape,
                             noticeKo = wizardNotice,
+                            busyKo = wizardBusy,
+                            canMeasure = capture.opened != null,
                             outcome = example,
                             judged = example?.let { exampleJudgement(it) },
                             showingExample = wizardExample,
@@ -362,6 +366,20 @@ fun SelahApp() {
                             onPickCalFile = { pickWizardCal.launch(arrayOf("*/*")) },
                             onChooseReading = wizard::chooseReading,
                             onPhantom = wizard::acknowledgePhantom,
+                            onRunInputCheck = {
+                                val spec = vm.rtaSpec()
+                                if (spec != null) {
+                                    wizard.runInputCheck(
+                                        capture = wizardCapture,
+                                        fftSize = spec.first,
+                                        sampleRate = spec.second,
+                                        // 한 틱은 FFT 한 장이 나올 만한 시간보다
+                                        // 조금 짧게 둔다 — 길면 장을 건너뛰고,
+                                        // 너무 짧으면 헛돈다.
+                                        tick = { kotlinx.coroutines.delay(30) },
+                                    )
+                                }
+                            },
                             onNext = wizard::goNext,
                             onBack = wizard::goBack,
                             onGoTo = wizard::goTo,

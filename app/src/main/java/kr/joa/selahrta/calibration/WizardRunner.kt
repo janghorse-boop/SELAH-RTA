@@ -1,5 +1,6 @@
 package kr.joa.selahrta.calibration
 
+import kr.joa.selahrta.audio.SignalLevel
 import kr.joa.selahrta.audio.TestSignal
 import kr.joa.selahrta.dsp.CalibrationCurve
 import kr.joa.selahrta.dsp.CalibrationSession
@@ -21,14 +22,30 @@ interface WizardCapture {
     /** 지금 열려 있는 입력의 열쇠([kr.joa.selahrta.audio.InputDeviceInfo.stableKey]). */
     val openedDeviceKey: String?
 
-    /** 지금 찌그러지고 있는가. */
-    val clipped: Boolean
+    /**
+     * **이 측정에서** 찌그러진 적이 있는가.
+     *
+     * 캡처가 세는 값은 세션 누적이라, 한 번 찌그러지면 그 뒤 모든 측정이
+     * 「찌그러졌다」가 된다. 그래서 재기 직전에 [markClippingBaseline] 로
+     * 금을 긋고 그 뒤만 본다.
+     */
+    val clippedSinceMark: Boolean
+
+    /** 지금부터의 찌그러짐만 보겠다고 금을 긋는다. */
+    fun markClippingBaseline()
 
     /** FFT 한 장마다 받아 갈 곳을 붙인다. */
     fun installTap(tap: MeasurementTap)
     fun removeTap(tap: MeasurementTap)
 
-    fun playSignal(signal: TestSignal)
+    /**
+     * 신호를 튼다. **레벨을 마법사가 정한다.**
+     *
+     * 저장된 값(사람이 시험 신호용으로 골라 둔 것)을 쓰면 「작게」인
+     * 경우가 많은데, 잔여 DSP 검사는 SNR 이 넉넉해야 뜻이 있다 — 신호가
+     * 잡음에 가까우면 이득이 변해도 잡음에 묻혀 안 보인다.
+     */
+    fun playSignal(signal: TestSignal, level: SignalLevel)
     fun stopSignal()
 }
 
@@ -106,7 +123,7 @@ class WizardRunner(
         frames: Int = 60,
         previousBroadbandDb: List<Double> = emptyList(),
     ): RunOutcome<DspProbeResult> {
-        capture.playSignal(TestSignal.Pink)
+        capture.playSignal(TestSignal.Pink, MEASURE_LEVEL)
         if (!awaitAudible(tap, noiseFloorDb)) {
             capture.stopSignal()
             return RunOutcome.Failed(NOT_AUDIBLE_KO)
@@ -153,11 +170,12 @@ class WizardRunner(
         require(step != MeasureStep.Target) { "대상은 measureTarget 으로 잰다: $step" }
         wrongDevice(expectDeviceKey)?.let { return it }
 
-        capture.playSignal(TestSignal.Pink)
+        capture.playSignal(TestSignal.Pink, MEASURE_LEVEL)
         if (!awaitAudible(tap, noiseFloorDb)) {
             capture.stopSignal()
             return RunOutcome.Failed(NOT_AUDIBLE_KO)
         }
+        capture.markClippingBaseline()
         tap.startReference(curve, calFileName, calSha256)
         val filled = collect(tap, frames)
         tap.stop()
@@ -165,7 +183,7 @@ class WizardRunner(
 
         val got = tap.drainReference()
         if (!filled) return notEnough(got.size, frames)
-        if (capture.clipped) return RunOutcome.Failed(CLIPPED_KO)
+        if (capture.clippedSinceMark) return RunOutcome.Failed(CLIPPED_KO)
         got.forEach { session.recordReference(step, it) }
         return RunOutcome.Done(got.size)
     }
@@ -180,11 +198,12 @@ class WizardRunner(
     ): RunOutcome<Int> {
         wrongDevice(expectDeviceKey)?.let { return it }
 
-        capture.playSignal(TestSignal.Pink)
+        capture.playSignal(TestSignal.Pink, MEASURE_LEVEL)
         if (!awaitAudible(tap, noiseFloorDb)) {
             capture.stopSignal()
             return RunOutcome.Failed(NOT_AUDIBLE_KO)
         }
+        capture.markClippingBaseline()
         tap.startTarget()
         val filled = collect(tap, frames)
         tap.stop()
@@ -192,7 +211,7 @@ class WizardRunner(
 
         val got = tap.drainTarget()
         if (!filled) return notEnough(got.size, frames)
-        if (capture.clipped) return RunOutcome.Failed(CLIPPED_KO)
+        if (capture.clippedSinceMark) return RunOutcome.Failed(CLIPPED_KO)
         got.forEach { session.record(MeasureStep.Target, it) }
         return RunOutcome.Done(got.size)
     }
@@ -274,5 +293,17 @@ const val CLIPPED_KO: String =
         "찌그러진 값으로 만든 보정은 엉뚱한 쪽으로 밀어 놓습니다."
 
 const val NOT_AUDIBLE_KO: String =
-    "소리가 들리지 않습니다. 스피커가 켜져 있는지, 볼륨이 올라가 있는지, " +
-        "마이크가 가려지지 않았는지 보십시오."
+    "신호가 주변 소리 위로 올라오지 않습니다. 스피커가 켜져 있는지, 볼륨이 " +
+        "올라가 있는지, 마이크가 가려지지 않았는지 보십시오. 잡음을 잴 때 이미 " +
+        "무언가 울리고 있었다면 그것도 같은 결과가 됩니다 — 조용한 상태에서 " +
+        "다시 하십시오."
+
+/**
+ * 교정 측정에 쓰는 신호 레벨.
+ *
+ * **「크게」가 아니다.** 스피커와 마이크가 가까우면 쉽게 찌그러지고,
+ * 찌그러진 값으로 만든 보정은 엉뚱한 쪽으로 밀어 놓는다. 「보통」으로
+ * 두고, 모자라면 사람이 스피커 볼륨을 올리는 편이 낫다 — 그쪽이 방의
+ * 실제 음장을 바꾸므로 측정에 맞는 조절이다.
+ */
+val MEASURE_LEVEL: SignalLevel = SignalLevel.Medium

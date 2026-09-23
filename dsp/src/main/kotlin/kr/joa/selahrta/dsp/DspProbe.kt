@@ -70,6 +70,20 @@ data class DspProbePolicy(
 
     /** 잡음 바닥을 받았을 때, 대역을 볼 만하다고 치는 최소 SNR. */
     val minBandSnrDb: Double = 6.0,
+
+    /**
+     * 이만큼은 봐야 판정한다(실기기에서 드러난 자리).
+     *
+     * 처음에는 「한 대역이라도 있으면 판정한다」였다. 그런데 사무실에서
+     * 돌려 보니 31개 중 **7개**만 넘겼는데도 「의심」이 당당히 나왔다 —
+     * 이득 −5.6dB, 모양 13.2dB. 그 숫자는 남은 일곱 대역의 잡음 변동일
+     * 수도 있고, 화면은 그 사실을 **경고하지 않았다.** 숫자로만 적혀
+     * 있으면 사람은 판정을 믿는다.
+     *
+     * 이 값도 실측으로 정한 것이 아니다. 절반쯤은 봐야 스펙트럼 모양을
+     * 말할 수 있다는 짐작이다.
+     */
+    val minBandsConsidered: Int = 12,
 )
 
 enum class DspVerdict {
@@ -203,18 +217,18 @@ fun probeResidualDsp(
     if (repeatSpread != null && repeatSpread > policy.maxRepeatSpreadDb) {
         reasons += "같은 측정을 되풀이했는데 레벨이 ${fmt(repeatSpread)}dB 벌어졌습니다."
     }
-    // **볼 대역이 하나도 없으면 판정하지 않는다.** 모양을 안 봤는데
-    // 「모양이 멀쩡하다」고 말할 수는 없다.
-    if (considered.isEmpty()) {
+    // **볼 대역이 모자라면 판정하지 않는다.** 일곱 대역으로 「스펙트럼
+    // 모양이 변했다」고 말할 수는 없다(사무실 실측에서 드러난 자리).
+    if (considered.size < policy.minBandsConsidered) {
         return DspProbeResult(
             verdict = DspVerdict.NotEnoughData,
             broadbandDriftDb = broadbandDrift,
             bandShapeDriftDb = null,
             worstBand = null,
             repeatSpreadDb = repeatSpread,
-            bandsConsidered = 0,
+            bandsConsidered = considered.size,
             framesUsed = frames.size,
-            reasonsKo = listOf(TOO_QUIET_KO),
+            reasonsKo = listOf(tooQuietKo(considered.size, bandCount)),
         )
     }
 
@@ -236,9 +250,10 @@ fun probeResidualDsp(
  * **「처리가 없습니다」라고 쓰지 않는다.** 고정 처리는 이 검사로 보이지
  * 않는다(위 KDoc 참고).
  */
-const val TOO_QUIET_KO: String =
-    "신호가 잡음에 묻혀 볼 수 있는 대역이 없습니다. 더 크게 틀거나 " +
-        "주변을 조용히 한 뒤 다시 하십시오."
+fun tooQuietKo(considered: Int, total: Int): String =
+    "믿고 볼 수 있는 대역이 $total 개 중 $considered 개뿐입니다. 이만큼으로는 " +
+        "이득이나 스펙트럼이 변했는지 말할 수 없습니다 — 남은 대역의 잡음 " +
+        "흔들림일 수도 있습니다. 더 크게 틀거나 주변을 조용히 한 뒤 다시 하십시오."
 
 const val NO_TIME_VARYING_FOUND_KO: String =
     "소리를 트는 동안 이득도 스펙트럼 모양도 눈에 띄게 변하지 않았습니다. " +

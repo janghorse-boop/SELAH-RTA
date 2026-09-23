@@ -50,7 +50,8 @@ fun interface SpectrumSink {
 }
 
 class RtaEngine(
-    private val sampleRate: Int,
+    /** 실제로 도는 샘플레이트. 교정 통로가 같은 값으로 묶여야 한다. */
+    val sampleRateHz: Int,
     /** 명세 7장의 출발점은 4096. 길수록 저역이 잘 보이고 반응은 느려진다. */
     val fftSize: Int = 4096,
     /** 겹치는 비율. 0.5 면 절반씩 겹친다. */
@@ -59,13 +60,13 @@ class RtaEngine(
     peakHoldFallDb: Double = 0.4,
 ) {
     init {
-        require(sampleRate > 0) { "샘플레이트가 0 이하다" }
+        require(sampleRateHz > 0) { "샘플레이트가 0 이하다" }
         require(overlap in 0.0..0.9) { "겹침 비율이 범위를 벗어난다: $overlap" }
     }
 
     private val hop = (fftSize * (1.0 - overlap)).toInt().coerceAtLeast(1)
     private val spectrum = PowerSpectrum(fftSize)
-    private val bands = BandAnalyzer(fftSize, sampleRate)
+    private val bands = BandAnalyzer(fftSize, sampleRateHz)
     private val smoothing = BandSmoothing(ThirdOctave.BAND_COUNT, smoothingFactor)
     private val peakHold = PeakHold(ThirdOctave.BAND_COUNT, peakHoldFallDb)
 
@@ -147,7 +148,7 @@ class RtaEngine(
      * 적는 동안 숫자는 보정 전 값이었다(독립 재검증 F06).
      */
     fun setCurve(curve: CalibrationCurve?) {
-        binCorrection = curve?.binCorrectionLinear(fftSize, sampleRate)
+        binCorrection = curve?.binCorrectionLinear(fftSize, sampleRateHz)
         curveGeneration++
         smoothing.reset()
         peakHold.reset()

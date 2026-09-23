@@ -65,6 +65,10 @@ fun CalibrationWizardScreen(
     /** 불러온 곡선의 모양 단서. 없으면 null. */
     shape: CurveShape?,
     noticeKo: String?,
+    /** 지금 무엇을 하는 중인가. null 이면 놀고 있다. */
+    busyKo: String?,
+    /** 재고 있는가. 마이크가 안 열려 있으면 점검을 시작할 수 없다. */
+    canMeasure: Boolean,
     /** 잰 결과. 아직 없으면 null. */
     outcome: CalibrationOutcome?,
     judged: QualityResult?,
@@ -72,6 +76,7 @@ fun CalibrationWizardScreen(
     onPickCalFile: () -> Unit,
     onChooseReading: (CurveReading) -> Unit,
     onPhantom: (Boolean) -> Unit,
+    onRunInputCheck: () -> Unit,
     onNext: () -> Unit,
     onBack: () -> Unit,
     onGoTo: (WizardStep) -> Unit,
@@ -130,6 +135,13 @@ fun CalibrationWizardScreen(
                 onPickCalFile = onPickCalFile,
                 onChooseReading = onChooseReading,
                 onPhantom = onPhantom,
+            )
+
+            WizardStep.InputCheck -> InputCheckStep(
+                state = state,
+                busyKo = busyKo,
+                canRun = canMeasure,
+                onRun = onRunInputCheck,
             )
 
             WizardStep.Review -> ReviewStep(outcome, judged, showingExample, onToggleExample)
@@ -419,4 +431,88 @@ fun exampleJudgement(outcome: CalibrationOutcome): QualityResult {
         ),
         outcome,
     )
+}
+
+// ----------------------------------------------------------------------
+// 2단계
+// ----------------------------------------------------------------------
+
+@Composable
+private fun InputCheckStep(
+    state: WizardState,
+    busyKo: String?,
+    canRun: Boolean,
+    onRun: () -> Unit,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(SelahColors.Surface, RoundedCornerShape(12.dp))
+            .border(1.dp, SelahColors.Outline, RoundedCornerShape(12.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            "입력 · DSP 점검",
+            color = SelahColors.TextPrimary,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            INPUT_CHECK_HOW_KO,
+            color = SelahColors.TextSecondary,
+            fontSize = 11.sp,
+            lineHeight = 16.sp,
+            style = TextStyle(lineBreak = LineBreak.Paragraph),
+        )
+
+        if (!canRun) {
+            InfoBar(NOT_MEASURING_KO, tone = SelahColors.Warn)
+        }
+
+        if (busyKo != null) {
+            InfoBar(busyKo, tone = SelahColors.InRange)
+        } else {
+            TextButton(onClick = onRun, enabled = canRun) {
+                Text(if (state.dsp == null) "점검하기" else "다시 점검하기")
+            }
+        }
+
+        val dsp = state.dsp
+        if (dsp != null) {
+            Text(
+                dspNumbersKo(dsp),
+                color = SelahColors.TextMuted,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+                style = TextStyle(lineBreak = LineBreak.Paragraph),
+            )
+        }
+        if (state.noiseFloorDb != null) {
+            Text(
+                "주변 잡음 광대역 %.1fdBFS 로 쟀습니다.".format(
+                    kr.joa.selahrta.dsp.broadbandDb(state.noiseFloorDb.toDoubleArray()),
+                ),
+                color = SelahColors.TextMuted,
+                fontSize = 11.sp,
+            )
+        }
+    }
+}
+
+const val INPUT_CHECK_HOW_KO: String =
+    "먼저 조용한 상태에서 주변 잡음을 재고, 이어서 핑크 노이즈를 틀어 " +
+        "이득과 스펙트럼이 시간에 따라 변하는지 봅니다. 변하면 AGC·NS 가 " +
+        "남아 있다는 뜻이라 교정이 흔들립니다."
+
+const val NOT_MEASURING_KO: String =
+    "재는 중이 아닙니다. 「측정」 화면에서 측정을 시작한 뒤 돌아오십시오. " +
+        "마이크가 열려 있어야 점검할 수 있습니다."
+
+/** 수치를 **그대로** 보인다. 「의심됨」만으로는 무엇을 고칠지 알 수 없다. */
+fun dspNumbersKo(dsp: kr.joa.selahrta.dsp.DspProbeResult): String {
+    val drift = dsp.broadbandDriftDb?.let { "%.1f".format(it) } ?: "모름"
+    val shape = dsp.bandShapeDriftDb?.let { "%.1f".format(it) } ?: "모름"
+    return "장 ${dsp.framesUsed}개 · 본 대역 ${dsp.bandsConsidered}개 · " +
+        "이득 변화 ${drift}dB · 모양 변화 ${shape}dB"
 }

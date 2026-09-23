@@ -206,6 +206,27 @@ class DspProbeTest {
         assertEquals(n - 5, r.bandsConsidered)
     }
 
+    /**
+     * **본 대역이 모자라면 판정하지 않는다**(사무실 실측에서 드러난 자리).
+     *
+     * 31개 중 7개만 넘겼는데도 「의심」이 당당히 나왔다 — 이득 −5.6dB,
+     * 모양 13.2dB. 그 숫자는 남은 일곱 대역의 잡음 변동일 수도 있는데,
+     * 화면은 그 사실을 경고하지 않았다. 숫자로만 적혀 있으면 사람은
+     * 판정을 믿는다.
+     */
+    @Test
+    fun `본 대역이 모자라면 판정하지 않는다`() {
+        val fs = frames(40).map { f ->
+            // 일곱 대역만 신호가 있고 나머지는 잡음에 묻혔다.
+            DoubleArray(n) { b -> if (b in 10..16) f[b] else -200.0 }
+        }
+        val r = probeResidualDsp(fs)
+        assertEquals(DspVerdict.NotEnoughData, r.verdict)
+        assertEquals(7, r.bandsConsidered)
+        assertFalse("모르는 것을 확인함으로 치면 안 된다", r.verifiedBySignal)
+        assertTrue(r.reasonsKo.toString(), r.reasonsKo.single().contains("7 개뿐"))
+    }
+
     /** 묻힌 대역은 **모양 검사에서 뺀다** — 잡음이 모양 변화로 보인다. */
     @Test
     fun `묻힌 대역은 모양 검사에서 뺀다`() {

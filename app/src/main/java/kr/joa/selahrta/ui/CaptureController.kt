@@ -195,6 +195,14 @@ class CaptureController(
      * **DSP 객체는 오디오 스레드만 만진다.** 「무엇을 하라」만 건네고,
      * 실제로 하는 것은 덩어리 사이의 안전한 지점이다.
      */
+    /**
+     * 지금 돌고 있는 분석기의 설정(FFT 길이, 샘플레이트). 안 돌면 null.
+     *
+     * 교정 통로([kr.joa.selahrta.dsp.MeasurementTap])는 **같은 설정으로**
+     * 묶어야 한다. 다르면 칸 주파수가 어긋나 CAL 이 엉뚱한 자리에 걸린다.
+     */
+    fun rtaSpec(): Pair<Int, Int>? = active?.let { it.rta.fftSize to it.rta.sampleRateHz }
+
     fun postToCapture(cmd: (CaptureSession) -> Unit) {
         val s = active ?: return
         s.commands.add { cmd(s) }

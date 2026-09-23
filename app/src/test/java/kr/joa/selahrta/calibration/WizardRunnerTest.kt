@@ -35,9 +35,17 @@ class WizardRunnerTest {
     /** 무슨 일이 어떤 차례로 일어났는지 적어 두는 가짜. */
     private class FakeCapture(
         override var openedDeviceKey: String? = "Usb|UMC404HD|",
-        override var clipped: Boolean = false,
+        var clipping: Boolean = false,
     ) : WizardCapture {
         val log = mutableListOf<String>()
+        var marks = 0
+
+        override val clippedSinceMark: Boolean get() = clipping
+
+        override fun markClippingBaseline() {
+            marks++
+            log += "mark"
+        }
         var taps = 0
         var playing: TestSignal? = null
 
@@ -49,8 +57,10 @@ class WizardRunnerTest {
             taps--; log += "tap-"
         }
 
-        override fun playSignal(signal: TestSignal) {
-            playing = signal; log += "play:${signal.name}"
+        var level: kr.joa.selahrta.audio.SignalLevel? = null
+
+        override fun playSignal(signal: TestSignal, level: kr.joa.selahrta.audio.SignalLevel) {
+            playing = signal; this.level = level; log += "play:${signal.name}"
         }
 
         override fun stopSignal() {
@@ -276,7 +286,7 @@ class WizardRunnerTest {
     /** 찌그러진 값으로 만든 보정은 엉뚱한 쪽으로 밀어 놓는다. */
     @Test
     fun `찌그러지면 세션에 넣지 않는다`() = runBlocking {
-        val cap = FakeCapture(clipped = true)
+        val cap = FakeCapture(clipping = true)
         val t = tap()
         val clock = FakeClock(t, bins)
         val runner = WizardRunner(cap, clock.wait)
