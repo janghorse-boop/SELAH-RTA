@@ -72,7 +72,7 @@ class PipelineProbeTest {
         }
         val r2 = s2.result()!!
         val q2 = qualityFromSession(r2, flat(10.0), dspVerifiedBySignal = true)
-        val out2 = calibrateFromSession(r2, q2, null)
+        val out2 = calibrateFromSession(r2, q2)
         println(
             "SPECTRAL_DRIFT drift=${r2.referenceDriftDb} bandDrift=${r2.referenceBandDriftDb} " +
                 "verdict=${judgeQuality(q2).verdict} " +
@@ -83,13 +83,14 @@ class PipelineProbeTest {
         val noise = flat(10.0); noise[20] = a[20]
         // 기준 경로 배경도 준다 — 안 주면 보정 자체를 거절하므로(RCP02)
         // 이 관측점이 재려던 것을 볼 수 없다.
-        val q = qualityFromSession(
-            r2, noise, referenceNoiseDb = flat(10.0), dspVerifiedBySignal = true,
-        )
         val cal = CalibrationCurve.of(
             listOf(CurvePoint(200.0, 0.0), CurvePoint(10000.0, 0.0)),
         ).getOrThrow()
-        val c = calibrateFromSession(r2, q, cal.rangeHz).getOrThrow()
+        val q = qualityFromSession(
+            r2, noise, referenceNoiseDb = flat(10.0),
+            referenceCalRangeHz = cal.rangeHz, dspVerifiedBySignal = true,
+        )
+        val c = calibrateFromSession(r2, q).getOrThrow()
         val ix = c.correction.hz.indices.minBy { abs(ln(c.correction.hz[it] / ThirdOctave.exactCenter(20))) }
         val lo = c.correction.hz.indices.minBy { abs(c.correction.hz[it] - 30.0) }
         println(
@@ -125,7 +126,7 @@ class PipelineProbeTest {
             s3.record(MeasureStep.ReferenceAfter, flat(70.0))
         }
         val r3 = s3.result()!!
-        val out3 = calibrateFromSession(r3, qualityFromSession(r3, flat(40.0)), null)
+        val out3 = calibrateFromSession(r3, qualityFromSession(r3, flat(40.0)))
         println(
             "CENTER_CAL refusedWhenCalNotApplied=${out3.isFailure} " +
                 "why=${out3.exceptionOrNull()?.message?.take(40)}",

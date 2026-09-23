@@ -293,9 +293,19 @@ class CalibrationSessionTest {
     // ★ 기준 CAL 은 밴드가 아니라 FFT 칸에 건다 (독립 검증 CP04)
     // ------------------------------------------------------------------
 
-    /** 두 경로 모두 배경이 조용했던 경우. 기준 배경까지 준다(RCP02). */
-    private fun goodQuality(r: SessionResult) =
-        qualityFromSession(r, flat(40.0), referenceNoiseDb = flat(40.0), dspVerifiedBySignal = true)
+    /**
+     * 두 경로 모두 배경이 조용했던 경우. 기준 배경까지 준다(RCP02).
+     *
+     * @param cal 기준 CAL 이 덮는 범위. **승인과 곡선이 같은 값을 보도록**
+     *   품질 보고에 넣는다(독립 검증 RCP-F01).
+     */
+    private fun goodQuality(
+        r: SessionResult,
+        cal: ClosedFloatingPointRange<Double>? = null,
+    ) = qualityFromSession(
+        r, flat(40.0), referenceNoiseDb = flat(40.0),
+        referenceCalRangeHz = cal, dspVerifiedBySignal = true,
+    )
 
     /**
      * **칸 단위로 걸지 않았으면 만들지 않는다.**
@@ -307,7 +317,7 @@ class CalibrationSessionTest {
     @Test
     fun `기준 CAL 을 칸에 걸지 않았으면 거절한다`() {
         val r = sessionOf(flat(70.0), flat(70.0), flat(70.0), calApplied = false)
-        val out = calibrateFromSession(r, goodQuality(r), null)
+        val out = calibrateFromSession(r, goodQuality(r))
         assertTrue("거절해야 한다", out.isFailure)
         assertTrue(
             "까닭을 말해야 한다: ${out.exceptionOrNull()?.message}",
@@ -336,8 +346,8 @@ class CalibrationSessionTest {
         val right = sessionOf(corrected, phone, corrected)
         val wrong = sessionOf(uncorrected, phone, uncorrected)
 
-        val rightOut = calibrateFromSession(right, goodQuality(right), null).getOrThrow()
-        val wrongOut = calibrateFromSession(wrong, goodQuality(wrong), null).getOrThrow()
+        val rightOut = calibrateFromSession(right, goodQuality(right)).getOrThrow()
+        val wrongOut = calibrateFromSession(wrong, goodQuality(wrong)).getOrThrow()
 
         val rightAt14k = rightOut.correction.db[nearest(rightOut.correction, 14_000.0)]
         val wrongAt14k = wrongOut.correction.db[nearest(wrongOut.correction, 14_000.0)]
@@ -373,7 +383,7 @@ class CalibrationSessionTest {
         assertFalse("그 대역은 못 쓴다", q.usable[20])
         assertTrue("나머지는 쓸 수 있어 전체는 통과한다", q.usableRatio > 0.9)
 
-        val out = calibrateFromSession(r, q, null).getOrThrow()
+        val out = calibrateFromSession(r, q).getOrThrow()
         val i = nearest(out.correction, ThirdOctave.exactCenter(20))
         assertFalse(
             "못 믿는 대역에 보정이 남으면 안 된다",
@@ -394,8 +404,8 @@ class CalibrationSessionTest {
     @Test
     fun `기준 CAL 이 덮지 않는 주파수는 보정에서 빠진다`() {
         val r = sessionOf(flat(70.0), flat(70.0), flat(70.0))
-        val q = goodQuality(r)
-        val out = calibrateFromSession(r, q, 200.0..10_000.0).getOrThrow()
+        val q = goodQuality(r, cal = 200.0..10_000.0)
+        val out = calibrateFromSession(r, q).getOrThrow()
 
         val low = nearest(out.correction, 30.0)
         val high = nearest(out.correction, 18_000.0)
@@ -411,7 +421,7 @@ class CalibrationSessionTest {
         // 대상 배경 미측정 → SNR 0. 기준 쪽은 쟀다고 둬야 이 시험이
         // 「기준을 안 쟀다」가 아니라 「대상이 못 쓴다」를 잰다.
         val q = qualityFromSession(r, noiseDb = null, referenceNoiseDb = flat(40.0))
-        val out = calibrateFromSession(r, q, null)
+        val out = calibrateFromSession(r, q)
         assertTrue("거절해야 한다", out.isFailure)
         assertTrue(
             "${out.exceptionOrNull()?.message}",
@@ -443,11 +453,12 @@ class CalibrationSessionTest {
         // 아무것도 재지 않는다(실제로 그랬다 — 되돌린 판이 통과했다).
         // 여기서 지지구간을 가르는 것은 오직 CAL 범위여야 한다.
         val q = qualityFromSession(
-            r, flat(0.0), referenceNoiseDb = flat(0.0), dspVerifiedBySignal = true,
+            r, flat(0.0), referenceNoiseDb = flat(0.0),
+            referenceCalRangeHz = 1000.0..16_000.0, dspVerifiedBySignal = true,
         )
 
         // CAL 은 기준에만 걸린다 — 여기서 지지구간이 갈린다.
-        val out = calibrateFromSession(r, q, 1000.0..16_000.0).getOrThrow()
+        val out = calibrateFromSession(r, q).getOrThrow()
 
         // 전제 확인: 정규화 대역 안에서 두 마스크가 **정말 다른가.**
         val band = out.reference.hz.indices.filter {
@@ -486,10 +497,11 @@ class CalibrationSessionTest {
             if (ThirdOctave.exactCenter(it) in 250.0..3500.0) 50.0 else 0.0
         }
         val q = qualityFromSession(
-            r, noise, referenceNoiseDb = noise, dspVerifiedBySignal = true,
+            r, noise, referenceNoiseDb = noise,
+            referenceCalRangeHz = 20.0..20_000.0, dspVerifiedBySignal = true,
         )
 
-        val out = calibrateFromSession(r, q, 20.0..20_000.0)
+        val out = calibrateFromSession(r, q)
         assertTrue("거절해야 한다", out.isFailure)
         assertTrue(
             "레벨을 맞출 수 없다고 말해야 한다: ${out.exceptionOrNull()?.message}",
@@ -501,7 +513,7 @@ class CalibrationSessionTest {
     @Test
     fun `정규화에 쓴 자리를 남긴다`() {
         val r = sessionOf(flat(70.0), flat(70.0))
-        val out = calibrateFromSession(r, goodQuality(r), null).getOrThrow()
+        val out = calibrateFromSession(r, goodQuality(r)).getOrThrow()
         assertTrue("점 수", out.normalizeSupportPoints > 0)
         assertTrue("대역 수", out.normalizeBandsUsed > 0)
         assertTrue(
@@ -521,7 +533,7 @@ class CalibrationSessionTest {
         val q = qualityFromSession(r, flat(40.0), dspVerifiedBySignal = true)
         assertFalse(q.referenceSnrKnown)
 
-        val out = calibrateFromSession(r, q, null)
+        val out = calibrateFromSession(r, q)
         assertTrue("거절해야 한다", out.isFailure)
         assertTrue(
             "${out.exceptionOrNull()?.message}",
@@ -552,7 +564,7 @@ class CalibrationSessionTest {
         assertFalse("기준은 못 쓴다", q.referenceUsable[20])
         assertFalse("그래서 함께 쓸 수 없다", q.bothUsable[20])
 
-        val out = calibrateFromSession(r, q, null).getOrThrow()
+        val out = calibrateFromSession(r, q).getOrThrow()
         val i = nearest(out.correction, ThirdOctave.exactCenter(20))
         assertFalse("기준이 못 믿을 자리에 보정이 남으면 안 된다", out.correction.valid[i])
     }
@@ -609,8 +621,8 @@ class CalibrationSessionTest {
     @Test
     fun `평활 뒤에도 무효 구간이 남는다`() {
         val r = sessionOf(flat(70.0), flat(70.0), flat(70.0))
-        val q = goodQuality(r)
-        val out = calibrateFromSession(r, q, 200.0..10_000.0).getOrThrow()
+        val q = goodQuality(r, cal = 200.0..10_000.0)
+        val out = calibrateFromSession(r, q).getOrThrow()
         assertTrue("무효 구간이 있어야 한다", out.correction.valid.any { !it })
         assertTrue("유효 구간도 있어야 한다", out.correction.valid.any { it })
     }

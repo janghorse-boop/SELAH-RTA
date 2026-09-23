@@ -42,6 +42,7 @@ class CalibrationQualityTest {
         // 기준 경로도 조용했던 경우. 안 주면 「모른다」가 되어 Pass 가
         // 나오지 않는다(독립 검증 RCP02).
         referenceBands: List<BandNoise>? = bands(25.0, bands.size),
+        referenceCalRangeHz: ClosedFloatingPointRange<Double>? = null,
     ) = QualityReport(
         bands = bands,
         repeatSpreadDb = repeatSpreadDb,
@@ -50,6 +51,7 @@ class CalibrationQualityTest {
         noStableFrames = noStableFrames,
         minFramesPerStep = minFramesPerStep,
         referenceBands = referenceBands,
+        referenceCalRangeHz = referenceCalRangeHz,
         clipped = clipped,
         dspVerifiedBySignal = dspVerifiedBySignal,
         policy = policy,
@@ -108,15 +110,16 @@ class CalibrationQualityTest {
             val snr = if (hz < 200.0) 5.0 else 25.0
             BandNoise(hz, 80.0, 80.0 - snr)
         }
-        val r = judgeQuality(QualityReport(b, dspVerifiedBySignal = true))
+        val r = judgeQuality(report(b))
 
         assertTrue("대부분 쓸 수 있으므로 버리지는 않는다", r.maySave)
         assertEquals(QualityVerdict.Degraded, r.verdict)
         assertTrue(
             "좁은 범위를 알려야 한다: ${r.reasonsKo}",
-            r.reasonsKo.any { it.contains("믿을 수 있는 범위") },
+            r.reasonsKo.any { it.contains("보정이 걸리는 범위") },
         )
-        val range = r.report.usableRangeHz!!
+        // **승인 범위**로 본다 — 대상만 보면 기준·CAL 제한이 숨는다(RCP-F01).
+        val range = r.report.approvedRangeHz!!
         assertTrue("200Hz 아래는 빠져야 한다", range.start >= 200.0)
     }
 
@@ -182,6 +185,88 @@ class CalibrationQualityTest {
     }
 
     // ------------------------------------------------------------------
+    // ★ 승인은 교집합으로 한다 (독립 검증 RCP-F01)
+    // ------------------------------------------------------------------
+
+    /**
+     * **RCP-F01 반례 ①** — 각 경로는 60% 를 넘는데 교집합은 25.8% 다.
+     *
+     * 잡음이 두 경로의 **서로 다른 구간**을 갉아먹으면 이렇게 된다.
+     * 예전에는 대상 비율과 기준 비율을 따로 봐서 Pass 가 났다.
+     */
+    @Test
+    fun `각각은 충분해도 교집합이 모자라면 막는다`() {
+        val hz = { i: Int -> 20.0 * Math.pow(2.0, i / 3.0) }
+        // 대상은 0~18 과 30 이 좋고, 기준은 12~30 이 좋다 → 겹치는 것은 12~18.
+        val target = (0 until 31).map {
+            BandNoise(hz(it), 70.0, if (it <= 18 || it == 30) 40.0 else 70.0)
+        }
+        val reference = (0 until 31).map {
+            BandNoise(hz(it), 70.0, if (it >= 12) 40.0 else 70.0)
+        }
+        val rep = report(target, referenceBands = reference)
+
+        // **전제부터 확인한다** — 각자는 정말 충분한가.
+        assertTrue("대상은 60% 를 넘는다", rep.usableRatio > 0.6)
+        assertTrue("기준도 60% 를 넘는다", rep.referenceUsable.count { it } / 31.0 > 0.6)
+        // 12~18 의 일곱에 30 이 더해져 여덟이다 — Codex probe 가 보고한 수와 같다.
+        assertEquals("겹치는 것은 여덟뿐이다", 8, rep.approvedCount)
+
+        val r = judgeQuality(rep)
+        assertEquals(QualityVerdict.Fail, r.verdict)
+        assertFalse(r.mayAutoApply)
+        assertTrue(
+            "어느 쪽이 문제인지 짚어 줘야 한다: ${r.reasonsKo}",
+            r.reasonsKo.any { it.contains("대상") && it.contains("기준") },
+        )
+    }
+
+    /**
+     * **RCP-F01 반례 ②** — CAL 이 좁으면 보정도 거기까지다.
+     *
+     * 예전에는 CAL 범위가 곡선 생성에만 쓰여, 대상 SNR 이 전 대역에서
+     * 좋으면 좁은 범위 경고조차 없었다.
+     */
+    @Test
+    fun `CAL 범위가 좁으면 승인에 반영된다`() {
+        val r = judgeQuality(report(bands(25.0), referenceCalRangeHz = 1000.0..1300.0))
+        assertEquals(QualityVerdict.Fail, r.verdict)
+        assertTrue(
+            "CAL 범위를 적어야 한다: ${r.reasonsKo}",
+            r.reasonsKo.any { it.contains("CAL 1000~1300Hz") },
+        )
+    }
+
+    /** 조금 좁은 정도면 막지는 않되 **범위를 알린다.** */
+    @Test
+    fun `CAL 이 조금 좁으면 범위를 알린다`() {
+        // 20~1300Hz 는 19/31 = 61.3% — 비율 관문(60%)은 넘고 위끝은 8kHz 미만이다.
+        val r = judgeQuality(report(bands(25.0), referenceCalRangeHz = 20.0..1_300.0))
+        assertEquals(QualityVerdict.Degraded, r.verdict)
+        assertTrue(
+            "${r.reasonsKo}",
+            r.reasonsKo.any { it.contains("보정이 걸리는 범위") },
+        )
+    }
+
+    @Test
+    fun `두 경로가 다 넓으면 통과한다`() {
+        val r = judgeQuality(report(bands(25.0), referenceCalRangeHz = 20.0..20_000.0))
+        assertEquals(QualityVerdict.Pass, r.verdict)
+        assertTrue(r.mayAutoApply)
+    }
+
+    @Test
+    fun `교집합이 0 이면 막는다`() {
+        val hz = { i: Int -> 20.0 * Math.pow(2.0, i / 3.0) }
+        val target = (0 until 31).map { BandNoise(hz(it), 70.0, if (it < 15) 40.0 else 70.0) }
+        val reference = (0 until 31).map { BandNoise(hz(it), 70.0, if (it >= 15) 40.0 else 70.0) }
+        val rep = report(target, referenceBands = reference)
+        assertEquals(0, rep.approvedCount)
+        assertEquals(QualityVerdict.Fail, judgeQuality(rep).verdict)
+    }
+
+    // ------------------------------------------------------------------
     // 반복성 — 「모른다」를 「괜찮다」로 바꾸지 않는다 (독립 검증 CP01)
     // ------------------------------------------------------------------
 
@@ -242,7 +327,7 @@ class CalibrationQualityTest {
      */
     @Test
     fun `DSP 를 신호로 확인 안 했으면 자동 적용을 막는다`() {
-        val r = judgeQuality(QualityReport(bands(25.0), dspVerifiedBySignal = false))
+        val r = judgeQuality(report(bands(25.0), dspVerifiedBySignal = false))
         assertEquals(QualityVerdict.Degraded, r.verdict)
         assertTrue("저장은 된다", r.maySave)
         assertFalse("자동 적용은 안 된다", r.mayAutoApply)

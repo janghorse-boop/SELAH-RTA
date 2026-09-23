@@ -52,8 +52,8 @@ class RecheckProbeTest {
         val noise = DoubleArray(n) {
             if (ThirdOctave.exactCenter(it) in 250.0..3500.0) 50.0 else 0.0
         }
-        val q2 = qualityFromSession(r2, noise, dspVerifiedBySignal = true)
-        val o2 = calibrateFromSession(r2, q2, 20.0..20000.0).getOrNull()
+        val q2 = qualityFromSession(r2, noise, referenceCalRangeHz = 20.0..20000.0, dspVerifiedBySignal = true)
+        val o2 = calibrateFromSession(r2, q2).getOrNull()
         println(
             "ZERO_NORMALIZATION verdict=${judgeQuality(q2).verdict} usable=${q2.usableCount}/$n " +
                 "pointsUsed=${o2?.internalNormalized?.pointsUsed ?: "-"} " +
@@ -63,8 +63,8 @@ class RecheckProbeTest {
 
         val slope = DoubleArray(n) { 50 + 4 * log2(ThirdOctave.exactCenter(it) / 1000.0) }
         val r3 = session(slope, slope)
-        val q3 = qualityFromSession(r3, flat(0.0), dspVerifiedBySignal = true)
-        val o3 = calibrateFromSession(r3, q3, 1000.0..16000.0).getOrNull()
+        val q3 = qualityFromSession(r3, flat(0.0), referenceCalRangeHz = 1000.0..16000.0, dspVerifiedBySignal = true)
+        val o3 = calibrateFromSession(r3, q3).getOrNull()
         println(
             "UNEQUAL_SUPPORT verdict=${judgeQuality(q3).verdict} identicalInputs=true " +
                 "correction=${o3?.correction?.db?.filterIndexed { i, _ -> o3.correction.valid[i] }?.firstOrNull() ?: "거절"} " +
@@ -73,14 +73,14 @@ class RecheckProbeTest {
 
         // 기준 배경까지 재 준 경우 — RCP01 의 두 반례가 **계산 자체로도**
         // 고쳐졌는지 본다. 거절만으로 덮고 넘어가지 않는다.
-        val q2b = qualityFromSession(r2, noise, referenceNoiseDb = noise, dspVerifiedBySignal = true)
-        val o2b = calibrateFromSession(r2, q2b, 20.0..20000.0)
+        val q2b = qualityFromSession(r2, noise, referenceNoiseDb = noise, referenceCalRangeHz = 20.0..20000.0, dspVerifiedBySignal = true)
+        val o2b = calibrateFromSession(r2, q2b)
         println(
             "ZERO_NORMALIZATION_WITH_REFSNR ok=${o2b.isSuccess} " +
                 "why=${o2b.exceptionOrNull()?.message?.take(30) ?: "-"}",
         )
-        val q3b = qualityFromSession(r3, flat(0.0), referenceNoiseDb = flat(0.0), dspVerifiedBySignal = true)
-        val o3b = calibrateFromSession(r3, q3b, 1000.0..16000.0).getOrNull()
+        val q3b = qualityFromSession(r3, flat(0.0), referenceNoiseDb = flat(0.0), referenceCalRangeHz = 1000.0..16000.0, dspVerifiedBySignal = true)
+        val o3b = calibrateFromSession(r3, q3b).getOrNull()
         println(
             "UNEQUAL_SUPPORT_WITH_REFSNR identicalInputs=true " +
                 "correction=${o3b?.correction?.db?.filterIndexed { i, _ -> o3b.correction.valid[i] }?.firstOrNull() ?: "거절"} " +

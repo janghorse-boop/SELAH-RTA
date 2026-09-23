@@ -273,7 +273,6 @@ fun broadbandDb(bandsDb: DoubleArray): Double =
 fun calibrateFromSession(
     session: SessionResult,
     quality: QualityReport,
-    referenceCalRangeHz: ClosedFloatingPointRange<Double>?,
     settings: CalibrationSettings = CalibrationSettings(),
 ): Result<CalibrationOutcome> {
     if (!session.referenceCalApplied) {
@@ -305,9 +304,14 @@ fun calibrateFromSession(
     // 기준: **기준 경로의 SNR** 에 더해 CAL 이 덮는 범위 안이어야 한다.
     // 예전에는 대상의 마스크를 그대로 베껴 써서, 기준 쪽이 아무리
     // 시끄러워도 걸러지지 않았다.
+    //
+    // **CAL 범위는 품질 보고에서 읽는다.** 인자로 따로 받으면 승인이
+    // 본 범위와 곡선이 쓴 범위가 갈라질 수 있다(독립 검증 RCP-F01 은
+    // 그 둘이 갈라져 있던 것이었다).
+    val calRange = quality.referenceCalRangeHz
     val referenceValid = BooleanArray(n) { i ->
         val hz = ThirdOctave.exactCenter(i)
-        quality.referenceUsable[i] && (referenceCalRangeHz == null || hz in referenceCalRangeHz)
+        quality.referenceUsable[i] && (calRange == null || hz in calRange)
     }
 
     if (referenceValid.none { it } || internalValid.none { it }) {
@@ -354,6 +358,14 @@ fun qualityFromSession(
     session: SessionResult,
     noiseDb: DoubleArray?,
     referenceNoiseDb: DoubleArray? = null,
+    /**
+     * 기준 마이크 CAL 이 **실제로 잰** 범위. [calibrateFromSession] 에
+     * 넘기는 것과 **같은 값이어야 한다.**
+     *
+     * 여기에 없으면 승인이 CAL 제한을 보지 못한다 — CAL 이 1000~1300Hz
+     * 뿐이라 보정이 축 네 점에만 걸려도 Pass 가 났다(독립 검증 RCP-F01).
+     */
+    referenceCalRangeHz: ClosedFloatingPointRange<Double>? = null,
     clipped: Boolean = false,
     dspVerifiedBySignal: Boolean = false,
     policy: QualityPolicy = QualityPolicy(),
@@ -387,6 +399,7 @@ fun qualityFromSession(
         // **쓴 장으로 센다**(RCP03).
         minFramesPerStep = session.minKeptFramesPerStep,
         referenceBands = referenceBands,
+        referenceCalRangeHz = referenceCalRangeHz,
         clipped = clipped,
         dspVerifiedBySignal = dspVerifiedBySignal,
         policy = policy,

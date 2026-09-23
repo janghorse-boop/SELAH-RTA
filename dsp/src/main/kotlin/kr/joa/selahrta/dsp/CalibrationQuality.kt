@@ -144,6 +144,14 @@ data class QualityReport(
      * 그때는 검증 완료(Pass)를 주지 않는다.
      */
     val referenceBands: List<BandNoise>? = null,
+    /**
+     * 기준 마이크 CAL 이 **실제로 잰** 주파수 범위. 없으면 null.
+     *
+     * **승인은 이것까지 본다**(독립 검증 RCP-F01). 예전에는 CAL 범위가
+     * 곡선 생성에만 쓰여, CAL 이 1000~1300Hz 뿐이라 보정이 축 네 점에만
+     * 걸려도 판정은 Pass 였다.
+     */
+    val referenceCalRangeHz: ClosedFloatingPointRange<Double>? = null,
     /** 재는 동안 잘린 적이 있는가. */
     val clipped: Boolean = false,
     /**
@@ -171,12 +179,33 @@ data class QualityReport(
     val referenceSnrKnown: Boolean get() = referenceBands != null
 
     /**
-     * 두 경로가 **함께** 믿을 만한 대역. 보정에 쓸 수 있는 자리다.
+     * 두 경로가 **함께** 믿을 만하고 **CAL 도 덮는** 대역.
+     *
+     * **승인은 이것으로 한다**(독립 검증 RCP-F01). 각 경로를 따로 보면
+     * 둘 다 60% 를 넘으면서 교집합은 25.8% 인 경우가 통과한다 — 잡음이
+     * 서로 다른 구간을 갉아먹었을 때 그렇게 된다.
      *
      * 기준을 안 쟀으면 비어 있다 — 그 상태로는 보정을 만들지 않는다.
      */
     val bothUsable: List<Boolean>
-        get() = usable.indices.map { usable[it] && referenceUsable[it] }
+        get() = usable.indices.map { i ->
+            usable[i] && referenceUsable[i] &&
+                (referenceCalRangeHz == null || bands[i].hz in referenceCalRangeHz)
+        }
+
+    /** 승인에 쓰는 대역 수. */
+    val approvedCount: Int get() = bothUsable.count { it }
+
+    val approvedRatio: Double
+        get() = if (bands.isEmpty()) 0.0 else approvedCount.toDouble() / bands.size
+
+    /** 승인 대역이 실제로 덮는 주파수 범위. 없으면 null. */
+    val approvedRangeHz: ClosedFloatingPointRange<Double>?
+        get() {
+            val ok = bands.filterIndexed { i, _ -> bothUsable[i] }
+            if (ok.isEmpty()) return null
+            return ok.minOf { it.hz }..ok.maxOf { it.hz }
+        }
 
     val usableCount: Int get() = usable.count { it }
 
@@ -228,14 +257,27 @@ fun judgeQuality(report: QualityReport): QualityResult {
         fails += "재는 동안 입력이 잘렸습니다. GAIN 을 낮추고 다시 재십시오."
     }
 
-    if (report.usableRatio < p.minUsableBandRatio) {
+    // **승인은 교집합으로 한다**(독립 검증 RCP-F01).
+    //
+    // 예전에는 대상 비율과 기준 비율을 따로 봤다. 잡음이 두 경로의
+    // 서로 다른 구간을 갉아먹으면 **각자는 60% 를 넘는데 함께 쓸 수
+    // 있는 대역은 25.8%** 인 일이 생긴다. 보정이 실제로 걸리는 자리는
+    // 교집합이므로, 승인도 거기서 해야 한다.
+    //
+    // 각 경로의 수는 **까닭을 짚으라고** 함께 적는다 — 어느 쪽을
+    // 고쳐야 하는지는 그 둘을 봐야 안다.
+    if (report.approvedRatio < p.minUsableBandRatio) {
         fails += buildString {
-            append("쓸 수 있는 대역이 ")
-            append("${report.usableCount}/${report.bands.size}")
-            append("(${"%.0f".format(report.usableRatio * 100)}%)뿐입니다 — ")
-            append("SNR ${"%.0f".format(p.minBandSnrDb)}dB 이상인 대역이 ")
+            append("보정에 쓸 수 있는 대역이 ")
+            append("${report.approvedCount}/${report.bands.size}")
+            append("(${"%.0f".format(report.approvedRatio * 100)}%)뿐입니다 — ")
             append("${"%.0f".format(p.minUsableBandRatio * 100)}% 는 되어야 합니다. ")
-            append("배경 소음을 줄이거나 신호를 키우십시오.")
+            append("(대상 ${report.usableCount}")
+            if (report.referenceSnrKnown) append(" · 기준 ${report.referenceUsable.count { it }}")
+            report.referenceCalRangeHz?.let {
+                append(" · CAL ${it.start.toInt()}~${it.endInclusive.toInt()}Hz")
+            }
+            append(") 배경 소음을 줄이거나 신호를 키우십시오.")
         }
     }
 
@@ -293,10 +335,12 @@ fun judgeQuality(report: QualityReport): QualityResult {
         degrades += "기준 경로의 배경 소음을 재지 않았습니다. 기준 마이크가 " +
             "실제로 신호를 잡았는지 확인되지 않아, 이 보정은 자동으로 걸리지 않습니다."
     } else {
+        // 교집합 검사가 이미 막았더라도, **어느 쪽이 문제인지** 짚어
+        // 준다 — 「보정 대역이 모자라다」만 보면 무엇을 고칠지 모른다.
         val refUsable = report.referenceUsable.count { it }
         val refRatio = refUsable.toDouble() / report.bands.size
         if (refRatio < p.minUsableBandRatio) {
-            fails += "기준 경로에서 쓸 수 있는 대역이 " +
+            fails += "그중 기준 경로에서 쓸 수 있는 대역이 " +
                 "$refUsable/${report.bands.size}" +
                 "(${"%.0f".format(refRatio * 100)}%)뿐입니다. " +
                 "기준 마이크 쪽 배경 소음이 너무 큽니다."
@@ -311,9 +355,13 @@ fun judgeQuality(report: QualityReport): QualityResult {
     }
 
     // 쓸 수 있는 대역이 있어도 **범위가 좁으면** 그 사실을 적는다.
-    report.usableRangeHz?.let { r ->
+    //
+    // **대상의 범위가 아니라 승인 범위를 본다**(독립 검증 RCP-F01).
+    // 대상만 보면, CAL 이 1000~1300Hz 뿐이라 보정이 그 언저리에만 걸려도
+    // 「전 대역을 믿을 수 있다」로 읽힌다.
+    report.approvedRangeHz?.let { r ->
         if (fails.isEmpty() && (r.start > 100.0 || r.endInclusive < 8000.0)) {
-            degrades += "믿을 수 있는 범위가 " +
+            degrades += "보정이 걸리는 범위가 " +
                 "${r.start.toInt()}Hz ~ ${(r.endInclusive / 1000).toInt()}kHz 뿐입니다. " +
                 "그 밖에서는 보정이 걸리지 않습니다."
         }
@@ -325,10 +373,65 @@ fun judgeQuality(report: QualityReport): QualityResult {
         else -> QualityResult(
             QualityVerdict.Pass,
             listOf(
-                "쓸 수 있는 대역 ${report.usableCount}/${report.bands.size}, " +
+                "보정에 쓸 수 있는 대역 ${report.approvedCount}/${report.bands.size}, " +
                     "가장 나쁜 SNR ${"%.0f".format(report.worstSnrDb ?: 0.0)}dB.",
             ),
             report,
         )
     }
+}
+
+/**
+ * **저장·자동 적용을 승인할지** 최종으로 판정한다(독립 검증 RCP-F01).
+ *
+ * ## [judgeQuality] 와 무엇이 다른가
+ *
+ * [judgeQuality] 는 **잰 것**만 본다 — 대역별 SNR, 반복성, 흐름. 그런데
+ * 보정이 실제로 걸리는 범위는 그 뒤에도 더 줄어든다: 공통 축으로 보간할
+ * 때, 정규화할 자리가 좁을 때, 보정 상한에 걸려 무효가 될 때.
+ *
+ * **진단 곡선을 그리는 것과 저장을 승인하는 것은 다르다.** 앞은
+ * [calibrateFromSession] 이 내주고, 뒤는 여기서 판정한다.
+ *
+ * @param outcome [calibrateFromSession] 이 낸 결과.
+ */
+fun judgeCalibration(report: QualityReport, outcome: CalibrationOutcome): QualityResult {
+    val base = judgeQuality(report)
+    val fails = mutableListOf<String>()
+    val degrades = mutableListOf<String>()
+
+    val valid = outcome.correction.valid
+    val validCount = valid.count { it }
+    if (validCount == 0) {
+        fails += "보정이 걸리는 자리가 하나도 남지 않았습니다."
+    } else {
+        // 보간·평활·상한을 지나고 **실제로 남은** 범위.
+        val lo = outcome.correction.hz[valid.indexOfFirst { it }]
+        val hi = outcome.correction.hz[valid.indexOfLast { it }]
+        if (lo > 100.0 || hi < 8000.0) {
+            degrades += "계산을 마친 뒤 보정이 걸리는 범위는 " +
+                "${lo.toInt()}Hz ~ ${(hi / 1000).toInt()}kHz 입니다. " +
+                "그 밖에서는 보정이 걸리지 않습니다."
+        }
+    }
+
+    if (outcome.normalizeSupportPoints == 0) {
+        fails += "레벨을 맞춘 자리가 없습니다."
+    }
+
+    val verdict = when {
+        base.verdict == QualityVerdict.Fail || fails.isNotEmpty() -> QualityVerdict.Fail
+        base.verdict == QualityVerdict.Degraded || degrades.isNotEmpty() -> QualityVerdict.Degraded
+        else -> QualityVerdict.Pass
+    }
+
+    // **판정을 움직이지 않는 안내.** 레벨을 몇 개 대역에서 맞췄는지는
+    // 사람이 봐야 할 값이지만, 「몇 개면 충분한가」는 아직 실측으로
+    // 정해지지 않았다 — 근거 없는 문턱을 만드는 대신 수를 적는다.
+    val note = "레벨은 ${outcome.normalizeBandsUsed}개 대역" +
+        "(${outcome.normalizeSupportPoints}점)에서 맞췄습니다 — " +
+        "오프셋 ${"%+.1f".format(outcome.internalNormalized.offsetDb)}dB."
+
+    // Pass 일 때 base 의 요약 한 줄은 그대로 살린다.
+    return QualityResult(verdict, base.reasonsKo + fails + degrades + note, report)
 }
