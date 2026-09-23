@@ -325,6 +325,46 @@ data class CalibrationOutcome(
     val normalizeSupportPoints: Int get() = internalNormalized.pointsUsed
 
     /**
+     * **계산을 마친 뒤 실제로 보정이 걸리는** 1/3옥타브 밴드들
+     * (독립 검증 F01-R).
+     *
+     * ## 왜 축 점이 아니라 밴드로 세는가
+     *
+     * 보정 축은 1/12옥타브라 밴드 하나에 서너 점이 든다. 점으로 세면
+     * **축 해상도를 바꿨을 때 같은 지원 구간이 다른 수로 나온다.**
+     * 정책([QualityPolicy.minUsableBandRatio])이 원래 밴드 비율이므로,
+     * 계산 뒤의 지원도 같은 단위로 세야 견줄 수 있다.
+     *
+     * ## 「지원된다」의 뜻
+     *
+     * 그 밴드의 경계 안에 축 점이 있고 **그 점들이 모두** 믿을 만해야
+     * 한다. 절반만 살아 있는 밴드를 「보정된다」고 부르지 않는다 —
+     * 실제 보정은 칸마다 걸리므로, 밴드 안 어디에 에너지가 있느냐에
+     * 따라 못 믿는 자리를 지나게 된다.
+     *
+     * 이것이 없을 때 무슨 일이 있었나: 상한 처리로 축 120점 중 49점만
+     * 남고 원래 중심 31개 중 3개만 살아남았는데, **양끝에 유효점이
+     * 있다는 이유로** 최종 판정이 Pass 였다.
+     */
+    val supportedBands: List<Int>
+        get() = (0 until ThirdOctave.BAND_COUNT).filter { b ->
+            val lo = ThirdOctave.lowerEdge(b)
+            val hi = ThirdOctave.upperEdge(b)
+            var any = false
+            for (i in correction.hz.indices) {
+                val f = correction.hz[i]
+                if (f < lo || f > hi) continue
+                if (!correction.valid[i]) return@filter false
+                any = true
+            }
+            any
+        }
+
+    /** 계산을 마친 뒤 보정이 걸리는 밴드의 비율. */
+    val supportedBandRatio: Double
+        get() = supportedBands.size.toDouble() / ThirdOctave.BAND_COUNT
+
+    /**
      * 정규화에 쓰인 점들이 **원래 몇 개의 1/3옥타브 밴드**에서 왔는가.
      *
      * 점 수보다 이쪽이 「얼마나 넓은 자리에서 맞췄는가」에 가깝다.

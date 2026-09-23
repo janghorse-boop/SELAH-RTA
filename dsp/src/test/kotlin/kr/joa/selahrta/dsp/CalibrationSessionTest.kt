@@ -617,6 +617,108 @@ class CalibrationSessionTest {
         )
     }
 
+    // ------------------------------------------------------------------
+    // ★ 계산을 마친 뒤의 지원 범위 (독립 검증 F01-R)
+    // ------------------------------------------------------------------
+
+    /**
+     * **F01-R 반례** — 상한 처리로 가운데가 무너졌는데 양끝만 남았다.
+     *
+     * 기준이 밴드마다 100dB/40dB 로 톱니처럼 요동하면 보정량이 상한
+     * (12dB)을 넘어 대부분 무효가 된다. 그런데 양끝에 유효점이 남아
+     * 있어 예전에는 **최종 Pass** 가 났다.
+     */
+    @Test
+    fun `상한으로 가운데가 무너지면 최종 승인을 막는다`() {
+        val ref = DoubleArray(n) {
+            if (it < 2 || it > 28) 70.0 else if (it % 2 == 0) 100.0 else 40.0
+        }
+        val r = sessionOf(ref, flat(70.0))
+        val q = qualityFromSession(
+            r, flat(0.0), referenceNoiseDb = flat(0.0),
+            referenceCalRangeHz = 20.0..20_000.0, dspVerifiedBySignal = true,
+        )
+        val out = calibrateFromSession(r, q).getOrThrow()
+
+        // **전제부터 확인한다** — 입력 단계는 정말 통과하는가.
+        assertTrue("입력 교집합은 넉넉하다", q.approvedRatio >= 0.6)
+        assertEquals("입력 판정은 통과다", QualityVerdict.Pass, judgeQuality(q).verdict)
+        assertTrue("정규화 자리도 있다", out.normalizeSupportPoints > 0)
+        // 양끝은 넓게 벌어져 있다 — 그래서 범위만 보면 멀쩡해 보인다.
+        val lo = out.correction.hz[out.correction.valid.indexOfFirst { it }]
+        val hi = out.correction.hz[out.correction.valid.indexOfLast { it }]
+        assertTrue("아래끝이 100Hz 보다 낮다", lo < 100.0)
+        assertTrue("위끝이 8kHz 보다 높다", hi > 8_000.0)
+
+        // 그런데 실제로 보정이 걸리는 대역은 거의 없다.
+        assertTrue(
+            "지원 대역이 절반도 안 남아야 이 시험에 뜻이 있다: ${out.supportedBands.size}",
+            out.supportedBandRatio < 0.5,
+        )
+
+        val final = judgeCalibration(q, out)
+        assertEquals(QualityVerdict.Fail, final.verdict)
+        assertFalse(final.mayAutoApply)
+        assertTrue(
+            "몇 대역이 남았는지 말해야 한다: ${final.reasonsKo}",
+            final.reasonsKo.any { it.contains("보정이 걸리는 대역") },
+        )
+    }
+
+    /** 멀쩡한 평탄 입력은 **그대로 통과해야** 한다 — 관문이 과하지 않게. */
+    @Test
+    fun `평탄한 입력은 최종 승인을 받는다`() {
+        val r = sessionOf(flat(70.0), flat(70.0))
+        val q = goodQuality(r)
+        val out = calibrateFromSession(r, q).getOrThrow()
+
+        assertEquals("전 대역이 지원된다", n, out.supportedBands.size)
+        val final = judgeCalibration(q, out)
+        assertEquals(QualityVerdict.Pass, final.verdict)
+        assertTrue(final.mayAutoApply)
+    }
+
+    /**
+     * **지원 대역은 축 해상도에 흔들리지 않아야 한다.**
+     *
+     * 점으로 세면 옥타브당 점 수를 바꿀 때 같은 지원 구간이 다른 수로
+     * 나온다. 밴드로 세는 까닭이다.
+     */
+    @Test
+    fun `축 해상도를 바꿔도 지원 대역 수가 같다`() {
+        val r = sessionOf(flat(70.0), flat(70.0))
+        val q = goodQuality(r)
+        val coarse = calibrateFromSession(r, q, CalibrationSettings(pointsPerOctave = 6)).getOrThrow()
+        val fine = calibrateFromSession(r, q, CalibrationSettings(pointsPerOctave = 24)).getOrThrow()
+
+        assertTrue("점 수는 달라야 한다", coarse.correction.size != fine.correction.size)
+        assertEquals(
+            "그래도 지원 대역 수는 같아야 한다",
+            coarse.supportedBands.size,
+            fine.supportedBands.size,
+        )
+    }
+
+    /** 절반만 살아 있는 밴드는 **지원된다고 부르지 않는다.** */
+    @Test
+    fun `한 점이라도 못 믿으면 그 대역은 지원되지 않는다`() {
+        val r = sessionOf(flat(70.0), flat(70.0))
+        val q = goodQuality(r, cal = 200.0..10_000.0)
+        val out = calibrateFromSession(r, q).getOrThrow()
+
+        // CAL 밖 대역은 빠지고, 경계에 걸친 대역도 빠진다.
+        assertTrue("전 대역은 아니다", out.supportedBands.size < n)
+        out.supportedBands.forEach { b ->
+            val lo = ThirdOctave.lowerEdge(b)
+            val hi = ThirdOctave.upperEdge(b)
+            out.correction.hz.indices
+                .filter { out.correction.hz[it] in lo..hi }
+                .forEach {
+                    assertTrue("지원 대역 안은 모두 유효해야 한다", out.correction.valid[it])
+                }
+        }
+    }
+
     /** 평활을 지나도 **무효 구간이 살아 있어야** 한다. */
     @Test
     fun `평활 뒤에도 무효 구간이 남는다`() {

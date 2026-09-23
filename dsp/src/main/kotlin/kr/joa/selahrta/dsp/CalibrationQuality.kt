@@ -397,6 +397,7 @@ fun judgeQuality(report: QualityReport): QualityResult {
  */
 fun judgeCalibration(report: QualityReport, outcome: CalibrationOutcome): QualityResult {
     val base = judgeQuality(report)
+    val p = report.policy
     val fails = mutableListOf<String>()
     val degrades = mutableListOf<String>()
 
@@ -405,7 +406,29 @@ fun judgeCalibration(report: QualityReport, outcome: CalibrationOutcome): Qualit
     if (validCount == 0) {
         fails += "보정이 걸리는 자리가 하나도 남지 않았습니다."
     } else {
-        // 보간·평활·상한을 지나고 **실제로 남은** 범위.
+        // **양끝만 보면 가운데가 무너진 것을 놓친다**(독립 검증 F01-R).
+        //
+        // 상한 처리는 곡선 한가운데를 통째로 무효로 만들 수 있다. 그때도
+        // 양끝에 유효점이 남으면 「25Hz~19kHz 가 걸린다」로 읽혔다 —
+        // 실제로는 원래 중심 31개 중 3개만 살아 있었다.
+        //
+        // 그래서 **원래 밴드 단위로** 센다. 입력 단계의 교집합 비율
+        // (`approvedRatio`)은 보간·평활·상한 **이전** 값이라 이 결손을
+        // 볼 수 없다.
+        val supported = outcome.supportedBands.size
+        if (outcome.supportedBandRatio < p.minUsableBandRatio) {
+            fails += buildString {
+                append("계산을 마친 뒤 보정이 걸리는 대역이 ")
+                append("$supported/${ThirdOctave.BAND_COUNT}")
+                append("(${"%.0f".format(outcome.supportedBandRatio * 100)}%)뿐입니다 — ")
+                append("${"%.0f".format(p.minUsableBandRatio * 100)}% 는 되어야 합니다. ")
+                append("보정량이 상한(${"%.0f".format(outcome.settings.maxCorrectionDb)}dB)을 ")
+                append("넘는 자리가 많다는 뜻입니다.")
+            }
+        }
+
+        // 양끝 범위는 **따로** 알린다 — 가운데 결손을 이것으로 갈음하지
+        // 않는다.
         val lo = outcome.correction.hz[valid.indexOfFirst { it }]
         val hi = outcome.correction.hz[valid.indexOfLast { it }]
         if (lo > 100.0 || hi < 8000.0) {
