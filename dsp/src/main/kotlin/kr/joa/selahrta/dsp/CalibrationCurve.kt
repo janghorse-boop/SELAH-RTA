@@ -18,12 +18,35 @@ data class CurvePoint(val hz: Double, val gainDb: Double)
  * [gainDbAt] 이 돌려주는 값을 **빼면** 보정된 값이 된다.
  */
 class CalibrationCurve private constructor(
-    /** 주파수 오름차순으로 정렬된 점들. */
+    /**
+     * 주파수 오름차순으로 정렬된 점들. **언제나 「응답」 규약이다.**
+     *
+     * 파일이 보정값(correction)이었다면 [of] 에서 이미 뒤집어 두었다 —
+     * 그래야 이 클래스의 나머지가 읽는 법을 다시 따지지 않는다. 파일에
+     * 적혀 있던 그대로는 [rawPoints] 에 있다.
+     */
     val points: List<CurvePoint>,
+    /** 파일에 적혀 있던 값 그대로. 되짚을 때와 화면에 원본을 보일 때 쓴다. */
+    val rawPoints: List<CurvePoint>,
+    /** 둘째 열을 무엇으로 읽었는가(독립 검토 R04). 프로파일에 남는다. */
+    val reading: CurveReading,
 ) {
     init {
         require(points.size >= 2) { "보정 곡선에는 점이 둘 이상 있어야 한다" }
     }
+
+    /**
+     * 같은 파일을 **다른 읽는 법으로** 다시 본다.
+     *
+     * 사람이 화면에서 골랐을 때 쓴다. 파일을 다시 읽지 않으므로 점이
+     * 달라질 일이 없다 — 달라지는 것은 부호뿐이다.
+     */
+    fun withReading(other: CurveReading): CalibrationCurve =
+        if (other == reading) this else CalibrationCurve(
+            points = rawPoints.map { CurvePoint(it.hz, it.gainDb * other.toResponseSign) },
+            rawPoints = rawPoints,
+            reading = other,
+        )
 
     val lowestHz: Double get() = points.first().hz
     val highestHz: Double get() = points.last().hz
@@ -133,7 +156,17 @@ class CalibrationCurve private constructor(
          * 정렬·중복 제거를 여기서 한 번만 한다. 파일은 대개 정렬돼 있지만
          * 아닌 것도 있고, 정렬 안 된 채로 보간하면 조용히 틀린 값이 나온다.
          */
-        fun of(raw: List<CurvePoint>): Result<CalibrationCurve> {
+        fun of(
+            raw: List<CurvePoint>,
+            /**
+             * 둘째 열을 무엇으로 읽을 것인가(독립 검토 R04).
+             *
+             * [CurveReading.Correction] 이면 **여기서 뒤집는다.** 그래야
+             * 이 클래스의 나머지 전부가 손대지 않고 그대로 맞다 — 읽는
+             * 법을 곳곳에서 다시 따지면 한 군데는 반드시 빠진다.
+             */
+            reading: CurveReading = CurveReading.Response,
+        ): Result<CalibrationCurve> {
             val clean = raw
                 .filter { it.hz > 0.0 && it.hz.isFinite() && it.gainDb.isFinite() }
                 .sortedBy { it.hz }
@@ -142,7 +175,13 @@ class CalibrationCurve private constructor(
                 clean.size < 2 -> Result.failure(
                     IllegalArgumentException("쓸 수 있는 점이 ${clean.size}개뿐입니다. 최소 둘이 필요합니다."),
                 )
-                else -> Result.success(CalibrationCurve(clean))
+                else -> Result.success(
+                    CalibrationCurve(
+                        points = clean.map { CurvePoint(it.hz, it.gainDb * reading.toResponseSign) },
+                        rawPoints = clean,
+                        reading = reading,
+                    ),
+                )
             }
         }
     }

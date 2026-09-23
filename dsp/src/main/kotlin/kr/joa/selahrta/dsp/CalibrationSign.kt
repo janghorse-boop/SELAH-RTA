@@ -76,3 +76,118 @@ fun signNoticeKo(evidence: SignEvidence): String? = when (evidence) {
             "「마이크의 응답」으로 보고 측정값에서 빼는데, 이미 뒤집힌 값이라면 " +
             "보정이 반대로 두 배 걸립니다. 제조사 설명을 확인하십시오."
 }
+
+/**
+ * 둘째 열을 **무엇으로 읽을 것인가.**
+ *
+ * 증거([SignEvidence])는 단서일 뿐이고, 이것은 **정해진 값**이다.
+ * 어느 쪽으로 읽었는지 프로파일에 남아야 나중에 되짚을 수 있다
+ * (독립 검토 R04: 「response/correction 을 명시적으로 선택·기록하고」).
+ */
+enum class CurveReading(val labelKo: String, val explainKo: String) {
+    /** 마이크의 **응답**. 측정값에서 뺀다. `.cal`·`.frd` 의 일반 규약이다. */
+    Response(
+        "마이크 응답",
+        "둘째 열이 마이크가 실제로 낸 값입니다. 측정값에서 뺍니다. " +
+            ".cal·.frd 파일은 대개 이쪽입니다.",
+    ),
+
+    /** 이미 뒤집힌 **보정값**. 측정값에 더한다. */
+    Correction(
+        "보정값",
+        "둘째 열이 이미 뒤집힌 값입니다. 측정값에 더합니다. " +
+            "이쪽을 응답으로 읽으면 보정이 반대로 두 배 걸립니다.",
+    ),
+    ;
+
+    /** 응답 규약으로 옮길 때 곱할 값. */
+    val toResponseSign: Double get() = if (this == Response) 1.0 else -1.0
+}
+
+/**
+ * 이 곡선을 **무엇에 쓰는가.** 같은 모호함이라도 걸린 것이 다르다.
+ */
+enum class ReadingStakes {
+    /**
+     * RTA 막대에 거는 표시용 곡선.
+     *
+     * 틀리면 화면의 막대가 어긋나고, 보고 있으면 알아챌 여지가 있다.
+     */
+    DisplayCurve,
+
+    /**
+     * **교정의 기준**이 되는 EMM-6 CAL.
+     *
+     * 틀리면 이 기준으로 만든 **모든 프로파일이 그만큼 틀어진 채로
+     * 굳는다.** 그러고도 곡선은 멀쩡해 보인다. 그래서 여기서는 모르는
+     * 것을 관례로 때우지 않는다.
+     */
+    ReferenceForCalibration,
+}
+
+/** 읽는 법을 정했는가, 사람에게 물어야 하는가. */
+sealed interface ReadingDecision {
+    val reading: CurveReading
+    val whyKo: String
+
+    /** 정해졌다. 그대로 걸어도 된다. */
+    data class Settled(
+        override val reading: CurveReading,
+        override val whyKo: String,
+    ) : ReadingDecision
+
+    /**
+     * **사람이 정해야 한다.** [reading] 은 제안일 뿐이고, 확인 전에는
+     * 자동으로 걸지 않는다.
+     */
+    data class NeedsPerson(
+        override val reading: CurveReading,
+        override val whyKo: String,
+    ) : ReadingDecision
+
+    val settled: Boolean get() = this is Settled
+}
+
+/**
+ * 증거와 용도로 읽는 법을 정한다(독립 검토 R04).
+ *
+ * ## 왜 용도에 따라 다른가
+ *
+ * 단서가 없는 파일이 대부분이다. 그것을 전부 막으면 아무 파일도 못
+ * 쓰고, 전부 통과시키면 기준이 뒤집힌 채로 굳는다. 그래서 **걸린 것의
+ * 크기로 가른다.**
+ *
+ * - 표시용 곡선은 관례(`.cal`·`.frd` = 응답)를 따르고 지나간다. 틀려도
+ *   화면에서 드러날 여지가 있고, 되돌리기 쉽다.
+ * - **교정의 기준**은 그렇지 않다. 그 파일로 만든 프로파일이 전부 같은
+ *   방향으로 틀어지고, 나중에 봐도 알 수 없다. 그래서 모르면 묻는다.
+ *
+ * 머리글이 **우리 가정과 반대**를 가리키면 용도와 상관없이 묻는다 —
+ * 그때는 「모르는」 것이 아니라 「어긋나는」 것이다.
+ */
+fun decideReading(evidence: SignEvidence, stakes: ReadingStakes): ReadingDecision = when (evidence) {
+    SignEvidence.LooksLikeResponse -> ReadingDecision.Settled(
+        CurveReading.Response,
+        "파일 머리글이 「응답」으로 읽힙니다.",
+    )
+
+    SignEvidence.LooksLikeCorrection -> ReadingDecision.NeedsPerson(
+        CurveReading.Correction,
+        "파일 머리글이 「보정값」으로 읽힙니다. 앱의 기본 가정과 반대라 " +
+            "확인이 필요합니다. 잘못 읽으면 보정이 반대로 두 배 걸립니다.",
+    )
+
+    SignEvidence.Unknown -> when (stakes) {
+        ReadingStakes.DisplayCurve -> ReadingDecision.Settled(
+            CurveReading.Response,
+            "머리글에 단서가 없어 관례대로 「응답」으로 읽습니다(.cal·.frd).",
+        )
+
+        ReadingStakes.ReferenceForCalibration -> ReadingDecision.NeedsPerson(
+            CurveReading.Response,
+            "머리글에 단서가 없습니다. 이 파일은 교정의 기준이 되므로, " +
+                "잘못 읽으면 이 기준으로 만든 프로파일이 전부 같은 방향으로 " +
+                "틀어집니다. 제조사 설명을 보고 정해 주십시오.",
+        )
+    }
+}

@@ -3,6 +3,11 @@ package kr.joa.selahrta.calibration
 import kr.joa.selahrta.audio.MicSeparation
 import kr.joa.selahrta.audio.MicSeparationResult
 import kr.joa.selahrta.dsp.CalibrationOutcome
+import kr.joa.selahrta.dsp.CurveReading
+import kr.joa.selahrta.dsp.ReadingDecision
+import kr.joa.selahrta.dsp.ReadingStakes
+import kr.joa.selahrta.dsp.SignEvidence
+import kr.joa.selahrta.dsp.decideReading
 import kr.joa.selahrta.dsp.DspProbeResult
 import kr.joa.selahrta.dsp.DspVerdict
 import kr.joa.selahrta.dsp.QualityReport
@@ -67,14 +72,39 @@ enum class WizardStep(val titleKo: String, val whatKo: String) {
     val number: Int get() = ordinal + 1
 }
 
-/** 불러온 CAL 파일의 신원. 프로파일에 그대로 남는다(지시서 6장). */
+/**
+ * 불러온 CAL 파일의 신원. 프로파일에 그대로 남는다(지시서 6장).
+ *
+ * **둘째 열을 무엇으로 읽었는지도 함께 남긴다**(독립 검토 R04). 그 값이
+ * 없으면 나중에 「이 프로파일이 어느 규약으로 만들어졌는가」를 알 길이
+ * 없고, 부호가 뒤집힌 채 굳은 것을 되짚지 못한다.
+ */
 data class CalInfo(
     val fileName: String,
     val sha256: String,
     val lowestHz: Double,
     val highestHz: Double,
     val pointCount: Int,
-)
+    /** 머리글에서 찾은 단서. 정해진 값이 아니라 단서다. */
+    val evidence: SignEvidence = SignEvidence.Unknown,
+    val reading: CurveReading = CurveReading.Response,
+    /**
+     * **사람이 화면에서 골랐는가.**
+     *
+     * 관례로 정해진 것과 다르다. 교정의 기준은 관례로 때우지 않는다 —
+     * 틀리면 이 기준으로 만든 프로파일이 전부 같은 방향으로 틀어진다.
+     */
+    val readingChosenByPerson: Boolean = false,
+) {
+    private val decision: ReadingDecision
+        get() = decideReading(evidence, ReadingStakes.ReferenceForCalibration)
+
+    /** 읽는 법이 정해졌는가. 사람이 골랐거나, 머리글이 분명하거나. */
+    val readingSettled: Boolean get() = readingChosenByPerson || decision.settled
+
+    /** 안 정해졌을 때 화면에 적을 까닭. */
+    val readingQuestionKo: String get() = decision.whyKo
+}
 
 /**
  * 다음으로 가도 되는가.
@@ -159,8 +189,14 @@ fun gateFor(state: WizardState, step: WizardStep): StepGate = when (step) {
 
 private fun equipmentGate(state: WizardState): StepGate {
     val block = mutableListOf<String>()
-    if (state.cal == null) {
+    val cal = state.cal
+    if (cal == null) {
         block += "EMM-6 CAL 파일을 불러오지 않았습니다. 기준 없이 잰 값은 보정이 되지 않습니다."
+    } else if (!cal.readingSettled) {
+        // **관례로 때우지 않는다**(독립 검토 R04). 이 파일이 교정의
+        // 기준이라, 부호가 뒤집히면 이 기준으로 만든 프로파일이 전부
+        // 같은 방향으로 틀어지고 나중에 봐도 알 수 없다.
+        block += cal.readingQuestionKo
     }
     if (!state.phantomAcknowledged) {
         block += "팬텀전원(+48V)을 켰는지 확인해 주십시오. 앱은 이 상태를 알 수 없습니다."

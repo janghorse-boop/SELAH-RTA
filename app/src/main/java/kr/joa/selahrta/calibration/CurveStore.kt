@@ -11,6 +11,8 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kr.joa.selahrta.dsp.CalibrationCurve
 import kr.joa.selahrta.dsp.CalibrationFile
+import kr.joa.selahrta.dsp.ReadingStakes
+import kr.joa.selahrta.dsp.decideReading
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
@@ -188,6 +190,7 @@ class CurveStore(private val context: Context) {
     suspend fun save(key: CalibrationKey, fileName: String, text: String): Result<ActiveCurve> =
         withContext(Dispatchers.IO) {
             val loaded = CalibrationFile.load(text).getOrElse { return@withContext Result.failure(it) }
+            val decision = decideReading(loaded.signEvidence, ReadingStakes.DisplayCurve)
             runCatching {
                 // 원래 열쇠를 첫 줄 주석으로 남긴다. 해석기가 건너뛰는 줄이라
                 // 곡선에는 영향이 없고, 폴더만 봐도 어느 기기 것인지 알 수 있다.
@@ -199,11 +202,18 @@ class CurveStore(private val context: Context) {
                     p[atKey(key)] = System.currentTimeMillis()
                     // 새로 가져오면 켜진다. 꺼 두고 가져왔는데 그대로 꺼져
                     // 있으면 「가져왔는데 아무 일도 안 일어난다」가 된다.
-                    p.remove(onKey(key))
+                    //
+                    // **다만 읽는 법이 안 정해졌으면 켜지 않는다**(독립 검토
+                    // R04). 머리글이 우리 가정과 반대를 가리키는 파일을 그대로
+                    // 걸면 보정이 반대로 두 배 걸리고, 그 차이는 ±30dB 경고로
+                    // 잡히지 않는다 — 측정 마이크 파일은 대개 ±5dB 안쪽이다.
+                    if (decision.settled) p.remove(onKey(key)) else p[onKey(key)] = "false"
                 }
                 ActiveCurve(
                     curve = loaded.curve,
                     fileName = fileName,
+                    // 읽는 법이 안 정해졌으면 꺼진 채로 들어온다(R04).
+                    enabled = decision.settled,
                     pointCount = loaded.pointCount,
                     headerLines = loaded.headerLines,
                     importedAtEpochMs = System.currentTimeMillis(),

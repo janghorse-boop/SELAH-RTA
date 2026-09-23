@@ -4,6 +4,8 @@ import kr.joa.selahrta.audio.MicSeparation
 import kr.joa.selahrta.audio.MicSeparationResult
 import kr.joa.selahrta.dsp.BandNoise
 import kr.joa.selahrta.dsp.CurvePoint
+import kr.joa.selahrta.dsp.CurveReading
+import kr.joa.selahrta.dsp.SignEvidence
 import kr.joa.selahrta.dsp.DspProbeResult
 import kr.joa.selahrta.dsp.DspVerdict
 import kr.joa.selahrta.dsp.QualityReport
@@ -24,7 +26,14 @@ import org.junit.Test
  */
 class WizardFlowTest {
 
-    private val cal = CalInfo("17860.txt", "abc123", 10.0, 25_000.0, 300)
+    /**
+     * 머리글이 「응답」으로 분명한 파일. 그래야 읽는 법을 묻지 않는다
+     * (독립 검토 R04) — 다른 시험들이 그 물음에 걸리지 않게 한다.
+     */
+    private val cal = CalInfo(
+        "17860.txt", "abc123", 10.0, 25_000.0, 300,
+        evidence = SignEvidence.LooksLikeResponse,
+    )
 
     private fun dsp(
         verdict: DspVerdict,
@@ -78,6 +87,52 @@ class WizardFlowTest {
         val g = gateFor(WizardState(cal = cal), WizardStep.Equipment)
         assertTrue(g is StepGate.Blocked)
         assertTrue(g.reasonsKo.toString(), g.reasonsKo.any { it.contains("앱은 이 상태를 알 수 없습니다") })
+    }
+
+    /**
+     * **읽는 법을 정하지 않으면 못 간다**(독립 검토 R04).
+     *
+     * 단서 없는 파일이 대부분이지만, 이 파일은 교정의 기준이다. 잘못
+     * 읽으면 이 기준으로 만든 프로파일이 **전부 같은 방향으로** 틀어지고
+     * 곡선은 멀쩡해 보인다.
+     */
+    @Test
+    fun `CAL 읽는 법이 안 정해지면 막힌다`() {
+        val unclear = cal.copy(evidence = SignEvidence.Unknown)
+        val g = gateFor(
+            WizardState(cal = unclear, phantomAcknowledged = true),
+            WizardStep.Equipment,
+        )
+        assertTrue("$g", g is StepGate.Blocked)
+        assertTrue(g.reasonsKo.toString(), g.reasonsKo.any { it.contains("기준") })
+    }
+
+    @Test
+    fun `사람이 고르면 지나간다`() {
+        val chosen = cal.copy(
+            evidence = SignEvidence.Unknown,
+            reading = CurveReading.Correction,
+            readingChosenByPerson = true,
+        )
+        val s = WizardState(cal = chosen, phantomAcknowledged = true)
+        assertEquals(StepGate.Allowed, gateFor(s, WizardStep.Equipment))
+    }
+
+    /** 머리글이 **반대**를 가리키면 사람이 고르기 전에는 못 간다. */
+    @Test
+    fun `머리글이 보정값이면 골라야 지나간다`() {
+        val contrary = cal.copy(evidence = SignEvidence.LooksLikeCorrection)
+        val s = WizardState(cal = contrary, phantomAcknowledged = true)
+        assertTrue(gateFor(s, WizardStep.Equipment) is StepGate.Blocked)
+
+        val settled = contrary.copy(
+            reading = CurveReading.Correction,
+            readingChosenByPerson = true,
+        )
+        assertEquals(
+            StepGate.Allowed,
+            gateFor(WizardState(cal = settled, phantomAcknowledged = true), WizardStep.Equipment),
+        )
     }
 
     @Test
