@@ -87,6 +87,10 @@ fun CalibrationWizardScreen(
     framesOf: (MeasureStep) -> Int,
     onMeasure: (MeasureStep) -> Unit,
     onRestartMeasurement: () -> Unit,
+    /** 저장된 프로파일 이름. 아직이면 null. */
+    savedLabelKo: String?,
+    canSave: Boolean,
+    onSave: () -> Unit,
     onNext: () -> Unit,
     onBack: () -> Unit,
     onGoTo: (WizardStep) -> Unit,
@@ -172,6 +176,13 @@ fun CalibrationWizardScreen(
             )
 
             WizardStep.Review -> ReviewStep(outcome, judged, showingExample, onToggleExample)
+
+            WizardStep.Save -> SaveStepPanel(
+                busyKo = busyKo,
+                savedLabelKo = savedLabelKo,
+                canSave = canSave,
+                onSave = onSave,
+            )
 
             else -> NotBuiltNotice(state.step)
         }
@@ -757,3 +768,71 @@ private fun MeasureRow(
         }
     }
 }
+
+// ----------------------------------------------------------------------
+// 6단계
+// ----------------------------------------------------------------------
+
+/**
+ * 저장.
+ *
+ * **판정을 여기서 그리지 않는다.** 위의 [GateLine] 이 이미 같은 판정을
+ * 보여 주고 있고(`saveGate` 가 `judgeCalibration` 을 그대로 쓴다), 두 번
+ * 적으면 둘이 갈라졌을 때 어느 쪽이 참인지 알 수 없다.
+ */
+@Composable
+private fun SaveStepPanel(
+    busyKo: String?,
+    savedLabelKo: String?,
+    canSave: Boolean,
+    onSave: () -> Unit,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(SelahColors.Surface, RoundedCornerShape(12.dp))
+            .border(1.dp, SelahColors.Outline, RoundedCornerShape(12.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            "저장",
+            color = SelahColors.TextPrimary,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+
+        if (savedLabelKo != null) {
+            InfoBar("저장했습니다: $savedLabelKo", tone = SelahColors.InRange)
+            Text(
+                SAVED_NEXT_KO,
+                color = SelahColors.TextMuted,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+                style = TextStyle(lineBreak = LineBreak.Paragraph),
+            )
+        } else {
+            Text(
+                SAVE_HOW_KO,
+                color = SelahColors.TextSecondary,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+                style = TextStyle(lineBreak = LineBreak.Paragraph),
+            )
+            if (busyKo != null) {
+                InfoBar(busyKo, tone = SelahColors.InRange)
+            } else {
+                TextButton(onClick = onSave, enabled = canSave) { Text("저장하기") }
+            }
+        }
+    }
+}
+
+const val SAVE_HOW_KO: String =
+    "판정을 통과해야 저장됩니다. 통과해도 「제한」이면 저장만 되고 자동 " +
+        "적용은 꺼진 채로 들어갑니다 — 보정 전후를 눈으로 견주는 데는 " +
+        "쓸 수 있습니다."
+
+const val SAVED_NEXT_KO: String =
+    "설정 화면의 「프로파일 관리」에서 볼 수 있습니다. 거기서 지금 경로에 " +
+        "걸리는지, 걸리지 않으면 왜 그런지 확인할 수 있습니다."

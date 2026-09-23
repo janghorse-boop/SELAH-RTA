@@ -11,7 +11,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kr.joa.selahrta.audio.MicSeparation
 import kr.joa.selahrta.calibration.CalInfo
+import kr.joa.selahrta.calibration.MeasuredProfile
+import kr.joa.selahrta.calibration.ProfileBuildResult
+import kr.joa.selahrta.calibration.ProfileStore
+import kr.joa.selahrta.calibration.blockedNoticeKo
+import kr.joa.selahrta.calibration.buildProfileForSave
 import kr.joa.selahrta.calibration.RunOutcome
 import kr.joa.selahrta.calibration.WizardRunner
 import kr.joa.selahrta.calibration.WizardState
@@ -349,6 +355,67 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ------------------------------------------------------------------
+    // 6단계 — 저장
+    // ------------------------------------------------------------------
+
+    private val profiles = ProfileStore.forApp(app)
+
+    /** 저장이 끝났으면 그 프로파일. 화면이 「저장했습니다」를 그린다. */
+    private val _saved = MutableStateFlow<MeasuredProfile?>(null)
+    val saved: StateFlow<MeasuredProfile?> = _saved.asStateFlow()
+
+    /**
+     * 프로파일을 저장한다.
+     *
+     * **판정을 여기서 다시 하지 않는다.** [buildProfileForSave] 가 판정을
+     * 품고 있고, 막히면 프로파일 자체가 만들어지지 않는다. 여기서 한 번
+     * 더 보면 두 곳이 갈라진다.
+     *
+     * @param environment 지금 열린 경로. [currentProfileEnvironment] 가 만든다.
+     */
+    fun save(environment: kr.joa.selahrta.calibration.ProfileEnvironment) {
+        if (_busyKo.value != null) return
+        val st = _state.value
+        val session = st.session
+        val quality = st.quality
+        val outcome = st.outcome
+        if (session == null || quality == null || outcome == null) {
+            _noticeKo.value = "잰 것이 없습니다. 4단계로 돌아가십시오."
+            return
+        }
+        val separation = st.separation?.state ?: MicSeparation.Indistinguishable
+
+        viewModelScope.launch {
+            _busyKo.value = "저장하는 중입니다."
+            try {
+                when (
+                    val built = buildProfileForSave(
+                        session = session,
+                        quality = quality,
+                        outcome = outcome,
+                        environment = environment,
+                        separation = separation,
+                        caseRemoved = st.caseRemoved,
+                    )
+                ) {
+                    is ProfileBuildResult.Blocked ->
+                        _noticeKo.value = blockedNoticeKo(built.judged) + " " +
+                            built.judged.reasonsKo.joinToString(" ")
+
+                    is ProfileBuildResult.Ready -> profiles.save(built.profile, outcome).fold(
+                        onSuccess = { _saved.value = it },
+                        onFailure = { e ->
+                            _noticeKo.value = "저장하지 못했습니다: ${e.message ?: "알 수 없는 까닭"}"
+                        },
+                    )
+                }
+            } finally {
+                _busyKo.value = null
+            }
+        }
+    }
+
     /** 다음 단계로. **관문이 막으면 아무 일도 안 일어난다.** */
     fun goNext() {
         val next = nextStep(_state.value) ?: return
@@ -375,6 +442,8 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
     fun reset() {
         curve = null
         _noticeKo.value = null
+        _saved.value = null
+        session.reset()
         _state.value = WizardState()
     }
 

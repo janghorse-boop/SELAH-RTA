@@ -100,6 +100,7 @@ fun SelahApp() {
     val wizardState by wizard.state.collectAsStateWithLifecycle()
     val wizardNotice by wizard.noticeKo.collectAsStateWithLifecycle()
     val wizardBusy by wizard.busyKo.collectAsStateWithLifecycle()
+    val wizardSaved by wizard.saved.collectAsStateWithLifecycle()
     val wizardCapture = remember(vm) { WizardCaptureBridge(vm) }
 
     // 마이크 탐색은 이미 설정 화면이 돌린다. 마법사는 **그 결과를 받아만**
@@ -378,6 +379,18 @@ fun SelahApp() {
                             openedDeviceKey = capture.opened?.deviceKey,
                             framesOf = wizard::framesFor,
                             onRestartMeasurement = wizard::restartMeasurement,
+                            savedLabelKo = wizardSaved?.labelKo,
+                            canSave = capture.opened != null && wizardSaved == null,
+                            onSave = {
+                                val opened = capture.opened
+                                if (opened != null) {
+                                    wizard.save(
+                                        currentProfileEnvironment(
+                                            opened, capture.inputs, deviceBuild,
+                                        ),
+                                    )
+                                }
+                            },
                             onMeasure = { step ->
                                 val spec = vm.rtaSpec()
                                 if (spec != null) {
