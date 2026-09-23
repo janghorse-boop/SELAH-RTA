@@ -139,3 +139,22 @@ fun bandsToCurvePoints(bandsDb: DoubleArray): List<CurvePoint> {
     }
     return bandsDb.mapIndexed { i, db -> CurvePoint(ThirdOctave.exactCenter(i), db) }
 }
+
+/**
+ * 장들의 **대역별 중앙값**. 잡음 바닥을 잴 때 쓴다.
+ *
+ * **평균이 아니다.** 신호를 끄고 재는 동안에도 문 닫히는 소리 한 번이면
+ * 평균이 통째로 올라가고, 그러면 그 위의 모든 SNR 판정이 함께 틀어진다 —
+ * 「신호가 잡음에 묻혔다」가 아닌데 그렇게 나온다.
+ *
+ * 전력 평균을 쓰지 않는 까닭도 같다. 전력 평균은 큰 쪽에 더 끌린다.
+ */
+fun medianBandsDb(frames: List<DoubleArray>): DoubleArray {
+    require(frames.isNotEmpty()) { "장이 하나도 없다" }
+    val bandCount = frames.first().size
+    require(frames.all { it.size == bandCount }) { "장마다 밴드 수가 다르다" }
+    return DoubleArray(bandCount) { b ->
+        val s = frames.map { it[b] }.sorted()
+        if (s.size % 2 == 1) s[s.size / 2] else (s[s.size / 2 - 1] + s[s.size / 2]) / 2.0
+    }
+}
