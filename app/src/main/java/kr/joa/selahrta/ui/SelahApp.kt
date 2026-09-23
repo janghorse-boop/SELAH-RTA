@@ -96,6 +96,10 @@ fun SelahApp() {
     // 기기 신원은 안 바뀐다. 한 번만 읽는다.
     val deviceBuild = remember { DeviceBuildInfo.current() }
 
+    val wizard: CalibrationWizardViewModel = viewModel()
+    val wizardState by wizard.state.collectAsStateWithLifecycle()
+    val wizardNotice by wizard.noticeKo.collectAsStateWithLifecycle()
+
     // **칩을 저장된 구간에 맞춘다.** 구간을 고르는 줄을 없앤 뒤로 칩이
     // 곧 구간인데, 칩은 늘 「설교」로 시작하고 구간은 지난번에 고른 것이
     // 저장돼 있다. 맞추지 않으면 칩은 「설교」인데 범위는 「찬양 78~85」인
@@ -131,6 +135,11 @@ fun SelahApp() {
         // 제공자를 거치면 네트워크를 타서 화면이 멈출 수 있다.
         vm.importCurveFrom(uri)
     }
+
+    // 마법사의 기준 CAL 고르기. 위와 같은 문서 제공자를 쓴다.
+    val pickWizardCal = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri -> if (uri != null) wizard.importCal(uri) }
 
     // **알림 권한은 백그라운드 측정을 시작하는 그 자리에서 묻는다**(FS02).
     //
@@ -342,10 +351,22 @@ fun SelahApp() {
                             .background(SelahColors.Background),
                     ) {
                         CalibrationWizardScreen(
+                            state = wizardState,
+                            shape = wizard.shape,
+                            noticeKo = wizardNotice,
                             outcome = example,
                             judged = example?.let { exampleJudgement(it) },
                             showingExample = wizardExample,
+                            // 확장자를 못 믿는 제공자가 많아 넓게 받는다.
+                            // 내용으로 판별하므로 잘못 고른 파일은 파서가 거른다.
+                            onPickCalFile = { pickWizardCal.launch(arrayOf("*/*")) },
+                            onChooseReading = wizard::chooseReading,
+                            onPhantom = wizard::acknowledgePhantom,
+                            onNext = wizard::goNext,
+                            onBack = wizard::goBack,
+                            onGoTo = wizard::goTo,
                             onToggleExample = { wizardExample = !wizardExample },
+                            onDismissNotice = wizard::dismissNotice,
                             onClose = { wizardOpen = false },
                         )
                     }
