@@ -178,3 +178,74 @@ class CurveReadingTest {
         assertTrue(d.whyKo, d.whyKo.contains("두 배"))
     }
 }
+
+/**
+ * 곡선의 **모양**에서 오는 단서(독립 검토 R04 보강).
+ *
+ * 값은 실제 EMM-6 CAL 파일(17860.txt)의 모양을 그대로 옮긴 것이다:
+ * 20Hz −2.0 · 1kHz 0.0 · 20kHz +4.1. **파일 자체는 저장소에 올리지
+ * 않는다**(inbox 규칙) — 모양만 여기 적는다.
+ */
+class CurveShapeTest {
+
+    private fun emm6Like() = CalibrationCurve.of(
+        listOf(
+            CurvePoint(20.0, -2.0),
+            CurvePoint(1_000.0, 0.0),
+            CurvePoint(10_000.0, 3.0),
+            CurvePoint(20_000.0, 4.1),
+        ),
+    ).getOrThrow()
+
+    @Test
+    fun `저중고 세 점을 뽑는다`() {
+        val s = shapeOf(emm6Like())
+        assertEquals(-2.0, s.lowDb, 1e-9)
+        assertEquals(0.0, s.midDb, 1e-9)
+        assertEquals(4.1, s.highDb, 1e-9)
+    }
+
+    @Test
+    fun `측정 캡슐 응답 모양을 알아본다`() {
+        val s = shapeOf(emm6Like())
+        assertTrue(s.risesToHigh)
+        assertTrue(s.normalizedAtMid)
+        assertTrue(describeShapeKo(s), describeShapeKo(s).contains("캡슐의 응답이 대체로"))
+    }
+
+    /** 거울상이면 **보정값일 수 있다**고 말한다 — 단정하지는 않는다. */
+    @Test
+    fun `거울상이면 보정값일 수 있다고 말한다`() {
+        val mirrored = CalibrationCurve.of(
+            listOf(
+                CurvePoint(20.0, 2.0),
+                CurvePoint(1_000.0, 0.0),
+                CurvePoint(20_000.0, -4.1),
+            ),
+        ).getOrThrow()
+        val s = shapeOf(mirrored)
+        assertFalse(s.risesToHigh)
+        val text = describeShapeKo(s)
+        assertTrue(text, text.contains("보정값일 수 있습니다"))
+    }
+
+    /** **앱이 정해 준 것처럼 읽히면 안 된다.** 숫자를 먼저, 뜻은 뒤에. */
+    @Test
+    fun `숫자를 먼저 적고 확인을 권한다`() {
+        val text = describeShapeKo(shapeOf(emm6Like()))
+        assertTrue(text, text.startsWith("이 파일은 저역"))
+        assertTrue(text, text.contains("제조사 설명으로 확인"))
+        assertFalse("별표가 있다: $text", text.contains("*"))
+    }
+
+    /** 곡선이 좁아도 뽑히는 자리가 곡선 안이어야 한다. */
+    @Test
+    fun `좁은 곡선도 자기 범위 안에서 뽑는다`() {
+        val narrow = CalibrationCurve.of(
+            listOf(CurvePoint(200.0, -1.0), CurvePoint(5_000.0, 2.0)),
+        ).getOrThrow()
+        val s = shapeOf(narrow)
+        assertEquals("끝점을 늘여 쓰지 않는다", -1.0, s.lowDb, 1e-9)
+        assertEquals(2.0, s.highDb, 1e-9)
+    }
+}

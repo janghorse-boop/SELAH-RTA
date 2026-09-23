@@ -191,3 +191,56 @@ fun decideReading(evidence: SignEvidence, stakes: ReadingStakes): ReadingDecisio
         )
     }
 }
+
+/**
+ * 곡선의 **모양**에서 오는 단서(독립 검토 R04 보강).
+ *
+ * 머리글에 단서가 없는 파일이 대부분이라 [signEvidenceOf] 만으로는
+ * 거의 언제나 「모름」이 된다. 그런데 값 자체가 말해 주는 것이 있다.
+ *
+ * 작은 측정용 캡슐은 대체로 **저역이 조금 모자라고 고역이 솟는다**
+ * (다이어프램 앞의 압력 상승과 캡슐 공진 때문이다). 그 마이크의 **응답**을
+ * 적은 파일은 그 모양 그대로이고, 이미 뒤집은 **보정값** 파일은 거울상
+ * 이다 — 저역이 솟고 고역이 내려간다.
+ *
+ * **이것으로 정하지 않는다.** 마이크마다 다르고, 정규화 자리도 다르다.
+ * 사람이 고를 때 곁에 놓는 단서일 뿐이다.
+ */
+data class CurveShape(
+    val lowDb: Double,
+    val midDb: Double,
+    val highDb: Double,
+) {
+    /** 고역이 저역보다 높은가. 측정 캡슐 응답의 흔한 모양이다. */
+    val risesToHigh: Boolean get() = highDb > lowDb
+
+    /** 1kHz 언저리를 0 으로 맞춰 둔 파일인가. */
+    val normalizedAtMid: Boolean get() = kotlin.math.abs(midDb) < 0.5
+}
+
+/** 곡선에서 저·중·고 세 점을 뽑는다. */
+fun shapeOf(curve: CalibrationCurve): CurveShape = CurveShape(
+    lowDb = curve.gainDbAt(curve.lowestHz.coerceAtLeast(20.0)),
+    midDb = curve.gainDbAt(1_000.0),
+    highDb = curve.gainDbAt(curve.highestHz.coerceAtMost(20_000.0)),
+)
+
+/**
+ * 모양을 사람 말로. **판단하지 않고 보여만 준다.**
+ *
+ * 숫자를 먼저 적고, 그 모양이 흔히 무엇을 뜻하는지를 뒤에 덧붙인다 —
+ * 순서를 바꾸면 앱이 정해 준 것처럼 읽힌다.
+ */
+fun describeShapeKo(shape: CurveShape): String {
+    val head = "이 파일은 저역 %.1fdB · 1kHz %.1fdB · 고역 %.1fdB 입니다."
+        .format(shape.lowDb, shape.midDb, shape.highDb)
+    val tail = if (shape.risesToHigh) {
+        "저역이 낮고 고역이 솟는 모양인데, 작은 측정용 캡슐의 응답이 대체로 " +
+            "이렇습니다. 보정값 파일이라면 대개 그 거울상(저역이 솟고 고역이 " +
+            "내려감)입니다."
+    } else {
+        "고역이 낮고 저역이 솟는 모양입니다. 측정용 캡슐의 응답은 대체로 그 " +
+            "반대라, 이미 뒤집힌 보정값일 수 있습니다."
+    }
+    return "$head $tail 어느 쪽인지는 제조사 설명으로 확인하십시오."
+}
