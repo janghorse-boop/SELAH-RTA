@@ -79,7 +79,15 @@ fun CalibrationWizardScreen(
     onPhantom: (Boolean) -> Unit,
     onRunInputCheck: () -> Unit,
     /** 마이크 탐색이 도는 중인가. 재는 중에는 돌릴 수 없다. */
-    probingMics: Boolean,
+    /**
+     * 지금 탐색을 돌릴 수 **없는** 까닭. 돌릴 수 있으면 null.
+     *
+     * 예전 이름은 `probingMics` 였는데, 실제로 넘어오던 값은 「측정 중인가」
+     * 였다. 그래서 재는 동안 버튼이 **「탐색 중…」이라고 거짓말을 했다** —
+     * 탐색은 시작도 안 했는데 사람은 기다리다 만다(실기기 확인 2026-09-23).
+     * 못 하는 까닭을 그대로 들고 다니면 그 거짓말을 할 자리가 없다.
+     */
+    probeBlockedKo: String?,
     onProbeMics: () -> Unit,
     onCaseRemoved: (Boolean?) -> Unit,
     /** 지금 열린 입력의 열쇠. 어느 마이크로 재는지 화면에 적는다. */
@@ -160,7 +168,7 @@ fun CalibrationWizardScreen(
 
             WizardStep.MicJudgement -> MicJudgementStep(
                 state = state,
-                probing = probingMics,
+                blockedKo = probeBlockedKo,
                 onProbe = onProbeMics,
                 onCaseRemoved = onCaseRemoved,
             )
@@ -562,7 +570,7 @@ fun dspNumbersKo(dsp: kr.joa.selahrta.dsp.DspProbeResult): String {
 @Composable
 private fun MicJudgementStep(
     state: WizardState,
-    probing: Boolean,
+    blockedKo: String?,
     onProbe: () -> Unit,
     onCaseRemoved: (Boolean?) -> Unit,
 ) {
@@ -604,13 +612,23 @@ private fun MicJudgementStep(
                 )
             }
 
-            TextButton(onClick = onProbe, enabled = !probing) {
+            TextButton(onClick = onProbe, enabled = blockedKo == null) {
                 Text(
                     when {
-                        probing -> "탐색 중…"
                         state.separation == null -> "탐색하기"
                         else -> "다시 탐색하기"
                     },
+                )
+            }
+
+            // **못 하는 까닭을 버튼 옆에 적는다.** 흐려진 버튼만 보고는
+            // 무엇을 해야 눌리는지 알 수 없다.
+            if (blockedKo != null) {
+                Text(
+                    blockedKo,
+                    color = SelahColors.Warn,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
                 )
             }
         }
@@ -620,9 +638,9 @@ private fun MicJudgementStep(
 }
 
 const val MIC_PROBE_HOW_KO: String =
-    "이 폰이 후면·하단 마이크를 따로 열어 주는지 실제로 녹음해 확인합니다. " +
-        "기기 목록에 둘로 보이는 것만으로는 갈린다고 할 수 없습니다. " +
-        "재는 중에는 돌릴 수 없으니 측정을 잠시 멈춰야 할 수 있습니다."
+    "이 폰이 내장 마이크를 하나하나 따로 열어 주는지 실제로 녹음해 확인합니다. " +
+        "기기 목록은 내장을 한 줄로 묶어 보여 주지만, 여기서는 묶기 전 후보를 " +
+        "하나하나 열어 봅니다. 재는 중에는 돌릴 수 없습니다."
 
 /**
  * 케이스 상태. **확인이 아니라 듣는 것이다.**
@@ -665,7 +683,7 @@ private fun CaseRow(removed: Boolean?, onChange: (Boolean?) -> Unit) {
 }
 
 const val CASE_NOTE_KO: String =
-    "후면 마이크는 케이스에 막혀 응답이 크게 달라집니다. 앱은 케이스가 " +
+    "내장 마이크는 케이스에 막히면 응답이 크게 달라집니다. 앱은 케이스가 " +
         "있는지 알 수 없으니, 지금 상태를 골라 두면 나중에 이 보정을 걸 때 " +
         "같은 상태인지 물어볼 수 있습니다."
 

@@ -363,6 +363,25 @@ fun SelahApp() {
                 if (wizardOpen) {
                     BackHandler { wizardOpen = false }
                     val example = if (wizardExample) remember { exampleOutcome() } else null
+                    // **잰 것이 있으면 잰 것을 보인다.** 예전에는 예시만
+                    // 넘기고 있어서, 세 번을 다 재고 5단계에 가도 화면이
+                    // 「아직 잰 것이 없습니다」였다 — 저장은 진짜 값으로
+                    // 되는데 **눈으로 볼 자리만 비어 있었다.** 5단계가 있는
+                    // 까닭이 저장 전에 보는 것이므로, 이건 단계 하나가
+                    // 통째로 없던 것과 같다(실기기 확인 2026-09-24).
+                    val shownOutcome = example ?: wizardState.outcome
+                    // 판정은 **저장 관문이 쓰는 것과 같은 함수**로 낸다
+                    // (WizardFlow.saveGate). 화면과 관문이 다른 판정을
+                    // 보이면 어느 쪽이 참인지 알 수 없다.
+                    val shownJudged: kr.joa.selahrta.dsp.QualityResult? = when {
+                        example != null -> exampleJudgement(example)
+                        shownOutcome != null && wizardState.quality != null ->
+                            kr.joa.selahrta.dsp.judgeCalibration(
+                                wizardState.quality!!,
+                                shownOutcome,
+                            )
+                        else -> null
+                    }
                     Box(
                         Modifier
                             .fillMaxSize()
@@ -374,15 +393,20 @@ fun SelahApp() {
                             noticeKo = wizardNotice,
                             busyKo = wizardBusy,
                             canMeasure = capture.opened != null,
-                            outcome = example,
-                            judged = example?.let { exampleJudgement(it) },
+                            outcome = shownOutcome,
+                            judged = shownJudged,
                             showingExample = wizardExample,
                             // 확장자를 못 믿는 제공자가 많아 넓게 받는다.
                             // 내용으로 판별하므로 잘못 고른 파일은 파서가 거른다.
                             onPickCalFile = { pickWizardCal.launch(arrayOf("*/*")) },
                             onChooseReading = wizard::chooseReading,
                             onPhantom = wizard::acknowledgePhantom,
-                            probingMics = capture.measure != MeasureState.Idle,
+                            probeBlockedKo = if (capture.measure != MeasureState.Idle) {
+                                "재는 동안에는 탐색할 수 없습니다. 「측정」 화면에서 " +
+                                    "측정을 끝낸 뒤 돌아오십시오."
+                            } else {
+                                null
+                            },
                             onProbeMics = vm::probeMicrophones,
                             onCaseRemoved = wizard::noteCaseRemoved,
                             openedDeviceKey = capture.opened?.deviceKey,

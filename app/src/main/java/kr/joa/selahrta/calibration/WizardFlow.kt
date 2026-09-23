@@ -53,7 +53,7 @@ enum class WizardStep(val titleKo: String, val whatKo: String) {
     ),
     MicJudgement(
         "물리 마이크 판정",
-        "이 폰이 후면·하단을 따로 열어 주는지 기기에 물어봅니다.",
+        "이 폰이 내장 마이크를 하나하나 따로 열어 주는지 기기에 물어봅니다.",
     ),
     Measure(
         "기준 → 대상 → 기준",
@@ -340,7 +340,7 @@ const val EFFECTS_STILL_ON_KO: String =
         "알린 처리가 남아 있습니다. 고정된 처리는 신호로 가려낼 수 없습니다."
 
 const val INDISTINGUISHABLE_KO: String =
-    "이 폰에서는 후면·하단을 따로 열 수 없어 마이크별 교정을 만들지 않습니다. " +
+    "이 폰에서는 내장 마이크를 하나하나 따로 열 수 없어 마이크별 교정을 만들지 않습니다. " +
         "둘을 임의로 나누면 서로 다른 마이크의 보정이 섞이고, 그건 화면에 보이지 않습니다."
 
 const val LOGICAL_ONLY_KO: String =
