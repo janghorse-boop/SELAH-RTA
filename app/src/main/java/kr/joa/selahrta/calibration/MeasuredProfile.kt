@@ -2,7 +2,7 @@ package kr.joa.selahrta.calibration
 
 import kr.joa.selahrta.audio.CaptureSource
 import kr.joa.selahrta.audio.MicSeparation
-import kr.joa.selahrta.audio.isRearAddress
+import kr.joa.selahrta.audio.isSecondaryBuiltInAddress
 import kr.joa.selahrta.audio.micPositionKo
 import kr.joa.selahrta.domain.MicKind
 import kr.joa.selahrta.dsp.QualityVerdict
@@ -69,8 +69,13 @@ data class ProfileEnvironment(
         channelIndex = channelIndex.takeIf { channelCount > 1 },
     )
 
-    /** 후면 마이크인가. 케이스에 막히는 자리라 따로 본다. */
-    val isRear: Boolean get() = isRearAddress(deviceAddress)
+    /**
+     * 하단이 아닌 두 번째 내장 마이크인가.
+     *
+     * **「후면」이라고 부르지 않는다.** 안드로이드가 back 이라 알려도
+     * 실제 위치는 다를 수 있다 — S23 Ultra 는 상단이다(2026-09-23 확인).
+     */
+    val isSecondaryBuiltIn: Boolean get() = isSecondaryBuiltInAddress(deviceAddress)
 }
 
 /** 프로파일에 남기는 품질 요약(지시서 6장 「품질 지표」). */
@@ -270,9 +275,12 @@ fun judgeProfileApply(
             "마이크 경로가 달라졌을 수 있으니 재검증을 권합니다."
     }
 
-    // **케이스는 물어볼 길이 없다.** 후면은 케이스에 막혀 응답이 크게
-    // 달라지므로, 확인할 수 없다는 사실을 걸 때마다 알린다.
-    if (now.isRear) {
+    // **케이스는 물어볼 길이 없다.** 케이스에 가려지는 자리면 응답이
+    // 크게 달라지므로, 확인할 수 없다는 사실을 걸 때마다 알린다.
+    // 어느 자리인지는 안드로이드 주소로 알 수 없다(S23 은 back 이라
+    // 알리지만 실제로는 상단이다) — 그래서 「가려지는 자리면」이라고만
+    // 말하고 판단은 사람에게 맡긴다.
+    if (now.isSecondaryBuiltIn) {
         warn += when (profile.caseRemoved) {
             true -> "케이스를 벗기고 잰 보정입니다. 지금도 벗겨져 있는지 확인하십시오."
             false -> "케이스를 씌운 채 잰 보정입니다. 지금도 같은 상태인지 확인하십시오."

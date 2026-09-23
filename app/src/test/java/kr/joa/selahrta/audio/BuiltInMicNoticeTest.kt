@@ -27,12 +27,12 @@ class BuiltInMicNoticeTest {
 
     @Test
     fun `뒤쪽 주소를 알아본다`() {
-        assertTrue(isRearAddress("back"))
-        assertTrue(isRearAddress("rear"))
-        assertTrue("대소문자·공백을 가리지 않는다", isRearAddress(" BACK "))
-        assertFalse(isRearAddress("bottom"))
-        assertFalse(isRearAddress("top"))
-        assertFalse(isRearAddress(""))
+        assertTrue(isSecondaryBuiltInAddress("back"))
+        assertTrue(isSecondaryBuiltInAddress("rear"))
+        assertTrue("대소문자·공백을 가리지 않는다", isSecondaryBuiltInAddress(" BACK "))
+        assertFalse(isSecondaryBuiltInAddress("bottom"))
+        assertTrue("상단도 하단이 아니다", isSecondaryBuiltInAddress("top"))
+        assertFalse(isSecondaryBuiltInAddress(""))
     }
 
     @Test
@@ -53,14 +53,33 @@ class BuiltInMicNoticeTest {
     @Test
     fun `하단에는 아무 말도 하지 않는다`() {
         assertNull(builtInMicNoticeKo(mic("bottom")))
-        assertNull(builtInMicNoticeKo(mic("top")))
     }
 
-    /** **모르는 주소면 짐작하지 않는다.** 케이스를 벗기라고 할 근거가 없다. */
+    /**
+     * **상단도 알린다.** 예전에는 주소가 back·rear 일 때만 알렸는데,
+     * S23 Ultra 는 back 이라 알리면서 실제로는 상단에 있었다
+     * (2026-09-23 담당자 확인). 주소로 위치를 단정할 수 없으니 「하단이
+     * 아닌 것」은 모두 알리고, 어디에 있는지는 사람이 보게 한다.
+     */
     @Test
-    fun `모르는 주소면 말하지 않는다`() {
+    fun `하단이 아닌 주소는 모두 알린다`() {
+        for (addr in listOf("top", "back", "rear", "mic3")) {
+            assertNotNull(addr, builtInMicNoticeKo(mic(addr)))
+        }
+    }
+
+    /** 주소가 아예 없으면 할 말이 없다. */
+    @Test
+    fun `주소가 없으면 말하지 않는다`() {
         assertNull(builtInMicNoticeKo(mic("")))
-        assertNull(builtInMicNoticeKo(mic("mic3")))
+    }
+
+    /** **위치를 단정하지 않는다.** 「후면」이라고 부르던 것을 고쳤다. */
+    @Test
+    fun `안내가 위치를 단정하지 않는다`() {
+        val s = builtInMicNoticeKo(mic("back"))!!
+        assertTrue(s, s.contains("실제 위치와 다를 수 있습니다"))
+        assertFalse("위치를 단정하면 안 된다: $s", s.startsWith("후면 마이크를"))
     }
 
     @Test
