@@ -146,9 +146,13 @@ class RtaEngine(
      * 결과를 남겨 두면 다음 FFT 가 돌 때까지 옛 곡선으로 계산한 프레임을
      * 새 곡선의 이름표와 함께 내보낸다 — 화면이 「+10dB 보정 적용됨」이라고
      * 적는 동안 숫자는 보정 전 값이었다(독립 재검증 F06).
+     *
+     * **곡선은 1kHz 에 못을 박아 건다**([CURVE_REFERENCE_HZ]). 음압 교정기로
+     * 잡은 절대 레벨이 곡선을 갈아 끼워도 흔들리지 않게 하려는 것이다 —
+     * 까닭은 [CalibrationCurve.binCorrectionLinear] 의 `referenceHz` 참고.
      */
     fun setCurve(curve: CalibrationCurve?) {
-        binCorrection = curve?.binCorrectionLinear(fftSize, sampleRateHz)
+        binCorrection = curve?.binCorrectionLinear(fftSize, sampleRateHz, CURVE_REFERENCE_HZ)
         curveGeneration++
         smoothing.reset()
         peakHold.reset()
@@ -227,3 +231,24 @@ class RtaEngine(
         latest = null
     }
 }
+
+/**
+ * 보정 곡선을 **여기에 못 박아** 건다(Hz).
+ *
+ * ## 왜 1kHz 인가
+ *
+ * 음압 교정기가 내는 소리가 1kHz 순음이고, A·C 가중이 1kHz 에서 정확히
+ * 0dB 이다. 그래서 이 한 점은 **가중이 무엇이든, 곡선이 무엇이든 같은
+ * 값**이어야 한다. 그 조건을 쓰는 쪽의 규율에 맡기지 않고 여기서 만든다.
+ *
+ * ## 무엇이 달라지는가
+ *
+ * 보정 곡선의 절대 높이는 원래 뜻이 없다 — 마이크의 응답을 견준 값이라
+ * 어디를 0dB 으로 부를지는 고르기 나름이다. 지금 계산은 300~3000Hz
+ * 평균을 0 으로 두는데, 그 평균이 0 이라고 1kHz 가 0 인 것은 아니다.
+ *
+ * 그 차이는 **교정기로 맞춘 절대 레벨을 그대로 밀어낸다.** 큰 숫자(dBA)는
+ * 시간영역 음압계에서 나오고 곡선을 받지 않는데, 1kHz 막대는 곡선을
+ * 받기 때문이다. 못을 박으면 둘이 1kHz 에서 언제나 같다.
+ */
+const val CURVE_REFERENCE_HZ = 1_000.0

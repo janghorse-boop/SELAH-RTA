@@ -103,14 +103,46 @@ class CalibrationCurve private constructor(
      *
      * 칸 0 은 DC 라 주파수가 0 이다. 마이크 응답을 말할 수 있는 자리가
      * 아니므로 곡선의 첫 점 값을 쓴다([gainDbAt] 이 곡선 밖을 그렇게 다룬다).
+     *
+     * ## [referenceHz] — **절대 레벨의 기준점**
+     *
+     * 주면 그 주파수의 보정량이 정확히 0dB 이 되도록 곡선 전체를 상수만큼
+     * 민다. **모양은 바뀌지 않는다** — 곡선의 절대 높이는 원래 뜻이 없다.
+     *
+     * ### 왜 필요한가
+     *
+     * 음압 교정기는 1kHz 순음 하나로 **절대 레벨**을 잡아 준다. 그런데
+     * 그렇게 잡은 오프셋은 **시간영역 음압계**(가중 필터만 거친다)에서
+     * 재는데, RTA 밴드는 그 위에 보정 곡선까지 받는다. 곡선의 1kHz 값이
+     * 0dB 이 아니면 **두 숫자가 그만큼 갈라진다** — 큰 숫자(dBA)는 94.0 인데
+     * 1kHz 막대는 96.1 인 식이다. 곡선을 갈아 끼우면 그 차이도 따라 바뀐다.
+     *
+     * 지금 쓰는 보정 곡선은 300~3000Hz **평균**을 0dB 로 맞춘다
+     * ([kr.joa.selahrta.dsp.normalizeToBand]). 평균이 0 이라고 1kHz 가 0 인
+     * 것은 아니다.
+     *
+     * 1kHz 에 못을 박으면 그 갈라짐이 **구조적으로 0** 이 된다. 어느 곡선을
+     * 걸어도, 곡선을 빼도, 1kHz 는 교정기가 말한 그 값이다.
+     *
+     * ### 곡선이 1kHz 를 덮지 않으면
+     *
+     * [gainDbAt] 이 끝점 값을 돌려주므로 **잰 적 없는 값에 못을 박게 된다.**
+     * 그래도 안 박는 것보다는 낫다 — 안 박으면 어긋남의 크기를 아무도
+     * 모른다. 1kHz 를 덮지 않는 보정 파일은 [covers] 로 걸러 화면이 알린다.
      */
-    fun binCorrectionLinear(fftSize: Int, sampleRate: Int): DoubleArray {
+    fun binCorrectionLinear(
+        fftSize: Int,
+        sampleRate: Int,
+        referenceHz: Double? = null,
+    ): DoubleArray {
         require(fftSize > 0) { "FFT 길이가 0 이하다: $fftSize" }
         require(sampleRate > 0) { "샘플레이트가 0 이하다: $sampleRate" }
+        require(referenceHz == null || referenceHz > 0.0) { "기준 주파수가 0 이하다: $referenceHz" }
+        val ref = referenceHz?.let { gainDbAt(it) } ?: 0.0
         val binWidth = sampleRate.toDouble() / fftSize
         return DoubleArray(fftSize / 2 + 1) { k ->
             val hz = if (k == 0) lowestHz else k * binWidth
-            10.0.pow(-gainDbAt(hz) / 10.0)
+            10.0.pow(-(gainDbAt(hz) - ref) / 10.0)
         }
     }
 
