@@ -50,6 +50,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kr.joa.selahrta.R
+import kr.joa.selahrta.calibration.DeviceBuildInfo
+import kr.joa.selahrta.calibration.currentProfileEnvironment
 import kr.joa.selahrta.domain.CalibrationState
 import kr.joa.selahrta.domain.ChurchSegment
 import kr.joa.selahrta.domain.MeasureState
@@ -59,6 +61,7 @@ import kr.joa.selahrta.ui.instrument.InstrumentGuideScreen
 import kr.joa.selahrta.ui.nav.ViewMode
 import kr.joa.selahrta.ui.nav.defaultMode
 import kr.joa.selahrta.ui.nav.hasModeChips
+import kr.joa.selahrta.ui.screens.CalibrationProfilesScreen
 import kr.joa.selahrta.ui.screens.CalibrationWizardScreen
 import kr.joa.selahrta.ui.screens.FeedbackScreen
 import kr.joa.selahrta.ui.screens.HistoryScreen
@@ -82,10 +85,16 @@ fun SelahApp() {
     // 측정 중에 잘못 눌러 들어가게 된다.
     var wizardOpen by rememberSaveable { mutableStateOf(false) }
     var wizardExample by rememberSaveable { mutableStateOf(false) }
+    var profilesOpen by rememberSaveable { mutableStateOf(false) }
     var mode by remember { mutableStateOf(ViewMode.Sermon) }
 
     val vm: CaptureViewModel = viewModel()
     val capture by vm.state.collectAsStateWithLifecycle()
+
+    val profiles: ProfilesViewModel = viewModel()
+    val profilesState by profiles.state.collectAsStateWithLifecycle()
+    // 기기 신원은 안 바뀐다. 한 번만 읽는다.
+    val deviceBuild = remember { DeviceBuildInfo.current() }
 
     // **칩을 저장된 구간에 맞춘다.** 구간을 고르는 줄을 없앤 뒤로 칩이
     // 곧 구간인데, 칩은 늘 「설교」로 시작하고 구간은 지난번에 고른 것이
@@ -243,6 +252,7 @@ fun SelahApp() {
                 // 덮여 있어서, 닫지 않으면 다른 탭으로 가도 그대로 얹혀
                 // 있다(기기에서 확인).
                 wizardOpen = false
+                profilesOpen = false
                 // 측정·분석으로 오면 그 구역에서 마지막에 보던 칩으로 돌아간다.
                 if (picked.hasModeChips) mode = picked.defaultMode(mode)
             }
@@ -308,6 +318,10 @@ fun SelahApp() {
                         onCurveMicName = vm::setCurveMicName,
                         onDismissCurveNotice = vm::dismissCurveNotice,
                         onOpenCalibrationWizard = { wizardOpen = true },
+                        onOpenCalibrationProfiles = {
+                            profiles.reload()
+                            profilesOpen = true
+                        },
                         onSaveRange = vm::setRange,
                         onResetRange = vm::resetRange,
                         onPlaySignal = vm::playSignal,
@@ -333,6 +347,30 @@ fun SelahApp() {
                             showingExample = wizardExample,
                             onToggleExample = { wizardExample = !wizardExample },
                             onClose = { wizardOpen = false },
+                        )
+                    }
+                }
+
+                if (profilesOpen) {
+                    BackHandler { profilesOpen = false }
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .background(SelahColors.Background),
+                    ) {
+                        CalibrationProfilesScreen(
+                            state = profilesState,
+                            // **열린 값으로 대조한다.** 요청한 값이 아니라
+                            // 실제로 열린 경로여야 「지금 걸리는가」가 참이다.
+                            now = capture.opened?.let {
+                                currentProfileEnvironment(it, capture.inputs, deviceBuild)
+                            },
+                            onToggle = profiles::setEnabled,
+                            onDelete = profiles::delete,
+                            onOpen = profiles::open,
+                            onCloseOpened = profiles::close,
+                            onDismissNotice = profiles::dismissNotice,
+                            onClose = { profilesOpen = false },
                         )
                     }
                 }

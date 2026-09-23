@@ -100,6 +100,8 @@ fun SettingsScreen(
     onDismissCurveNotice: () -> Unit,
     /** 교정 마법사를 연다(S23 지시서 6장). */
     onOpenCalibrationWizard: () -> Unit,
+    /** 저장된 프로파일 목록을 연다(지시서 7장). */
+    onOpenCalibrationProfiles: () -> Unit,
     onSaveRange: (ChurchSegment, SegmentRange) -> Unit,
     onResetRange: (ChurchSegment) -> Unit,
     onPlaySignal: (TestSignal) -> Unit,
@@ -242,8 +244,9 @@ fun SettingsScreen(
 
         // 마법사는 아직 재는 기능이 붙지 않았다. 여는 자리를 먼저 둔
         // 까닭은 비교 화면을 기기에서 확인해야 하기 때문이다.
-        TextButton(onClick = onOpenCalibrationWizard, modifier = Modifier.padding(top = 4.dp)) {
-            Text("교정 마법사 열기")
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            TextButton(onClick = onOpenCalibrationWizard) { Text("교정 마법사 열기") }
+            TextButton(onClick = onOpenCalibrationProfiles) { Text("프로파일 관리") }
         }
 
         SectionTitle("시험 신호")
