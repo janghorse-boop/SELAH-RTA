@@ -40,19 +40,51 @@ data class InputDeviceInfo(
      * **id 로 기억하면 안 된다.** USB 를 뺐다 꽂으면 id 가 바뀌어서
      * 「고른 기기가 사라졌다」고 잘못 판단한다.
      *
-     * **주소도 넣어야 한다.** 하단 마이크와 후면 마이크는 물리적으로 다른
-     * 마이크라 감도가 다르다. 이름만으로 묶으면 서로 다른 마이크에 같은
-     * 보정값이 적용돼 음압이 몇 dB 씩 틀어진다.
+     * **외부 기기는 주소도 넣는다.** 같은 이름의 인터페이스를 둘 꽂으면
+     * 주소만이 둘을 가른다.
+     *
+     * ## 내장 마이크는 주소를 빼고 묶는다 (2026-09-23)
+     *
+     * 예전에는 내장도 주소를 넣어 하단·상단을 다른 기기로 다뤘다. 실측이
+     * 그 전제를 무너뜨렸다 — 「상단」을 골라도 하단이 함께 켜지고, 주소가
+     * 가리키는 위치조차 실제와 다르다([InputDeviceScanner] 의 접는 규칙).
+     *
+     * **이 한 줄이 실제로 하는 일은 보정값을 붙들어 두는 것이다.** 열쇠에
+     * 주소가 남아 있으면 라우팅이 하단에서 상단으로 한 번 넘어가는 것만으로
+     * 「모르는 기기」가 되어 **저장된 보정이 조용히 떨어져 나간다.**
      */
-    val stableKey: String get() = "${kind.name}|$productName|$address"
+    val stableKey: String get() = when (kind) {
+        MicKind.BuiltIn -> "${kind.name}|$productName"
+        else -> "${kind.name}|$productName|$address"
+    }
 
     /**
-     * 화면에 적을 이름. 위치가 있으면 붙인다.
+     * 화면에 적을 이름.
      *
-     * 「SM-S918N」이 두 줄 뜨면 담당자는 무엇을 고르는지 알 수 없다.
+     * 내장 마이크는 **기기명 그대로**다. 위치를 붙이지 않는다 — 고를 수도
+     * 없고 이름도 못 믿는 구분이라(위 참고) 붙이면 잘못 고르게 할 뿐이다.
+     * 외부 기기는 주소가 둘을 가르는 단서라 그대로 붙인다.
      */
     val displayName: String
-        get() = micPositionKo(address)?.let { "$productName ($it)" } ?: productName
+        get() = when (kind) {
+            MicKind.BuiltIn -> productName
+            else -> micPositionKo(address)?.let { "$productName ($it)" } ?: productName
+        }
+
+    /**
+     * **탐색 전용** 열쇠. 내장 마이크도 주소까지 넣어 후보를 가른다.
+     *
+     * [stableKey] 는 내장을 한 줄로 묶으므로 후보 둘이 같은 값을 갖는다.
+     * 그 값으로 「고른 것과 열린 것이 같은가」를 물으면 **언제나 같다**가
+     * 되어, 탐색이 아무것도 묻지 않은 것과 같아진다.
+     *
+     * 보정·기억에는 쓰지 않는다 — 그쪽은 묶여 있어야 한다([stableKey]).
+     */
+    val probeKey: String get() = "${kind.name}|$productName|$address"
+
+    /** 탐색 보고서에 적을 이름. 어느 후보였는지 알아볼 수 있어야 한다. */
+    val probeLabel: String
+        get() = if (address.isBlank()) productName else "$productName [$address]"
 
     /** 48kHz 로 열 수 있다고 기기가 알리는가. 모르면 true 로 본다(해 보면 안다). */
     val supports48k: Boolean get() = sampleRates.isEmpty() || sampleRates.contains(48_000)

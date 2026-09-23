@@ -121,18 +121,53 @@ class InputDevicesTest {
         assertTrue(DisconnectPolicy.Pause.helpKo.contains("재지 않습니다"))
     }
 
+    /**
+     * 내장 마이크는 **한 기기로 묶인다**(2026-09-23 결정).
+     *
+     * 예전에는 주소까지 열쇠에 넣어 하단·상단을 다른 기기로 다뤘다.
+     * 실측이 그 전제를 무너뜨렸다 — 「상단」을 골라도 하단이 함께 켜지고
+     * (활성=[22,24]), 주소가 가리키는 위치조차 실제와 달랐다.
+     *
+     * **이 시험이 지키는 것은 보정값이다.** 열쇠에 주소가 남으면 라우팅이
+     * 한 번 넘어가는 것만으로 「모르는 기기」가 되어 저장된 보정이 조용히
+     * 떨어져 나간다.
+     */
     @Test
-    fun `내장 마이크가 여럿이면 위치로 구별한다`() {
-        // 갤럭시 S23 실측: 내장 마이크가 둘(addr='bottom', 'back')인데
-        // 이름은 둘 다 기기 모델명이다. 주소를 안 넣으면 열쇠가 충돌해
-        // **물리적으로 다른 마이크에 같은 보정값**이 적용된다.
+    fun `내장 마이크는 주소가 달라도 같은 기기로 묶인다`() {
         val bottom = builtIn(id = 22, addr = "bottom")
         val back = builtIn(id = 24, addr = "back")
-        assertTrue("서로 다른 기기여야 한다", bottom.stableKey != back.stableKey)
+        assertEquals("같은 폰의 내장이면 같은 열쇠다", bottom.stableKey, back.stableKey)
+        assertEquals("이름은 기기명 그대로다", "SM-S918N", bottom.displayName)
+        assertEquals("위치를 붙이지 않는다", "SM-S918N", back.displayName)
+    }
 
-        // 후면을 골라 두면 하단이 아니라 후면이 열려야 한다.
-        val c = chooseInput(listOf(bottom, back), back.stableKey, autoPreferExternal = false)
-        assertEquals(24, c.device!!.id)
+    /**
+     * 묶은 뒤에도 **탐색은 둘을 갈라 볼 수 있어야 한다.**
+     *
+     * 갈라지는지 묻는 일까지 접어 버리면, 정말 갈라 주는 폰이 나와도
+     * 알아채지 못한다. 보정에 쓰는 열쇠와 탐색에 쓰는 열쇠를 따로 둔다.
+     */
+    @Test
+    fun `탐색 열쇠는 내장도 주소로 가른다`() {
+        val bottom = builtIn(id = 22, addr = "bottom")
+        val back = builtIn(id = 24, addr = "back")
+        assertTrue("후보를 가릴 수 있어야 한다", bottom.probeKey != back.probeKey)
+        assertTrue("어느 후보인지 보여야 한다", bottom.probeLabel.contains("bottom"))
+        assertTrue(back.probeLabel.contains("back"))
+    }
+
+    /**
+     * 외부 기기는 **여전히 주소로 가른다.** 같은 이름의 인터페이스를 둘
+     * 꽂으면 주소만이 둘을 구별한다 — 묶으면 다른 마이크에 같은 보정이 간다.
+     */
+    @Test
+    fun `외부 기기는 주소로 구별한다`() {
+        val a = usb(id = 30).copy(address = "usb:1")
+        val b = usb(id = 31).copy(address = "usb:2")
+        assertTrue("서로 다른 기기여야 한다", a.stableKey != b.stableKey)
+
+        val c = chooseInput(listOf(a, b), b.stableKey, autoPreferExternal = false)
+        assertEquals(31, c.device!!.id)
         assertEquals(ChoiceReason.UserPicked, c.reason)
     }
 
