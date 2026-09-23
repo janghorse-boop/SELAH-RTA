@@ -101,28 +101,13 @@ class ProfileBuilderTest {
      * 만들 수 없어 증거 없는 세션을 쓴다. 그래서 CAL 이름·해시는 null 로
      * 적히고, 그 사실을 아래 시험 하나가 못 박는다.
      */
-    private fun sessionStub(q: QualityReport) = kr.joa.selahrta.dsp.SessionResult(
-        referenceBefore = stepStub(),
-        target = stepStub(),
-        referenceAfter = stepStub(),
+    // 틀은 TestProfiles.kt 에 하나만 둔다 — 증거(referenceProof)는 꾸며 낼
+    // 수 없어서 진짜 곡선으로 한 번 돌려 얻는다.
+    private fun sessionStub(q: QualityReport) = fakeSession(
+        withProof = false,
         referenceDriftDb = q.referenceDriftDb ?: 0.0,
         referenceBandDriftDb = q.referenceBandDriftDb ?: 0.0,
         repeatSpreadDb = q.repeatSpreadDb,
-        noStableFrames = false,
-        minKeptFramesPerStep = 16,
-        minTotalFramesPerStep = 16,
-        referenceMeanDb = DoubleArray(n) { 70.0 },
-        referenceProof = null,
-    )
-
-    private fun stepStub() = kr.joa.selahrta.dsp.StepResult(
-        step = kr.joa.selahrta.dsp.MeasureStep.Target,
-        meanDb = DoubleArray(n) { 70.0 },
-        keptFrames = 16,
-        droppedFrames = 0,
-        levelSpreadDb = 0.5,
-        noStableFrames = false,
-        totalFrames = 16,
     )
 
     // ------------------------------------------------------------------

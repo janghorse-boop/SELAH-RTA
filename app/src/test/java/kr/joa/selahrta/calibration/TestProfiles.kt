@@ -3,7 +3,15 @@ package kr.joa.selahrta.calibration
 import kr.joa.selahrta.audio.CaptureSource
 import kr.joa.selahrta.audio.MicSeparation
 import kr.joa.selahrta.domain.MicKind
+import kr.joa.selahrta.dsp.BandAnalyzer
+import kr.joa.selahrta.dsp.CalibrationCurve
+import kr.joa.selahrta.dsp.CurvePoint
+import kr.joa.selahrta.dsp.MeasureStep
 import kr.joa.selahrta.dsp.QualityVerdict
+import kr.joa.selahrta.dsp.SessionResult
+import kr.joa.selahrta.dsp.StepResult
+import kr.joa.selahrta.dsp.ThirdOctave
+import kr.joa.selahrta.dsp.applyReferenceCalibration
 
 /**
  * 시험용 프로파일 하나.
@@ -52,6 +60,58 @@ internal fun testProfile(
     caseRemoved = caseRemoved,
     enabled = enabled,
 )
+
+/**
+ * 시험용 측정 결과 하나.
+ *
+ * `referenceProof` 는 **꾸며 낼 수 없다** — 생성자가 dsp 안쪽이다. 그래서
+ * 여기서도 진짜 곡선으로 [applyReferenceCalibration] 을 한 번 돌려서
+ * 얻는다. 그 사실 자체가 「증거가 증거 구실을 한다」는 확인이다.
+ */
+internal fun fakeSession(
+    noStable: Boolean = false,
+    withProof: Boolean = true,
+    bandCount: Int = ThirdOctave.BAND_COUNT,
+    referenceDriftDb: Double = 0.2,
+    referenceBandDriftDb: Double = 0.4,
+    repeatSpreadDb: Double? = 0.5,
+    keptFrames: Int = 16,
+): SessionResult = SessionResult(
+    referenceBefore = fakeStep(bandCount, keptFrames, noStable),
+    target = fakeStep(bandCount, keptFrames, noStable),
+    referenceAfter = fakeStep(bandCount, keptFrames, noStable),
+    referenceDriftDb = referenceDriftDb,
+    referenceBandDriftDb = referenceBandDriftDb,
+    repeatSpreadDb = repeatSpreadDb,
+    noStableFrames = noStable,
+    minKeptFramesPerStep = if (noStable) 0 else keptFrames,
+    minTotalFramesPerStep = keptFrames,
+    referenceMeanDb = DoubleArray(bandCount) { 70.0 },
+    referenceProof = if (withProof) fakeProof() else null,
+)
+
+private fun fakeStep(bandCount: Int, kept: Int, noStable: Boolean) = StepResult(
+    step = MeasureStep.Target,
+    meanDb = DoubleArray(bandCount) { 70.0 },
+    keptFrames = if (noStable) 0 else kept,
+    droppedFrames = if (noStable) kept else 0,
+    levelSpreadDb = 0.5,
+    noStableFrames = noStable,
+    totalFrames = kept,
+)
+
+internal fun fakeProof(fileName: String = "17860.txt", sha: String = "abc123") =
+    applyReferenceCalibration(
+        binPower = DoubleArray(1024 / 2 + 1) { 1e-6 },
+        analyzer = BandAnalyzer(1024, 48_000),
+        curve = CalibrationCurve.of(
+            listOf(CurvePoint(10.0, 0.0), CurvePoint(25_000.0, 0.0)),
+        ).getOrThrow(),
+        fftSize = 1024,
+        sampleRate = 48_000,
+        calFileName = fileName,
+        calSha256 = sha,
+    ).proof
 
 internal fun testEnvironment(
     address: String = "back",
