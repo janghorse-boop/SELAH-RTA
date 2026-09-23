@@ -176,6 +176,69 @@ class MeasurementTapTest {
     }
 
     // ------------------------------------------------------------------
+    // 회차가 섞이지 않는다 (독립 검토 R05)
+    // ------------------------------------------------------------------
+
+    /**
+     * **늦게 이어진 콜백이 새 회차에 들어가면 안 된다.**
+     *
+     * 검토자가 짚은 순서를 그대로 만든다: 오디오 콜백이 회차를 잡은
+     * 뒤, 주 스레드가 멈추고 꺼내고 **기준** 회차를 시작하고, 그제야
+     * 콜백이 이어진다.
+     *
+     * 막지 못하면 대상 마이크로 받은 장이 **CAL 증거를 달고** 기준에
+     * 들어간다. 값은 멀쩡해 보이고, 증거를 꾸밀 수 없게 만든 설계가
+     * 그 자리에서 무너진다.
+     *
+     * 스레드를 돌려 흔드는 시험은 「어쩌다 통과」하므로 순서를 **강제로**
+     * 만든다.
+     */
+    @Test
+    fun `늦게 끝난 콜백이 새 회차에 섞이지 않는다`() {
+        val t = tap()
+        t.startTarget()
+
+        // 오디오 콜백이 회차를 잡았다. 아직 쓰지는 않았다.
+        val inFlight = t.beginFrameForTest()
+        assertNotNull(inFlight)
+
+        // 그사이 주 스레드가 회차를 바꾼다.
+        t.stop()
+        t.drainTarget()
+        t.startReference(curve(0.0), "17860.txt", "abc")
+
+        // 이제 늦은 콜백이 이어진다.
+        inFlight!!.accept(power(1e-4))
+
+        assertTrue("대상 장이 기준에 들어갔다", t.drainReference().isEmpty())
+        assertEquals("새 회차가 오염됐다", 0, t.count)
+    }
+
+    /** 늦은 콜백이 **옛 회차를 다시 채우지도** 않는다 — 이미 닫혔다. */
+    @Test
+    fun `멈춘 회차는 늦은 콜백도 받지 않는다`() {
+        val t = tap()
+        t.startTarget()
+        val inFlight = t.beginFrameForTest()!!
+        t.stop()
+
+        inFlight.accept(power(1e-4))
+
+        assertEquals(0, t.drainTarget().size)
+    }
+
+    @Test
+    fun `회차 번호가 시작할 때마다 올라간다`() {
+        val t = tap()
+        t.startTarget()
+        val first = t.currentGeneration
+        t.stop()
+        t.drainTarget()
+        t.startReference(curve(0.0))
+        assertTrue("$first -> ${t.currentGeneration}", t.currentGeneration > first)
+    }
+
+    // ------------------------------------------------------------------
     // 붙여서 실제로 도는가
     // ------------------------------------------------------------------
 
