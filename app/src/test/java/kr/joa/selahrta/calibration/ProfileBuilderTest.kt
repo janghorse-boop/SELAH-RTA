@@ -91,7 +91,6 @@ class ProfileBuilderTest {
         outcome = outcome,
         environment = env(),
         separation = MicSeparation.Separable,
-        curvesFileName = "p.curves",
         caseRemoved = caseRemoved,
         nowEpochMs = 1_700_000_000_000L,
         id = "fixed-id",

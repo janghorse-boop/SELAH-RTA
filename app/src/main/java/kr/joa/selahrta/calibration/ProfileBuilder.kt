@@ -43,7 +43,6 @@ sealed interface ProfileBuildResult {
  * 안 되는 상태이고, 그것을 켜는 것은 나중에 사람이 프로파일 목록에서
  * 할 일이다(지시서 6장).
  *
- * @param curvesFileName 곡선 넷을 담을 파일 이름. 저장하는 쪽이 정한다.
  * @param caseRemoved 후면 마이크일 때 케이스를 벗겼는지. **사람이 말한
  *   것이고 확인할 길이 없다** — 그대로 적어 둔다.
  * @param nowEpochMs 시각. 시험이 고정할 수 있게 받는다.
@@ -54,7 +53,6 @@ fun buildProfileForSave(
     outcome: CalibrationOutcome,
     environment: ProfileEnvironment,
     separation: MicSeparation,
-    curvesFileName: String,
     caseRemoved: Boolean? = null,
     nowEpochMs: Long = System.currentTimeMillis(),
     id: String = UUID.randomUUID().toString(),
@@ -100,7 +98,10 @@ fun buildProfileForSave(
             maxCorrectionDb = outcome.settings.maxCorrectionDb,
             validFromHz = validRange?.first,
             validToHz = validRange?.second,
-            curvesFileName = curvesFileName,
+            // **이름은 저장소가 정한다.** 부르는 쪽이 고르게 두면 두
+            // 프로파일이 같은 곡선 파일을 가리킬 수 있고, 그러면 하나를
+            // 지울 때 다른 하나의 곡선이 함께 사라진다.
+            curvesFileName = ProfileStore.curvesFileNameFor(id),
             caseRemoved = caseRemoved,
             // **부르는 쪽이 정하지 않는다.** 판정이 정한다.
             enabled = judged.mayAutoApply,

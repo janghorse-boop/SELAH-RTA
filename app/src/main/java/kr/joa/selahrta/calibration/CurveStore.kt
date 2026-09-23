@@ -214,27 +214,6 @@ class CurveStore(private val context: Context) {
         }
 
     /**
-     * 임시 파일에 쓴 뒤 옮긴다.
-     *
-     * 곧바로 덮어쓰다가 중간에 죽으면 반쯤 쓰인 파일이 남는데, 그 파일은
-     * 해석은 되면서 점이 모자란 곡선이 되기 쉽다 — 「보정이 걸렸다」고
-     * 적히면서 값은 틀린 상태다.
-     */
-    private fun writeAtomically(target: File, text: String) {
-        // 임시 이름을 매번 다르게 짓는다. 같은 기기에 두 번 저장이 겹치면
-        // 둘이 같은 `.tmp` 에 써서 서로의 내용을 섞는다(독립 재검증 추가 지적).
-        val tmp = File(target.parentFile, "${target.name}.${System.nanoTime()}.tmp")
-        tmp.writeText(text)
-        if (!tmp.renameTo(target)) {
-            // **여기서 직접 덮어쓰지 않는다.** 그러면 「원자적으로 쓴다」는
-            // 말이 실패 경로에서만 거짓이 되어, 하필 그때 반쯤 쓰인 파일이
-            // 남는다(독립 재검증 추가 지적). 실패는 실패로 알린다.
-            tmp.delete()
-            throw IOException("보정 파일을 제자리에 옮기지 못했습니다: ${target.name}")
-        }
-    }
-
-    /**
      * 걸기를 켜거나 끔다. **파일은 그대로 둔다.**
      *
      * 지우는 것과 다르다 — 지우면 다시 가져와야 하고, 그러면 보정
