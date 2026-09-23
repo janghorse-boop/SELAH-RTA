@@ -14,6 +14,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -97,6 +98,8 @@ fun SettingsScreen(
     onToggleCurve: (Boolean) -> Unit,
     onCurveMicName: (String) -> Unit,
     onDismissCurveNotice: () -> Unit,
+    /** 교정 마법사를 연다(S23 지시서 6장). */
+    onOpenCalibrationWizard: () -> Unit,
     onSaveRange: (ChurchSegment, SegmentRange) -> Unit,
     onResetRange: (ChurchSegment) -> Unit,
     onPlaySignal: (TestSignal) -> Unit,
@@ -236,6 +239,12 @@ fun SettingsScreen(
             onDismissNotice = onDismissCurveNotice,
             modifier = Modifier.padding(top = 10.dp),
         )
+
+        // 마법사는 아직 재는 기능이 붙지 않았다. 여는 자리를 먼저 둔
+        // 까닭은 비교 화면을 기기에서 확인해야 하기 때문이다.
+        TextButton(onClick = onOpenCalibrationWizard, modifier = Modifier.padding(top = 4.dp)) {
+            Text("교정 마법사 열기")
+        }
 
         SectionTitle("시험 신호")
         SignalGeneratorCard(

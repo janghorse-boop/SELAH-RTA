@@ -59,11 +59,14 @@ import kr.joa.selahrta.ui.instrument.InstrumentGuideScreen
 import kr.joa.selahrta.ui.nav.ViewMode
 import kr.joa.selahrta.ui.nav.defaultMode
 import kr.joa.selahrta.ui.nav.hasModeChips
+import kr.joa.selahrta.ui.screens.CalibrationWizardScreen
 import kr.joa.selahrta.ui.screens.FeedbackScreen
 import kr.joa.selahrta.ui.screens.HistoryScreen
 import kr.joa.selahrta.ui.screens.MeasureScreen
 import kr.joa.selahrta.ui.screens.RtaScreen
 import kr.joa.selahrta.ui.screens.SettingsScreen
+import kr.joa.selahrta.ui.screens.exampleJudgement
+import kr.joa.selahrta.ui.screens.exampleOutcome
 import kr.joa.selahrta.ui.theme.SelahColors
 
 @Composable
@@ -75,6 +78,10 @@ fun SelahApp() {
     // 기록·설정에는 갈 방법이 아예 없어진다. 대신 둘이 어긋나지 않도록
     // 한쪽을 바꿀 때 다른 쪽을 맞춘다.
     var section by remember { mutableStateOf(NavSection.Measure) }
+    // 교정 마법사는 탭이 아니라 **위에 덮는 화면**이다. 탭으로 두면
+    // 측정 중에 잘못 눌러 들어가게 된다.
+    var wizardOpen by rememberSaveable { mutableStateOf(false) }
+    var wizardExample by rememberSaveable { mutableStateOf(false) }
     var mode by remember { mutableStateOf(ViewMode.Sermon) }
 
     val vm: CaptureViewModel = viewModel()
@@ -232,6 +239,10 @@ fun SelahApp() {
         bottomBar = {
             BottomBar(section) { picked ->
                 section = picked
+                // **탭을 옮기면 마법사를 닫는다.** 마법사는 탭 내용 위에
+                // 덮여 있어서, 닫지 않으면 다른 탭으로 가도 그대로 얹혀
+                // 있다(기기에서 확인).
+                wizardOpen = false
                 // 측정·분석으로 오면 그 구역에서 마지막에 보던 칩으로 돌아간다.
                 if (picked.hasModeChips) mode = picked.defaultMode(mode)
             }
@@ -296,6 +307,7 @@ fun SelahApp() {
                         onToggleCurve = vm::setCurveEnabled,
                         onCurveMicName = vm::setCurveMicName,
                         onDismissCurveNotice = vm::dismissCurveNotice,
+                        onOpenCalibrationWizard = { wizardOpen = true },
                         onSaveRange = vm::setRange,
                         onResetRange = vm::resetRange,
                         onPlaySignal = vm::playSignal,
@@ -303,6 +315,26 @@ fun SelahApp() {
                         onSignalLevel = vm::setSignalLevel,
                         onDismissSignalNotice = vm::dismissSignalNotice,
                     )
+                }
+
+                // **탭 내용 위에 덮는다.** 탭으로 두면 측정 중에 잘못
+                // 눌러 들어간다. 뒤로가기로 닫힌다.
+                if (wizardOpen) {
+                    BackHandler { wizardOpen = false }
+                    val example = if (wizardExample) remember { exampleOutcome() } else null
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .background(SelahColors.Background),
+                    ) {
+                        CalibrationWizardScreen(
+                            outcome = example,
+                            judged = example?.let { exampleJudgement(it) },
+                            showingExample = wizardExample,
+                            onToggleExample = { wizardExample = !wizardExample },
+                            onClose = { wizardOpen = false },
+                        )
+                    }
                 }
             }
         }

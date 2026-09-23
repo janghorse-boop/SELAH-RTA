@@ -36,6 +36,24 @@ import kotlin.math.abs
 import kotlin.math.log10
 
 /**
+ * **정규화 오프셋은 음압 차이가 아니다**(지시서 5장).
+ *
+ * 문구를 밖으로 뺀 까닭: 예전에 이 자리에 마크다운 별표를 쓰고
+ * `.replace("**","")` 를 붙여 두었는데, `a + b.replace(...)` 는 **뒤
+ * 문자열에만** 걸려서 앞부분의 별표가 그대로 화면에 나왔다(기기에서
+ * 확인). 눈으로 훑는 대신 **시험이 잡게** 한다.
+ */
+const val LEVEL_IS_NOT_SPL_KO: String =
+    "이 값은 「디지털 입력 레벨」의 차이입니다. 두 경로의 이득이 달라서 " +
+        "생긴 것이라 음압(dB SPL) 차이가 아닙니다."
+
+/** 차례로 재는 한계를 화면에 적는다(지시서 4장 마지막 줄). */
+const val SEQUENTIAL_MEASURE_LIMIT_KO: String =
+    "기준과 대상을 「같은 자리에 동시에」 놓을 수 없어 차례로 잽니다. " +
+        "그 사이에 스피커·환경이 변하면 그만큼 오차입니다 — 기준을 앞뒤로 " +
+        "두 번 재서 얼마나 변했는지 함께 봅니다."
+
+/**
  * 교정 결과 비교(S23 개별 교정 지시서 4장).
  *
  * > EMM-6 CAL 적용 기준 곡선, 내장 마이크 원시 곡선, 레벨 정규화한 내장
@@ -60,7 +78,19 @@ fun CalibrationCompareCard(
     quality: QualityResult?,
     modifier: Modifier = Modifier,
 ) {
-    var showRaw by remember { mutableStateOf(true) }
+    /**
+     * **원시 곡선은 기본으로 끈다.**
+     *
+     * 원시는 정규화 **전**이라 다른 셋과 높이가 수십 dB 다르다(두 경로의
+     * 입력 이득이 다르니 당연하다 — 그래서 정규화를 한다). 한 축에 같이
+     * 그리면 y 범위가 그 차이만큼 벌어져 **네 곡선이 모두 가운데 얇은
+     * 띠로 눌린다**(기기에서 확인: 예시에서 70dB 범위가 잡혔다).
+     *
+     * 모양은 정규화 곡선과 같고 높이만 다르므로, 평소에는 끄고 **레벨
+     * 차이를 보고 싶을 때** 켠다. 그 차이의 수치는 아래 「레벨 정규화
+     * …dB」 로 늘 보인다.
+     */
+    var showRaw by remember { mutableStateOf(false) }
     var showNormalized by remember { mutableStateOf(true) }
     var showCorrected by remember { mutableStateOf(true) }
 
@@ -110,8 +140,7 @@ fun CalibrationCompareCard(
             fontSize = 11.sp,
         )
         Text(
-            "이 값은 **디지털 입력 레벨**의 차이입니다. 두 경로의 이득이 달라서 " +
-                "생긴 것이라 음압(dB SPL) 차이가 아닙니다.".replace("**", ""),
+            LEVEL_IS_NOT_SPL_KO,
             color = SelahColors.TextMuted,
             fontSize = 11.sp,
             lineHeight = 15.sp,
@@ -139,9 +168,7 @@ fun CalibrationCompareCard(
         )
 
         InfoBar(
-            "기준과 대상을 **같은 자리에 동시에** 놓을 수 없어 차례로 잽니다. " +
-                "그 사이에 스피커·환경이 변하면 그만큼 오차입니다 — 기준을 앞뒤로 " +
-                "두 번 재서 얼마나 변했는지 함께 봅니다.".replace("**", ""),
+            SEQUENTIAL_MEASURE_LIMIT_KO,
             tone = SelahColors.Warn,
         )
     }
