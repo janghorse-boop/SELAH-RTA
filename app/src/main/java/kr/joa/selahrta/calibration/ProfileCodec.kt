@@ -375,6 +375,11 @@ fun encodeCurves(o: CalibrationOutcome): String = buildString {
     put("normalized.bandLowHz", o.internalNormalized.bandLowHz)
     put("normalized.bandHighHz", o.internalNormalized.bandHighHz)
     put("normalized.pointsUsed", o.internalNormalized.pointsUsed)
+    // **기준 쪽 오프셋도 남긴다**(지시서 4장: 「적용한 정규화 오프셋」).
+    // 둘을 같이 봐야 레벨을 어떻게 맞췄는지 되짚을 수 있다. 대역은 두
+    // 곡선이 같은 값을 쓰므로 위에 적은 것으로 갈음한다.
+    put("refNormalized.offsetDb", o.referenceNormalized.offsetDb)
+    put("refNormalized.pointsUsed", o.referenceNormalized.pointsUsed)
     putCurve("correction", o.correction)
     putCurve("corrected", o.corrected)
     put("settings.axisFromHz", o.settings.axisFromHz)
@@ -451,6 +456,16 @@ fun decodeCurves(text: String): Result<CalibrationOutcome> {
     val bandLow = r.dbl("normalized.bandLowHz")
     val bandHigh = r.dbl("normalized.bandHighHz")
     val pointsUsed = r.int("normalized.pointsUsed")
+    val refOffsetDb = r.dbl("refNormalized.offsetDb")
+    val refPointsUsed = r.int("refNormalized.pointsUsed")
+
+    // 두 곡선은 **같은 자리**에서 맞춘다(독립 검증 RCP01). 다른 수가
+    // 적혀 있으면 그 파일은 다른 규칙으로 만들어진 것이다.
+    r.check(
+        "refNormalized.pointsUsed",
+        refPointsUsed == pointsUsed,
+        "대상($pointsUsed)과 다르다",
+    )
 
     r.problem()?.let { return Result.failure(IllegalArgumentException("곡선을 읽지 못했습니다. $it")) }
 
@@ -464,6 +479,13 @@ fun decodeCurves(text: String): Result<CalibrationOutcome> {
                 bandLowHz = bandLow,
                 bandHighHz = bandHigh,
                 pointsUsed = pointsUsed,
+            ),
+            referenceNormalized = Normalized(
+                curve = reference,
+                offsetDb = refOffsetDb,
+                bandLowHz = bandLow,
+                bandHighHz = bandHigh,
+                pointsUsed = refPointsUsed,
             ),
             correction = correction!!,
             corrected = corrected!!,

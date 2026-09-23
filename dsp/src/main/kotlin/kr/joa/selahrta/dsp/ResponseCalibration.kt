@@ -165,13 +165,27 @@ fun normalizeToBand(
     bandLowHz: Double = 300.0,
     bandHighHz: Double = 3000.0,
     toDb: Double = 0.0,
+    /**
+     * 평균에 쓸 자리를 **바깥에서 지정한다.** null 이면 이 곡선의
+     * `valid` 를 쓴다.
+     *
+     * **두 곡선을 견주려면 같은 자리에서 평균해야 한다**(독립 검증
+     * RCP01). 각자의 `valid` 로 평균하면 두 평균의 주파수 지지구간이
+     * 달라진다 — 기준에만 CAL 범위가 걸리면 그렇게 된다. 그러면
+     * **완전히 같은 두 곡선에서도** 오프셋 차이가 생겨, 기울어진
+     * 곡선에서 −3.5dB 의 없던 보정이 나왔다.
+     */
+    support: BooleanArray? = null,
 ): Normalized {
     require(bandHighHz > bandLowHz) { "대역이 이상하다: $bandLowHz~$bandHighHz" }
+    require(support == null || support.size == curve.size) {
+        "지지구간 길이가 다르다: ${support?.size} != ${curve.size}"
+    }
 
     var sum = 0.0
     var n = 0
     for (i in curve.hz.indices) {
-        if (!curve.valid[i]) continue
+        if (!(support?.get(i) ?: curve.valid[i])) continue
         if (curve.hz[i] < bandLowHz || curve.hz[i] > bandHighHz) continue
         sum += curve.db[i]
         n++
@@ -286,12 +300,49 @@ data class CalibrationOutcome(
     val internalRaw: ResponseCurve,
     /** 레벨을 맞춘 대상 응답. */
     val internalNormalized: Normalized,
+    /**
+     * 레벨을 맞춘 **기준** 응답. 오프셋을 화면에 보이려고 함께 남긴다
+     * (지시서 4장: 「적용한 정규화 오프셋(dB)」).
+     */
+    val referenceNormalized: Normalized,
     /** 평활·상한을 거친 보정 곡선. */
     val correction: ResponseCurve,
     /** 보정을 적용한 뒤의 대상 응답. 기준과 얼마나 붙었는지 본다. */
     val corrected: ResponseCurve,
     val settings: CalibrationSettings,
-)
+) {
+    /**
+     * 두 곡선이 **함께 믿을 만했던** 정규화 대역 안의 점 수.
+     *
+     * 0 이면 레벨을 맞출 근거가 아예 없었다는 뜻이다 — 그때 오프셋 0 으로
+     * 넘어가면 **녹음 게인 차이가 통째로 보정이 된다**(독립 검증 RCP01:
+     * 10dB 차이가 그대로 +10dB 보정이 되었다).
+     *
+     * **이 수만으로 충분함을 말할 수는 없다.** 축이 1/12옥타브라 원래
+     * 밴드 하나에서 여러 점이 나온다 — 그래서 [normalizeBandsUsed] 를
+     * 함께 본다.
+     */
+    val normalizeSupportPoints: Int get() = internalNormalized.pointsUsed
+
+    /**
+     * 정규화에 쓰인 점들이 **원래 몇 개의 1/3옥타브 밴드**에서 왔는가.
+     *
+     * 점 수보다 이쪽이 「얼마나 넓은 자리에서 맞췄는가」에 가깝다.
+     */
+    val normalizeBandsUsed: Int
+        get() {
+            val lo = settings.normalizeBandLowHz
+            val hi = settings.normalizeBandHighHz
+            val seen = sortedSetOf<Int>()
+            for (i in reference.hz.indices) {
+                if (!reference.valid[i] || !internalNormalized.curve.valid[i]) continue
+                val f = reference.hz[i]
+                if (f < lo || f > hi) continue
+                seen += ThirdOctave.nearestBand(f)
+            }
+            return seen.size
+        }
+}
 
 /**
  * 기준과 대상을 받아 **네 곡선을 모두** 낸다.
@@ -315,13 +366,20 @@ fun calibrateResponse(
     val reference = interpolateToAxis(referencePoints, axis, referenceValid)
     val internalRaw = interpolateToAxis(internalPoints, axis, internalValid)
 
-    // **기준도 대상도 같은 대역에서 맞춘다.** 한쪽만 맞추면 그 차이가
-    // 그대로 보정값이 된다.
+    // **같은 대역이 아니라 같은 자리에서 맞춘다**(독립 검증 RCP01).
+    //
+    // 이름이 같은 300~3000Hz 를 써도, 각자의 valid 로 평균하면 실제로
+    // 평균한 주파수들이 다르다 — 기준에만 CAL 범위가 걸리면 그렇게 된다.
+    // 그러면 **완전히 같은 두 곡선에서도** 오프셋이 달라져 없던 보정이
+    // 생긴다(반례에서 −3.5dB).
+    val common = BooleanArray(axis.size) { reference.valid[it] && internalRaw.valid[it] }
     val refNorm = normalizeToBand(
         reference, settings.normalizeBandLowHz, settings.normalizeBandHighHz,
+        support = common,
     )
     val intNorm = normalizeToBand(
         internalRaw, settings.normalizeBandLowHz, settings.normalizeBandHighHz,
+        support = common,
     )
 
     val raw = correctionCurve(refNorm.curve, intNorm.curve)
@@ -338,6 +396,7 @@ fun calibrateResponse(
         reference = refNorm.curve,
         internalRaw = internalRaw,
         internalNormalized = intNorm,
+        referenceNormalized = refNorm,
         correction = limited,
         corrected = corrected,
         settings = settings,

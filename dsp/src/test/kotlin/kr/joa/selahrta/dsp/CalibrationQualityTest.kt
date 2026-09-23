@@ -39,6 +39,9 @@ class CalibrationQualityTest {
         noStableFrames: Boolean = false,
         minFramesPerStep: Int? = 16,
         clipped: Boolean = false,
+        // 기준 경로도 조용했던 경우. 안 주면 「모른다」가 되어 Pass 가
+        // 나오지 않는다(독립 검증 RCP02).
+        referenceBands: List<BandNoise>? = bands(25.0, bands.size),
     ) = QualityReport(
         bands = bands,
         repeatSpreadDb = repeatSpreadDb,
@@ -46,6 +49,7 @@ class CalibrationQualityTest {
         referenceBandDriftDb = referenceBandDriftDb,
         noStableFrames = noStableFrames,
         minFramesPerStep = minFramesPerStep,
+        referenceBands = referenceBands,
         clipped = clipped,
         dspVerifiedBySignal = dspVerifiedBySignal,
         policy = policy,

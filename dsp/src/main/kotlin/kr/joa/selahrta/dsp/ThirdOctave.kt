@@ -1,5 +1,6 @@
 package kr.joa.selahrta.dsp
 
+import kotlin.math.log10
 import kotlin.math.pow
 
 /**
@@ -32,6 +33,21 @@ object ThirdOctave {
         require(index in 0 until BAND_COUNT) { "밴드 번호가 범위를 벗어난다: $index" }
         val n = index - 17
         return 1000.0 * 10.0.pow(n / 10.0)
+    }
+
+    /**
+     * [hz] 가 속하는 밴드 번호. 범위 밖이면 가장 가까운 끝 밴드.
+     *
+     * **한 밴드에서 여러 축 점이 나온다.** 보정 축은 1/12옥타브라 밴드
+     * 하나당 서너 점이 생기므로, 「점을 몇 개 썼는가」와 「몇 개 대역에서
+     * 썼는가」는 다르다 — 뒤쪽이 「얼마나 넓은 자리에서 맞췄는가」에
+     * 가깝다(독립 검증 RCP01).
+     */
+    fun nearestBand(hz: Double): Int {
+        require(hz > 0.0) { "주파수는 양수여야 한다: $hz" }
+        // exactCenter 의 역이다: n = 10·log10(hz/1000), 밴드 번호 = n + 17.
+        val n = 10.0 * log10(hz / 1000.0)
+        return (Math.round(n).toInt() + 17).coerceIn(0, BAND_COUNT - 1)
     }
 
     /** 아래쪽 경계(Hz). 중심에서 1/6 옥타브 아래. */

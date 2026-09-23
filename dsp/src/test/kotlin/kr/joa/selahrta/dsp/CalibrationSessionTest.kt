@@ -7,6 +7,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.abs
+import kotlin.math.log2
 
 /**
  * 교정 세션의 **순서와 셈**을 잰다.
@@ -48,6 +49,10 @@ class CalibrationSessionTest {
         repeat(repeats) { s.record(MeasureStep.ReferenceAfter, after) }
         return s.result()!!
     }
+
+    /** 앞뒤 기준이 같은 경우. 흐름 0 이라 다른 것만 보게 된다. */
+    private fun sessionOf(reference: DoubleArray, target: DoubleArray): SessionResult =
+        sessionOf(reference, target, reference)
 
     /** 보정 곡선에서 [hz] 에 가장 가까운 자리. */
     private fun nearest(c: ResponseCurve, hz: Double): Int =
@@ -288,8 +293,9 @@ class CalibrationSessionTest {
     // ★ 기준 CAL 은 밴드가 아니라 FFT 칸에 건다 (독립 검증 CP04)
     // ------------------------------------------------------------------
 
+    /** 두 경로 모두 배경이 조용했던 경우. 기준 배경까지 준다(RCP02). */
     private fun goodQuality(r: SessionResult) =
-        qualityFromSession(r, flat(40.0), dspVerifiedBySignal = true)
+        qualityFromSession(r, flat(40.0), referenceNoiseDb = flat(40.0), dspVerifiedBySignal = true)
 
     /**
      * **칸 단위로 걸지 않았으면 만들지 않는다.**
@@ -360,7 +366,9 @@ class CalibrationSessionTest {
         val r = sessionOf(signal, signal, signal)
         // 20번 대역만 배경이 신호와 같다 → SNR 0.
         val noise = flat(40.0).also { it[20] = signal[20] }
-        val q = qualityFromSession(r, noise, dspVerifiedBySignal = true)
+        val q = qualityFromSession(
+            r, noise, referenceNoiseDb = flat(40.0), dspVerifiedBySignal = true,
+        )
 
         assertFalse("그 대역은 못 쓴다", q.usable[20])
         assertTrue("나머지는 쓸 수 있어 전체는 통과한다", q.usableRatio > 0.9)
@@ -400,12 +408,200 @@ class CalibrationSessionTest {
     @Test
     fun `믿을 수 있는 대역이 없으면 거절한다`() {
         val r = sessionOf(flat(70.0), flat(70.0), flat(70.0))
-        val q = qualityFromSession(r, noiseDb = null) // 배경 미측정 → SNR 0
+        // 대상 배경 미측정 → SNR 0. 기준 쪽은 쟀다고 둬야 이 시험이
+        // 「기준을 안 쟀다」가 아니라 「대상이 못 쓴다」를 잰다.
+        val q = qualityFromSession(r, noiseDb = null, referenceNoiseDb = flat(40.0))
         val out = calibrateFromSession(r, q, null)
         assertTrue("거절해야 한다", out.isFailure)
         assertTrue(
             "${out.exceptionOrNull()?.message}",
             out.exceptionOrNull()?.message?.contains("믿을 수 있는 대역") == true,
+        )
+    }
+
+    // ------------------------------------------------------------------
+    // ★ 같은 자리에서 레벨을 맞춘다 (독립 검증 RCP01)
+    // ------------------------------------------------------------------
+
+    /**
+     * **RCP01 반례 ①** — 기준과 대상이 **완전히 같은 곡선**인데 보정이
+     * 생겼다.
+     *
+     * CAL 범위가 기준에만 걸려 두 곡선의 유효 지지구간이 달라졌고, 각자의
+     * valid 로 평균하니 실제로 평균한 주파수들이 달라졌다. 기울어진
+     * 곡선에서 그 차이가 그대로 오프셋 차이가 되어 **−3.5dB** 의 없던
+     * 보정이 나왔다.
+     *
+     * 같은 입력이면 상대 응답 보정은 **정확히 0** 이어야 한다.
+     */
+    @Test
+    fun `같은 곡선이면 지지구간이 달라도 보정이 0 이다`() {
+        val slope = DoubleArray(n) { 50 + 4 * log2(ThirdOctave.exactCenter(it) / 1000.0) }
+        val r = sessionOf(slope, slope)
+        // **배경을 아주 조용하게 둔다.** 40dB 로 두면 1414Hz 아래가 SNR 로
+        // 먼저 잘려 두 마스크가 **우연히 같아지고**, 그러면 이 시험은
+        // 아무것도 재지 않는다(실제로 그랬다 — 되돌린 판이 통과했다).
+        // 여기서 지지구간을 가르는 것은 오직 CAL 범위여야 한다.
+        val q = qualityFromSession(
+            r, flat(0.0), referenceNoiseDb = flat(0.0), dspVerifiedBySignal = true,
+        )
+
+        // CAL 은 기준에만 걸린다 — 여기서 지지구간이 갈린다.
+        val out = calibrateFromSession(r, q, 1000.0..16_000.0).getOrThrow()
+
+        // 전제 확인: 정규화 대역 안에서 두 마스크가 **정말 다른가.**
+        val band = out.reference.hz.indices.filter {
+            out.reference.hz[it] in 300.0..3000.0
+        }
+        assertTrue(
+            "정규화 대역 안에서 기준·대상 마스크가 달라야 이 시험에 뜻이 있다",
+            band.any { out.reference.valid[it] != out.internalRaw.valid[it] },
+        )
+
+        val validDb = out.correction.db.filterIndexed { i, _ -> out.correction.valid[i] }
+        assertTrue("믿을 수 있는 자리가 있어야 한다", validDb.isNotEmpty())
+        validDb.forEach {
+            assertEquals("같은 입력이면 보정은 0 이다", 0.0, it, 1e-9)
+        }
+        assertEquals(
+            "두 정규화 오프셋이 같아야 한다",
+            out.referenceNormalized.offsetDb,
+            out.internalNormalized.offsetDb,
+            1e-9,
+        )
+    }
+
+    /**
+     * **RCP01 반례 ②** — 정규화할 자리가 하나도 없는데 조용히 넘어갔다.
+     *
+     * 오프셋 0 으로 진행하면 두 경로의 **녹음 게인 차이가 통째로 보정**이
+     * 된다. 반례에서 10dB 차이가 그대로 +10dB 보정이 되었다.
+     */
+    @Test
+    fun `레벨 맞출 자리가 없으면 거절한다`() {
+        // 기준 60dB, 대상 50dB — 순전한 게인 차이다.
+        val r = sessionOf(flat(60.0), flat(50.0))
+        // 정규화 대역(300~3000Hz)을 덮는 자리의 배경이 신호와 같다.
+        val noise = DoubleArray(n) {
+            if (ThirdOctave.exactCenter(it) in 250.0..3500.0) 50.0 else 0.0
+        }
+        val q = qualityFromSession(
+            r, noise, referenceNoiseDb = noise, dspVerifiedBySignal = true,
+        )
+
+        val out = calibrateFromSession(r, q, 20.0..20_000.0)
+        assertTrue("거절해야 한다", out.isFailure)
+        assertTrue(
+            "레벨을 맞출 수 없다고 말해야 한다: ${out.exceptionOrNull()?.message}",
+            out.exceptionOrNull()?.message?.contains("레벨을 맞출") == true,
+        )
+    }
+
+    /** 정규화에 쓴 자리를 **점 수와 대역 수로 함께** 남긴다. */
+    @Test
+    fun `정규화에 쓴 자리를 남긴다`() {
+        val r = sessionOf(flat(70.0), flat(70.0))
+        val out = calibrateFromSession(r, goodQuality(r), null).getOrThrow()
+        assertTrue("점 수", out.normalizeSupportPoints > 0)
+        assertTrue("대역 수", out.normalizeBandsUsed > 0)
+        assertTrue(
+            "축이 1/12옥타브라 점이 대역보다 많다",
+            out.normalizeSupportPoints > out.normalizeBandsUsed,
+        )
+    }
+
+    // ------------------------------------------------------------------
+    // ★ 기준 경로의 SNR (독립 검증 RCP02)
+    // ------------------------------------------------------------------
+
+    /** 기준 경로를 안 쟀으면 **만들지 않는다.** 대상이 조용한 건 증명이 아니다. */
+    @Test
+    fun `기준 경로 배경을 안 쟀으면 거절한다`() {
+        val r = sessionOf(flat(70.0), flat(70.0))
+        val q = qualityFromSession(r, flat(40.0), dspVerifiedBySignal = true)
+        assertFalse(q.referenceSnrKnown)
+
+        val out = calibrateFromSession(r, q, null)
+        assertTrue("거절해야 한다", out.isFailure)
+        assertTrue(
+            "${out.exceptionOrNull()?.message}",
+            out.exceptionOrNull()?.message?.contains("기준 경로") == true,
+        )
+        assertTrue(
+            "판정도 통과를 주면 안 된다",
+            judgeQuality(q).verdict != QualityVerdict.Pass,
+        )
+    }
+
+    /**
+     * **대상은 조용한데 기준만 시끄러운 경우.**
+     *
+     * 예전에는 대상의 마스크를 기준에 그대로 베껴 써서, 기준 마이크가
+     * 배경과 구별되지 않아도 걸러지지 않았다.
+     */
+    @Test
+    fun `기준 경로만 SNR 미달이면 그 대역이 빠진다`() {
+        val r = sessionOf(flat(70.0), flat(70.0))
+        // 20번 대역에서 **기준 경로만** 배경이 신호와 같다.
+        val refNoise = flat(40.0).also { it[20] = 70.0 }
+        val q = qualityFromSession(
+            r, flat(40.0), referenceNoiseDb = refNoise, dspVerifiedBySignal = true,
+        )
+
+        assertTrue("대상은 그 대역을 쓸 수 있다", q.usable[20])
+        assertFalse("기준은 못 쓴다", q.referenceUsable[20])
+        assertFalse("그래서 함께 쓸 수 없다", q.bothUsable[20])
+
+        val out = calibrateFromSession(r, q, null).getOrThrow()
+        val i = nearest(out.correction, ThirdOctave.exactCenter(20))
+        assertFalse("기준이 못 믿을 자리에 보정이 남으면 안 된다", out.correction.valid[i])
+    }
+
+    @Test
+    fun `기준 경로가 통째로 시끄러우면 막는다`() {
+        val r = sessionOf(flat(70.0), flat(70.0))
+        val q = qualityFromSession(
+            r, flat(40.0), referenceNoiseDb = flat(70.0), dspVerifiedBySignal = true,
+        )
+        val judged = judgeQuality(q)
+        assertEquals(QualityVerdict.Fail, judged.verdict)
+        assertTrue(
+            "${judged.reasonsKo}",
+            judged.reasonsKo.any { it.contains("기준 경로") },
+        )
+    }
+
+    // ------------------------------------------------------------------
+    // ★ 최소 표본은 쓴 장으로 센다 (독립 검증 RCP03)
+    // ------------------------------------------------------------------
+
+    /**
+     * **RCP03 반례** — 여덟 장을 넣었지만 걸러내기가 둘만 남겼다.
+     *
+     * 예전에는 `minFramesPerStep` 을 **넣은** 장으로 세어 「여덟 장
+     * 모았다」고 말했다. 평균과 반복성은 실제로 둘로 판단한 것이다.
+     */
+    @Test
+    fun `최소 표본은 넣은 장이 아니라 쓴 장으로 센다`() {
+        val s = CalibrationSession(referenceCalApplied = true)
+        for (step in MeasureStep.entries) {
+            repeat(3) { s.record(step, flat(0.0)) }
+            repeat(2) { s.record(step, flat(50.0)) }
+            repeat(3) { s.record(step, flat(100.0)) }
+        }
+        val r = s.result()!!
+
+        assertEquals("넣은 것은 여덟", 8, r.minTotalFramesPerStep)
+        assertEquals("남은 것은 둘", 2, r.minKeptFramesPerStep)
+        assertEquals(2, r.target.keptFrames)
+
+        val judged = judgeQuality(
+            qualityFromSession(r, flat(0.0), referenceNoiseDb = flat(0.0), dspVerifiedBySignal = true),
+        )
+        assertEquals(QualityVerdict.Fail, judged.verdict)
+        assertTrue(
+            "몇 장을 썼는지 말해야 한다: ${judged.reasonsKo}",
+            judged.reasonsKo.any { it.contains("2개") },
         )
     }
 
@@ -436,7 +632,7 @@ class CalibrationSessionTest {
         assertEquals(r.repeatSpreadDb!!, q.repeatSpreadDb!!, 1e-9)
         assertEquals(r.referenceDriftDb, q.referenceDriftDb!!, 1e-9)
         assertEquals(r.referenceBandDriftDb, q.referenceBandDriftDb!!, 1e-9)
-        assertEquals(r.minFramesPerStep, q.minFramesPerStep)
+        assertEquals(r.minKeptFramesPerStep, q.minFramesPerStep)
         assertEquals(n, q.bands.size)
         assertEquals("1kHz 밴드의 중심주파수", 1000.0, q.bands[17].hz, 1e-9)
         assertTrue("SNR 이 넉넉하면 다 쓸 수 있다", q.usableRatio > 0.99)

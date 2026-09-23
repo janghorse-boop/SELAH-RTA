@@ -93,8 +93,16 @@ data class SessionResult(
     val repeatSpreadDb: Double?,
     /** 어느 단계에서든 안정된 장을 하나도 못 골랐는가. */
     val noStableFrames: Boolean,
-    /** 한 단계에 모인 장 수 중 가장 적은 것. */
-    val minFramesPerStep: Int,
+    /**
+     * 한 단계에서 **실제로 평균에 쓴** 장 수 중 가장 적은 것.
+     *
+     * **넣은 수가 아니라 남은 수다**(독립 검증 RCP03). 여덟 장을 넣고
+     * 걸러내기가 둘만 남겼다면 평균과 반복성은 **둘**로 판단한 것이다.
+     * 넣은 수로 세면 「여덟 장 모았다」고 말하게 된다 — 실제로 그랬다.
+     */
+    val minKeptFramesPerStep: Int,
+    /** 한 단계에 **넣은** 장 수 중 가장 적은 것. 진단용이다. */
+    val minTotalFramesPerStep: Int,
     /** 앞뒤 기준을 에너지 평균한 것. 이것이 「기준」이다. */
     val referenceMeanDb: DoubleArray,
     /**
@@ -185,7 +193,10 @@ class CalibrationSession(
             referenceBandDriftDb = bandDrift,
             repeatSpreadDb = worstSpread,
             noStableFrames = steps.any { it.noStableFrames },
-            minFramesPerStep = steps.minOf { it.totalFrames },
+            // **쓴 장으로 센다.** 넣은 장으로 세면 걸러내기가 여섯을
+            // 버려도 「여덟 장 모았다」가 된다(독립 검증 RCP03).
+            minKeptFramesPerStep = steps.minOf { it.keptFrames },
+            minTotalFramesPerStep = steps.minOf { it.totalFrames },
             referenceMeanDb = refMean,
             referenceCalApplied = referenceCalApplied,
         )
@@ -277,13 +288,26 @@ fun calibrateFromSession(
         "품질 보고의 대역 수가 다르다: ${quality.bands.size} != ${session.referenceMeanDb.size}"
     }
 
-    val usable = quality.usable
-    // 대상: SNR 이 받쳐 주는 대역만.
-    val internalValid = BooleanArray(usable.size) { usable[it] }
-    // 기준: SNR 에 더해 **CAL 이 덮는 범위 안**이어야 한다.
-    val referenceValid = BooleanArray(usable.size) { i ->
+    // **기준 경로의 SNR 을 모르면 만들지 않는다**(독립 검증 RCP02).
+    // 대상 경로가 조용한 것은 기준 경로가 조용했다는 증명이 아니다.
+    if (!quality.referenceSnrKnown) {
+        return Result.failure(
+            IllegalStateException(
+                "기준 경로의 배경 소음을 재지 않았습니다. 기준 마이크가 실제로 " +
+                    "신호를 잡았는지 알 수 없어 보정을 만들지 않습니다.",
+            ),
+        )
+    }
+
+    val n = quality.bands.size
+    // 대상: 대상 경로의 SNR 이 받쳐 주는 대역.
+    val internalValid = BooleanArray(n) { quality.usable[it] }
+    // 기준: **기준 경로의 SNR** 에 더해 CAL 이 덮는 범위 안이어야 한다.
+    // 예전에는 대상의 마스크를 그대로 베껴 써서, 기준 쪽이 아무리
+    // 시끄러워도 걸러지지 않았다.
+    val referenceValid = BooleanArray(n) { i ->
         val hz = ThirdOctave.exactCenter(i)
-        usable[i] && (referenceCalRangeHz == null || hz in referenceCalRangeHz)
+        quality.referenceUsable[i] && (referenceCalRangeHz == null || hz in referenceCalRangeHz)
     }
 
     if (referenceValid.none { it } || internalValid.none { it }) {
@@ -292,26 +316,44 @@ fun calibrateFromSession(
         )
     }
 
-    return Result.success(
-        calibrateResponse(
-            referencePoints = bandsToCurvePoints(session.referenceMeanDb),
-            internalPoints = bandsToCurvePoints(session.target.meanDb),
-            settings = settings,
-            referenceValid = referenceValid,
-            internalValid = internalValid,
-        ),
+    val outcome = calibrateResponse(
+        referencePoints = bandsToCurvePoints(session.referenceMeanDb),
+        internalPoints = bandsToCurvePoints(session.target.meanDb),
+        settings = settings,
+        referenceValid = referenceValid,
+        internalValid = internalValid,
     )
+
+    // **레벨을 맞출 자리가 없으면 만들지 않는다**(독립 검증 RCP01).
+    // 조용히 오프셋 0 으로 넘어가면 두 경로의 녹음 게인 차이가 통째로
+    // 보정이 된다 — 반례에서 10dB 차이가 그대로 +10dB 보정이 되었다.
+    if (outcome.normalizeSupportPoints == 0) {
+        return Result.failure(
+            IllegalStateException(
+                "레벨을 맞출 대역이 없습니다. " +
+                    "${settings.normalizeBandLowHz.toInt()}~${settings.normalizeBandHighHz.toInt()}Hz " +
+                    "안에 두 경로가 함께 믿을 만한 자리가 하나도 없습니다.",
+            ),
+        )
+    }
+
+    return Result.success(outcome)
 }
 
 /**
  * 세션과 배경 소음 측정으로 [QualityReport] 를 만든다.
  *
- * @param noiseDb 신호 없이 잰 배경(밴드 dB). 안 쟀으면 null — 그러면
- *   SNR 을 알 수 없으므로 **모든 대역을 못 믿는 것으로 둔다.**
+ * @param noiseDb **대상 경로**에서 신호 없이 잰 배경(밴드 dB). 안 쟀으면
+ *   null — 그러면 SNR 을 알 수 없으므로 **모든 대역을 못 믿는 것으로
+ *   둔다.**
+ * @param referenceNoiseDb **기준 경로**에서 잰 배경. 경로가 다르면 배경도
+ *   다르다 — 오디오 인터페이스의 잡음 바닥은 폰의 것과 무관하다.
+ *   안 쟀으면 null 이고, 그때는 보정을 만들지 않는다(독립 검증 RCP02).
  */
 fun qualityFromSession(
     session: SessionResult,
     noiseDb: DoubleArray?,
+    referenceNoiseDb: DoubleArray? = null,
     clipped: Boolean = false,
     dspVerifiedBySignal: Boolean = false,
     policy: QualityPolicy = QualityPolicy(),
@@ -326,13 +368,25 @@ fun qualityFromSession(
             noiseDb = noiseDb?.get(i) ?: target[i],
         )
     }
+    val reference = session.referenceMeanDb
+    val referenceBands = referenceNoiseDb?.let { rn ->
+        reference.indices.map { i ->
+            BandNoise(
+                hz = ThirdOctave.exactCenter(i),
+                signalDb = reference[i],
+                noiseDb = rn[i],
+            )
+        }
+    }
     return QualityReport(
         bands = bands,
         repeatSpreadDb = session.repeatSpreadDb,
         referenceDriftDb = session.referenceDriftDb,
         referenceBandDriftDb = session.referenceBandDriftDb,
         noStableFrames = session.noStableFrames,
-        minFramesPerStep = session.minFramesPerStep,
+        // **쓴 장으로 센다**(RCP03).
+        minFramesPerStep = session.minKeptFramesPerStep,
+        referenceBands = referenceBands,
         clipped = clipped,
         dspVerifiedBySignal = dspVerifiedBySignal,
         policy = policy,

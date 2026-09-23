@@ -125,8 +125,25 @@ data class QualityReport(
      * 으로 남지만 실제로 일어난 일은 정반대다 — 그래서 따로 적는다.
      */
     val noStableFrames: Boolean = false,
-    /** 한 단계에 모인 장 수 중 가장 적은 것. 모르면 null. */
+    /**
+     * 한 단계에서 **실제로 평균에 쓴** 장 수 중 가장 적은 것. 모르면 null.
+     *
+     * **넣은 수가 아니다**(독립 검증 RCP03). 여덟 장을 넣고 걸러내기가
+     * 둘만 남겼으면 둘로 판단한 것이다.
+     */
     val minFramesPerStep: Int? = null,
+    /**
+     * **기준 경로**의 대역별 신호·배경. 안 쟀으면 null.
+     *
+     * 대상 경로의 SNR 은 기준 경로의 신뢰도를 증명하지 않는다(독립 검증
+     * RCP02). 기준 마이크의 잡음 바닥이 대상 마이크의 주파수 특성으로
+     * 기록될 수 있고, 앞뒤 기준이 **둘 다 같은 배경**이면 흐름 검사도
+     * 그것을 잡지 못한다.
+     *
+     * null 은 「기준 경로가 조용했다」가 아니라 **「모른다」**다 —
+     * 그때는 검증 완료(Pass)를 주지 않는다.
+     */
+    val referenceBands: List<BandNoise>? = null,
     /** 재는 동안 잘린 적이 있는가. */
     val clipped: Boolean = false,
     /**
@@ -139,8 +156,27 @@ data class QualityReport(
     val dspVerifiedBySignal: Boolean = false,
     val policy: QualityPolicy = QualityPolicy(),
 ) {
-    /** 대역마다 보정에 쓸 수 있는가. */
+    /** **대상 경로** 대역마다 보정에 쓸 수 있는가. */
     val usable: List<Boolean> get() = bands.map { it.snrDb >= policy.minBandSnrDb }
+
+    /**
+     * **기준 경로** 대역마다 믿을 수 있는가. 안 쟀으면 전부 false 다 —
+     * 「모른다」를 「괜찮다」로 바꾸지 않는다(독립 검증 RCP02).
+     */
+    val referenceUsable: List<Boolean>
+        get() = referenceBands?.map { it.snrDb >= policy.minBandSnrDb }
+            ?: List(bands.size) { false }
+
+    /** 기준 경로의 배경을 쟀는가. */
+    val referenceSnrKnown: Boolean get() = referenceBands != null
+
+    /**
+     * 두 경로가 **함께** 믿을 만한 대역. 보정에 쓸 수 있는 자리다.
+     *
+     * 기준을 안 쟀으면 비어 있다 — 그 상태로는 보정을 만들지 않는다.
+     */
+    val bothUsable: List<Boolean>
+        get() = usable.indices.map { usable[it] && referenceUsable[it] }
 
     val usableCount: Int get() = usable.count { it }
 
@@ -249,6 +285,22 @@ fun judgeQuality(report: QualityReport): QualityResult {
     // 벌어짐을 아예 재지 못한 경우도 **통과로 넘기지 않는다.**
     if (report.repeatSpreadDb == null) {
         degrades += "반복 측정의 벌어짐을 재지 못했습니다. 흔들리지 않았다는 뜻이 아닙니다."
+    }
+
+    // **기준 경로의 SNR 을 모르면 검증 완료를 주지 않는다**(RCP02).
+    // 대상이 조용한 것은 기준이 조용했다는 증명이 아니다.
+    if (!report.referenceSnrKnown) {
+        degrades += "기준 경로의 배경 소음을 재지 않았습니다. 기준 마이크가 " +
+            "실제로 신호를 잡았는지 확인되지 않아, 이 보정은 자동으로 걸리지 않습니다."
+    } else {
+        val refUsable = report.referenceUsable.count { it }
+        val refRatio = refUsable.toDouble() / report.bands.size
+        if (refRatio < p.minUsableBandRatio) {
+            fails += "기준 경로에서 쓸 수 있는 대역이 " +
+                "$refUsable/${report.bands.size}" +
+                "(${"%.0f".format(refRatio * 100)}%)뿐입니다. " +
+                "기준 마이크 쪽 배경 소음이 너무 큽니다."
+        }
     }
 
     // **DSP 를 신호로 확인하지 않았으면 자동 적용까지는 못 간다.**

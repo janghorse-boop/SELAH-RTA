@@ -81,7 +81,11 @@ class PipelineProbeTest {
 
         // ── CP02 SNR 마스크와 CAL 범위가 보정으로 넘어가는가 ───────────
         val noise = flat(10.0); noise[20] = a[20]
-        val q = qualityFromSession(r2, noise, dspVerifiedBySignal = true)
+        // 기준 경로 배경도 준다 — 안 주면 보정 자체를 거절하므로(RCP02)
+        // 이 관측점이 재려던 것을 볼 수 없다.
+        val q = qualityFromSession(
+            r2, noise, referenceNoiseDb = flat(10.0), dspVerifiedBySignal = true,
+        )
         val cal = CalibrationCurve.of(
             listOf(CurvePoint(200.0, 0.0), CurvePoint(10000.0, 0.0)),
         ).getOrThrow()
