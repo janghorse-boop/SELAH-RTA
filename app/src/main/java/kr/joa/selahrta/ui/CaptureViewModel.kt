@@ -28,6 +28,8 @@ import kr.joa.selahrta.calibration.ActiveCalibration
 import kr.joa.selahrta.calibration.CalibrationKey
 import kr.joa.selahrta.calibration.ActiveCurve
 import kr.joa.selahrta.calibration.CalibrationStore
+import kr.joa.selahrta.calibration.chooseCorrection
+import kr.joa.selahrta.calibration.currentProfileEnvironment
 import kr.joa.selahrta.calibration.CurveStore
 import kr.joa.selahrta.calibration.GlobalCalibration
 import kr.joa.selahrta.calibration.SaveResult
@@ -649,6 +651,34 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      * 열린 기기가 바뀌면 열쇠도 바뀌므로 이전 구독을 끊는다 — 안 끊으면
      * USB 를 꽂았을 때 내장 마이크의 보정값이 덮어쓴다.
      */
+    /** 이 경로에 걸 수 있는 프로파일과 그 곡선. 경로가 바뀔 때 다시 읽는다. */
+    private var applicableProfile: kr.joa.selahrta.calibration.MeasuredProfile? = null
+    private var applicableCurve: kr.joa.selahrta.dsp.ResponseCurve? = null
+
+    private val profileStore = kr.joa.selahrta.calibration.ProfileStore.forApp(app)
+    private val deviceBuild = kr.joa.selahrta.calibration.DeviceBuildInfo.current()
+
+    /**
+     * 이 경로에 걸 프로파일을 찾아 둔다.
+     *
+     * **곡선은 걸 것이 정해진 뒤에만 읽는다.** 목록에 있는 모두의 곡선을
+     * 미리 읽으면 경로가 바뀔 때마다 수백 점을 여러 벌 읽게 된다.
+     */
+    private suspend fun loadApplicableProfile(format: OpenedFormat) {
+        val now = currentProfileEnvironment(format, controller.baseState.value.inputs, deviceBuild)
+        val listed = profileStore.list()
+            .filterIsInstance<kr.joa.selahrta.calibration.StoredProfile.Ok>()
+            .map { it.profile }
+        val picked = kr.joa.selahrta.calibration.pickApplicable(listed, now)
+        applicableProfile = picked
+        applicableCurve = picked?.let { p ->
+            profileStore.loadCurves(p).getOrNull()?.correction
+        }
+        // 곡선을 못 읽었으면 프로파일도 없는 셈이다 — 반쪽으로 두면
+        // 「걸렸다」고 적히면서 아무것도 안 걸린다.
+        if (applicableCurve == null) applicableProfile = null
+    }
+
     private fun watchCalibration(format: OpenedFormat) {
         calibrationJob?.cancel()
         val key = CalibrationKey.of(format)
@@ -659,13 +689,27 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         }
         curveJob?.cancel()
         curveJob = viewModelScope.launch {
+            loadApplicableProfile(format)
             curveStore.watch(key).collect { c ->
                 // 보정은 **엔진 안에서 FFT 칸마다** 걸린다. 칸 계수는 곡선이
                 // 바뀔 때 한 번만 계산한다 — 초당 15번 2049개 칸을 보간하면
                 // 그것만으로 폰이 더워진다.
                 // **꺼 두면 걸지 않는다.** 파일은 그대로 있고 화면에도 남지만,
                 // 엔진에는 넘기지 않는다 — 그래야 보정 전·후를 견준다.
-                controller.postToCapture { session -> session.rta.setCurve(c?.curve?.takeIf { c.enabled }) }
+                //
+                // **거는 자리는 여기 하나뿐이다.** 곡선의 출처가 둘(가져온
+                // 파일 · 잰 프로파일)이 되었으므로, 어느 것을 걸지는
+                // chooseCorrection 이 한 번만 정한다 — 각자 걸면 이중
+                // 보정이 되고, 그건 화면에서 안 보인다(지시서 4.6).
+                val chosen = chooseCorrection(
+                    imported = c,
+                    profile = applicableProfile,
+                    profileCurve = applicableCurve,
+                    now = currentProfileEnvironment(
+                        format, controller.baseState.value.inputs, deviceBuild,
+                    ),
+                )
+                controller.postToCapture { session -> session.rta.setCurve(chosen.curveOrNull) }
                 controller.update { st -> st.copy(
                     curve = c,
                     curveGeneration = controller.baseState.value.curveGeneration + 1,
