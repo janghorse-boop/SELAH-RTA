@@ -146,6 +146,9 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
         tick: suspend () -> Unit,
     ) {
         if (_busyKo.value != null) return
+        // **지난 알림을 지운다.** 남겨 두면 새 결과 옆에 옛 실패 문구가
+        // 그대로 붙어 있어, 방금 실패한 것처럼 읽힌다(기기에서 확인).
+        _noticeKo.value = null
         viewModelScope.launch {
             val tap = MeasurementTap(fftSize, sampleRate)
             val runner = WizardRunner(capture, tick)
@@ -247,6 +250,7 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
         tick: suspend () -> Unit,
     ) {
         if (_busyKo.value != null) return
+        _noticeKo.value = null
         val st = _state.value
         val curve = this.curve
         val cal = st.cal

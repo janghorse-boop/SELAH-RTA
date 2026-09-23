@@ -49,8 +49,16 @@ import kotlin.math.abs
 data class DspProbePolicy(
     /** 앞창·뒤창의 광대역 차이가 이보다 크면 이득이 변한 것으로 본다. */
     val maxBroadbandDriftDb: Double = 1.0,
-    /** 광대역을 뺀 뒤 대역별로 남는 변화의 한도. */
-    val maxBandShapeDriftDb: Double = 2.0,
+    /**
+     * 광대역을 뺀 뒤 대역별로 남는 변화의 한도.
+     *
+     * **실측으로 올렸다**(2026-09-23, 조용한 사무실, S23 하단 마이크,
+     * PC 스피커로 핑크 노이즈). 처리가 없는데도 정렬된 두 실행에서
+     * 2.2dB · 3.2dB 이 나왔다 — 둘 다 가장 낮은 대역(40Hz)이었다.
+     * 그 대역은 스피커가 내는 것이 거의 없어 방 울림이 그대로 흔들린다.
+     * 2.0 으로 두면 멀쩡한 측정이 「NS 가 있다」로 뜬다.
+     */
+    val maxBandShapeDriftDb: Double = 4.0,
     /** 반복 사이 광대역 레벨의 벌어짐 한도. */
     val maxRepeatSpreadDb: Double = 1.0,
     /** 앞창·뒤창에 각각 쓸 장 수. 둘을 합친 것보다 장이 적으면 판정하지 않는다. */
@@ -80,10 +88,12 @@ data class DspProbePolicy(
      * 수도 있고, 화면은 그 사실을 **경고하지 않았다.** 숫자로만 적혀
      * 있으면 사람은 판정을 믿는다.
      *
-     * 이 값도 실측으로 정한 것이 아니다. 절반쯤은 봐야 스펙트럼 모양을
-     * 말할 수 있다는 짐작이다.
+     * **실측으로 올렸다**(같은 날 같은 자리). 창이 신호의 시작을 걸치면
+     * 2개·14개처럼 적게 나오는데, 14개짜리 실행은 이득 −23.5dB 이라는
+     * 믿을 수 없는 값을 내놓고도 12 를 넘어 판정까지 갔다. 제대로 정렬된
+     * 실행은 31개 중 28개가 나왔다 — 그 언저리를 요구하는 편이 맞다.
      */
-    val minBandsConsidered: Int = 12,
+    val minBandsConsidered: Int = 20,
 )
 
 enum class DspVerdict {
