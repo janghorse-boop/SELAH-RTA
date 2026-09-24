@@ -43,6 +43,7 @@ import kr.joa.selahrta.dsp.QualityResult
 import kr.joa.selahrta.dsp.ThirdOctave
 import kr.joa.selahrta.dsp.calibrateResponse
 import kr.joa.selahrta.dsp.judgeCalibration
+import kr.joa.selahrta.calibration.ReferenceHookup
 import kr.joa.selahrta.ui.components.CalReadingCard
 import kr.joa.selahrta.ui.components.CalibrationCompareCard
 import kr.joa.selahrta.ui.components.InfoBar
@@ -77,6 +78,7 @@ fun CalibrationWizardScreen(
     onPickCalFile: () -> Unit,
     onChooseReading: (CurveReading) -> Unit,
     onPhantom: (Boolean) -> Unit,
+    onChooseHookup: (ReferenceHookup) -> Unit,
     onRunInputCheck: () -> Unit,
     /** 마이크 탐색이 도는 중인가. 재는 중에는 돌릴 수 없다. */
     /**
@@ -154,9 +156,11 @@ fun CalibrationWizardScreen(
                 cal = state.cal,
                 shape = shape,
                 phantom = state.phantomAcknowledged,
+                hookup = state.referenceHookup,
                 onPickCalFile = onPickCalFile,
                 onChooseReading = onChooseReading,
                 onPhantom = onPhantom,
+                onChooseHookup = onChooseHookup,
             )
 
             WizardStep.InputCheck -> InputCheckStep(
@@ -221,9 +225,11 @@ private fun EquipmentStep(
     cal: CalInfo?,
     shape: CurveShape?,
     phantom: Boolean,
+    hookup: ReferenceHookup?,
     onPickCalFile: () -> Unit,
     onChooseReading: (CurveReading) -> Unit,
     onPhantom: (Boolean) -> Unit,
+    onChooseHookup: (ReferenceHookup) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Column(
@@ -242,7 +248,8 @@ private fun EquipmentStep(
             )
             Text(
                 if (cal == null) {
-                    "EMM-6 에 딸려 온 개별 CAL 파일을 불러옵니다. 이 파일이 교정의 기준입니다."
+                    "기준 마이크에 딸려 온 개별 CAL 파일을 불러옵니다. " +
+                        "iMM-6C 든 EMM-6 든 이 파일이 교정의 기준입니다."
                 } else {
                     "${cal.fileName} · 점 ${cal.pointCount}개 · " +
                         "${cal.lowestHz.toInt()}Hz ~ ${(cal.highestHz / 1000).toInt()}kHz"
@@ -267,9 +274,63 @@ private fun EquipmentStep(
             )
         }
 
-        PhantomRow(phantom, onPhantom)
+        HookupRow(hookup, onChooseHookup)
+
+        // **팬텀전원은 XLR 경로에만 묻는다.** 없는 스위치를 켰다고
+        // 체크하게 만들면 그 체크는 아무 뜻도 없어진다.
+        if (hookup?.needsPhantom == true) {
+            PhantomRow(phantom, onPhantom)
+        }
     }
 }
+
+/**
+ * 기준 마이크를 어떻게 물렸는가.
+ *
+ * **품질 등급이 아니라 연결 방식이다**(가격·구독 전략 3장). iMM-6C 와
+ * EMM-6 은 둘 다 개별 CAL 을 적용하는 정식 측정용 마이크이고, 다른 것은
+ * 팬텀전원과 게인 노브가 있느냐뿐이다.
+ */
+@Composable
+private fun HookupRow(
+    chosen: ReferenceHookup?,
+    onChoose: (ReferenceHookup) -> Unit,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(SelahColors.Surface, RoundedCornerShape(12.dp))
+            .border(1.dp, SelahColors.Outline, RoundedCornerShape(12.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            "기준 마이크 연결",
+            color = SelahColors.TextPrimary,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            HOOKUP_NOTE_KO,
+            color = SelahColors.TextMuted,
+            fontSize = 11.sp,
+            lineHeight = 16.sp,
+            style = TextStyle(lineBreak = LineBreak.Paragraph),
+        )
+        ReferenceHookup.entries.forEach { h ->
+            ChoiceRow(
+                labelKo = h.labelKo,
+                helpKo = h.helpKo,
+                chosen = chosen == h,
+                onClick = { onChoose(h) },
+            )
+        }
+    }
+}
+
+const val HOOKUP_NOTE_KO: String =
+    "둘 다 개별 CAL 을 적용하는 정식 측정용 마이크입니다. 품질 등급이 아니라 " +
+        "연결 방식의 차이이고, 연결에 따라 확인할 것이 다릅니다."
 
 /**
  * 팬텀전원은 **확인이 아니라 듣는 것이다.**
@@ -316,9 +377,9 @@ private fun PhantomRow(phantom: Boolean, onPhantom: (Boolean) -> Unit) {
 }
 
 const val PHANTOM_NOTE_KO: String =
-    "UMC404HD 뒷면의 +48V 스위치를 직접 켜 주십시오. 앱은 팬텀전원이 켜졌는지 " +
+    "인터페이스의 +48V 스위치를 직접 켜 주십시오. 앱은 팬텀전원이 켜졌는지 " +
         "알 수 없습니다 — 여기 켜 두는 것은 확인이 아니라 「켰다」고 적어 두는 " +
-        "것입니다. 안 켜면 EMM-6 에서 신호가 아예 들어오지 않습니다."
+        "것입니다. 안 켜면 측정 마이크에서 신호가 아예 들어오지 않습니다."
 
 // ----------------------------------------------------------------------
 // 5단계
@@ -854,3 +915,57 @@ const val SAVE_HOW_KO: String =
 const val SAVED_NEXT_KO: String =
     "설정 화면의 「프로파일 관리」에서 볼 수 있습니다. 거기서 지금 경로에 " +
         "걸리는지, 걸리지 않으면 왜 그런지 확인할 수 있습니다."
+
+/**
+ * 고를 수 있는 항목 한 줄. 고른 것은 테두리와 「고름」으로 표시한다.
+ *
+ * [kr.joa.selahrta.ui.components.CalReadingCard] 의 선택 줄과 같은 꼴로
+ * 그린다 — 같은 마법사 안에서 「고르는 일」이 두 가지 모습이면 사람이
+ * 둘을 다른 종류의 조작으로 읽는다.
+ */
+@Composable
+private fun ChoiceRow(
+    labelKo: String,
+    helpKo: String,
+    chosen: Boolean,
+    onClick: () -> Unit,
+) {
+    val tone = if (chosen) SelahColors.Accent else SelahColors.Outline
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .background(tone.copy(alpha = if (chosen) 0.14f else 0.06f), RoundedCornerShape(10.dp))
+            .border(1.dp, tone.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                labelKo,
+                color = SelahColors.TextPrimary,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            if (chosen) {
+                Text(
+                    "고름",
+                    color = SelahColors.Accent,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+        Text(
+            helpKo,
+            color = SelahColors.TextMuted,
+            fontSize = 11.sp,
+            lineHeight = 16.sp,
+            style = TextStyle(lineBreak = LineBreak.Paragraph),
+        )
+    }
+}

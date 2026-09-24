@@ -16,6 +16,7 @@ import kr.joa.selahrta.calibration.CalInfo
 import kr.joa.selahrta.calibration.MeasuredProfile
 import kr.joa.selahrta.calibration.ProfileBuildResult
 import kr.joa.selahrta.calibration.ProfileStore
+import kr.joa.selahrta.calibration.ReferenceHookup
 import kr.joa.selahrta.calibration.blockedNoticeKo
 import kr.joa.selahrta.calibration.buildProfileForSave
 import kr.joa.selahrta.calibration.RunOutcome
@@ -119,6 +120,22 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
 
     fun acknowledgePhantom(on: Boolean) {
         _state.update { it.copy(phantomAcknowledged = on) }
+    }
+
+    /**
+     * 기준 마이크를 어떻게 물렸는지 고른다.
+     *
+     * **USB 직결로 바꾸면 팬텀 체크를 지운다.** 남겨 두면 「없는 스위치를
+     * 켰다」는 기록이 프로파일에 붙어 다니고, 나중에 XLR 로 되돌렸을 때
+     * 확인하지 않은 것을 확인한 것으로 읽는다.
+     */
+    fun chooseHookup(hookup: ReferenceHookup) {
+        _state.update {
+            it.copy(
+                referenceHookup = hookup,
+                phantomAcknowledged = if (hookup.needsPhantom) it.phantomAcknowledged else false,
+            )
+        }
     }
 
     // ------------------------------------------------------------------

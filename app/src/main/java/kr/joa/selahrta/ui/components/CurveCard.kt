@@ -127,7 +127,7 @@ fun CurveCard(
                 onValueChange = { micName = it },
                 label = { Text("마이크 (직접 적기)", fontSize = 12.sp) },
                 placeholder = {
-                    Text("예: Dayton EMM-6 #123456", fontSize = 12.sp)
+                    Text("예: Dayton EMM-6 #123456 · iMM-6C #123456", fontSize = 12.sp)
                 },
                 singleLine = true,
                 textStyle = LocalTextStyle.current.copy(fontSize = 13.sp),

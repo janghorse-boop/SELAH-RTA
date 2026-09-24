@@ -401,6 +401,7 @@ fun SelahApp() {
                             onPickCalFile = { pickWizardCal.launch(arrayOf("*/*")) },
                             onChooseReading = wizard::chooseReading,
                             onPhantom = wizard::acknowledgePhantom,
+                            onChooseHookup = wizard::chooseHookup,
                             probeBlockedKo = if (capture.measure != MeasureState.Idle) {
                                 "재는 동안에는 탐색할 수 없습니다. 「측정」 화면에서 " +
                                     "측정을 끝낸 뒤 돌아오십시오."
