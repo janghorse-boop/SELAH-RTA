@@ -436,6 +436,12 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             scanner.watch().collect { list ->
                 val prev = controller.baseState.value.inputs
                 controller.update { st -> st.copy(inputs = list) }
+                // **본 기기는 기억한다.** 빼도 목록에 남아야 다시 꽂기
+                // 전에도 고를 수 있고, 그 기기의 보정이 있다는 사실도
+                // 보인다(2026-09-24 담당자 지시).
+                list.forEach { d ->
+                    settingsStore.rememberDevice(d.stableKey, d.displayName, d.kind)
+                }
                 if (controller.running) controller.onDeviceListChanged(prev, list)
             }
         }
@@ -480,6 +486,11 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     /** 지금 도는 분석기의 (FFT 길이, 샘플레이트). 안 돌면 null. */
     fun rtaSpec(): Pair<Int, Int>? = controller.rtaSpec()
 
+    /** 목록에서 전에 쓴 기기를 지운다. */
+    fun forgetDevice(key: String) {
+        viewModelScope.launch { settingsStore.forgetDevice(key) }
+    }
+
     fun setPreferredInput(key: String?) {
         viewModelScope.launch { settingsStore.setPreferredInput(key) }
     }
@@ -492,10 +503,6 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun setInputChannel(deviceKey: String, index: Int) {
         viewModelScope.launch { settingsStore.setInputChannel(deviceKey, index) }
-    }
-
-    fun setAutoPreferExternal(on: Boolean) {
-        viewModelScope.launch { settingsStore.setAutoPreferExternal(on) }
     }
 
     fun setDisconnectPolicy(p: DisconnectPolicy) {

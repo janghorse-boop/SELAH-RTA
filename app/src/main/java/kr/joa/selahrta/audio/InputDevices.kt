@@ -145,17 +145,26 @@ enum class DisconnectPolicy(val labelKo: String, val helpKo: String) {
  * 어느 기기로 열 것인가를 정한다. **순수 함수다.**
  *
  * @param available 지금 쓸 수 있는 입력들
- * @param preferredKey 사용자가 골라 둔 기기([InputDeviceInfo.stableKey]). null 이면 자동
- * @param autoPreferExternal 외부 기기가 있으면 자동으로 그것을 쓸 것인가(명세 2장)
+ * @param preferredKey 사용자가 골라 둔 기기([InputDeviceInfo.stableKey]).
+ *   null 이면 **내장 마이크**로 연다.
+ *
+ * ## 「자동으로 고르기」를 없앴다 (2026-09-24 담당자 지시)
+ *
+ * 예전에는 외부 기기가 꽂히면 알아서 그쪽으로 갈아타는 설정이 있었다.
+ * 담당자 판단 — **불필요하다.** 고르는 것은 사람이 하고, 고른 것이
+ * 없거나 빠졌으면 내장으로 연다. 그것이 당연한 동작이다.
+ *
+ * 자동 전환은 값을 조용히 바꾸는 쪽이라 위험하기도 했다. 재는 도중에
+ * 기기가 꽂히면 그 자리에서 측정을 끊고 새로 시작해야 했는데, 그 복잡함이
+ * 전부 이 설정 하나에서 나왔다.
  */
 fun chooseInput(
     available: List<InputDeviceInfo>,
     preferredKey: String?,
-    autoPreferExternal: Boolean,
     /**
      * 「내장 마이크로 전환」 정책으로 다시 시작하는 중인가.
      *
-     * 켜져 있으면 고른 기기도 「외부 자동」도 보지 않고 내장을 고른다.
+     * 켜져 있으면 고른 기기를 보지 않고 내장을 고른다.
      * 그러지 않으면 외부 마이크가 하나 더 꽂혀 있을 때 그쪽으로 열려,
      * 정책 이름과 다른 일이 벌어진다(독립 검증 R11).
      */
@@ -174,22 +183,15 @@ fun chooseInput(
         val exact = available.firstOrNull { it.stableKey == preferredKey }
         if (exact != null) return InputChoice(exact, ChoiceReason.UserPicked)
         // 골라 둔 기기가 사라졌다. 조용히 다른 것으로 바꾸지 않고 그 사실을 알린다.
-        val fallback = pickAuto(available, autoPreferExternal)
-        return InputChoice(fallback, ChoiceReason.PreferredMissing)
+        return InputChoice(builtInFirst(available), ChoiceReason.PreferredMissing)
     }
 
-    return InputChoice(pickAuto(available, autoPreferExternal), ChoiceReason.Auto)
+    return InputChoice(builtInFirst(available), ChoiceReason.Auto)
 }
 
-private fun pickAuto(available: List<InputDeviceInfo>, preferExternal: Boolean): InputDeviceInfo {
-    if (preferExternal) {
-        // 외부 기기 중 48kHz 를 지원한다고 알리는 것을 먼저 고른다.
-        available.firstOrNull { it.kind == MicKind.Usb && it.supports48k }?.let { return it }
-        available.firstOrNull { it.kind == MicKind.Usb }?.let { return it }
-    }
-    // 내장 마이크는 fallback 이 아니라 정식 입력이다(명세 2장).
-    return available.firstOrNull { it.kind == MicKind.BuiltIn } ?: available.first()
-}
+/** 내장 마이크. 없는 기기도 있으므로 그때는 남은 것 중 하나. */
+private fun builtInFirst(available: List<InputDeviceInfo>): InputDeviceInfo =
+    available.firstOrNull { it.kind == MicKind.BuiltIn } ?: available.first()
 
 data class InputChoice(val device: InputDeviceInfo?, val reason: ChoiceReason)
 
@@ -209,7 +211,7 @@ enum class ChoiceReason {
     /**
      * 쓰던 기기가 빠져 「내장 마이크로 전환」 정책대로 내장을 골랐다.
      *
-     * 이때는 사용자가 골라 둔 기기나 「외부 자동」 규칙을 따르지 않는다 —
+     * 이때는 사용자가 골라 둔 기기를 따르지 않는다 —
      * 정책 이름이 「내장 마이크로 전환」인데 다른 외부 마이크를 고르면
      * 적힌 것과 다른 일을 하는 것이다(독립 검증 R11).
      */

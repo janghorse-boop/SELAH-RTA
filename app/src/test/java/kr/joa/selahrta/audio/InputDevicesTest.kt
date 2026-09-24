@@ -21,7 +21,7 @@ class InputDevicesTest {
 
     @Test
     fun `기기가 없으면 없다고 말한다`() {
-        val c = chooseInput(emptyList(), null, autoPreferExternal = true)
+        val c = chooseInput(emptyList(), null)
         assertNull(c.device)
         assertEquals(ChoiceReason.NoDevice, c.reason)
         assertNotNull(c.reason.noticeKo(null))
@@ -29,30 +29,31 @@ class InputDevicesTest {
 
     @Test
     fun `내장만 있으면 내장으로 잰다 — fallback 이 아니라 정식 입력이다`() {
-        val c = chooseInput(listOf(builtIn()), null, autoPreferExternal = true)
+        val c = chooseInput(listOf(builtIn()), null)
         assertEquals(MicKind.BuiltIn, c.device!!.kind)
         assertEquals(ChoiceReason.Auto, c.reason)
         // 「기기가 없다」는 경고가 뜨면 안 된다. 내장은 정상 상태다.
         assertNull(c.reason.noticeKo(c.device))
     }
 
+    /**
+     * **고른 것이 없으면 내장이다**(2026-09-24 담당자 지시).
+     *
+     * 예전에는 「외부 기기 자동 사용」 설정이 있어서, 켜 두면 USB 가
+     * 꽂히는 순간 그쪽으로 갈아탔다. 그 설정을 없앴다 — 고르는 것은
+     * 사람이 하고, 고른 것이 없으면 내장으로 연다.
+     */
     @Test
-    fun `자동 전환을 켜면 외부 기기를 먼저 쓴다`() {
-        val c = chooseInput(listOf(builtIn(), usb()), null, autoPreferExternal = true)
-        assertEquals(MicKind.Usb, c.device!!.kind)
-    }
-
-    @Test
-    fun `자동 전환을 끄면 USB 가 꽂혀 있어도 내장으로 잰다`() {
-        // 명세 2장: USB 연결 시 감지하되 자동 전환 여부는 설정으로 둔다.
-        val c = chooseInput(listOf(builtIn(), usb()), null, autoPreferExternal = false)
+    fun `고른 것이 없으면 USB 가 꽂혀 있어도 내장으로 잰다`() {
+        val c = chooseInput(listOf(builtIn(), usb()), null)
         assertEquals(MicKind.BuiltIn, c.device!!.kind)
+        assertEquals(ChoiceReason.Auto, c.reason)
     }
 
     @Test
     fun `사용자가 고른 기기가 가장 앞선다`() {
         val u = usb()
-        val c = chooseInput(listOf(builtIn(), u), u.stableKey, autoPreferExternal = false)
+        val c = chooseInput(listOf(builtIn(), u), u.stableKey)
         assertEquals(u.id, c.device!!.id)
         assertEquals(ChoiceReason.UserPicked, c.reason)
     }
@@ -60,14 +61,14 @@ class InputDevicesTest {
     @Test
     fun `내장을 골라 두면 USB 가 꽂혀도 내장을 쓴다`() {
         val b = builtIn()
-        val c = chooseInput(listOf(b, usb()), b.stableKey, autoPreferExternal = true)
+        val c = chooseInput(listOf(b, usb()), b.stableKey)
         assertEquals(MicKind.BuiltIn, c.device!!.kind)
         assertEquals(ChoiceReason.UserPicked, c.reason)
     }
 
     @Test
     fun `골라 둔 기기가 사라지면 조용히 바꾸지 않고 알린다`() {
-        val c = chooseInput(listOf(builtIn()), usb().stableKey, autoPreferExternal = true)
+        val c = chooseInput(listOf(builtIn()), usb().stableKey)
         assertEquals(MicKind.BuiltIn, c.device!!.kind)
         assertEquals(ChoiceReason.PreferredMissing, c.reason)
         val notice = c.reason.noticeKo(c.device)
@@ -81,7 +82,7 @@ class InputDevicesTest {
         val before = usb(id = 7)
         val after = usb(id = 19)
         assertEquals(before.stableKey, after.stableKey)
-        val c = chooseInput(listOf(builtIn(), after), before.stableKey, autoPreferExternal = false)
+        val c = chooseInput(listOf(builtIn(), after), before.stableKey)
         assertEquals(ChoiceReason.UserPicked, c.reason)
         assertEquals(19, c.device!!.id)
     }
@@ -92,26 +93,20 @@ class InputDevicesTest {
         val b = usb(name = "Umik-1")
         assertTrue(a.stableKey != b.stableKey)
         // 다른 마이크의 보정값이 적용되면 완전히 틀린 음압이 나온다.
-        val c = chooseInput(listOf(builtIn(), b), a.stableKey, autoPreferExternal = true)
+        val c = chooseInput(listOf(builtIn(), b), a.stableKey)
         assertEquals(ChoiceReason.PreferredMissing, c.reason)
-    }
-
-    @Test
-    fun `48kHz 를 지원하는 외부 기기를 먼저 고른다`() {
-        val no48 = usb(id = 2, name = "Old USB", rates = listOf(44_100))
-        val yes48 = usb(id = 3, name = "New USB", rates = listOf(44_100, 48_000))
-        val c = chooseInput(listOf(builtIn(), no48, yes48), null, autoPreferExternal = true)
-        assertEquals("New USB", c.device!!.productName)
     }
 
     @Test
     fun `샘플레이트를 모르면 될 수도 있다고 본다`() {
         // 기기가 목록을 안 알리는 경우가 흔하다. 미리 배제하면 멀쩡한
         // 마이크를 못 쓰게 된다 — 열어 보면 알 수 있다.
-        val unknown = usb(rates = emptyList())
-        assertTrue(unknown.supports48k)
-        val c = chooseInput(listOf(builtIn(), unknown), null, autoPreferExternal = true)
-        assertEquals(MicKind.Usb, c.device!!.kind)
+        //
+        // 자동 고르기를 없앤 뒤로 이 값은 **고르는 데 쓰이지 않는다.**
+        // 화면이 「이 기기가 48kHz 를 알리는가」를 적는 데만 쓴다.
+        assertTrue(usb(rates = emptyList()).supports48k)
+        assertTrue(usb(rates = listOf(44_100, 48_000)).supports48k)
+        assertTrue(!usb(rates = listOf(44_100)).supports48k)
     }
 
     @Test
@@ -166,7 +161,7 @@ class InputDevicesTest {
         val b = usb(id = 31).copy(address = "usb:2")
         assertTrue("서로 다른 기기여야 한다", a.stableKey != b.stableKey)
 
-        val c = chooseInput(listOf(a, b), b.stableKey, autoPreferExternal = false)
+        val c = chooseInput(listOf(a, b), b.stableKey)
         assertEquals(31, c.device!!.id)
         assertEquals(ChoiceReason.UserPicked, c.reason)
     }
@@ -194,16 +189,16 @@ class InputDevicesTest {
         val fallback = chooseInput(
             devices,
             preferredKey = usb(2, "iMM-6C").stableKey,
-            autoPreferExternal = true,
             disconnectFallBack = true,
         )
         assertEquals(MicKind.BuiltIn, fallback.device?.kind)
         assertEquals(ChoiceReason.DisconnectFallBack, fallback.reason)
         assertNotNull("무엇으로 바뀌었는지 알려야 한다", fallback.reason.noticeKo(fallback.device))
 
-        // 평소 규칙이었다면 외부를 골랐을 상황이다 — 그 차이가 이 시험의 요점이다.
-        val normal = chooseInput(devices, null, autoPreferExternal = true)
+        // 정책을 끄면 고른 기기(외부)가 그대로 열린다 — 그 차이가 요점이다.
+        val normal = chooseInput(devices, preferredKey = usb(2, "iMM-6C").stableKey)
         assertEquals(MicKind.Usb, normal.device?.kind)
+        assertEquals(ChoiceReason.UserPicked, normal.reason)
     }
 
     /** 내장이 없는 기기에서도 터지지 않는다. */
@@ -212,7 +207,6 @@ class InputDevicesTest {
         val c = chooseInput(
             listOf(usb(2, "iMM-6C")),
             preferredKey = null,
-            autoPreferExternal = false,
             disconnectFallBack = true,
         )
         assertEquals(MicKind.Usb, c.device?.kind)

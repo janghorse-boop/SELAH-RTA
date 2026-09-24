@@ -264,38 +264,18 @@ class CaptureController(
         }
 
         // 쓰던 기기는 그대로 있고 새 기기가 꽂혔다.
+        //
+        // **갈아타지 않는다**(2026-09-24 담당자 지시로 「외부 기기 자동
+        // 사용」을 없앴다). 재던 것을 끊지 않고, 새 기기가 왔다는 사실만
+        // 알린다 — 쓰려면 사람이 고른다.
         val added = now.filter { n -> before.none { it.stableKey == n.stableKey } }
         val newExternal = added.firstOrNull { it.kind == MicKind.Usb } ?: return
-        val s = _state.value.meterSettings
-
-        // **자동 전환은 새 측정으로 한다**(명세 2·14장, 독립 재검증 F07).
-        // 한 세션 안에서 마이크를 갈아 끼우면 그 앞뒤 값이 서로 다른 마이크의
-        // 값인데 Leq·MAX 는 하나로 합쳐진다. 그래서 지금 측정을 끝내고 새로
-        // 연다 — 값이 섞이지 않으면서 자동 전환은 실제로 일어난다.
-        //
-        // 고른 기기가 있으면 자동 전환하지 않는다. 사용자의 선택이 앞선다.
-        val wouldPick = chooseInput(now, s.preferredInputKey, s.autoPreferExternal).device
-        if (s.autoPreferExternal && s.preferredInputKey == null &&
-            wouldPick?.stableKey == newExternal.stableKey
-        ) {
-            stop()
-            _state.value = _state.value.copy(
-                deviceNoticeKo = "${newExternal.productName} 이(가) 연결돼 그 마이크로 " +
-                    "새 측정을 시작합니다. 앞서 재던 값은 다른 마이크의 것이라 " +
-                    "이어 붙이지 않고 여기서 끊습니다.",
-            )
-            start()
-            return
-        }
 
         _state.value = _state.value.copy(
             deviceNoticeKo = "${newExternal.productName} 이(가) 연결됐습니다. " +
-                if (s.preferredInputKey != null) {
-                    "고르신 기기가 따로 있어 바꾸지 않았습니다. 쓰시려면 설정에서 " +
-                        "이 기기를 고르십시오."
-                } else {
-                    "「외부 기기 자동 사용」이 꺼져 있어 바꾸지 않았습니다."
-                },
+                "쓰시려면 측정을 끝내고 설정에서 이 기기를 고르십시오 — " +
+                "재는 도중에 마이크를 바꾸면 그 앞뒤가 다른 마이크의 값인데 " +
+                "Leq·MAX 는 하나로 합쳐집니다.",
         )
     }
 
@@ -456,7 +436,6 @@ class CaptureController(
         val choice = chooseInput(
             available,
             s0.preferredInputKey,
-            s0.autoPreferExternal,
             disconnectFallBack,
         )
         if (choice.device == null) {
