@@ -29,26 +29,27 @@ enum class ViewMode(val labelKo: String, val section: NavSection) {
      */
     History("기록", NavSection.Measure),
 
-    Rta("RTA", NavSection.Analyze),
-    Feedback("피드백", NavSection.Analyze),
-
     /**
-     * 악기 EQ 가이드(명세 §6).
+     * 31밴드 RTA — **피드백 후보도 여기서 함께 본다**(2026-09-24 담당자 지시).
      *
-     * **마이크 없이도 열린다.** 다른 칩과 달리 캡처를 쓰지 않으므로,
-     * 권한이 없어도 이 칩은 제 내용을 그대로 보여준다(명세 §1 원칙 2).
+     * 예전에는 「피드백」이 옆 칩이었다. 그런데 「어느 대역이 솟았나」와
+     * 「그게 하울링인가」는 한 가지 질문이라, 두 화면을 번갈아 보며 주파수를
+     * 머리로 맞춰 봐야 했다. 지금은 차트 위에 후보를 표식으로 찍고 바로
+     * 아래에 정확한 주파수를 적는다.
+     *
+     * **이 화면만 가로로 눕는다**(`LockLandscape`). 31밴드는 가로로 늘어선
+     * 그림이라 세로에서는 막대가 실오라기처럼 보인다.
      */
-    InstrumentEq("악기 EQ", NavSection.Analyze),
+    Rta("RTA", NavSection.Analyze),
 }
 
 /**
  * 이 칩이 캡처를 쓰는가. 쓰지 않으면 권한이 없어도 막지 않는다.
  *
- * 악기 EQ 는 표를 읽는 화면이고, 기록은 지난 값을 보는 화면이다.
- * 둘 다 지금 들어오는 소리와 무관하다.
+ * 기록은 지난 값을 보는 화면이라 지금 들어오는 소리와 무관하다.
  */
 val ViewMode.needsCapture: Boolean
-    get() = this != ViewMode.InstrumentEq && this != ViewMode.History
+    get() = this != ViewMode.History
 
 /**
  * 아래쪽 탭 넷.
@@ -81,11 +82,14 @@ fun NavSection.defaultMode(last: ViewMode): ViewMode = when (this) {
 }
 
 /**
- * 위 칩이 보이는 구역인지.
+ * 위 칩이 보이는 구역인지 — **고를 것이 둘 이상일 때만** 보인다.
  *
- * **도구에는 칩을 두지 않는다.** 지금은 시험 신호 하나뿐이라 칩 한 개가
- * 뜨는데, 고를 것이 하나인 고르개는 고르개가 아니다. 카드를 세로로
- * 쌓아 두고, 항목이 늘면 그때 칩으로 나눈다.
+ * 고를 것이 하나인 고르개는 고르개가 아니다. 칩 한 개가 덩그러니 떠서
+ * 자리만 차지하고, 눌러도 아무 일이 없어 고장처럼 보인다.
+ *
+ * **세어서 정한다.** 예전에는 구역 이름을 손으로 적어 두었는데, 칩이
+ * 빠질 때(피드백·악기 EQ, 2026-09-24) 이 줄을 같이 고치는 것을 잊으면
+ * 한 개짜리 고르개가 그대로 남는다. 세어 보면 잊을 수가 없다.
  */
 val NavSection.hasModeChips: Boolean
-    get() = this == NavSection.Measure || this == NavSection.Analyze
+    get() = ViewMode.entries.count { it.section == this } > 1

@@ -482,9 +482,27 @@ class FeedbackDetector(
             val drift = cents(maxHz, minHz)
             val needed = if (harmonicSeen) (persistentMs * harmonicPatience).toLong() else persistentMs
             val continuity = framesSeen.toDouble() / (lastFrame - firstFrame + 1)
+            // **안정성은 「의심」에도 건다**(2026-09-24).
+            //
+            // 예전에는 흔들림·연속성을 「지속」에서만 봤다. 그래서 「의심」은
+            // 사실상 「좁고 솟은 소리가 0.3초 이어졌다」뿐이었고, 그 조건은
+            // 말소리·노래가 쉼 없이 만족시킨다. 담당자 지적 — 「의심이 되는
+            // 주파수가 너무 많은데 실제로는 피드백이 아니다」.
+            //
+            // 재 보니 그대로였다(`FalsePositiveProbeTest`):
+            //   비브라토 440Hz 10초 → 후보 6개 · 말소리 흉내 30초 → 후보 7개
+            //
+            // **이 둘이 하울링과 악기음을 실제로 갈라 준다**(이 클래스의 머리말).
+            // 하울링은 방이 정하는 주파수라 흔들리지 않고 매 프레임 거기 있다.
+            // 「지속」에서만 보던 것을 후보가 되는 문턱으로 올린 것이지, 새
+            // 규칙을 만든 것이 아니다.
+            //
+            // **탐지가 늦어지지는 않는다.** 여전히 0.3초면 「의심」이 된다 —
+            // 흔들리지 않은 0.3초여야 할 뿐이다.
+            val stable = drift <= maxDriftCents && continuity >= minContinuity
             val state = when {
-                duration >= needed && drift <= maxDriftCents && continuity >= minContinuity ->
-                    FeedbackState.Persistent
+                !stable -> FeedbackState.None
+                duration >= needed -> FeedbackState.Persistent
                 duration >= suspectMs -> FeedbackState.Suspect
                 else -> FeedbackState.None
             }

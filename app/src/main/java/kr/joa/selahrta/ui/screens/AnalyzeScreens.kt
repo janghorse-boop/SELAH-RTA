@@ -27,6 +27,11 @@ import kr.joa.selahrta.dsp.FeedbackCandidate
 import kr.joa.selahrta.dsp.FeedbackEvent
 import kr.joa.selahrta.dsp.FeedbackState
 import kr.joa.selahrta.ui.CaptureUiState
+import androidx.compose.ui.platform.LocalConfiguration
+import kr.joa.selahrta.ui.LockLandscape
+import kr.joa.selahrta.ui.components.BAND_SLOT_WIDE
+import kr.joa.selahrta.ui.components.formatHz
+import kr.joa.selahrta.ui.components.hzUnit
 import kr.joa.selahrta.ui.components.BandMeter
 import kr.joa.selahrta.ui.components.InfoBar
 import kr.joa.selahrta.ui.components.NO_VALUE
@@ -46,9 +51,51 @@ import kr.joa.selahrta.ui.theme.SelahColors
  */
 @Composable
 fun RtaScreen(capture: CaptureUiState) {
+    // **이 화면만 눕힌다**(담당자 지시). 31밴드는 가로로 늘어선 그림이라
+    // 세로 화면에서는 막대가 실오라기처럼 보인다. 떠나면 [LockLandscape] 가
+    // 원래 방향으로 돌려놓는다.
+    LockLandscape()
+
     val rta = capture.rta
     val (floor, ceil) = rtaRange(rta)
     val unresolved = rta?.resolved?.indexOfFirst { it }?.takeIf { it > 0 }
+
+    val running = capture.measure is MeasureState.Running
+    val cfg = LocalConfiguration.current
+    val landscape = cfg.screenWidthDp > cfg.screenHeightDp
+
+    // **눕히면 차트만 남는다**(2026-09-24 담당자 지시: 「가로화면에서는 RTA
+    // 그래프로 꽉 채우는 게 좋겠다」, 「피드백이 발생하는 부분은 RTA 그래프를
+    // 보고 판단하면 될 것 같다」).
+    //
+    // 그래서 **차트가 숫자까지 말하게** 만들었다 — 후보가 앉은 막대는 색이
+    // 다르고, 표식 옆에 정확한 주파수가 적힌다. 설명을 읽을 자리는 없어졌지만
+    // 그림 하나로 판단할 수 있다.
+    //
+    // 높이를 숫자로 못박지 않고 모디파이어가 주는 만큼을 쓴다. 남는 높이는
+    // 기기마다·표시줄 크기마다 달라 미리 셈할 수 없고, 못박아 두었더니 폰을
+    // 눕혔을 때 가로축 주파수 눈금이 탭 바에 잘렸다(기기에서 확인).
+    if (landscape) {
+        BandMeter(
+            rta,
+            floor,
+            ceil,
+            Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 6.dp),
+            chartHeight = null,
+            // **눕히면 31칸이 다 들어온다 — 늘이지 않는다.**
+            //
+            // 늘여 두었더니(칸당 30dp = 930dp) 화면보다 넓어져 6.3k 위가
+            // 오른쪽 밖으로 밀렸고, 담당자가 「6.3k·8k·10k·12.5k·16k·20k 가
+            // 없다」고 했다(2026-09-24). 밀면 나오기는 하지만, **보이지 않는
+            // 것은 없는 것이다.**
+            //
+            // 눕힌 화면의 폭이면 칸당 25dp 안팎이라 31칸에 글자를 다 넣고도
+            // 남는다. 늘일 까닭이 없다.
+            minSlotWidth = 0.dp,
+            feedback = capture.feedback,
+        )
+        return
+    }
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
@@ -58,7 +105,25 @@ fun RtaScreen(capture: CaptureUiState) {
             modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
         )
 
-        BandMeter(rta, floor, ceil, Modifier.fillMaxWidth())
+        // **차트만 길게 한다**(2026-09-24 담당자 지시). 세로 화면에서도 31칸이
+        // 각자 자리를 갖도록 늘이고 옆으로 밀어 본다. 눕히면 위의 가로 전용
+        // 배치로 간다.
+        BandMeter(
+            rta,
+            floor,
+            ceil,
+            Modifier.fillMaxWidth(),
+            chartHeight = 260.dp,
+            minSlotWidth = BAND_SLOT_WIDE,
+            feedback = capture.feedback,
+        )
+
+        FeedbackStrip(
+            capture.feedback.firstOrNull(),
+            running = running,
+            compact = false,
+            modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+        )
 
         if (unresolved != null && rta != null) {
             // 흐린 막대가 무슨 뜻인지, **얼마나** 못 믿을지를 함께 적는다.
@@ -105,113 +170,17 @@ fun RtaScreen(capture: CaptureUiState) {
                 Modifier.weight(1f),
             )
         }
-    }
-}
 
-/**
- * 컨셉 화면 3번 — 피드백 후보.
- *
- * 명세 9장: **최대 FFT bin 하나를 하울링으로 단정하지 않는다.**
- * prominence · narrowness · level · persistence · 반복성을 조합하고,
- * 화면에는 「후보」라고 적는다. 확신하는 말투를 쓰면 담당자가 예배 중에
- * 멀쩡한 악기 소리를 깎게 된다.
- */
-@Composable
-fun FeedbackScreen(capture: CaptureUiState) {
-    val running = capture.measure is MeasureState.Running
-    val top = capture.feedback.firstOrNull()
-
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
-    ) {
-        InfoBar(
-            "솟음·좁이·레벨·지속·주파수 안정을 모두 만족할 때만 후보로 올립니다. " +
-                "한 번 튄 소리는 올리지 않습니다.",
-            modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
-        )
-
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .background(SelahColors.Surface, RoundedCornerShape(14.dp))
-                .border(
-                    1.dp,
-                    if (top?.state == FeedbackState.Persistent) SelahColors.High else SelahColors.Outline,
-                    RoundedCornerShape(14.dp),
-                )
-                .padding(vertical = 28.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Text(
-                when {
-                    !running -> "측정 중이 아닙니다"
-                    top == null -> "감지된 피드백 후보 없음"
-                    top.state == FeedbackState.Persistent -> "피드백 후보 — 지속"
-                    else -> "피드백 후보 — 의심"
-                },
-                color = when {
-                    top?.state == FeedbackState.Persistent -> SelahColors.High
-                    top != null -> SelahColors.Warn
-                    else -> SelahColors.TextSecondary
-                },
-                fontSize = 14.sp,
-            )
-            Text(
-                top?.let { formatHz(it.hz) } ?: NO_VALUE,
-                color = if (top != null) SelahColors.TextPrimary else SelahColors.TextMuted,
-                fontSize = 40.sp,
-                fontWeight = FontWeight.Bold,
-            )
-            Text(
-                top?.let { hzUnit(it.hz) } ?: "Hz",
-                color = SelahColors.TextMuted,
-                fontSize = 12.sp,
-            )
-            if (top != null) {
-                Text(
-                    "${(top.durationMs / 100) / 10.0}초 이어짐 · 둘레보다 " +
-                        "${"%.0f".format(top.prominenceDb)}dB 솟음",
-                    color = SelahColors.TextMuted,
-                    fontSize = 11.sp,
-                )
-            }
-        }
-
-        // 명세 9장: 화면에는 「후보」라고 적는다. 확신하는 말투를 쓰면
-        // 담당자가 예배 중에 멀쩡한 악기 소리를 깎게 된다.
-        if (top != null) {
-            InfoBar(
-                buildString {
-                    // **「의심」에는 EQ 를 만지라고 하지 않는다.** 아직 짧게
-                    // 스친 소리일 수 있는데 먼저 깎으라고 하면, 예배 중에
-                    // 멀쩡한 악기 소리를 깎게 된다(독립 검증 P9 판단 2번).
-                    // 먼저 귀로 확인하도록 안내한다.
-                    if (top.state == FeedbackState.Persistent) {
-                        append("소리를 들어 확인하신 뒤, 하울링이 맞으면 이 대역을 조금 내려 보십시오. ")
-                    } else {
-                        append("아직 짧습니다. 먼저 소리를 들어 보십시오. ")
-                    }
-                    if (top.hasHarmonics) {
-                        append(
-                            "2·3배 주파수가 함께 서 있어 악기나 목소리일 수 있습니다 — " +
-                                "하울링은 대개 홀로 섭니다.",
-                        )
-                    } else {
-                        append("배음 없이 홀로 선 소리라 하울링에 가깝습니다.")
-                    }
-                },
-                Modifier.padding(top = 12.dp),
-                tone = if (top.hasHarmonics) SelahColors.Warn else SelahColors.TextMuted,
-            )
-        }
-
+        // **피드백 화면이 여기로 들어왔다**(2026-09-24 담당자 지시).
+        // 「어느 대역이 솟았나」와 「그게 하울링인가」는 같은 그림에서 읽어야
+        // 하는 한 가지 질문인데, 두 화면으로 나뉘어 있어 주파수를 머리로
+        // 맞춰 봐야 했다.
         Text(
             "지금 잡고 있는 후보",
             color = SelahColors.TextPrimary,
             fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(top = 20.dp, bottom = 8.dp),
+            modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
         )
         if (capture.feedback.isEmpty()) {
             Text(
@@ -248,13 +217,110 @@ fun FeedbackScreen(capture: CaptureUiState) {
         }
 
         Text(
-            "「후보」입니다 — 오래 끄는 오르간 저음도 여기까지 올 수 있습니다. " +
-                "소리를 듣고 판단하십시오.",
+            "솟음·좁이·레벨·지속·주파수 안정을 모두 만족할 때만 후보로 올립니다. " +
+                "그래도 「후보」입니다 — 오래 끄는 오르간 저음도 여기까지 올 수 " +
+                "있습니다. 소리를 듣고 판단하십시오.",
             color = SelahColors.TextMuted,
             fontSize = 11.sp,
             lineHeight = 15.sp,
             modifier = Modifier.padding(top = 16.dp, bottom = 24.dp),
         )
+    }
+}
+
+/**
+ * 차트 바로 아래 한 줄 — **지금 가장 유력한 후보**.
+ *
+ * ## 왜 차트에 붙였나
+ *
+ * 피드백은 원래 따로 한 화면이었다. 담당자가 「RTA 에 피드백이 표기되면
+ * 피드백 항목은 별도로 없어도 된다」고 정리했고(2026-09-24), 맞는 말이다 —
+ * 「어느 대역이 솟았나」와 「그게 하울링인가」는 한 가지 질문이다.
+ *
+ * ## 그래도 숫자는 글자로 적는다
+ *
+ * 차트의 표식은 **어디**를 가리킬 뿐이다. 깎을 때 필요한 것은 정확한
+ * 주파수인데, 1/3옥타브 밴드 하나는 23% 나 넓어서 「2.5k 칸」과 「2489Hz」는
+ * 다른 말이다. 그래서 표식 옆이 아니라 여기에 숫자를 적는다.
+ *
+ * ## 말투를 지킨다(명세 9장)
+ *
+ * 「후보」라고 적고, **의심 단계에서는 EQ 를 만지라고 하지 않는다.** 아직
+ * 짧게 스친 소리일 수 있는데 먼저 깎으라고 하면 예배 중에 멀쩡한 악기
+ * 소리를 깎게 된다(독립 검증 P9 판단 2번).
+ */
+@Composable
+private fun FeedbackStrip(
+    top: FeedbackCandidate?,
+    running: Boolean,
+    /** 눕힌 화면용. 한 줄로 줄이고 설명을 뺀다 — 차트에 높이를 내준다. */
+    compact: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val tone = when {
+        top == null -> SelahColors.Outline
+        top.state == FeedbackState.Persistent -> SelahColors.High
+        else -> SelahColors.Warn
+    }
+    Column(
+        modifier
+            .background(SelahColors.Surface, RoundedCornerShape(10.dp))
+            .border(1.dp, tone, RoundedCornerShape(10.dp))
+            .padding(horizontal = 12.dp, vertical = if (compact) 7.dp else 10.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        if (top == null) {
+            Text(
+                if (running) "피드백 후보 없음" else "측정을 시작하면 후보를 찾습니다",
+                color = SelahColors.TextMuted,
+                fontSize = 12.sp,
+            )
+            return@Column
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "피드백 후보 — ${top.state.labelKo}",
+                color = tone,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                "  ${formatHz(top.hz)}${hzUnit(top.hz)}",
+                color = SelahColors.TextPrimary,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                "  ${(top.durationMs / 100) / 10.0}초 · 둘레보다 " +
+                    "${"%.0f".format(top.prominenceDb)}dB 솟음",
+                color = SelahColors.TextMuted,
+                fontSize = 11.sp,
+            )
+        }
+        if (!compact) {
+            Text(
+                buildString {
+                    // **「의심」에는 EQ 를 만지라고 하지 않는다.** 먼저 귀로
+                    // 확인하도록 안내한다 — 아직 짧게 스친 소리일 수 있다.
+                    if (top.state == FeedbackState.Persistent) {
+                        append("소리를 들어 확인하신 뒤, 하울링이 맞으면 이 대역을 조금 내려 보십시오. ")
+                    } else {
+                        append("아직 짧습니다. 먼저 소리를 들어 보십시오. ")
+                    }
+                    if (top.hasHarmonics) {
+                        append(
+                            "2·3배 주파수가 함께 서 있어 악기나 목소리일 수 있습니다 — " +
+                                "하울링은 대개 홀로 섭니다.",
+                        )
+                    } else {
+                        append("배음 없이 홀로 선 소리라 하울링에 가깝습니다.")
+                    }
+                },
+                color = SelahColors.TextMuted,
+                fontSize = 11.sp,
+                lineHeight = 15.sp,
+            )
+        }
     }
 }
 
@@ -339,8 +405,3 @@ private fun CandidateRow(c: FeedbackCandidate) {
     }
 }
 
-/** 1kHz 아래는 Hz, 위는 kHz 로 적는다. 자릿수가 너무 길어지지 않게. */
-private fun formatHz(hz: Double): String =
-    if (hz < 1000) "%.0f".format(hz) else "%.2f".format(hz / 1000)
-
-private fun hzUnit(hz: Double): String = if (hz < 1000) "Hz" else "kHz"

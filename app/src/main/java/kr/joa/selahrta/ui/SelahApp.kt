@@ -9,7 +9,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -57,13 +59,11 @@ import kr.joa.selahrta.domain.ChurchSegment
 import kr.joa.selahrta.domain.MeasureState
 import kr.joa.selahrta.domain.MicKind
 import kr.joa.selahrta.ui.nav.NavSection
-import kr.joa.selahrta.ui.instrument.InstrumentGuideScreen
 import kr.joa.selahrta.ui.nav.ViewMode
 import kr.joa.selahrta.ui.nav.defaultMode
 import kr.joa.selahrta.ui.nav.hasModeChips
 import kr.joa.selahrta.ui.screens.CalibrationProfilesScreen
 import kr.joa.selahrta.ui.screens.CalibrationWizardScreen
-import kr.joa.selahrta.ui.screens.FeedbackScreen
 import kr.joa.selahrta.ui.screens.HistoryScreen
 import kr.joa.selahrta.ui.screens.MeasureScreen
 import kr.joa.selahrta.ui.screens.RtaScreen
@@ -261,7 +261,8 @@ fun SelahApp() {
     Scaffold(
         containerColor = SelahColors.Background,
         bottomBar = {
-            BottomBar(section) { picked ->
+            // RTA 는 차트가 화면을 꽉 채우는 화면이라 탭 바를 낮게 그린다.
+            BottomBar(section, compact = mode == ViewMode.Rta) { picked ->
                 section = picked
                 // **탭을 옮기면 마법사를 닫는다.** 마법사는 탭 내용 위에
                 // 덮여 있어서, 닫지 않으면 다른 탭으로 가도 그대로 얹혀
@@ -269,12 +270,28 @@ fun SelahApp() {
                 wizardOpen = false
                 profilesOpen = false
                 // 측정·분석으로 오면 그 구역에서 마지막에 보던 칩으로 돌아간다.
-                if (picked.hasModeChips) mode = picked.defaultMode(mode)
+                //
+                // **칩이 보이는지와 무관하다.** 예전에는 `hasModeChips` 로
+                // 감쌌는데, 분석에 RTA 하나만 남아 칩이 사라지자(2026-09-24)
+                // 이 줄이 통째로 건너뛰어졌다 — 아래 탭은 「분석」인데 화면은
+                // 측정이 그대로 떠 있었다(기기에서 확인). 칩은 **보여 주는**
+                // 일이고 이것은 **어디로 가느냐**라, 애초에 같은 조건일 까닭이
+                // 없었다. 도구·설정은 `defaultMode` 가 그대로 돌려준다.
+                mode = picked.defaultMode(mode)
             }
         },
     ) { inner ->
         Column(Modifier.fillMaxSize().padding(inner)) {
-            TopBrandBar(capture)
+            // **RTA 에서는 머리글을 접는다**(2026-09-24 담당자 지시: 「SELAH RTA
+            // 제목 포함, USB MIC·미보정 표시도 없어도 된다 — RTA 만 해당」).
+            //
+            // 눕힌 화면은 세로가 380dp 안팎뿐이라, 머리글 한 줄이 차트의
+            // 가로축 주파수 눈금을 화면 밖으로 밀어냈다. RTA 는 「어느 대역이
+            // 솟았나」를 보는 화면이라 기기·보정 배지 없이도 읽힌다.
+            //
+            // **다른 화면에서는 접지 않는다.** 미보정 배지는 그 숫자가 아직
+            // 짐작임을 말하는 자리라, 절대 음압을 읽는 화면에서 숨기면 안 된다.
+            if (mode != ViewMode.Rta) TopBrandBar(capture)
 
             if (section.hasModeChips) {
                 ModeChips(section, mode) { picked ->
@@ -300,9 +317,6 @@ fun SelahApp() {
                             onDismissDeviceNotice = vm::dismissDeviceNotice,
                         )
                         ViewMode.Rta -> RtaScreen(capture)
-                        ViewMode.Feedback -> FeedbackScreen(capture)
-                        // 캡처를 쓰지 않는다. 권한이 없어도 그대로 열린다.
-                        ViewMode.InstrumentEq -> InstrumentGuideScreen()
                         // 지난 기록을 보는 화면이라 마이크가 필요 없다.
                         ViewMode.History -> HistoryScreen()
                     }
@@ -617,14 +631,38 @@ private fun ModeChips(
 }
 
 @Composable
-private fun BottomBar(current: NavSection, onSelect: (NavSection) -> Unit) {
-    NavigationBar(containerColor = SelahColors.Surface) {
+private fun BottomBar(
+    current: NavSection,
+    /**
+     * 낮게 그린다 — RTA 전용(2026-09-24 담당자 지시: 「아래 측정부터 설정까지
+     * 버튼은 최소화해 달라. 클 필요가 없다」).
+     *
+     * 눕힌 화면은 세로가 380dp 안팎뿐인데 기본 탭 바가 80dp 를 가져간다.
+     * 그 화면에서 탭은 **나가는 길**일 뿐 보고 있는 것이 아니라, 아이콘만
+     * 남겨도 어디로 가는지 알 수 있다.
+     *
+     * **글자를 지우고 설명은 남긴다.** 읽어 주는 쪽에는 `contentDescription`
+     * 으로 같은 말이 간다 — 좁히는 것과 안 알리는 것은 다른 일이다.
+     */
+    compact: Boolean,
+    onSelect: (NavSection) -> Unit,
+) {
+    NavigationBar(
+        containerColor = SelahColors.Surface,
+        modifier = if (compact) Modifier.height(46.dp) else Modifier,
+    ) {
         NavSection.entries.forEach { s ->
             NavigationBarItem(
                 selected = s == current,
                 onClick = { onSelect(s) },
-                icon = { Icon(painterResource(s.iconRes), contentDescription = null) },
-                label = { Text(s.labelKo, fontSize = 11.sp) },
+                icon = {
+                    Icon(
+                        painterResource(s.iconRes),
+                        contentDescription = if (compact) s.labelKo else null,
+                        modifier = if (compact) Modifier.size(18.dp) else Modifier,
+                    )
+                },
+                label = if (compact) null else ({ Text(s.labelKo, fontSize = 11.sp) }),
                 colors = NavigationBarItemDefaults.colors(
                     selectedIconColor = SelahColors.Accent,
                     selectedTextColor = SelahColors.Accent,
