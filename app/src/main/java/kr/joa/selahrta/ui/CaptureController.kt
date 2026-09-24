@@ -5,7 +5,6 @@ import kr.joa.selahrta.audio.AudioSource
 import kr.joa.selahrta.audio.CaptureDiagnostics
 import kr.joa.selahrta.audio.CaptureEnd
 import kr.joa.selahrta.audio.CaptureGeneration
-import kr.joa.selahrta.audio.DisconnectPolicy
 import kr.joa.selahrta.audio.InputDeviceInfo
 import kr.joa.selahrta.audio.OpenResult
 import kr.joa.selahrta.audio.OpenedFormat
@@ -129,37 +128,11 @@ class CaptureController(
     private var openingKey: String? = null
 
     /**
-     * 분리 정책이 **자동으로** 다시 연 횟수. 주 스레드만 만진다.
-     *
-     * 세지 않으면 끝없이 되풀이된다 — 열리기는 하는데 곧바로 끊기는
-     * 기기(오디오 서버가 거듭 죽거나 USB 독이 깜박일 때)에서
-     * `onCaptureEnded(DeviceLost)` → `applyDisconnectPolicy` → `stop`+
-     * `start` 가 그대로 반복된다. 시험에서 **13번 열렸다**.
-     *
-     * **소리가 실제로 들어오면 0 으로 되돌린다** — 두 시간 예배에서
-     * 드문드문 끊긴 것이 모여 멀쩡한 전환까지 막으면 안 된다.
-     */
-    private var autoRestarts = 0
-
-    /**
      * 밖에 마지막으로 알린 수명주기. 같은 것을 두 번 알리지 않는다.
      *
      * 처음에는 재고 있지 않다.
      */
     private var lifecycle = CaptureLifecycle.Finished
-
-    /**
-     * 지금 **기기를 갈아타는 중**인가. 주 스레드만 만진다.
-     *
-     * 분리 정책이 `FallBack` 이면 `stop()` 다음에 곰바로 `start()` 가
-     * 온다. 그 사이의 `stop` 을 **끝났다고 알리면 안 된다** —
-     * 백그라운드에서 서비스를 내렸다가는 다시 띄울 수 없고
-     * (안드로이드 14부터 `microphone` 형은 앱이 앞에 있어야 한다),
-     * 그러면 자동 전환 중에 마이크가 끊긴다. 검증자가 짚은
-     * 「`onStoppedHook` 에 무조건 서비스 stop 만 더하지 말 것」이 이것이다
-     * (독립 검증 FS01).
-     */
-    private var switchingDevice = false
 
     /** 세대를 매기고 늦게 온 소식을 가린다. 주 스레드만 만진다. */
     private val generation = CaptureGeneration()
@@ -174,14 +147,14 @@ class CaptureController(
     val running: Boolean get() = active != null
 
     /**
-     * 수명주기를 밖에 알린다. **바뀜 때만**, 주 스레드에서.
+     * 수명주기를 밖에 알린다. **바뀔 때만**, 주 스레드에서.
      *
-     * 갈아타는 중의 `Finished` 는 삼킨다 — 그건 끝난 것이 아니라 잠깐
-     * 놓는 것이다([switchingDevice]). 갈아타기가 끝나면
-     * [applyDisconnectPolicy] 가 **실제로 살아 있는지로** 다시 맞춘다.
+     * 예전에는 「갈아타는 중의 Finished 는 삼킨다」는 예외가 있었다.
+     * 분리 정책의 자동 전환 때문이었는데, 그 정책을 없애면서
+     * (2026-09-24) 갈아타는 중이라는 상태 자체가 사라졌다 — stop 은
+     * 언제나 끝이다.
      */
     private fun emitLifecycle(next: CaptureLifecycle) {
-        if (switchingDevice && next == CaptureLifecycle.Finished) return
         if (lifecycle == next) return
         lifecycle = next
         onLifecycle(next)
@@ -287,59 +260,29 @@ class CaptureController(
      * `source` 가 이미 null 이라 목록 변경 처리를 건너뛰어 분리 정책이
      * 통째로 실행되지 않았다(독립 재검증 F03).
      */
+    /**
+     * 쓰던 기기가 빠졌다. **멈추고 알린다.**
+     *
+     * ## 정책 설정을 없앴다 (2026-09-24 담당자 지시)
+     *
+     * 예전에는 「내장 마이크로 전환 / 멈추고 기다리기」를 설정으로 두었다.
+     * 담당자 판단 — **고를 일이 아니다.** 기기가 빠지면 측정은 당연히
+     * 멈추고, 빠졌다고 알리고, 다른 기기를 고르면 된다.
+     *
+     * 자동 전환 쪽이 값을 조용히 바꾸는 쪽이라 위험하기도 했다. 그 시점부터
+     * 다른 마이크·다른 보정값인데 Leq·MAX 는 하나로 합쳐진다. 그래서
+     * 「갈아타는 중의 stop 은 끝이 아니다」 같은 예외 처리가 줄줄이 붙어
+     * 있었다 — 그 복잡함이 전부 이 설정 하나에서 나왔다.
+     */
     private fun applyDisconnectPolicy(name: String, extraKo: String? = null) {
-        val policy = _state.value.meterSettings.disconnectPolicy
-        // **이 stop 이 「끝」인지 「갈아타기」인지를 먼저 가른다.**
-        // 갈아타는 중이면 서비스를 내리지 않는다 — 백그라운드에서는
-        // 다시 띄울 수 없기 때문이다(FS01).
-        switchingDevice =
-            policy == DisconnectPolicy.FallBack && autoRestarts < MAX_AUTO_RESTARTS
-        try {
-            applyDisconnectPolicyInner(policy, name, extraKo)
-        } finally {
-            switchingDevice = false
-            // 갈아타기가 끝났다. **실제로 살아 있는지로** 맞춘다 —
-            // 새 기기를 여는 데 실패했으면 서비스도 내려야 한다.
-            emitLifecycle(
-                if (active != null) CaptureLifecycle.Active else CaptureLifecycle.Finished,
-            )
-        }
-    }
-
-    private fun applyDisconnectPolicyInner(
-        policy: DisconnectPolicy,
-        name: String,
-        extraKo: String?,
-    ) {
         stop()
-        when (policy) {
-            DisconnectPolicy.Pause -> _state.value = _state.value.copy(
-                measure = MeasureState.Failed(FailureReason.DeviceLost),
-                errorKo = extraKo ?: "$name 이(가) 빠져 측정을 멈췄습니다. 다시 꽂고 시작하십시오.",
-            )
-            DisconnectPolicy.FallBack -> {
-                // **끝없이 다시 열지 않는다.** 열리자마자 끊기는 기기에서는
-                // 다시 여는 것이 도움이 되지 않고 스레드와 장치만 축낸다.
-                if (autoRestarts >= MAX_AUTO_RESTARTS) {
-                    _state.value = _state.value.copy(
-                        measure = MeasureState.Failed(FailureReason.DeviceLost),
-                        errorKo = "마이크 연결이 거듭 끊겨 자동 전환을 멈췄습니다" +
-                            "(${autoRestarts}번 다시 열어 봤습니다). " +
-                            "케이블과 다른 앱을 확인한 뒤 다시 시작하십시오.",
-                        deviceNoticeKo = null,
-                    )
-                    return
-                }
-                autoRestarts++
-                _state.value = _state.value.copy(
-                    deviceNoticeKo = "$name 이(가) 빠져 내장 마이크로 새 측정을 시작합니다. " +
-                        "여기서부터는 다른 마이크·다른 보정값의 값입니다.",
-                )
-                // 정책 이름이 「내장 마이크로 전환」이다. 평소 규칙대로 고르면
-                // 외부 마이크가 하나 더 꽂혀 있을 때 그쪽으로 열린다(R11).
-                start(disconnectFallBack = true)
-            }
-        }
+        _state.value = _state.value.copy(
+            measure = MeasureState.Failed(FailureReason.DeviceLost),
+            errorKo = extraKo
+                ?: "$name 이(가) 빠져 측정을 멈췄습니다. " +
+                "다시 꽂거나 설정에서 다른 기기를 고른 뒤 시작하십시오.",
+        )
+        emitLifecycle(CaptureLifecycle.Finished)
     }
 
     /**
@@ -425,10 +368,9 @@ class CaptureController(
         )
     }
 
-    fun start(disconnectFallBack: Boolean = false) {
+    fun start() {
         if (active != null) return
         // 사람이 시작한 것이면 지난 실패는 잊는다. 자동 전환만 센다.
-        if (!disconnectFallBack) autoRestarts = 0
         _state.value = _state.value.copy(measure = MeasureState.Starting, errorKo = null)
 
         val s0 = _state.value.meterSettings
@@ -436,7 +378,6 @@ class CaptureController(
         val choice = chooseInput(
             available,
             s0.preferredInputKey,
-            disconnectFallBack,
         )
         if (choice.device == null) {
             _state.value = _state.value.copy(
@@ -621,7 +562,6 @@ class CaptureController(
             if (active !== session) return@post
             // **여기까지 왔다는 것은 소리가 실제로 들어왔다는 뜻**이다.
             // 잘 재고 있었으면 지난 자동 전환은 세지 않는다.
-            autoRestarts = 0
             _measurement.value = snapshot
         }
     }
@@ -701,6 +641,5 @@ class CaptureController(
          *
          * 말썽인 기기에서 끝없이 되풀이하지 않기 위한 것이다.
          */
-        const val MAX_AUTO_RESTARTS = 3
     }
 }

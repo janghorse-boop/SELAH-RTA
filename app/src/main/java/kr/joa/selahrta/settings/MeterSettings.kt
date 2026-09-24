@@ -10,7 +10,6 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import androidx.datastore.preferences.core.doublePreferencesKey
-import kr.joa.selahrta.audio.DisconnectPolicy
 import kr.joa.selahrta.domain.ChurchSegment
 import kr.joa.selahrta.domain.MicKind
 import kr.joa.selahrta.domain.DefaultSegmentRanges
@@ -62,8 +61,6 @@ data class MeterSettings(
      * 따로 두므로, 목록에 남아 있어야 무엇이 보정돼 있는지도 보인다.
      */
     val knownDevices: List<KnownDevice> = emptyList(),
-    /** 쓰던 기기가 빠졌을 때(명세 2장). */
-    val disconnectPolicy: DisconnectPolicy = DisconnectPolicy.FallBack,
     /** 지금 재고 있는 예배 구간. */
     val segment: ChurchSegment = ChurchSegment.Sermon,
     /**
@@ -94,7 +91,6 @@ class MeterSettingsStore(private val context: Context) {
 
     /** 한 번이라도 연결됐던 기기. 값은 `종류|이름`. */
     private fun knownKey(deviceKey: String) = stringPreferencesKey("$KNOWN_PREFIX$deviceKey")
-    private val disconnectKey = stringPreferencesKey("disconnectPolicy")
     private val segmentKey = stringPreferencesKey("segment")
 
     // 범위는 구간마다 네 값이라 열쇠를 만들어 쓴다.
@@ -136,9 +132,6 @@ class MeterSettingsStore(private val context: Context) {
                         kind = kind,
                     )
                 }.sortedBy { it.name },
-                disconnectPolicy = p[disconnectKey]?.let { n ->
-                    DisconnectPolicy.entries.firstOrNull { it.name == n }
-                } ?: DisconnectPolicy.FallBack,
                 segment = p[segmentKey]?.let { n ->
                     ChurchSegment.entries.firstOrNull { it.name == n }
                 } ?: ChurchSegment.Sermon,
@@ -177,7 +170,6 @@ class MeterSettingsStore(private val context: Context) {
     /** 그 기기로 잴 때 쓸 채널을 기억한다. */
     suspend fun setInputChannel(deviceKey: String, index: Int) =
         write { it[channelKey(deviceKey)] = index.coerceAtLeast(0) }
-    suspend fun setDisconnectPolicy(p: DisconnectPolicy) = write { it[disconnectKey] = p.name }
     suspend fun setSegment(s: ChurchSegment) = write { it[segmentKey] = s.name }
 
     /** 구간 범위를 고친다. 말이 안 되는 값은 저장하지 않는다. */

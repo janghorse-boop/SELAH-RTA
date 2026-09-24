@@ -1,7 +1,6 @@
 package kr.joa.selahrta.ui
 
 import kr.joa.selahrta.audio.CaptureEnd
-import kr.joa.selahrta.audio.DisconnectPolicy
 import kr.joa.selahrta.audio.InputDeviceInfo
 import kr.joa.selahrta.audio.OpenFailure
 import kr.joa.selahrta.domain.MeasureState
@@ -52,7 +51,6 @@ class ServiceLifecycleTest {
         deviceList: MutableList<InputDeviceInfo> = mutableListOf(builtInMic()),
         failFrom: Int = Int.MAX_VALUE,
         endOnStartFirst: Int = 0,
-        policy: DisconnectPolicy = DisconnectPolicy.Pause,
     ) {
         devices = deviceList
         sources = mutableListOf()
@@ -77,7 +75,7 @@ class ServiceLifecycleTest {
             nowNs = { clock.ns },
         )
         controller.update {
-            it.copy(meterSettings = it.meterSettings.copy(disconnectPolicy = policy))
+            it.copy(meterSettings = it.meterSettings)
         }
     }
 
@@ -136,8 +134,8 @@ class ServiceLifecycleTest {
     }
 
     @Test
-    fun `USB 가 빠지고 정책이 멈춤이면 서비스도 내린다`() {
-        build(policy = DisconnectPolicy.Pause)
+    fun `USB 가 빠지면 서비스도 내린다`() {
+        build()
         controller.start()
         assertTrue(serviceUp)
 
@@ -179,89 +177,12 @@ class ServiceLifecycleTest {
     }
 
     // ------------------------------------------------------------------
-    // 갈아타는 길 — **여기서 내리면 안 된다**
-    // ------------------------------------------------------------------
-
-    /**
-     * **자동 전환 중에는 서비스를 놓지 않는다.**
-     *
-     * 이것이 이 설계의 요점이다. 중간에 `Finished` 가 한 번이라도 나가면
-     * 백그라운드에서 서비스가 내려가고, 다시 띄울 수 없어 마이크가 끊긴다.
-     */
-    @Test
-    fun `기기를 갈아타는 동안에는 서비스를 놓지 않는다`() {
-        build(policy = DisconnectPolicy.FallBack)
-        controller.start()
-        val openedBefore = sources.size
-
-        sources.last().endWith(CaptureEnd.DeviceLost)
-
-        report("fallback 성공")
-        assertTrue("다시 열려 돌아야 한다", controller.running)
-        assertEquals("새로 열었어야 한다", openedBefore + 1, sources.size)
-        assertEquals(
-            "갈아타는 동안 Finished 가 나가면 안 된다",
-            listOf(CaptureLifecycle.Active),
-            signals,
-        )
-    }
-
-    /** 갈아타려다 **새 기기도 못 열면** 그때는 내려야 한다. */
-    @Test
-    fun `갈아타기에 실패하면 서비스를 내린다`() {
-        build(policy = DisconnectPolicy.FallBack, failFrom = 1)
-        controller.start()
-        assertTrue(serviceUp)
-
-        sources.last().endWith(CaptureEnd.DeviceLost)
-
-        report("fallback 실패")
-        assertFalse("멈춰 있어야 한다", controller.running)
-        assertFalse("서비스가 남으면 안 된다", serviceUp)
-        assertEquals(listOf(CaptureLifecycle.Active, CaptureLifecycle.Finished), signals)
-    }
-
-    /** 거듭 끊겨 **자동 전환 한도를 넘으면** 그때도 내려야 한다. */
-    @Test
-    fun `자동 전환 한도를 넘으면 서비스를 내린다`() {
-        build(policy = DisconnectPolicy.FallBack, endOnStartFirst = 12)
-
-        controller.start()
-
-        report("한도 초과")
-        assertFalse("멈춰 있어야 한다", controller.running)
-        assertFalse("서비스가 남으면 안 된다", serviceUp)
-        assertEquals(
-            "마지막에 한 번 끝났다고 해야 한다",
-            CaptureLifecycle.Finished,
-            signals.last(),
-        )
-        assertTrue(
-            "한 번은 떠 있었어야 한다 — 실제로 열려 돌았다",
-            signals.contains(CaptureLifecycle.Active),
-        )
-    }
-
-    /**
-     * **잘 재다가 한 번 갈아타도 서비스는 그대로다.**
-     *
-     * `한 번 끊겼다가 잘 열리면 계속 잰다`(RestartCapTest)의 서비스 쪽
-     * 짝이다. 측정이 이어지는데 알림만 사라지면 사람은 끊긴 줄 안다.
-     */
-    @Test
-    fun `잘 재다 갈아타도 알림은 그대로다`() {
-        build(policy = DisconnectPolicy.FallBack)
-        controller.start()
-        repeat(20) { sources.last().deliver() }
-
-        sources.last().endWith(CaptureEnd.DeviceLost)
-
-        report("정상 → 갈아타기")
-        assertTrue(controller.running)
-        assertTrue("서비스가 떠 있어야 한다", serviceUp)
-        assertEquals(listOf(CaptureLifecycle.Active), signals)
-    }
-
+    // 기기가 빠진 길 — **내려야 한다**
+    //
+    // 2026-09-24 에 자동 전환(FallBack)을 없앴다. 예전에는 이 자리에
+    // 「갈아타는 동안 서비스를 놓지 않는다」류 시험 넷이 있었는데,
+    // 갈아타는 길 자체가 사라져 지웠다 — 이제 기기가 빠지면 언제나
+    // 멈추고, 멈추면 서비스도 내린다(위 「USB 가 빠지면」 시험).
     // ------------------------------------------------------------------
 
     /** 다시 시작하면 다시 떠야 한다. */

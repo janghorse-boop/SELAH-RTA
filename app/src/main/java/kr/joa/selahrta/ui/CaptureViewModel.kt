@@ -6,7 +6,6 @@ import androidx.lifecycle.viewModelScope
 import kr.joa.selahrta.audio.AudioBlock
 import kr.joa.selahrta.audio.AudioSource
 import kr.joa.selahrta.audio.ChoiceReason
-import kr.joa.selahrta.audio.DisconnectPolicy
 import kr.joa.selahrta.audio.InputDeviceInfo
 import kr.joa.selahrta.audio.InputDeviceScanner
 import kr.joa.selahrta.audio.MicSource
@@ -505,10 +504,6 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { settingsStore.setInputChannel(deviceKey, index) }
     }
 
-    fun setDisconnectPolicy(p: DisconnectPolicy) {
-        viewModelScope.launch { settingsStore.setDisconnectPolicy(p) }
-    }
-
     /**
      * 시험 신호를 스피커로 내보낸다(명세 16장).
      *
@@ -581,8 +576,8 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      * 「측정 시작」을 누른 그 순간 주 스레드에서 곧바로 돌고, 서비스는
      * 마이크가 열린 직후 같은 호출 안에서 뜬다 — 여전히 앞에 있다.
      */
-    fun start(disconnectFallBack: Boolean = false) {
-        controller.start(disconnectFallBack)
+    fun start() {
+        controller.start()
     }
 
     /**

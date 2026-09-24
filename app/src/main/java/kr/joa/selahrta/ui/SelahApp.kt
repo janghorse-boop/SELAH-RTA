@@ -335,7 +335,6 @@ fun SelahApp() {
                         onPreferredInput = vm::setPreferredInput,
                         onForgetDevice = vm::forgetDevice,
                         onInputChannel = vm::setInputChannel,
-                        onDisconnectPolicy = vm::setDisconnectPolicy,
                         // 확장자를 못 믿는 제공자가 많아 형식을 넓게 받는다.
                         // 내용으로 판별하므로 잘못 고른 파일은 파서가 거른다.
                         onPickCurveFile = { pickCurve.launch(arrayOf("*/*")) },

@@ -1,7 +1,6 @@
 package kr.joa.selahrta.ui
 
 import kr.joa.selahrta.audio.CaptureEnd
-import kr.joa.selahrta.audio.DisconnectPolicy
 import kr.joa.selahrta.audio.InputDeviceInfo
 import kr.joa.selahrta.domain.MeasureState
 import kr.joa.selahrta.domain.MicKind
@@ -185,13 +184,12 @@ class CaptureControllerOrderingTest {
      * 끊긴다.
      */
     @Test
-    fun `오류와 목록 변경이 둘 다 와도 한 번만 전환한다`() {
+    fun `오류와 목록 변경이 둘 다 와도 한 번만 멈춘다`() {
         build(deviceList = listOf(usbMic(), builtInMic()))
         controller.update {
             it.copy(
                 meterSettings = it.meterSettings.copy(
                     preferredInputKey = usbMic().stableKey,
-                    disconnectPolicy = DisconnectPolicy.FallBack,
                 ),
             )
         }
@@ -209,20 +207,20 @@ class CaptureControllerOrderingTest {
         // ③ 같은 오류가 한 번 더 온다(실제로 겹쳐 오는 일이 있다).
         sources.first().endWith(CaptureEnd.DeviceLost)
 
-        assertTrue("다시 돌아야 한다", controller.running)
-        assertEquals("내장으로 바뀌어야 한다", MicKind.BuiltIn, controller.baseState.value.opened?.micKind)
-        assertEquals("마이크를 한 번만 더 열어야 한다", opened + 1, sources.size)
+        // 2026-09-24: 분리 정책을 없애 「멈추고 알린다」로 고정했다.
+        // 겹쳐 오는 소식이 **다시 열지 않는지**가 여전히 요점이다.
+        assertFalse("멈춰 있어야 한다", controller.running)
+        assertEquals("마이크를 더 열면 안 된다", opened, sources.size)
     }
 
     /** 순서를 뒤집어도 같다 — 목록 변경이 먼저, 늦은 오류가 나중. */
     @Test
-    fun `목록 변경이 먼저 와도 한 번만 전환한다`() {
+    fun `목록 변경이 먼저 와도 한 번만 멈춘다`() {
         build(deviceList = listOf(usbMic(), builtInMic()))
         controller.update {
             it.copy(
                 meterSettings = it.meterSettings.copy(
                     preferredInputKey = usbMic().stableKey,
-                    disconnectPolicy = DisconnectPolicy.FallBack,
                 ),
             )
         }
@@ -237,9 +235,8 @@ class CaptureControllerOrderingTest {
         usbSource.endWith(CaptureEnd.DeviceLost)
         usbSource.endWith(CaptureEnd.ReadError)
 
-        assertTrue(controller.running)
-        assertEquals(MicKind.BuiltIn, controller.baseState.value.opened?.micKind)
-        assertEquals("마이크를 한 번만 더 열어야 한다", opened + 1, sources.size)
+        assertFalse(controller.running)
+        assertEquals("마이크를 더 열면 안 된다", opened, sources.size)
     }
 
     // ---- 3. G01 은 「멈추기」만의 문제가 아니다 ----
@@ -254,7 +251,7 @@ class CaptureControllerOrderingTest {
     fun `오류로 끝나도 마지막 측정 결과가 남는다`() {
         build()
         controller.update {
-            it.copy(meterSettings = it.meterSettings.copy(disconnectPolicy = DisconnectPolicy.Pause))
+            it.copy(meterSettings = it.meterSettings)
         }
         controller.start()
         feed(last)
@@ -274,13 +271,12 @@ class CaptureControllerOrderingTest {
 
     /** 기기가 빠져 「멈추기」 정책으로 끝나도 결과가 남는다. */
     @Test
-    fun `분리 정책이 멈추기여도 마지막 측정 결과가 남는다`() {
+    fun `기기가 빠져 멈춰도 마지막 측정 결과가 남는다`() {
         build(deviceList = listOf(usbMic(), builtInMic()))
         controller.update {
             it.copy(
                 meterSettings = it.meterSettings.copy(
                     preferredInputKey = usbMic().stableKey,
-                    disconnectPolicy = DisconnectPolicy.Pause,
                 ),
             )
         }

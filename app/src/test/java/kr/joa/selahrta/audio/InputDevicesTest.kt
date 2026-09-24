@@ -109,13 +109,6 @@ class InputDevicesTest {
         assertTrue(!usb(rates = listOf(44_100)).supports48k)
     }
 
-    @Test
-    fun `분리 정책 두 가지가 서로 다른 값을 치른다`() {
-        // 어느 쪽도 공짜가 아니다. 설명이 그 대가를 말해야 한다.
-        assertTrue(DisconnectPolicy.FallBack.helpKo.contains("다른 마이크"))
-        assertTrue(DisconnectPolicy.Pause.helpKo.contains("재지 않습니다"))
-    }
-
     /**
      * 내장 마이크는 **한 기기로 묶인다**(2026-09-23 결정).
      *
@@ -176,40 +169,24 @@ class InputDevicesTest {
     }
 
     /**
-     * 「내장 마이크로 전환」 정책은 이름대로 내장을 고른다(독립 검증 R11).
+     * **기기가 빠지면 멈춘다**(2026-09-24 담당자 지시).
      *
-     * 예전에는 평소 규칙으로 다시 시작해서, 외부 마이크가 하나 더 꽂혀
-     * 있으면 그쪽으로 열렸다. 정책 이름과 다른 일을 하면 담당자는 내장으로
-     * 재고 있다고 믿는다.
+     * 예전에는 「내장 마이크로 전환」 정책이 있어서, 빠진 뒤에도 규칙대로
+     * 다시 열었다. 그 길을 통째로 없앴다 — 그 시점부터 다른 마이크·다른
+     * 보정값인 값이 같은 Leq·MAX 에 합쳐지기 때문이다. 그래서 여기서
+     * 시험할 전환 규칙 자체가 없어졌다(CaptureControllerTest 가 「멈추고
+     * 알린다」를 지킨다).
      */
     @Test
-    fun `분리 후 전환 정책은 외부가 남아 있어도 내장을 고른다`() {
-        val devices = listOf(usb(2, "iMM-6C"), builtIn(1), usb(3, "다른 USB"))
-
-        val fallback = chooseInput(
-            devices,
-            preferredKey = usb(2, "iMM-6C").stableKey,
-            disconnectFallBack = true,
-        )
-        assertEquals(MicKind.BuiltIn, fallback.device?.kind)
-        assertEquals(ChoiceReason.DisconnectFallBack, fallback.reason)
-        assertNotNull("무엇으로 바뀌었는지 알려야 한다", fallback.reason.noticeKo(fallback.device))
-
-        // 정책을 끄면 고른 기기(외부)가 그대로 열린다 — 그 차이가 요점이다.
-        val normal = chooseInput(devices, preferredKey = usb(2, "iMM-6C").stableKey)
-        assertEquals(MicKind.Usb, normal.device?.kind)
-        assertEquals(ChoiceReason.UserPicked, normal.reason)
+    fun `고른 기기가 없으면 내장으로 연다`() {
+        val c = chooseInput(listOf(usb(2, "iMM-6C"), builtIn(1)), preferredKey = null)
+        assertEquals(MicKind.BuiltIn, c.device?.kind)
     }
 
     /** 내장이 없는 기기에서도 터지지 않는다. */
     @Test
-    fun `내장이 없으면 남은 것으로 전환한다`() {
-        val c = chooseInput(
-            listOf(usb(2, "iMM-6C")),
-            preferredKey = null,
-            disconnectFallBack = true,
-        )
+    fun `내장이 없으면 남은 것으로 연다`() {
+        val c = chooseInput(listOf(usb(2, "iMM-6C")), preferredKey = null)
         assertEquals(MicKind.Usb, c.device?.kind)
-        assertEquals(ChoiceReason.DisconnectFallBack, c.reason)
     }
 }

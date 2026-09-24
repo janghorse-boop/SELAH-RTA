@@ -70,7 +70,8 @@ enum class CaptureEnd(val messageKo: String, val reason: kr.joa.selahrta.domain.
 
     /** 기기가 빠졌거나 오디오 서버가 죽었다. */
     DeviceLost(
-        "마이크와의 연결이 끊겨 측정이 멈췄습니다. 다시 꽂고 시작하십시오.",
+        "마이크와의 연결이 끊겨 측정이 멈췄습니다. " +
+            "다시 꽂거나 설정에서 다른 기기를 고른 뒤 시작하십시오.",
         kr.joa.selahrta.domain.FailureReason.DeviceLost,
     ),
 
