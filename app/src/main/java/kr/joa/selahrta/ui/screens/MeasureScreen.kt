@@ -44,6 +44,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import kr.joa.selahrta.domain.ChurchSegment
 import kr.joa.selahrta.domain.MeasureState
+import kr.joa.selahrta.domain.SegmentRange
 import kr.joa.selahrta.domain.focusKo
 import kr.joa.selahrta.dsp.Weighting
 import kr.joa.selahrta.ui.CaptureUiState
@@ -120,14 +121,6 @@ fun MeasureScreen(
             .padding(horizontal = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        // **구간은 화면 안에서 고른다**(2026-09-24). 예전에는 위 칩이
-        // 설교·찬양이었는데, 둘은 같은 화면의 다른 권장 범위일 뿐이라
-        // 칩 두 자리를 쓰면서 화면은 하나였다.
-        SegmentPicker(
-            selected = segment,
-            onPick = onSegment,
-            modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
-        )
         when {
             !hasPermission -> InfoBar(
                 "소리의 크기를 재려면 마이크 권한이 필요합니다. " +
@@ -206,6 +199,25 @@ fun MeasureScreen(
             }
         }
 
+        // **범위 상자가 구간 고르개를 품는다**(2026-09-24 담당자 지시).
+        //
+        // 고르는 것은 **권장 범위 하나뿐**이다 — 측정 방식이 바뀌는 게
+        // 아니라 무엇과 견줄지가 바뀐다. 그래서 고르개가 범위 상자 밖에서
+        // 한 줄을 통째로 쓸 까닭이 없었다. 상자 안에 넣으니 「무엇을
+        // 고르면 이 숫자가 바뀐다」가 붙어 읽히고, 그만큼 아래가 올라와
+        // **세로 화면에서 측정 버튼이 보인다.**
+        RangeCard(
+            segment = segment,
+            onSegment = onSegment,
+            range = range,
+            isCustom = capture.meterSettings.isCustom(segment),
+            leqLabelKo = capture.meterSettings.leqWindow.labelKo,
+            // 구간 설명은 **고를 때** 쓸모가 있다. 재는 동안에는 이미 고른
+            // 뒤라, 그 자리를 비워 숫자와 버튼을 끌어올린다.
+            showFocus = !running,
+            modifier = Modifier.padding(top = 4.dp, bottom = 4.dp),
+        )
+
         // **색이 말하는 것을 읽어 주는 쪽에도 남긴다.** 화면의
         // 「낮음/적정/높음」 배지는 지웠지만, 배지를 지우는 것과 뜻을 지우는
         // 것은 다르다 — 색을 못 보는 사람에게는 바가 아무 말도 하지 않게 된다
@@ -227,16 +239,24 @@ fun MeasureScreen(
                 )?.let { stateDescription = it }
             },
         ) {
-            // 눈금은 40~110 dB. 예배당에서 실제로 오가는 범위다.
             GaugeArc(
-                fraction = m.currentSpl?.let { ((it - 40.0) / 70.0).toFloat() },
-                modifier = Modifier.size(260.dp, 150.dp),
+                fraction = m.currentSpl?.let { gaugeFraction(it) },
+                modifier = Modifier.size(248.dp, 132.dp),
                 color = liveColor ?: SelahColors.InRange,
+                // **견줄 수 없으면 띠도 없다.** C·Z 가중에서 dBA 범위를
+                // 눈금에 그려 두면, 색을 안 칠하는 것과 달리 「이 안에
+                // 들어오라」는 말로 읽힌다.
+                band = if (canJudge && range != null) {
+                    gaugeFraction(range.avgLowDb)..gaugeFraction(range.avgHighDb)
+                } else {
+                    null
+                },
+                maxMark = m.maxSpl?.let { gaugeFraction(it) },
             )
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
                     formatDb(m.currentSpl),
-                    fontSize = 64.sp,
+                    fontSize = 52.sp,
                     fontWeight = FontWeight.Bold,
                     // 미보정 값은 흐리게 그린다. 보정된 값과 같은 밝기로 띄우면
                     // 둘의 무게가 같아 보인다 — 하나는 잰 값이고 하나는 짐작이다.
@@ -262,90 +282,34 @@ fun MeasureScreen(
             }
         }
 
-        if (range != null) {
-            // **무엇을 재서 견주는 범위인지 적는다.**
-            //
-            // 예전에는 「설교 권장 범위 68 ~ 75 dBA」까지만 적었다. 그런데
-            // 이 범위는 **시간평균(LAeq) 기준**이고
-            // ([kr.joa.selahrta.domain.ReferenceRange]), 계기가 그리는 큰
-            // 숫자는 **순간값**이다. 어느 것과 견주라는 말이 없으니 말
-            // 한마디에 계기가 빨개지는 것을 「너무 크다」로 읽게 된다.
-            //
-            // 가격·구독 전략 3장이 「권장범위의 근거·측정 조건·가중치·
-            // **평균시간** 표시」를 요구한 자리가 바로 여기다.
-            // **눈에 띄게 둔다**(2026-09-24 담당자 지시). 예전에는 흐린
-            // 한 줄이라 계기 옆에서 묻혔다 — 정작 「지금 값이 알맞은가」를
-            // 판단하는 근거가 이 숫자인데.
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(top = 12.dp)
-                    .background(SelahColors.SurfaceVariant, RoundedCornerShape(12.dp))
-                    .border(1.dp, SelahColors.Outline, RoundedCornerShape(12.dp))
-                    .padding(vertical = 10.dp, horizontal = 14.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                Text(
-                    "${segment.shortKo} 권장 범위" +
-                        if (capture.meterSettings.isCustom(segment)) " (고친 값)" else "",
-                    color = SelahColors.TextMuted,
-                    fontSize = 11.sp,
-                )
-                Text(
-                    "${range.avgLowDb.toInt()} ~ ${range.avgHighDb.toInt()} dBA",
-                    color = SelahColors.TextPrimary,
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Bold,
-                )
-                Text(
-                    "Leq(${capture.meterSettings.leqWindow.labelKo}) 기준",
-                    color = SelahColors.TextMuted,
-                    fontSize = 11.sp,
-                )
-            }
-            if (running && canJudge) {
-                Text(
-                    "계기의 큰 숫자는 지금 값이라 더 크게 출렁입니다. " +
-                        "범위에 드는지는 아래 Leq 의 색으로 보십시오.",
-                    color = SelahColors.TextMuted,
-                    fontSize = 11.sp,
-                    lineHeight = 15.sp,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
-            }
-            // **색을 칠하지 않는 까닭은 글자로 적는다.** 배지를 없앤 뒤로
-            // 판정은 바의 색 하나로만 말하는데, 색이 안 들어오는 상태를
-            // 설명하지 않으면 고장처럼 보인다(명세 11장).
-            if (running && !canJudge) {
-                Text(
-                    "지금은 ${weighting.labelKo} 라 범위와 견주지 않습니다. " +
-                        "설정에서 dBA 로 바꾸면 계기에 색이 들어옵니다.",
-                    color = SelahColors.Warn,
-                    fontSize = 11.sp,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
-            }
-            // 「보편적 기준이 아니라 참고값입니다」는 뺐다. 같은 말이
-            // 설정 화면의 「구간별 권장 범위」 아래에 그대로 있다.
+        // **한 줄로 줄였다.** 두 줄짜리 안내가 계기와 타일 사이에 늘 떠
+        // 있어 버튼을 화면 밖으로 밀었다. 하려던 말은 하나다 —
+        // 「빨간 건 순간값이니 놀라지 말고 Leq 를 봐라」.
+        if (running && canJudge) {
+            Text(
+                "큰 숫자는 순간값입니다. 범위 판정은 아래 Leq 색으로 보십시오.",
+                color = SelahColors.TextMuted,
+                fontSize = 11.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+        // **색을 칠하지 않는 까닭은 글자로 적는다.** 배지를 없앤 뒤로
+        // 판정은 바의 색 하나로만 말하는데, 색이 안 들어오는 상태를
+        // 설명하지 않으면 고장처럼 보인다(명세 11장).
+        if (running && !canJudge) {
+            Text(
+                "지금은 ${weighting.labelKo} 라 범위와 견주지 않습니다. " +
+                    "설정에서 dBA 로 바꾸면 계기에 색이 들어옵니다.",
+                color = SelahColors.Warn,
+                fontSize = 11.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(top = 4.dp),
+            )
         }
 
-        // 구간을 고르는 줄은 **없앴다.** 화면 위쪽 칩(설교·찬양)이 곧
-        // 구간이라, 같은 것을 고르는 줄이 둘이면 어느 쪽이 진짜인지
-        // 알 수 없다. 기도·자유 측정은 쓰는 자리가 없어 걷어냈다.
-        Text(
-            segment.focusKo,
-            color = SelahColors.TextMuted,
-            fontSize = 11.sp,
-            lineHeight = 15.sp,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(top = 6.dp),
-        )
-
         Row(
-            Modifier.fillMaxWidth().padding(top = 20.dp),
+            Modifier.fillMaxWidth().padding(top = 14.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             ValueTile(
@@ -358,7 +322,7 @@ fun MeasureScreen(
                 // **권장 범위와 견줄 수 있는 것은 이 값이다.**
                 //
                 // 권장 범위는 시간평균(LAeq) 기준으로 정해져 있다
-                // ([kr.joa.selahrta.domain.ReferenceRange]). 그런데 색은
+                // ([kr.joa.selahrta.domain.SegmentRange]). 그런데 색은
                 // 계기에만 있었고 계기는 **순간값**을 그린다 — 말 한마디에
                 // 크게 튀는 값이라, 실제 Leq 가 범위 안에 얌전히 있어도
                 // 계기는 빨개졌다 나왔다 한다.
@@ -385,6 +349,51 @@ fun MeasureScreen(
                 if (m.peakClipped && m.peakSpl != null) "≥${formatDb(m.peakSpl)}" else formatDb(m.peakSpl),
                 if (m.peakClipped) "잘림 · 가중없음" else "dB 가중없음",
                 Modifier.weight(1f),
+            )
+        }
+
+        // **잘림은 버튼보다 위에 둔다.** 그 구간의 숫자가 전부 하한이라는
+        // 말이라, 화면에서 내려가면 안 되는 종류의 경고다.
+        if (m.anyClipping) {
+            InfoBar(
+                "소리가 너무 커서 파형이 잘린 구간이 있습니다. 그 구간의 음압은 " +
+                    "화면 값보다 높으며 얼마나 높은지는 알 수 없습니다. " +
+                    "마이크를 소리원에서 떼어 놓으십시오.",
+                Modifier.padding(top = 12.dp),
+                tone = SelahColors.High,
+            )
+        }
+
+        // **버튼 하나로 여닫는다.** 둘을 나란히 두었더니, 재는 동안에는
+        // 안내가 길어져 두 버튼이 화면 밖으로 밀렸다 — 「한 화면에
+        // 보인다」는 목적을 오히려 못 지키고, 누를 수 없는 버튼이 자리만
+        // 차지했다. 사용자가 토글 하나로 돌리라고 정했다.
+        //
+        // **저역 비중 카드보다 위로 올렸다**(2026-09-24). 그 카드가 한
+        // 줄을 차지하면서 재는 동안 「측정 종료」가 화면 밖으로 밀렸다 —
+        // 기기에서 확인했다. 카드는 읽는 것이고 버튼은 누르는 것이다.
+        // 누를 것이 먼저다.
+        Button(
+            onClick = {
+                when {
+                    !hasPermission -> onRequestPermission()
+                    running -> onStop()
+                    else -> onStart()
+                }
+            },
+            modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (running) SelahColors.SurfaceVariant else SelahColors.Accent,
+                contentColor = if (running) SelahColors.TextPrimary else Color(0xFF00201C),
+            ),
+        ) {
+            Text(
+                when {
+                    !hasPermission -> "마이크 권한 허용하기"
+                    running -> "측정 종료"
+                    else -> "측정 시작"
+                },
+                fontWeight = FontWeight.Bold,
             )
         }
 
@@ -419,44 +428,6 @@ fun MeasureScreen(
                     lineHeight = 14.sp,
                 )
             }
-        }
-
-        if (m.anyClipping) {
-            InfoBar(
-                "소리가 너무 커서 파형이 잘린 구간이 있습니다. 그 구간의 음압은 " +
-                    "화면 값보다 높으며 얼마나 높은지는 알 수 없습니다. " +
-                    "마이크를 소리원에서 떼어 놓으십시오.",
-                Modifier.padding(top = 12.dp),
-                tone = SelahColors.High,
-            )
-        }
-
-        // **버튼 하나로 여닫는다.** 둘을 나란히 두었더니, 재는 동안에는
-        // 안내가 길어져 두 버튼이 화면 밖으로 밀렸다 — 「한 화면에
-        // 보인다」는 목적을 오히려 못 지키고, 누를 수 없는 버튼이 자리만
-        // 차지했다. 사용자가 토글 하나로 돌리라고 정했다.
-        Button(
-            onClick = {
-                when {
-                    !hasPermission -> onRequestPermission()
-                    running -> onStop()
-                    else -> onStart()
-                }
-            },
-            modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = if (running) SelahColors.SurfaceVariant else SelahColors.Accent,
-                contentColor = if (running) SelahColors.TextPrimary else Color(0xFF00201C),
-            ),
-        ) {
-            Text(
-                when {
-                    !hasPermission -> "마이크 권한 허용하기"
-                    running -> "측정 종료"
-                    else -> "측정 시작"
-                },
-                fontWeight = FontWeight.Bold,
-            )
         }
 
         if (running) {
@@ -529,6 +500,18 @@ private fun GaugeArc(
     fraction: Float?,
     modifier: Modifier = Modifier,
     color: Color = SelahColors.InRange,
+    /**
+     * 권장 범위를 호 위에 **띠**로 깔아 둔다. 눈금으로 환산한 0~1 이다.
+     *
+     * 숫자로만 적어 두면 「지금 바늘이 그 안인가」를 사람이 머리로 셈해야
+     * 한다. 띠로 그리면 눈으로 바로 읽힌다.
+     *
+     * **A 가중일 때만 준다** — 범위가 dBA 기준이라 C·Z 에서는 견줄 수
+     * 없다(부르는 쪽이 canJudge 로 가린다).
+     */
+    band: ClosedFloatingPointRange<Float>? = null,
+    /** 이번 측정의 최대. 0~1. 지나간 자리를 눈금 위에 남긴다. */
+    maxMark: Float? = null,
 ) {
     // **미끄러지게 한다.** 화면은 66ms 마다 한 번 새 값을 받는데, 그때마다
     // 바가 툭툭 건너뛰면 눈이 따라가기 어렵다. 그 사이를 이어 그린다.
@@ -566,6 +549,25 @@ private fun GaugeArc(
             style = Stroke(width = stroke, cap = StrokeCap.Round),
         )
 
+        // **권장 범위 띠는 바늘 밑에 깔린다.** 위에 그리면 지금 값을 가린다.
+        // 끝을 Butt 로 자르는 것은 일부러다 — Round 로 두면 띠가 양쪽으로
+        // 반지름만큼 번져 실제 범위보다 넓어 보인다.
+        band?.let {
+            val lo = it.start.coerceIn(0f, 1f)
+            val hi = it.endInclusive.coerceIn(0f, 1f)
+            if (hi > lo) {
+                drawArc(
+                    color = SelahColors.InRange.copy(alpha = 0.30f),
+                    startAngle = 180f + 180f * lo,
+                    sweepAngle = 180f * (hi - lo),
+                    useCenter = false,
+                    topLeft = topLeft,
+                    size = arcSize,
+                    style = Stroke(width = stroke, cap = StrokeCap.Butt),
+                )
+            }
+        }
+
         if (fraction != null) {
             drawArc(
                 color = shownColor,
@@ -577,8 +579,44 @@ private fun GaugeArc(
                 style = Stroke(width = stroke, cap = StrokeCap.Round),
             )
         }
+
+        // **지나간 최대를 눈금 위에 남긴다.** 숫자는 아래 타일에도 있지만,
+        // 호 위에 있으면 「지금이 그때보다 얼마나 작은가」가 한눈에 들어온다.
+        maxMark?.let {
+            val rad = Math.toRadians((180.0 + 180.0 * it.coerceIn(0f, 1f)))
+            val r = d / 2f
+            val cx = topLeft.x + r
+            val cy = topLeft.y + r
+            val inner = r - stroke / 2f
+            val outer = r + stroke / 2f
+            drawLine(
+                color = SelahColors.TextPrimary,
+                start = Offset(
+                    cx + (inner * kotlin.math.cos(rad)).toFloat(),
+                    cy + (inner * kotlin.math.sin(rad)).toFloat(),
+                ),
+                end = Offset(
+                    cx + (outer * kotlin.math.cos(rad)).toFloat(),
+                    cy + (outer * kotlin.math.sin(rad)).toFloat(),
+                ),
+                strokeWidth = 3.dp.toPx(),
+                cap = StrokeCap.Round,
+            )
+        }
     }
 }
+
+/**
+ * dB 를 계기 눈금(0~1)으로 옮긴다. 눈금은 40~110dB 다 — 예배당에서
+ * 실제로 오가는 범위.
+ *
+ * 한 자리에 모아 둔 까닭은 바늘·범위 띠·MAX 표식이 **같은 눈금**을 써야
+ * 하기 때문이다. 각자 셈하면 하나만 고쳐도 서로 어긋난다.
+ */
+private fun gaugeFraction(db: Double): Float = ((db - GAUGE_LOW_DB) / GAUGE_SPAN_DB).toFloat()
+
+private const val GAUGE_LOW_DB = 40.0
+private const val GAUGE_SPAN_DB = 70.0
 
 /**
  * 계기 바가 다음 값으로 넘어가는 데 걸리는 시간(ms).
@@ -590,36 +628,116 @@ private fun GaugeArc(
 private const val GAUGE_GLIDE_MS = 90
 
 /**
- * 재는 구간을 고른다 — 설교인가 찬양인가.
+ * 권장 범위 상자 — **구간 고르개를 안에 품는다.**
  *
- * **고르는 것은 권장 범위 하나뿐이다.** 측정 방식이 바뀌는 것이 아니라
- * 무엇과 견줄지가 바뀐다. 그래서 고르개를 범위 바로 위에 둔다.
+ * ## 왜 한 상자인가
+ *
+ * 구간을 고르는 일은 **이 상자의 숫자를 바꾸는 일**이다. 측정 방식이
+ * 바뀌지 않는다 — 무엇과 견줄지가 바뀔 뿐이다. 고르개를 밖에 두면 그
+ * 관계가 끊겨, 화면에 「고르는 것」이 둘(위 칩·아래 줄)인 것처럼 보인다.
+ *
+ * ## 무엇을 재서 견주는 범위인지 함께 적는다
+ *
+ * 범위는 **시간평균(LAeq) 기준**이고([kr.joa.selahrta.domain.SegmentRange])
+ * 계기의 큰 숫자는 **순간값**이다. 어느 것과 견주라는 말이 없으면, 말
+ * 한마디에 계기가 빨개지는 것을 「너무 크다」로 읽게 된다. 그래서 숫자
+ * 옆에 평균시간을 붙여 둔다(가격·구독 전략 3장의 요구이기도 하다).
  */
 @Composable
-private fun SegmentPicker(
-    selected: ChurchSegment,
-    onPick: (ChurchSegment) -> Unit,
+private fun RangeCard(
+    segment: ChurchSegment,
+    onSegment: (ChurchSegment) -> Unit,
+    range: SegmentRange?,
+    isCustom: Boolean,
+    leqLabelKo: String,
+    /** 구간 설명을 함께 보일지. 재는 동안에는 자리를 비운다. */
+    showFocus: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    Row(
-        modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    Column(
+        modifier
+            .fillMaxWidth()
+            .background(SelahColors.SurfaceVariant, RoundedCornerShape(12.dp))
+            .border(1.dp, SelahColors.Outline, RoundedCornerShape(12.dp))
+            .padding(vertical = 10.dp, horizontal = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "권장 범위" + if (isCustom) " (고친 값)" else "",
+                color = SelahColors.TextMuted,
+                fontSize = 11.sp,
+            )
+            SegmentPills(segment, onSegment)
+        }
+        if (range == null) {
+            Text(
+                "이 구간에는 권장 범위가 없습니다.",
+                color = SelahColors.TextSecondary,
+                fontSize = 13.sp,
+            )
+        } else {
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text(
+                    "${range.avgLowDb.toInt()} ~ ${range.avgHighDb.toInt()} dBA",
+                    color = SelahColors.TextPrimary,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    "  Leq($leqLabelKo) 기준",
+                    color = SelahColors.TextMuted,
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(bottom = 3.dp),
+                )
+            }
+        }
+        if (showFocus) {
+            Text(
+                segment.focusKo,
+                color = SelahColors.TextMuted,
+                fontSize = 11.sp,
+                lineHeight = 15.sp,
+            )
+        }
+    }
+}
+
+/**
+ * 구간을 고르는 작은 알약 둘 — 설교인가 찬양인가.
+ *
+ * **작게 둔다**(2026-09-24 담당자 지시). 예전에는 화면 폭을 반씩 나눠 쓰는
+ * 큰 버튼 둘이 한 줄을 통째로 차지했다. 고르는 일은 예배 한 번에 한
+ * 번뿐인데 늘 그만한 자리를 쓰고 있었고, 그만큼 측정 버튼이 화면 밖으로
+ * 밀렸다.
+ */
+@Composable
+private fun SegmentPills(
+    selected: ChurchSegment,
+    onPick: (ChurchSegment) -> Unit,
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         ChurchSegment.entries.forEach { s ->
             val on = s == selected
             Box(
                 Modifier
-                    .weight(1f)
                     .background(
-                        if (on) SelahColors.Accent else SelahColors.SurfaceVariant,
-                        RoundedCornerShape(10.dp),
+                        if (on) SelahColors.Accent else SelahColors.Surface,
+                        RoundedCornerShape(999.dp),
                     )
                     .clickable { onPick(s) }
-                    .padding(vertical = 10.dp),
+                    // 눌리는 자리가 글자만 해지면 손가락이 빗나간다.
+                    // 알약을 작게 두되 여백으로 누를 자리는 남긴다.
+                    .padding(horizontal = 14.dp, vertical = 7.dp)
+                    .semantics { stateDescription = if (on) "선택됨" else "선택 안 됨" },
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    s.labelKo,
+                    s.shortKo,
                     color = if (on) Color(0xFF00201C) else SelahColors.TextSecondary,
                     fontSize = 13.sp,
                     fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,

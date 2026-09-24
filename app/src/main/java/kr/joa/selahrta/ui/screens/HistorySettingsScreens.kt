@@ -511,7 +511,11 @@ private fun DeviceRow(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column {
+        // **남는 폭은 기기 이름이 가져간다.** 무게를 주지 않았더니 긴 USB
+        // 이름이 줄을 다 먹고, 오른쪽 배지가 한 글자씩 세로로 쪼개졌다
+        // ―「선/택/함」(기기에서 확인). 한국어는 기본값에서 글자 단위로
+        // 끊기기 때문이다.
+        Column(Modifier.weight(1f)) {
             Text(
                 title,
                 color = when {
@@ -526,28 +530,32 @@ private fun DeviceRow(
         }
         if (onForget != null) {
             TextButton(onClick = onForget) {
-                Text("지우기", color = SelahColors.TextMuted, fontSize = 11.sp)
+                Text("지우기", color = SelahColors.TextMuted, fontSize = 11.sp, softWrap = false)
             }
         }
         // 색만으로 알리지 않는다(명세 11장).
+        // **배지는 끊지 않는다.** 짧은 라벨이라 줄바꿈할 자리가 없다.
         when {
             inUse -> Text(
                 "사용 중",
                 color = SelahColors.Accent,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.SemiBold,
+                softWrap = false,
             )
             nextStart -> Text(
                 "다음 시작에 사용",
                 color = SelahColors.Warn,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.SemiBold,
+                softWrap = false,
             )
             selected -> Text(
                 "선택함",
                 color = SelahColors.Accent,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.SemiBold,
+                softWrap = false,
             )
         }
     }
