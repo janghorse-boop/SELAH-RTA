@@ -41,15 +41,39 @@ enum class ViewMode(val labelKo: String, val section: NavSection) {
      * 그림이라 세로에서는 막대가 실오라기처럼 보인다.
      */
     Rta("RTA", NavSection.Analyze),
+
+    /**
+     * 소리를 내보내는 것들 — 시험 신호, 앞으로 주파수 발생기·L/R 테스트.
+     *
+     * 설정이 아니라 도구다. 값을 바꿔 두는 일이 아니라 **하는 일**이기
+     * 때문이다.
+     */
+    Signal("시험 신호", NavSection.Tools),
+
+    /**
+     * 악기 EQ 가이드(명세 §6).
+     *
+     * **도구로 옮겨 살려 둔다**(2026-09-24 담당자 지시: 「악기 EQ는 일단
+     * 도구 안에 살려두겠습니다. 이후에 방향을 정해서 다시 수정하겠습니다」).
+     *
+     * 분석에 있던 것을 잠시 뺐다가 여기로 왔다. 자리는 이쪽이 더 맞는다 —
+     * 지금 들어오는 소리를 **읽는** 화면이 아니라 표를 **찾아보는** 화면이고,
+     * 도구에 있는 다른 것들과 같은 성격이다.
+     *
+     * **마이크 없이도 열린다.** 캡처를 쓰지 않으므로 권한이 없어도 제
+     * 내용을 그대로 보여준다(명세 §1 원칙 2).
+     */
+    InstrumentEq("악기 EQ", NavSection.Tools),
 }
 
 /**
  * 이 칩이 캡처를 쓰는가. 쓰지 않으면 권한이 없어도 막지 않는다.
  *
- * 기록은 지난 값을 보는 화면이라 지금 들어오는 소리와 무관하다.
+ * 악기 EQ 는 표를 찾아보는 화면이고, 기록은 지난 값을 보는 화면이다.
+ * 둘 다 지금 들어오는 소리와 무관하다.
  */
 val ViewMode.needsCapture: Boolean
-    get() = this != ViewMode.History
+    get() = this != ViewMode.History && this != ViewMode.InstrumentEq
 
 /**
  * 아래쪽 탭 넷.
@@ -74,11 +98,18 @@ enum class NavSection(val labelKo: String, val iconRes: Int) {
     Settings("설정", R.drawable.ic_nav_settings),
 }
 
-/** 아래 탭을 눌렀을 때 어느 칩으로 갈지. 마지막에 보던 칩을 기억해 돌아간다. */
+/**
+ * 아래 탭을 눌렀을 때 어느 칩으로 갈지. 마지막에 보던 칩을 기억해 돌아간다.
+ *
+ * **칩이 보이는지와 무관하게 부른다.** 칩이 한 개뿐이라 안 보이는 구역도
+ * 화면은 그 칩의 것으로 바뀌어야 한다 — 이 둘을 같은 조건으로 묶었다가,
+ * 분석에 칩이 사라지자 탭은 「분석」인데 화면은 측정이 떠 있었다.
+ */
 fun NavSection.defaultMode(last: ViewMode): ViewMode = when (this) {
     NavSection.Measure -> if (last.section == NavSection.Measure) last else ViewMode.Spl
     NavSection.Analyze -> if (last.section == NavSection.Analyze) last else ViewMode.Rta
-    else -> last
+    NavSection.Tools -> if (last.section == NavSection.Tools) last else ViewMode.Signal
+    NavSection.Settings -> last
 }
 
 /**

@@ -64,6 +64,7 @@ import kr.joa.selahrta.ui.nav.defaultMode
 import kr.joa.selahrta.ui.nav.hasModeChips
 import kr.joa.selahrta.ui.screens.CalibrationProfilesScreen
 import kr.joa.selahrta.ui.screens.CalibrationWizardScreen
+import kr.joa.selahrta.ui.instrument.InstrumentGuideScreen
 import kr.joa.selahrta.ui.screens.HistoryScreen
 import kr.joa.selahrta.ui.screens.MeasureScreen
 import kr.joa.selahrta.ui.screens.RtaScreen
@@ -303,32 +304,14 @@ fun SelahApp() {
             }
 
             Box(Modifier.weight(1f)) {
-                when (section) {
-                    NavSection.Measure, NavSection.Analyze -> when (mode) {
-                        ViewMode.Spl -> MeasureScreen(
-                            capture = capture,
-                            onSegment = vm::setSegment,
-                            hasPermission = hasPermission,
-                            onRequestPermission = {
-                                askPermission.launch(Manifest.permission.RECORD_AUDIO)
-                            },
-                            onStart = beginMeasure,
-                            onStop = vm::stop,
-                            onDismissDeviceNotice = vm::dismissDeviceNotice,
-                        )
-                        ViewMode.Rta -> RtaScreen(capture)
-                        // 지난 기록을 보는 화면이라 마이크가 필요 없다.
-                        ViewMode.History -> HistoryScreen()
-                    }
-
-                    NavSection.Tools -> ToolsScreen(
-                        capture = capture,
-                        onPlaySignal = vm::playSignal,
-                        onStopSignal = vm::stopSignal,
-                        onSignalLevel = vm::setSignalLevel,
-                        onDismissSignalNotice = vm::dismissSignalNotice,
-                    )
-                    NavSection.Settings -> SettingsScreen(
+                // **칩이 화면을 정한다.** 구역은 칩을 고르는 자리일 뿐이고,
+                // `defaultMode` 가 「이 구역에 맞는 칩」을 보장한다. 예전에는
+                // 구역으로 먼저 갈랐는데, 칩이 하나뿐이라 칩 줄이 사라진
+                // 구역에서 둘이 어긋났다.
+                //
+                // 설정만 칩이 없어 따로 둔다.
+                when {
+                    section == NavSection.Settings -> SettingsScreen(
                         capture = capture,
                         onSaveCalibration = vm::saveSimpleCalibration,
                         onClearCalibration = vm::clearCalibration,
@@ -358,6 +341,32 @@ fun SelahApp() {
                         onSignalLevel = vm::setSignalLevel,
                         onDismissSignalNotice = vm::dismissSignalNotice,
                     )
+
+                    else -> when (mode) {
+                        ViewMode.Spl -> MeasureScreen(
+                            capture = capture,
+                            onSegment = vm::setSegment,
+                            hasPermission = hasPermission,
+                            onRequestPermission = {
+                                askPermission.launch(Manifest.permission.RECORD_AUDIO)
+                            },
+                            onStart = beginMeasure,
+                            onStop = vm::stop,
+                            onDismissDeviceNotice = vm::dismissDeviceNotice,
+                        )
+                        ViewMode.Rta -> RtaScreen(capture)
+                        // 지난 기록을 보는 화면이라 마이크가 필요 없다.
+                        ViewMode.History -> HistoryScreen()
+                        ViewMode.Signal -> ToolsScreen(
+                            capture = capture,
+                            onPlaySignal = vm::playSignal,
+                            onStopSignal = vm::stopSignal,
+                            onSignalLevel = vm::setSignalLevel,
+                            onDismissSignalNotice = vm::dismissSignalNotice,
+                        )
+                        // 캡처를 쓰지 않는다. 권한이 없어도 그대로 열린다.
+                        ViewMode.InstrumentEq -> InstrumentGuideScreen()
+                    }
                 }
 
                 // **탭 내용 위에 덮는다.** 탭으로 두면 측정 중에 잘못

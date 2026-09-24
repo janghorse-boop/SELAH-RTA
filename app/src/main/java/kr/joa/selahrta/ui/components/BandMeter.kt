@@ -317,7 +317,16 @@ fun BandMeter(
                             if (labelEvery || b in LABEL_BANDS) {
                                 Text(
                                     ThirdOctave.label(b),
-                                    color = SelahColors.TextMuted,
+                                    // **눈금은 흐리게 두지 않는다**(2026-09-24
+                                    // 담당자 지시: 「아래 주파수 표시 글자 색상이
+                                    // 옅은 그레이라서 잘 안 보인다」).
+                                    //
+                                    // 다른 곳의 TextMuted 는 「읽어도 되고 안 읽어도
+                                    // 되는 것」에 쓴다. 그런데 이 글자는 **막대를
+                                    // 읽는 데 반드시 필요하다** — 몇 Hz 인지 모르면
+                                    // 막대는 그냥 무늬다. 8sp 로 작기까지 해서 흐린
+                                    // 회색으로는 예배당 조명에서 안 보인다.
+                                    color = SelahColors.TextPrimary,
                                     fontSize = labelSize,
                                     maxLines = 1,
                                     softWrap = false,
@@ -351,7 +360,9 @@ fun BandMeter(
                 // 31칸이 다 들어와 밀 것이 없다. maxValue 가 그 사실을 안다.
                 if (scroll.maxValue > 0) append(" · 옆으로 밀면 나머지 대역")
             },
-            color = SelahColors.TextMuted,
+            // 눈금 글자를 밝게 한 김에 이 줄도 한 호 올린다. 아주 흐리면
+            // 「무슨 단위로 보는 그림인가」가 화면에서 사라진다.
+            color = SelahColors.TextSecondary,
             fontSize = 9.sp,
             modifier = Modifier.padding(top = 2.dp),
         )
