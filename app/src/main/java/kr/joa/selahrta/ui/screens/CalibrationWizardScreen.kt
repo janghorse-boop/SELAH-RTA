@@ -528,7 +528,7 @@ fun exampleJudgement(outcome: CalibrationOutcome): QualityResult {
     return judgeCalibration(
         QualityReport(
             bands = bands,
-            repeatSpreadDb = 0.6,
+            repeatStdevDb = 0.6,
             referenceDriftDb = 0.2,
             referenceBandDriftDb = 0.4,
             minFramesPerStep = 16,

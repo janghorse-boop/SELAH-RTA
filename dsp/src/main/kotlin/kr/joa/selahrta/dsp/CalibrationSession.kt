@@ -3,6 +3,7 @@ package kr.joa.selahrta.dsp
 import kotlin.math.abs
 import kotlin.math.log10
 import kotlin.math.pow
+import kotlin.math.sqrt
 
 /**
  * 교정 한 세션의 **순서와 셈**(S23 개별 교정 지시서 3.2~3.3).
@@ -45,13 +46,31 @@ data class StepResult(
     val keptFrames: Int,
     val droppedFrames: Int,
     /**
-     * 남긴 장들의 광대역 레벨이 얼마나 벌어졌는가(dB).
+     * 남긴 장들의 광대역 레벨이 얼마나 흔들렸는가 — **표준편차**(dB).
+     *
+     * ## 왜 min−max 가 아닌가 (2026-09-24)
+     *
+     * 예전에는 `max − min` 이었다. **그 값은 장 수를 따라 커진다** —
+     * 흔들림의 크기가 같아도 많이 뽑을수록 양끝이 벌어지는 것은 통계의
+     * 성질이다. 그래서 오래 잰 사람이 벌을 받았다.
+     *
+     * 합성 핑크 노이즈(흔들릴 것이 하나도 없는 신호)로 잰 값이다
+     * ([kr.joa.selahrta.dsp.FrameSpreadProbeTest]):
+     *
+     * | 장 수 | min−max | 표준편차 |
+     * |---:|---:|---:|
+     * | 20 | 1.82 dB | 0.50 dB |
+     * | 120 | 2.51~3.54 dB | 0.59~0.61 dB |
+     * | 240 | 3.46 dB | 0.59 dB |
+     *
+     * min−max 는 문턱 2.0dB 을 **흠 없는 신호로도 전부 넘겼다.** 표준편차는
+     * 장 수와 씨앗에 상관없이 일정하다. 그래서 이쪽으로 바꿨다.
      *
      * **장이 하나뿐이면 `null` 이다.** 0 이 아니다 — 0 은 「흔들리지
      * 않았다」로 읽히는데 실제로는 **「알 수 없다」**이기 때문이다
      * (독립 검증 CP01).
      */
-    val levelSpreadDb: Double?,
+    val levelStdevDb: Double?,
     /**
      * 안정된 장을 **하나도 못 골라** 전부 쓴 경우인가.
      *
@@ -90,7 +109,9 @@ data class SessionResult(
      *
      * 대상만 보면 안 된다 — 기준이 흔들린 세션은 대상이 얌전해도 못 쓴다.
      */
-    val repeatSpreadDb: Double?,
+    val repeatStdevDb: Double?,
+    /** 가장 많이 변한 대역의 번호. [referenceBandDriftDb] 가 어디였는지. */
+    val referenceDriftBand: Int,
     /** 어느 단계에서든 안정된 장을 하나도 못 골랐는가. */
     val noStableFrames: Boolean,
     /**
@@ -203,7 +224,11 @@ class CalibrationSession(
         // **대역별로도 본다.** 광대역만 보면 모양 변화가 상쇄된다 —
         // 한 대역이 오르고 다른 대역이 내리면 광대역 차이는 0 인데,
         // 그 모양이 그대로 마이크 보정이 된다(독립 검증 CP01).
-        val bandDrift = (0 until bandCount).maxOf { abs(after.meanDb[it] - before.meanDb[it]) }
+        // **어느 대역인지도 함께 남긴다.** 크기만 알려 주면 사람이 무엇을
+        // 봐야 할지 알 수 없다 — 저역이면 방 울림, 고역이면 마이크 위치나
+        // 주변 소리를 의심해야 하는데, 그 갈림이 대역 하나에 달려 있다.
+        val driftBand = (0 until bandCount).maxBy { abs(after.meanDb[it] - before.meanDb[it]) }
+        val bandDrift = abs(after.meanDb[driftBand] - before.meanDb[driftBand])
 
         // **기준은 앞뒤의 에너지 평균**이다. 대상은 그 사이에 쟀다.
         val refMean = DoubleArray(bandCount) {
@@ -213,12 +238,12 @@ class CalibrationSession(
         }
 
         val steps = listOf(before, target, after)
-        // **세 단계 중 가장 나쁜 벌어짐.** 기준이 흔들린 세션은 대상이
+        // **세 단계 중 가장 많이 흔들린 것.** 기준이 흔들린 세션은 대상이
         // 얌전해도 못 쓴다. 하나라도 모르면 전체를 모르는 것으로 둔다.
-        val worstSpread = if (steps.any { it.levelSpreadDb == null }) {
+        val worstStdev = if (steps.any { it.levelStdevDb == null }) {
             null
         } else {
-            steps.maxOf { it.levelSpreadDb!! }
+            steps.maxOf { it.levelStdevDb!! }
         }
 
         return SessionResult(
@@ -227,7 +252,8 @@ class CalibrationSession(
             referenceAfter = after,
             referenceDriftDb = drift,
             referenceBandDriftDb = bandDrift,
-            repeatSpreadDb = worstSpread,
+            referenceDriftBand = driftBand,
+            repeatStdevDb = worstStdev,
             noStableFrames = steps.any { it.noStableFrames },
             // **쓴 장으로 센다.** 넣은 장으로 세면 걸러내기가 여섯을
             // 버려도 「여덟 장 모았다」가 된다(독립 검증 RCP03).
@@ -255,14 +281,22 @@ class CalibrationSession(
 
         val levels = used.map { broadbandDb(all[it]) }
         // **장이 하나면 「0」이 아니라 「모른다」다.**
-        val spread = if (levels.size < 2) null else (levels.max() - levels.min())
+        //
+        // 표준편차를 쓴다. min−max 는 장 수를 따라 커져서 같은 신호도
+        // 오래 재면 나쁘게 나온다(위 [StepResult.levelStdevDb] 참고).
+        val stdev = if (levels.size < 2) {
+            null
+        } else {
+            val mean = levels.average()
+            sqrt(levels.sumOf { (it - mean) * (it - mean) } / levels.size)
+        }
 
         return StepResult(
             step = step,
             meanDb = acc.meanDb()!!,
             keptFrames = used.size,
             droppedFrames = all.size - used.size,
-            levelSpreadDb = spread,
+            levelStdevDb = stdev,
             noStableFrames = noStable,
             totalFrames = all.size,
         )
@@ -442,11 +476,31 @@ fun qualityFromSession(
             )
         }
     }
+    // **쓸 대역에서만 모양 변화를 본다** (2026-09-24 실측).
+    //
+    // 예전에는 31개 밴드 전부에서 앞뒤 기준을 견주었다. 그래서 스피커가
+    // 소리를 내지 못하는 20Hz — SNR 이 없어 숫자가 뜻을 갖지 않는 자리 —
+    // 의 2.0dB 흔들림 때문에 **교정 전체가 거부됐다.** 그런데 그 대역은
+    // 뒤에서 어차피 버려진다(보정 범위 50Hz~6kHz). 쓰지도 않을 자리를
+    // 근거로 쓸 것을 버린 셈이다.
+    //
+    // 이제 SNR 이 서는 대역만 본다. 기준 쪽 배경을 안 쟀으면 가릴 수가
+    // 없으므로 **전부 본다** — 모르는 것을 괜찮다고 하지 않는다.
+    val usable = referenceBands
+        ?.indices
+        ?.filter { referenceBands[it].snrDb >= policy.minBandSnrDb }
+        ?: reference.indices.toList()
+    val before = session.referenceBefore.meanDb
+    val after = session.referenceAfter.meanDb
+    val driftBand = usable.maxByOrNull { abs(after[it] - before[it]) }
+    val bandDrift = driftBand?.let { abs(after[it] - before[it]) }
+
     return QualityReport(
         bands = bands,
-        repeatSpreadDb = session.repeatSpreadDb,
+        repeatStdevDb = session.repeatStdevDb,
         referenceDriftDb = session.referenceDriftDb,
-        referenceBandDriftDb = session.referenceBandDriftDb,
+        referenceBandDriftDb = bandDrift,
+        referenceDriftBand = driftBand,
         noStableFrames = session.noStableFrames,
         // **쓴 장으로 센다**(RCP03).
         minFramesPerStep = session.minKeptFramesPerStep,

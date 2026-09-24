@@ -17,7 +17,7 @@ import kotlin.math.sqrt
  * 그런데 움직인 것이 없었고, USB 경로를 다섯 번 다시 열어도 레벨은
  * 0.3dB 안에서 같았다.
  *
- * 그래서 **판정값 자체를 의심**한다. `repeatSpreadDb` 는 한 단계에서
+ * 그래서 **판정값 자체를 의심**했다. 그때의 `repeatSpreadDb` 는 한 단계에서
  * 살아남은 장들의 **광대역 레벨 min−max** 다([CalibrationSession]).
  *
  * ## 두 가지를 확인한다
@@ -27,11 +27,13 @@ import kotlin.math.sqrt
  *    양끝은 벌어진다. 그러면 **오래 잰 사람이 벌을 받는다.**
  * 2. **거르는 기준이 판정하는 기준보다 느슨하다.**
  *    [keepStableFrames] 는 중앙값 ±3dB 를 남기므로 남은 것의 폭은 최대
- *    6.0dB 인데, 그것을 판정하는 [QualityPolicy.maxRepeatSpreadDb] 는
- *    2.0dB 다. 필터를 통과한 것이 곧바로 관문에 걸린다.
+ *    6.0dB 인데, 그것을 판정하는 문턱은 2.0dB 였다. 필터를 통과한 것이
+ *    곧바로 관문에 걸렸다.
  *
- * **이 시험은 문턱을 고치지 않는다.** 무엇이 사실인지만 적어 둔다 —
- * 어느 값으로 바꿀지는 이 수치를 보고 사람이 정할 일이다.
+ * ## 그래서 표준편차로 바꿨다
+ *
+ * 담당자 결정(2026-09-24). 이 시험은 이제 **바뀐 문턱이 양쪽에서
+ * 말이 되는지**를 지킨다 — 멀쩡한 신호는 지나가고, 흔들린 신호는 걸린다.
  */
 class FrameSpreadProbeTest {
 
@@ -122,21 +124,35 @@ class FrameSpreadProbeTest {
     }
 
     /**
-     * **거르는 기준이 판정하는 기준보다 느슨하다.**
+     * **멀쩡한 신호는 문턱 아래여야 한다.**
      *
-     * [keepStableFrames] 가 중앙값 ±3dB 를 남기므로 통과한 무리의 폭은
-     * 6.0dB 까지 될 수 있는데, 그것을 판정하는 문턱은 2.0dB 다. 필터가
-     * 「괜찮다」고 한 것을 관문이 곧바로 버리는 구조다.
+     * 이것이 깨지면 아무것도 움직이지 않아도 교정이 막힌다 — 예전
+     * min−max 문턱이 딱 그 상태였다.
      */
     @Test
-    fun `필터가 남기는 폭이 판정 문턱보다 넓다`() {
-        val filterSpan = 2 * 3.0 // keepStableFrames 의 기본 maxDeviationDb
-        val gate = QualityPolicy().maxRepeatSpreadDb
-        println("필터가 허용하는 폭=%.1fdB · 판정 문턱=%.1fdB".format(filterSpan, gate))
-        assertTrue(
-            "이 시험의 전제가 깨졌다 — 필터와 문턱이 이제 어긋나지 않는다면 지워도 된다",
-            filterSpan > gate,
-        )
+    fun `흠 없는 신호는 문턱 아래다`() {
+        val gate = QualityPolicy().maxRepeatStdevDb
+        val worst = listOf(1L, 2L, 3L, 4L, 5L).maxOf { stdev(levels(120, it)) }
+        println("합성 핑크 노이즈 표준편차 최악=%.2fdB · 문턱=%.2fdB".format(worst, gate))
+        assertTrue("흠 없는 신호가 문턱을 넘는다: $worst > $gate", worst < gate)
+    }
+
+    /**
+     * **흔들린 신호는 문턱을 넘어야 한다.**
+     *
+     * 문턱을 낮은 쪽에서만 맞추면 아무 흔들림도 못 잡는 잣대가 된다.
+     * 재는 도중 레벨이 한 번 바뀌는 경우를 만들어 본다 — 마이크가
+     * 밀리거나 사람이 앞을 지나가면 이런 모양이 된다.
+     */
+    @Test
+    fun `도중에 레벨이 바뀌면 문턱을 넘는다`() {
+        val gate = QualityPolicy().maxRepeatStdevDb
+        val clean = levels(120, seed = 7)
+        // 뒤 절반이 3dB 낮아진 경우.
+        val bumped = clean.mapIndexed { i, v -> if (i >= clean.size / 2) v - 3.0 else v }
+        val d = stdev(bumped)
+        println("도중 3dB 변한 신호 표준편차=%.2fdB · 문턱=%.2fdB".format(d, gate))
+        assertTrue("흔들렸는데 못 잡는다: $d <= $gate", d > gate)
     }
 
     /**
@@ -163,7 +179,7 @@ class FrameSpreadProbeTest {
             )
         }
         val worst = results.maxOf { it.first }
-        println("가장 넓은 폭 = %.2fdB (문턱 %.1fdB)".format(worst, QualityPolicy().maxRepeatSpreadDb))
+        println("가장 넓은 폭 = %.2fdB (문턱 %.1fdB)".format(worst, QualityPolicy().maxRepeatStdevDb))
         // 단언하지 않는다 — 이 시험의 목적은 **수치를 남기는 것**이다.
         assertTrue("장을 못 모았다", results.all { it.third > 0 })
     }

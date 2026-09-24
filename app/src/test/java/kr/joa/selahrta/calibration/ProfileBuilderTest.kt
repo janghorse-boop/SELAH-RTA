@@ -69,10 +69,10 @@ class ProfileBuilderTest {
     private fun quality(
         snrDb: Double = 30.0,
         dspVerified: Boolean = true,
-        repeatSpreadDb: Double? = 0.5,
+        repeatStdevDb: Double? = 0.5,
     ) = QualityReport(
         bands = (0 until n).map { BandNoise(ThirdOctave.exactCenter(it), 70.0, 70.0 - snrDb) },
-        repeatSpreadDb = repeatSpreadDb,
+        repeatStdevDb = repeatStdevDb,
         referenceDriftDb = 0.1,
         referenceBandDriftDb = 0.3,
         minFramesPerStep = 16,
@@ -107,7 +107,7 @@ class ProfileBuilderTest {
         withProof = false,
         referenceDriftDb = q.referenceDriftDb ?: 0.0,
         referenceBandDriftDb = q.referenceBandDriftDb ?: 0.0,
-        repeatSpreadDb = q.repeatSpreadDb,
+        repeatStdevDb = q.repeatStdevDb,
     )
 
     // ------------------------------------------------------------------
@@ -164,7 +164,7 @@ class ProfileBuilderTest {
         val ready = build(out, q) as ProfileBuildResult.Ready
 
         assertEquals(judgeCalibration(q, out).verdict, ready.profile.quality.verdict)
-        assertEquals(q.repeatSpreadDb!!, ready.profile.quality.repeatSpreadDb, 0.0)
+        assertEquals(q.repeatStdevDb!!, ready.profile.quality.repeatStdevDb, 0.0)
         assertEquals(q.referenceDriftDb!!, ready.profile.quality.referenceDriftDb, 0.0)
         assertEquals(
             "쓸 수 있는 비율은 **계산 뒤** 지원 비율이다",

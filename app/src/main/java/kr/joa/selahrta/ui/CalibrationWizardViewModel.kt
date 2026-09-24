@@ -407,6 +407,21 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
         }
         val separation = st.separation?.state ?: MicSeparation.Indistinguishable
 
+        // **대상 마이크로 저장해야 한다.**
+        //
+        // 이 교정이 설명하는 것은 대상(폰 내장)의 응답인데, 저장은 「지금
+        // 열린 경로」로 기록된다. 마법사 순서가 기준 → 대상 → 기준 이라
+        // 마지막에 열려 있는 것은 **언제나 기준 마이크**다. 그대로 두면
+        // 폰 마이크의 보정이 USB 인터페이스의 것으로 기록되어, 정작 폰에는
+        // 걸리지 않고 엉뚱한 경로에 걸릴 수 있다(실기기 확인 2026-09-24).
+        val target = st.targetDeviceKey
+        if (target != null && environment.deviceKey != target) {
+            _noticeKo.value = "지금 열린 입력이 대상 마이크가 아닙니다. " +
+                "이 교정은 대상 마이크의 응답이므로 그 마이크로 되돌린 뒤 저장해야 합니다 — " +
+                "「측정」 화면에서 입력을 대상으로 바꾸고 다시 시작한 뒤 돌아오십시오."
+            return
+        }
+
         viewModelScope.launch {
             _busyKo.value = "저장하는 중입니다."
             try {

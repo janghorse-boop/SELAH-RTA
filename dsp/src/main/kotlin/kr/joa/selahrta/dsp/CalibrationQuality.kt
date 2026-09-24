@@ -72,8 +72,28 @@ data class QualityPolicy(
     val minBandSnrDb: Double = 12.0,
     /** 쓸 수 있는 대역이 이 비율 아래면 측정을 버린다. */
     val minUsableBandRatio: Double = 0.6,
-    /** 반복 측정이 이보다 벌어지면 버린다. */
-    val maxRepeatSpreadDb: Double = 2.0,
+    /**
+     * 반복 측정의 **표준편차**가 이보다 크면 버린다.
+     *
+     * ## 이 값이 1.5 인 근거 (2026-09-24 실측)
+     *
+     * [kr.joa.selahrta.dsp.FrameSpreadProbeTest] 가 재 놓은 값이다.
+     *
+     * | 조건 | 표준편차 |
+     * |---|---:|
+     * | 합성 핑크 노이즈(흔들릴 것 없음) | 0.59~0.61 dB |
+     * | 실제 방·스피커 | 그보다 조금 위 |
+     * | 도중에 레벨이 튄 신호 | 훨씬 위 |
+     *
+     * 0.6 은 **신호 자체의 성질**이라 피할 수 없는 바닥이다. 여기에
+     * 방과 스피커 몫을 얹어 1.5 로 둔다 — 멀쩡한 측정은 지나가고,
+     * 마이크가 밀리거나 사람이 지나가면 걸린다.
+     *
+     * **예전 값 2.0 은 min−max 에 대한 것이었고, 그것으로는 흠 없는
+     * 합성 신호조차 통과하지 못했다.** 잣대를 바꾸었으므로 숫자도 다시
+     * 정한 것이지, 통과시키려고 늘린 것이 아니다.
+     */
+    val maxRepeatStdevDb: Double = 1.5,
     /** 기준 전후 재측정의 **광대역** 차이가 이보다 크면 버린다. */
     val maxReferenceDriftDb: Double = 1.0,
     /**
@@ -108,7 +128,7 @@ data class QualityReport(
      * 얌전해도 그 세션은 못 쓴다(독립 검증 CP01). `null` 은 「흔들리지
      * 않았다」가 아니라 **「알 수 없다」**(장이 모자랐다).
      */
-    val repeatSpreadDb: Double? = null,
+    val repeatStdevDb: Double? = null,
     /** 기준 측정 → 대상 측정 → 기준 재측정 의 **광대역** 차이(dB). 안 쟀으면 null. */
     val referenceDriftDb: Double? = null,
     /**
@@ -118,6 +138,8 @@ data class QualityReport(
      * 아니라 **모양**이고, 그 모양이 마이크 보정으로 기록된다(CP01).
      */
     val referenceBandDriftDb: Double? = null,
+    /** 가장 많이 변한 대역. 화면이 그 이름을 적는다. 모르면 null. */
+    val referenceDriftBand: Int? = null,
     /**
      * 어느 단계에서든 **안정된 장을 하나도 못 골랐는가**.
      *
@@ -281,10 +303,10 @@ fun judgeQuality(report: QualityReport): QualityResult {
         }
     }
 
-    report.repeatSpreadDb?.let {
-        if (it > p.maxRepeatSpreadDb) {
-            fails += "반복 측정이 ${"%.1f".format(it)}dB 벌어졌습니다" +
-                "(허용 ${"%.1f".format(p.maxRepeatSpreadDb)}dB). " +
+    report.repeatStdevDb?.let {
+        if (it > p.maxRepeatStdevDb) {
+            fails += "재는 동안 레벨이 ${"%.2f".format(it)}dB 흔들렸습니다" +
+                "(허용 ${"%.2f".format(p.maxRepeatStdevDb)}dB). " +
                 "마이크·스피커·사람이 움직이지 않았는지 보십시오."
         }
     }
@@ -301,7 +323,10 @@ fun judgeQuality(report: QualityReport): QualityResult {
     // 이것을 보지 않으면 환경 변화가 마이크 특성으로 기록된다.
     report.referenceBandDriftDb?.let {
         if (it > p.maxReferenceBandDriftDb) {
-            fails += "기준 재측정이 어떤 대역에서 앞과 ${"%.1f".format(it)}dB 다릅니다" +
+            val where = report.referenceDriftBand
+                ?.let { b -> "${ThirdOctave.label(b)}Hz 에서" }
+                ?: "어떤 대역에서"
+            fails += "기준 재측정이 $where 앞과 ${"%.1f".format(it)}dB 다릅니다" +
                 "(허용 ${"%.1f".format(p.maxReferenceBandDriftDb)}dB). " +
                 "전체 음량은 같아도 소리의 「모양」이 변했다는 뜻입니다 — " +
                 "스피커·마이크 위치나 주변 소리가 달라졌는지 보십시오."
@@ -325,8 +350,8 @@ fun judgeQuality(report: QualityReport): QualityResult {
     }
 
     // 벌어짐을 아예 재지 못한 경우도 **통과로 넘기지 않는다.**
-    if (report.repeatSpreadDb == null) {
-        degrades += "반복 측정의 벌어짐을 재지 못했습니다. 흔들리지 않았다는 뜻이 아닙니다."
+    if (report.repeatStdevDb == null) {
+        degrades += "재는 동안 레벨이 얼마나 흔들렸는지 재지 못했습니다. 흔들리지 않았다는 뜻이 아닙니다."
     }
 
     // **기준 경로의 SNR 을 모르면 검증 완료를 주지 않는다**(RCP02).

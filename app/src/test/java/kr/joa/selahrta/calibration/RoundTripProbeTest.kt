@@ -47,7 +47,7 @@ class RoundTripProbeTest {
     /** 두 경로 다 조용하고 CAL 이 전 대역인 보고. 판정을 내리려면 필요하다. */
     private fun quality() = QualityReport(
         bands = (0 until n).map { BandNoise(ThirdOctave.exactCenter(it), 70.0, 0.0) },
-        repeatSpreadDb = 0.5,
+        repeatStdevDb = 0.5,
         referenceDriftDb = 0.0,
         referenceBandDriftDb = 0.0,
         minFramesPerStep = 16,

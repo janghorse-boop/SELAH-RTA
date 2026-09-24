@@ -85,7 +85,7 @@ fun buildProfileForSave(
             ),
             quality = ProfileQuality(
                 verdict = judged.verdict,
-                repeatSpreadDb = quality.repeatSpreadDb ?: Double.NaN,
+                repeatStdevDb = quality.repeatStdevDb ?: Double.NaN,
                 referenceDriftDb = quality.referenceDriftDb ?: Double.NaN,
                 usableBandRatio = outcome.supportedBandRatio,
                 worstSnrDb = quality.worstSnrDb,

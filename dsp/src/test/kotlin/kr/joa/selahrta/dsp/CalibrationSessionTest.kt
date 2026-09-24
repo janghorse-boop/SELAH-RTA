@@ -210,13 +210,15 @@ class CalibrationSessionTest {
         assertEquals("빈손으로 돌려주지 않는다", 2, t.keptFrames)
         assertEquals("버린 것은 정말 없다", 0, t.droppedFrames)
         assertTrue("안정된 장이 없었다고 적어야 한다", t.noStableFrames)
-        assertEquals("벌어짐이 그대로 남아야 한다", 50.0, t.levelSpreadDb!!, 1e-9)
+        // 값 둘(40·90)의 표준편차는 폭의 절반이다. 흔들림이 사라지지
+        // 않고 그대로 남는지를 본다 — 예전 min−max 로는 50.0 이었다.
+        assertEquals("흔들림이 그대로 남아야 한다", 25.0, t.levelStdevDb!!, 1e-9)
     }
 
     /**
      * **CP01 반례 ①** — 기준 단계만 불안정하고 대상은 얌전한 경우.
      *
-     * 예전에는 `repeatSpreadDb` 에 대상의 벌어짐만 담겨서, 기준이 50dB
+     * 예전에는 `repeatStdevDb` 에 대상의 벌어짐만 담겨서, 기준이 50dB
      * 출렁여도 **Pass** 가 나왔다.
      */
     @Test
@@ -266,7 +268,7 @@ class CalibrationSessionTest {
 
     /** 세 단계 중 **가장 나쁜** 벌어짐을 쓴다 — 대상만 보지 않는다. */
     @Test
-    fun `세 단계 중 가장 나쁜 벌어짐을 쓴다`() {
+    fun `세 단계 중 가장 많이 흔들린 것을 쓴다`() {
         val s = CalibrationSession()
         repeat(4) { s.recordReference(MeasureStep.ReferenceBefore, refSpectrum(flat(70.0))) }
         repeat(4) { s.recordReference(MeasureStep.ReferenceBefore, refSpectrum(flat(71.5))) } // 1.5dB
@@ -274,15 +276,17 @@ class CalibrationSessionTest {
         repeat(4) { s.recordReference(MeasureStep.ReferenceAfter, refSpectrum(flat(70.0))) }
         repeat(4) { s.recordReference(MeasureStep.ReferenceAfter, refSpectrum(flat(70.5))) } // 0.5dB
 
-        assertEquals("기준 앞단의 1.5dB 가 이겨야 한다", 1.5, s.result()!!.repeatSpreadDb!!, 1e-9)
+        // 앞단은 70·71.5 가 넷씩 → 표준편차 0.75. 뒷단은 70·70.5 → 0.25.
+        // 대상은 흔들림 없음 → 0. 가장 큰 것이 올라와야 한다.
+        assertEquals("기준 앞단이 이겨야 한다", 0.75, s.result()!!.repeatStdevDb!!, 1e-9)
     }
 
     /** **장이 하나면 「0」이 아니라 「모른다」다.** */
     @Test
-    fun `장이 하나면 벌어짐을 모른다`() {
+    fun `장이 하나면 흔들림을 모른다`() {
         val r = sessionOf(flat(70.0), flat(68.0), flat(70.0), repeats = 1)
-        assertNull("0 이 아니라 null 이어야 한다", r.target.levelSpreadDb)
-        assertNull(r.repeatSpreadDb)
+        assertNull("0 이 아니라 null 이어야 한다", r.target.levelStdevDb)
+        assertNull(r.repeatStdevDb)
 
         val judged = judgeQuality(qualityFromSession(r, flat(40.0), referenceCalRangeHz = FULL_CAL, dspVerifiedBySignal = true))
         assertTrue("통과시키면 안 된다", judged.verdict != QualityVerdict.Pass)
@@ -936,7 +940,7 @@ class CalibrationSessionTest {
         val r = s.result()!!
 
         val q = qualityFromSession(r, noiseDb = flat(40.0))
-        assertEquals(r.repeatSpreadDb!!, q.repeatSpreadDb!!, 1e-9)
+        assertEquals(r.repeatStdevDb!!, q.repeatStdevDb!!, 1e-9)
         assertEquals(r.referenceDriftDb, q.referenceDriftDb!!, 1e-9)
         assertEquals(r.referenceBandDriftDb, q.referenceBandDriftDb!!, 1e-9)
         assertEquals(r.minKeptFramesPerStep, q.minFramesPerStep)

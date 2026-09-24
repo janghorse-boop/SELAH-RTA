@@ -41,7 +41,7 @@ class CalibrationQualityTest {
         bands: List<BandNoise>,
         policy: QualityPolicy = QualityPolicy(),
         dspVerifiedBySignal: Boolean = true,
-        repeatSpreadDb: Double? = 0.5,
+        repeatStdevDb: Double? = 0.5,
         referenceDriftDb: Double? = 0.2,
         referenceBandDriftDb: Double? = 0.4,
         noStableFrames: Boolean = false,
@@ -53,7 +53,7 @@ class CalibrationQualityTest {
         referenceCalRangeHz: ClosedFloatingPointRange<Double>? = null,
     ) = QualityReport(
         bands = bands,
-        repeatSpreadDb = repeatSpreadDb,
+        repeatStdevDb = repeatStdevDb,
         referenceDriftDb = referenceDriftDb,
         referenceBandDriftDb = referenceBandDriftDb,
         noStableFrames = noStableFrames,
@@ -165,7 +165,7 @@ class CalibrationQualityTest {
     @Test
     fun `반복이 벌어지면 버린다`() {
         val r = judgeQuality(
-            QualityReport(bands(25.0), repeatSpreadDb = 3.5, dspVerifiedBySignal = true),
+            QualityReport(bands(25.0), repeatStdevDb = 3.5, dspVerifiedBySignal = true),
         )
         assertEquals(QualityVerdict.Fail, r.verdict)
         assertTrue(r.reasonsKo.any { it.contains("반복") })
@@ -187,7 +187,7 @@ class CalibrationQualityTest {
     @Test
     fun `허용 안이면 통과한다`() {
         val r = judgeQuality(
-            report(bands(25.0), repeatSpreadDb = 1.0, referenceDriftDb = 0.4),
+            report(bands(25.0), repeatStdevDb = 1.0, referenceDriftDb = 0.4),
         )
         assertEquals(QualityVerdict.Pass, r.verdict)
     }
@@ -313,7 +313,7 @@ class CalibrationQualityTest {
     /** **모르는 것은 통과시키지 않는다** — 0 도 아니고 Pass 도 아니다. */
     @Test
     fun `벌어짐을 모르면 통과시키지 않는다`() {
-        val r = judgeQuality(report(bands(25.0), repeatSpreadDb = null))
+        val r = judgeQuality(report(bands(25.0), repeatStdevDb = null))
         assertEquals(QualityVerdict.Degraded, r.verdict)
         assertFalse("자동 적용은 막는다", r.mayAutoApply)
         assertTrue("${r.reasonsKo}", r.reasonsKo.any { it.contains("재지 못했") })
@@ -353,7 +353,7 @@ class CalibrationQualityTest {
         val r = judgeQuality(
             QualityReport(
                 bands(snrDb = 3.0),
-                repeatSpreadDb = 5.0,
+                repeatStdevDb = 5.0,
                 clipped = true,
                 dspVerifiedBySignal = false,
             ),

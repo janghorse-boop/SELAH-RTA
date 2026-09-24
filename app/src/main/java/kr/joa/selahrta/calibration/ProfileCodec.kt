@@ -208,7 +208,9 @@ fun encodeProfile(p: MeasuredProfile): String = buildString {
     put("ref.micName", p.reference.micName)
 
     put("quality.verdict", p.quality.verdict.name)
-    put("quality.repeatSpreadDb", p.quality.repeatSpreadDb)
+    // **새 열쇠다.** 2026-09-24 에 min−max 에서 표준편차로 바꿨고, 둘은
+    // 다른 양이라 같은 열쇠에 담으면 옛 값이 새 뜻으로 읽힌다.
+    put("quality.repeatStdevDb", p.quality.repeatStdevDb)
     put("quality.referenceDriftDb", p.quality.referenceDriftDb)
     put("quality.usableBandRatio", p.quality.usableBandRatio)
     put("quality.worstSnrDb", p.quality.worstSnrDb)
@@ -281,7 +283,9 @@ fun decodeProfile(text: String): Result<MeasuredProfile> {
         ),
         quality = ProfileQuality(
             verdict = verdict ?: QualityVerdict.Fail,
-            repeatSpreadDb = r.dbl("quality.repeatSpreadDb"),
+            // 옛 프로파일에는 이 열쇠가 없다. 0 으로 두면 「흔들리지
+            // 않았다」로 읽히므로 NaN(모름)으로 둔다.
+            repeatStdevDb = r.dblOrNull("quality.repeatStdevDb") ?: Double.NaN,
             referenceDriftDb = r.dbl("quality.referenceDriftDb"),
             usableBandRatio = r.dbl("quality.usableBandRatio"),
             worstSnrDb = r.dblOrNull("quality.worstSnrDb"),

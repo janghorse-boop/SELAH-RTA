@@ -63,7 +63,7 @@ class MeasuredProfileTest {
         ),
         quality = ProfileQuality(
             verdict = verdict,
-            repeatSpreadDb = 0.8,
+            repeatStdevDb = 0.8,
             referenceDriftDb = 0.2,
             usableBandRatio = 0.9,
             worstSnrDb = 14.0,

@@ -330,7 +330,7 @@ class WizardFlowTest {
         bands = (0 until ThirdOctave.BAND_COUNT).map {
             BandNoise(ThirdOctave.exactCenter(it), 70.0, 40.0)
         },
-        repeatSpreadDb = 0.5,
+        repeatStdevDb = 0.5,
         referenceDriftDb = 0.2,
         referenceBandDriftDb = 0.4,
         minFramesPerStep = 16,
