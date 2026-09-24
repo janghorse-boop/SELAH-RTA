@@ -24,6 +24,7 @@ import kr.joa.selahrta.audio.MIN_AMPLITUDE
 import kr.joa.selahrta.audio.MIN_TONE_HZ
 import kr.joa.selahrta.audio.SignalChannels
 import kr.joa.selahrta.audio.SignalRequest
+import kr.joa.selahrta.audio.MEASURE_AMPLITUDE
 import kr.joa.selahrta.audio.SignalPlayer
 import kr.joa.selahrta.audio.OpenFailure
 import kr.joa.selahrta.audio.OpenResult
@@ -52,6 +53,10 @@ import kr.joa.selahrta.dsp.FeedbackCandidate
 import kr.joa.selahrta.dsp.FeedbackDetector
 import kr.joa.selahrta.dsp.FeedbackEvent
 import kr.joa.selahrta.dsp.FeedbackState
+import kr.joa.selahrta.dsp.BandAccumulator
+import kr.joa.selahrta.dsp.ROOM_MIN_FRAMES
+import kr.joa.selahrta.dsp.RoomResponse
+import kr.joa.selahrta.dsp.computeRoomResponse
 import kr.joa.selahrta.dsp.RtaEngine
 import kr.joa.selahrta.dsp.SpectrumSink
 import kr.joa.selahrta.dsp.RtaFrame
@@ -121,6 +126,19 @@ data class MeterReading(
     val settled: Boolean = false,
 )
 
+/**
+ * FR 측정의 단계.
+ *
+ * **배경이 먼저다.** 어느 밴드를 믿어도 되는지는 배경보다 얼마나 큰가로
+ * 가르므로, 순서가 바뀌면 판정할 근거가 없다.
+ */
+enum class ResponsePhase(val labelKo: String) {
+    Idle("멈춤"),
+    Quiet("배경 재는 중 — 조용히 해 주십시오"),
+    Signal("응답 재는 중 — 소리를 그대로 두십시오"),
+    Done("다 쟀습니다"),
+}
+
 data class CaptureUiState(
     val measure: MeasureState = MeasureState.Idle,
     val opened: OpenedFormat? = null,
@@ -185,6 +203,24 @@ data class CaptureUiState(
     val signalChannels: SignalChannels = SignalChannels.Both,
     /** 신호 발생기에 관해 알릴 것. */
     val signalNoticeKo: String? = null,
+    /** FR — 지금 어느 단계인가. */
+    val responsePhase: ResponsePhase = ResponsePhase.Idle,
+    /** 그 단계가 얼마나 찼는가(0~1). */
+    val responseProgress: Float = 0f,
+    /** 마지막으로 잰 응답. 아직 없으면 null. */
+    val responseResult: RoomResponse? = null,
+    /** FR 에 관해 알릴 것. */
+    val responseNoticeKo: String? = null,
+    /** 재는 동안 이 폰이 핑크 잡음을 함께 낼 것인가. */
+    val responsePlayHere: Boolean = true,
+    /**
+     * 배경을 재 두었는가.
+     *
+     * **밖에서 소리를 낼 때 필요하다.** PA 가 핑크 잡음을 계속 내고 있으면
+     * 「배경 3초」가 그 소리를 배경으로 재어 SNR 이 0 이 된다. 그래서 밖에서
+     * 낼 때는 사람이 소리를 끈 채로 배경을 먼저 재고, 켠 뒤에 응답을 잰다.
+     */
+    val responseQuietReady: Boolean = false,
     /**
      * 내장 마이크 탐색 결과. 아직 안 돌렸으면 null.
      *
@@ -424,6 +460,41 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 지금 내보내고 있는 재생의 세대. 늦게 온 소식을 가린다. */
     private var playGeneration = SignalPlayer.NONE
+
+    /** 지금 도는 FR 측정. 겹쳐 돌지 않게 붙들어 둔다. */
+    private var responseJob: Job? = null
+
+    /**
+     * 마지막으로 잰 배경의 밴드 평균.
+     *
+     * **상태에 담지 않는다.** 화면이 쓸 일이 없고, 31칸짜리 배열이 상태
+     * 비교에 끼면 화면이 쓸데없이 다시 그려진다. 있는지 없는지만
+     * [CaptureUiState.responseQuietReady] 로 알린다.
+     */
+    private var responseQuietMean: DoubleArray? = null
+
+    private companion object {
+        /**
+         * 배경을 몇 장 모을 것인가. 48kHz·FFT4096·50% 겹침이면 초당 23장쯤이라
+         * 3초쯤이다.
+         *
+         * **짧게 잡는다.** 사람을 조용히 시켜 놓는 시간이라 길면 안 지켜진다.
+         * 배경은 응답만큼 정밀할 필요도 없다 — 밴드를 가르는 문턱으로만 쓴다.
+         */
+        const val QUIET_FRAMES = 70
+
+        /**
+         * 응답을 몇 장 모을 것인가. 10초쯤이다.
+         *
+         * 핑크 잡음은 순간마다 출렁이므로 짧게 재면 그 출렁임이 방의
+         * 응답처럼 보인다. 길수록 좋지만, 예배당에서 사람을 세워 두는
+         * 시간이라 10초에서 끊는다.
+         */
+        const val SIGNAL_FRAMES = 230
+
+        /** 진행을 얼마나 자주 볼 것인가(ms). */
+        const val RESPONSE_TICK_MS = 100L
+    }
     private var calibrationJob: Job? = null
     private var curveJob: Job? = null
     private var settingsJob: Job? = null
@@ -484,6 +555,204 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      * 대입이 아니라 더하기라 하울링 탐지기가 밀려나지 않는다. 재는 중이
      * 아니면 아무 일도 일어나지 않는다 — 붙일 세션이 없다.
      */
+    /**
+     * 방·PA 의 크기 응답을 잰다(FR 화면).
+     *
+     * ## 배경을 먼저 재는 까닭
+     *
+     * 어느 밴드를 믿어도 되는지는 **배경보다 얼마나 큰가**로 가른다.
+     * 배경 없이 곡선을 내놓으면 예배당 공조기 소리를 방의 저역 부스트로
+     * 읽게 된다 — 그리고 그걸 보고 저역을 깎는다.
+     *
+     * ## 소리원을 누가 내는가
+     *
+     * [CaptureUiState.responsePlayHere] 가 true 면 이 폰이 핑크 잡음을
+     * 함께 낸다. 그러면 **폰 스피커의 기울기가 결과에 섞인다** — 화면이
+     * 그 사실을 적는다. PA 로 내면 PA 의 기울기가 섞이는데, 대개는 그쪽이
+     * 알고 싶은 것이다.
+     */
+    fun measureResponse() = runResponse(quiet = true, signal = true)
+
+    /**
+     * 배경만 잰다 — **밖에서 소리를 낼 때** 쓴다.
+     *
+     * PA 나 다른 폰이 핑크 잡음을 계속 내고 있으면 한 번에 이어서 잴 수
+     * 없다. 「배경 3초」가 그 소리를 배경으로 재어 버려 SNR 이 0 이 되고,
+     * 모든 밴드가 「못 씀」이 된다. 사람이 소리를 끈 채로 이것부터 누른다.
+     */
+    fun measureResponseQuiet() = runResponse(quiet = true, signal = false)
+
+    /** 응답만 잰다. 배경을 미리 재 두었어야 한다. */
+    fun measureResponseSignal() = runResponse(quiet = false, signal = true)
+
+    /**
+     * 방·PA 의 크기 응답을 잰다(FR 화면).
+     *
+     * ## 배경을 먼저 재는 까닭
+     *
+     * 어느 밴드를 믿어도 되는지는 **배경보다 얼마나 큰가**로 가른다.
+     * 배경 없이 곡선을 내놓으면 예배당 공조기 소리를 방의 저역 부스트로
+     * 읽게 된다 — 그리고 그걸 보고 저역을 깎는다.
+     *
+     * ## 소리원을 누가 내는가
+     *
+     * [CaptureUiState.responsePlayHere] 가 true 면 이 폰이 핑크 잡음을
+     * 함께 낸다. 그러면 **폰 스피커의 기울기가 결과에 섞인다** — 화면이
+     * 그 사실을 적는다. PA 로 내면 PA 의 기울기가 섞이는데, 대개는 그쪽이
+     * 알고 싶은 것이다.
+     */
+    private fun runResponse(quiet: Boolean, signal: Boolean) {
+        if (controller.baseState.value.measure !is MeasureState.Running) {
+            controller.update { st ->
+                st.copy(responseNoticeKo = "먼저 「측정」에서 마이크를 여십시오.")
+            }
+            return
+        }
+        if (responseJob?.isActive == true) return
+        if (signal && !quiet && responseQuietMean == null) {
+            controller.update { st ->
+                st.copy(responseNoticeKo = "배경을 먼저 재십시오.")
+            }
+            return
+        }
+
+        val spec = rtaSpec() ?: run {
+            controller.update { st ->
+                st.copy(responseNoticeKo = "분석기가 아직 돌지 않습니다. 잠시 뒤 다시 누르십시오.")
+            }
+            return
+        }
+
+        responseJob = viewModelScope.launch {
+            val tap = kr.joa.selahrta.dsp.MeasurementTap(spec.first, spec.second)
+            installMeasurementTap(tap)
+            try {
+                if (quiet) {
+                    // 1단계 — 배경. **소리를 내지 않는다.**
+                    controller.update { st ->
+                        st.copy(
+                            responsePhase = ResponsePhase.Quiet,
+                            responseProgress = 0f,
+                            responseNoticeKo = null,
+                            responseResult = if (signal) null else st.responseResult,
+                        )
+                    }
+                    tap.startTarget()
+                    val ok = collectFrames(tap, QUIET_FRAMES) { p ->
+                        controller.update { st -> st.copy(responseProgress = p) }
+                    }
+                    tap.stop()
+                    val frames = tap.drainTarget()
+                    if (!ok || frames.size < ROOM_MIN_FRAMES) {
+                        failResponse("배경을 재지 못했습니다. 마이크가 열려 있는지 확인하십시오.")
+                        return@launch
+                    }
+                    val acc = BandAccumulator(frames.first().size)
+                    frames.forEach { acc.add(it) }
+                    responseQuietMean = acc.meanDb()
+                    controller.update { st -> st.copy(responseQuietReady = true) }
+                }
+
+                if (!signal) {
+                    controller.update { st ->
+                        st.copy(responsePhase = ResponsePhase.Idle, responseProgress = 0f)
+                    }
+                    return@launch
+                }
+
+                // 2단계 — 소리. 이 폰이 낼지는 사람이 정한다.
+                val playHere = controller.baseState.value.responsePlayHere
+                if (playHere) playSignal(TestSignal.Pink, MEASURE_AMPLITUDE)
+                controller.update { st ->
+                    st.copy(responsePhase = ResponsePhase.Signal, responseProgress = 0f)
+                }
+                tap.startTarget()
+                val signalOk = collectFrames(tap, SIGNAL_FRAMES) { p ->
+                    controller.update { st -> st.copy(responseProgress = p) }
+                }
+                tap.stop()
+                if (playHere) stopSignal()
+                val signalFrames = tap.drainTarget()
+                if (!signalOk && signalFrames.size < ROOM_MIN_FRAMES) {
+                    failResponse("소리를 트는 동안 장이 모자랐습니다. 다시 재 보십시오.")
+                    return@launch
+                }
+
+                computeRoomResponse(signalFrames, responseQuietMean).fold(
+                    onSuccess = { res ->
+                        controller.update { st ->
+                            st.copy(
+                                responsePhase = ResponsePhase.Done,
+                                responseResult = res,
+                                responseProgress = 1f,
+                                responseNoticeKo = null,
+                            )
+                        }
+                    },
+                    onFailure = { e -> failResponse(e.message ?: "응답을 셈하지 못했습니다.") },
+                )
+            } finally {
+                removeMeasurementTap(tap)
+                // **어디서 빠져나오든 소리는 끈다.** 취소된 경우까지
+                // 포함이다 — 예배당에서 핑크 잡음이 계속 나면 회중이 듣는다.
+                if (controller.baseState.value.playingSignal != null) stopSignal()
+            }
+        }
+    }
+
+    /** 재는 도중에 그만둔다. 화면을 떠날 때도 부른다. */
+    fun cancelResponse() {
+        responseJob?.cancel()
+        responseJob = null
+        controller.update { st ->
+            st.copy(
+                responsePhase = if (st.responseResult != null) ResponsePhase.Done else ResponsePhase.Idle,
+                responseProgress = 0f,
+            )
+        }
+    }
+
+    /** 이 폰이 핑크 잡음을 함께 낼 것인가. */
+    fun setResponsePlayHere(on: Boolean) {
+        controller.update { st -> st.copy(responsePlayHere = on) }
+    }
+
+    fun dismissResponseNotice() {
+        controller.update { st -> st.copy(responseNoticeKo = null) }
+    }
+
+    private fun failResponse(reasonKo: String) {
+        controller.update { st ->
+            st.copy(
+                responsePhase = ResponsePhase.Idle,
+                responseProgress = 0f,
+                responseNoticeKo = reasonKo,
+            )
+        }
+    }
+
+    /**
+     * [target] 장이 모일 때까지 기다린다.
+     *
+     * **틱마다 진행을 알린다.** 10초를 아무 표시 없이 기다리게 하면
+     * 멈춘 줄 알고 화면을 떠난다.
+     */
+    private suspend fun collectFrames(
+        tap: kr.joa.selahrta.dsp.MeasurementTap,
+        target: Int,
+        onProgress: (Float) -> Unit,
+    ): Boolean {
+        var ticks = 0
+        val maxTicks = target * 4 + 40
+        while (tap.count < target && ticks < maxTicks) {
+            kotlinx.coroutines.delay(RESPONSE_TICK_MS)
+            onProgress((tap.count.toFloat() / target).coerceIn(0f, 1f))
+            ticks++
+        }
+        onProgress(1f)
+        return tap.count >= target
+    }
+
     fun installMeasurementTap(tap: kr.joa.selahrta.dsp.MeasurementTap) {
         controller.postToCapture { session -> session.rta.addSpectrumSink(tap) }
     }

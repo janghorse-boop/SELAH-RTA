@@ -65,6 +65,7 @@ import kr.joa.selahrta.ui.nav.hasModeChips
 import kr.joa.selahrta.ui.screens.CalibrationProfilesScreen
 import kr.joa.selahrta.ui.screens.CalibrationWizardScreen
 import kr.joa.selahrta.ui.instrument.InstrumentGuideScreen
+import kr.joa.selahrta.ui.screens.FrScreen
 import kr.joa.selahrta.ui.screens.HistoryScreen
 import kr.joa.selahrta.ui.screens.MeasureScreen
 import kr.joa.selahrta.ui.screens.RtaScreen
@@ -295,7 +296,8 @@ fun SelahApp() {
             if (mode != ViewMode.Rta) TopBrandBar(capture)
 
             if (section.hasModeChips) {
-                ModeChips(section, mode) { picked ->
+                // RTA 는 차트가 화면을 꽉 채우는 화면이라 칩도 낮게 그린다.
+                ModeChips(section, mode, compact = mode == ViewMode.Rta) { picked ->
                     mode = picked
                     // 칩을 누르면 아래 탭도 따라온다. 두 줄이 서로 다른 곳을
                     // 가리키면 지금 어디 있는지 알 수 없다.
@@ -357,6 +359,15 @@ fun SelahApp() {
                             onDismissDeviceNotice = vm::dismissDeviceNotice,
                         )
                         ViewMode.Rta -> RtaScreen(capture)
+                        ViewMode.Fr -> FrScreen(
+                            capture = capture,
+                            onMeasure = vm::measureResponse,
+                            onMeasureQuiet = vm::measureResponseQuiet,
+                            onMeasureSignal = vm::measureResponseSignal,
+                            onCancel = vm::cancelResponse,
+                            onPlayHere = vm::setResponsePlayHere,
+                            onDismissNotice = vm::dismissResponseNotice,
+                        )
                         // 지난 기록을 보는 화면이라 마이크가 필요 없다.
                         ViewMode.History -> HistoryScreen()
                         ViewMode.Signal -> ToolsScreen(
@@ -603,6 +614,14 @@ private fun StatusPill(text: String, color: Color, dim: Boolean = false) {
 private fun ModeChips(
     section: NavSection,
     selected: ViewMode,
+    /**
+     * 낮게 그린다 — RTA 전용.
+     *
+     * RTA 는 차트가 화면을 꽉 채우는 화면이라(담당자 지시) 칩 줄도 자리를
+     * 덜 쓰게 한다. **없애지는 않는다** — 분석에 FR 이 생기면서 이 줄이
+     * 유일한 길이 되었고, 없애면 눕힌 채로는 FR 에 갈 방법이 사라진다.
+     */
+    compact: Boolean,
     onSelect: (ViewMode) -> Unit,
 ) {
     // **양쪽을 채운다.** 칩은 가는 길이라 가지런히 놀아 놓으면
@@ -615,7 +634,7 @@ private fun ModeChips(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 4.dp),
+            .padding(horizontal = 12.dp, vertical = if (compact) 2.dp else 4.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         ViewMode.entries.filter { it.section == section }.forEach { m ->
@@ -628,13 +647,13 @@ private fun ModeChips(
                         RoundedCornerShape(10.dp),
                     )
                     .clickable { onSelect(m) }
-                    .padding(horizontal = 4.dp, vertical = 9.dp),
+                    .padding(horizontal = 4.dp, vertical = if (compact) 5.dp else 9.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     m.labelKo,
                     color = if (on) Color(0xFF00201C) else SelahColors.TextSecondary,
-                    fontSize = 13.sp,
+                    fontSize = if (compact) 11.sp else 13.sp,
                     fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
                     textAlign = TextAlign.Center,
                 )
