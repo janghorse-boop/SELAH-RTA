@@ -33,8 +33,6 @@ import kr.joa.selahrta.domain.ChurchSegment
 import kr.joa.selahrta.domain.SEGMENT_CAUTIONS
 import kr.joa.selahrta.domain.SegmentRange
 import kr.joa.selahrta.audio.InputDeviceInfo
-import kr.joa.selahrta.audio.SignalChannels
-import kr.joa.selahrta.audio.TestSignal
 import kr.joa.selahrta.domain.MeasureState
 import kr.joa.selahrta.domain.MicKind
 import kr.joa.selahrta.audio.builtInMicNoticeKo
@@ -46,7 +44,6 @@ import kr.joa.selahrta.settings.LeqWindow
 import kr.joa.selahrta.ui.CaptureUiState
 import kr.joa.selahrta.ui.components.CalibrationCard
 import kr.joa.selahrta.ui.components.CurveCard
-import kr.joa.selahrta.ui.components.SignalGeneratorCard
 import kr.joa.selahrta.ui.components.InfoBar
 import kr.joa.selahrta.ui.components.NotYet
 import kr.joa.selahrta.ui.theme.SelahColors
@@ -107,12 +104,6 @@ fun SettingsScreen(
     onOpenCalibrationProfiles: () -> Unit,
     onSaveRange: (ChurchSegment, SegmentRange) -> Unit,
     onResetRange: (ChurchSegment) -> Unit,
-    onPlaySignal: (TestSignal) -> Unit,
-    onStopSignal: () -> Unit,
-    onSignalLevel: (Double) -> Unit,
-    onSignalToneHz: (Double) -> Unit,
-    onSignalChannels: (SignalChannels) -> Unit,
-    onDismissSignalNotice: () -> Unit,
 ) {
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
@@ -235,20 +226,13 @@ fun SettingsScreen(
             TextButton(onClick = onOpenCalibrationProfiles) { Text("프로파일 관리") }
         }
 
-        SectionTitle("시험 신호")
-        SignalGeneratorCard(
-            playing = capture.playingSignal,
-            amplitude = capture.signalAmplitude,
-            toneHz = capture.signalToneHz,
-            channels = capture.signalChannels,
-            noticeKo = capture.signalNoticeKo,
-            onPlay = onPlaySignal,
-            onStop = onStopSignal,
-            onLevel = onSignalLevel,
-            onToneHz = onSignalToneHz,
-            onChannels = onSignalChannels,
-            onDismissNotice = onDismissSignalNotice,
-        )
+        // **시험 신호는 여기 없다**(2026-09-24 담당자 지시: 「도구와 설정이
+        // 중복됩니다. 이 부분은 도구에만 남으면 될 것 같습니다」).
+        //
+        // 아래 탭에 「도구」가 생기면서 이쪽이 그대로 남아 같은 카드가 두
+        // 곳에 떴다. 소리를 내보내는 일은 값을 바꿔 두는 일이 아니라
+        // **하는 일**이라 도구가 제자리다 — 설정에 둘 까닭이 애초에
+        // 없었다(`ToolsScreen` 참고).
 
         SectionTitle("측정 설정")
         ChoiceRow(

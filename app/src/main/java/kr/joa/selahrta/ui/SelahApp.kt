@@ -338,12 +338,6 @@ fun SelahApp() {
                         },
                         onSaveRange = vm::setRange,
                         onResetRange = vm::resetRange,
-                        onPlaySignal = vm::playSignal,
-                        onStopSignal = vm::stopSignal,
-                        onSignalLevel = vm::setSignalLevel,
-                        onSignalToneHz = vm::setSignalToneHz,
-                        onSignalChannels = vm::setSignalChannels,
-                        onDismissSignalNotice = vm::dismissSignalNotice,
                     )
 
                     else -> when (mode) {
