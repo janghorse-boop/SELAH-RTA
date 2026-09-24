@@ -909,6 +909,50 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * 보정값을 **그대로** 저장한다. 기준에서 옮겨 온 값에 쓴다.
+     *
+     * [saveSimpleCalibration] 은 「지금 읽는 값」에서 오프셋을 셈하는데,
+     * 옮겨 온 값은 이미 완성된 오프셋이라 다시 셈하면 안 된다. 그리고
+     * 옮길 때는 소리가 나고 있지 않아도 된다 — 견준 것은 아까 잰 두
+     * 측정이지 지금 들어오는 소리가 아니다.
+     */
+    fun saveOffsetDirect(
+        offsetDb: Double,
+        source: kr.joa.selahrta.calibration.CalibrationSource,
+    ) {
+        val format = controller.confirmedFormat()
+        if (format == null) {
+            controller.update { st ->
+                st.copy(
+                    calibrationNoticeKo = "어느 마이크로 열렸는지 아직 확인되지 않았습니다. " +
+                        "확인된 뒤에 보정하십시오 — 지금 저장하면 다른 기기의 " +
+                        "보정값으로 남을 수 있습니다.",
+                )
+            }
+            return
+        }
+        val measured = state.value.meter.currentDbfs
+        val cal = GlobalCalibration(
+            offsetDb = offsetDb,
+            savedAtEpochMs = System.currentTimeMillis(),
+            // 옮겨 온 값에는 「기준 소음계가 가리킨 값」이 없다. 지금
+            // 읽는 값이 있으면 그것으로 되짚을 수 있게 남겨 둔다.
+            referenceDb = measured?.let { it + offsetDb } ?: Double.NaN,
+            measuredDbfs = measured ?: Double.NaN,
+            source = source,
+        )
+        viewModelScope.launch {
+            val notice = when (val r = store.save(CalibrationKey.of(format), cal)) {
+                is SaveResult.Saved ->
+                    "기준 마이크에서 옮긴 보정값 ${"%+.1f".format(offsetDb)} dB 을 저장했습니다."
+                is SaveResult.Rejected -> r.reasonKo
+            }
+            controller.postToCapture { session -> session.engine.resetPeaks() }
+            controller.update { st -> st.copy(calibrationNoticeKo = notice) }
+        }
+    }
+
     fun clearCalibration() {
         val format = controller.confirmedFormat() ?: return
         viewModelScope.launch {

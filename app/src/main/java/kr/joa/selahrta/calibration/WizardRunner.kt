@@ -23,6 +23,18 @@ interface WizardCapture {
     val openedDeviceKey: String?
 
     /**
+     * 지금 열려 있는 **경로 전체**의 보정 열쇠. 안 열렸으면 null.
+     *
+     * 기기 열쇠만으로는 모자라다 — 같은 인터페이스라도 채널이 다르면
+     * 다른 마이크이고 보정값도 다르다. 절대 레벨을 옮길 때 기준 경로의
+     * 보정값을 찾는 데 쓴다.
+     */
+    val openedCalKey: CalibrationKey?
+
+    /** 그 경로에 저장된 보정값(dBFS → dB SPL). 없으면 null. */
+    val openedOffsetDb: Double?
+
+    /**
      * **이 측정에서** 찌그러진 적이 있는가.
      *
      * 캡처가 세는 값은 세션 누적이라, 한 번 찌그러지면 그 뒤 모든 측정이

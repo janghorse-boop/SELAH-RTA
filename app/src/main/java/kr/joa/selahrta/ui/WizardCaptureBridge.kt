@@ -2,6 +2,7 @@ package kr.joa.selahrta.ui
 
 import kr.joa.selahrta.audio.SignalLevel
 import kr.joa.selahrta.audio.TestSignal
+import kr.joa.selahrta.calibration.CalibrationKey
 import kr.joa.selahrta.calibration.WizardCapture
 import kr.joa.selahrta.dsp.MeasurementTap
 
@@ -22,6 +23,18 @@ class WizardCaptureBridge(private val vm: CaptureViewModel) : WizardCapture {
 
     override val openedDeviceKey: String?
         get() = vm.state.value.opened?.deviceKey
+
+    override val openedCalKey: CalibrationKey?
+        get() = vm.state.value.opened?.let { CalibrationKey.of(it) }
+
+    /**
+     * 그 경로에 **저장된** 보정값. 짐작값(ASSUMED_FULL_SCALE_SPL)이 아니다.
+     *
+     * `calibration.saved` 가 null 이면 그 경로는 미보정이고, 그때는
+     * 절대 레벨을 옮길 근거가 없다 — 짐작을 옮기는 것이 되기 때문이다.
+     */
+    override val openedOffsetDb: Double?
+        get() = vm.state.value.calibration.saved?.offsetDb
 
     /**
      * 캡처가 세는 값은 **세션 누적**이라, 금을 그은 뒤로 늘었는지를 본다.

@@ -37,6 +37,7 @@ import kr.joa.selahrta.dsp.CalibrationOutcome
 import kr.joa.selahrta.dsp.CurvePoint
 import kr.joa.selahrta.dsp.CurveReading
 import kr.joa.selahrta.dsp.CurveShape
+import kr.joa.selahrta.dsp.LevelTransfer
 import kr.joa.selahrta.dsp.MeasureStep
 import kr.joa.selahrta.dsp.QualityReport
 import kr.joa.selahrta.dsp.QualityResult
@@ -101,6 +102,8 @@ fun CalibrationWizardScreen(
     savedLabelKo: String?,
     canSave: Boolean,
     onSave: () -> Unit,
+    /** 기준에서 옮긴 절대 레벨을 이 경로에 저장한다. */
+    onApplyLevelTransfer: (Double) -> Unit,
     onNext: () -> Unit,
     onBack: () -> Unit,
     onGoTo: (WizardStep) -> Unit,
@@ -194,6 +197,9 @@ fun CalibrationWizardScreen(
                 savedLabelKo = savedLabelKo,
                 canSave = canSave,
                 onSave = onSave,
+                transfer = state.levelTransfer,
+                transferBlockKo = state.levelTransferBlockKo,
+                onApplyTransfer = onApplyLevelTransfer,
             )
 
             else -> NotBuiltNotice(state.step)
@@ -865,6 +871,11 @@ private fun SaveStepPanel(
     savedLabelKo: String?,
     canSave: Boolean,
     onSave: () -> Unit,
+    /** 기준에서 옮길 절대 레벨. 못 옮기면 null. */
+    transfer: LevelTransfer?,
+    /** 못 옮기는 까닭. 옮길 수 있으면 null. */
+    transferBlockKo: String?,
+    onApplyTransfer: (Double) -> Unit,
 ) {
     Column(
         Modifier
@@ -903,6 +914,91 @@ private fun SaveStepPanel(
             } else {
                 TextButton(onClick = onSave, enabled = canSave) { Text("저장하기") }
             }
+        }
+
+        LevelTransferBlock(transfer, transferBlockKo, onApplyTransfer)
+    }
+}
+
+/**
+ * **기준 마이크의 절대 레벨을 대상으로 옮긴다**(치환법).
+ *
+ * 두 마이크가 같은 자리에서 같은 소리를 들었으므로, 기준 경로가 음압으로
+ * 보정돼 있으면 그 값을 그대로 옮길 수 있다. 소음계를 옆에 두고 눈으로
+ * 맞추는 것보다 낫다 — **같은 소리**를 들었기 때문이다.
+ *
+ * **조용히 걸지 않는다.** 음압을 바꾸는 일이라 사람이 보고 정한다.
+ */
+@Composable
+private fun LevelTransferBlock(
+    transfer: LevelTransfer?,
+    blockKo: String?,
+    onApply: (Double) -> Unit,
+) {
+    if (transfer == null && blockKo == null) return
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(SelahColors.SurfaceVariant, RoundedCornerShape(10.dp))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            "기준 마이크의 음압을 이 마이크로 옮기기",
+            color = SelahColors.TextPrimary,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+
+        if (transfer == null) {
+            Text(
+                blockKo ?: "",
+                color = SelahColors.TextMuted,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+                style = TextStyle(lineBreak = LineBreak.Paragraph),
+            )
+            return
+        }
+
+        Text(
+            "두 마이크가 같은 자리에서 같은 소리를 들었습니다. " +
+                "기준 경로가 %.1fdB 더 작게 받았으므로, 그만큼 옮기면 "
+                    .format(-transfer.pathDifferenceDb) +
+                "이 마이크도 같은 음압을 가리킵니다.",
+            color = SelahColors.TextSecondary,
+            fontSize = 11.sp,
+            lineHeight = 16.sp,
+            style = TextStyle(lineBreak = LineBreak.Paragraph),
+        )
+        Text(
+            "%d~%dHz 의 %d개 대역에서 견줬습니다."
+                .format(
+                    transfer.bandLowHz.toInt(),
+                    transfer.bandHighHz.toInt(),
+                    transfer.bandsUsed,
+                ),
+            color = SelahColors.TextMuted,
+            fontSize = 10.sp,
+        )
+        Text(
+            "옮길 보정값 %+.1f dB".format(transfer.targetOffsetDb),
+            color = SelahColors.Accent,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold,
+        )
+        // **기준의 정확도를 물려받는다.** 교정기로 직접 맞춘 것과 같은
+        // 등급으로 읽히면 안 된다.
+        Text(
+            "이 값은 기준 마이크의 보정을 물려받습니다 — 기준이 틀렸으면 " +
+                "이것도 같은 만큼 틀립니다.",
+            color = SelahColors.TextMuted,
+            fontSize = 10.sp,
+            lineHeight = 15.sp,
+        )
+        TextButton(onClick = { onApply(transfer.targetOffsetDb) }) {
+            Text("이 값으로 보정하기")
         }
     }
 }

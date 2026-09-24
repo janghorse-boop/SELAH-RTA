@@ -2,6 +2,7 @@ package kr.joa.selahrta.calibration
 
 import kr.joa.selahrta.audio.MicSeparation
 import kr.joa.selahrta.audio.MicSeparationResult
+import kr.joa.selahrta.dsp.LevelTransfer
 import kr.joa.selahrta.dsp.CalibrationOutcome
 import kr.joa.selahrta.dsp.CurveReading
 import kr.joa.selahrta.dsp.ReadingDecision
@@ -217,6 +218,33 @@ data class WizardState(
     val referenceDeviceKey: String? = null,
     /** 대상을 잰 입력의 열쇠. 기준과 **달라야** 한다. */
     val targetDeviceKey: String? = null,
+    /**
+     * 기준을 잰 **경로 전체**의 열쇠. 절대 레벨을 옮길 때 그 경로의
+     * 보정값을 찾는 데 쓴다.
+     *
+     * 기기 열쇠만으로는 모자라다 — 같은 인터페이스라도 채널이 다르면
+     * 다른 마이크이고 보정값도 다르다(USB 지시서 9.2).
+     */
+    val referenceCalKey: CalibrationKey? = null,
+    /**
+     * 기준을 잴 **그때** 그 경로에 저장돼 있던 보정값(dBFS → dB SPL).
+     *
+     * **그때의 값을 붙들어 둔다.** 나중에 저장소를 다시 보면, 그사이
+     * 사람이 기준을 다시 보정했을 수도 있고 그러면 잰 것과 다른 값을
+     * 옮기게 된다. null 이면 기준이 미보정이었다는 뜻이다.
+     */
+    val referenceOffsetDb: Double? = null,
+
+    // 5~6단계
+    /**
+     * 기준에서 대상으로 옮길 **절대 레벨**. 못 옮기면 null.
+     *
+     * 조용히 걸지 않는다 — 음압을 바꾸는 일이라 사람이 보고 정한다
+     * (간편 보정이 계산을 먼저 보여 주는 것과 같은 까닭).
+     */
+    val levelTransfer: LevelTransfer? = null,
+    /** 못 옮기는 까닭. 옮길 수 있으면 null. */
+    val levelTransferBlockKo: String? = null,
 
     // 5단계
     val outcome: CalibrationOutcome? = null,

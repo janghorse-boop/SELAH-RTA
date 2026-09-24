@@ -413,6 +413,12 @@ fun SelahApp() {
                             onRestartMeasurement = wizard::restartMeasurement,
                             savedLabelKo = wizardSaved?.labelKo,
                             canSave = capture.opened != null && wizardSaved == null,
+                            onApplyLevelTransfer = { db ->
+                                vm.saveOffsetDirect(
+                                    db,
+                                    kr.joa.selahrta.calibration.CalibrationSource.FromReferenceMic,
+                                )
+                            },
                             onSave = {
                                 val opened = capture.opened
                                 if (opened != null) {

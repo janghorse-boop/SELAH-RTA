@@ -25,6 +25,8 @@ import kr.joa.selahrta.calibration.WizardState
 import kr.joa.selahrta.calibration.WizardStep
 import kr.joa.selahrta.calibration.nextStep
 import kr.joa.selahrta.calibration.previousStep
+import kr.joa.selahrta.dsp.TransferBlocked
+import kr.joa.selahrta.dsp.computeLevelTransfer
 import kr.joa.selahrta.dsp.CalibrationCurve
 import kr.joa.selahrta.dsp.CalibrationFile
 import kr.joa.selahrta.dsp.CalibrationSession
@@ -304,7 +306,14 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
                     is RunOutcome.Done -> {
                         _state.update {
                             when (step) {
-                                MeasureStep.ReferenceBefore -> it.copy(referenceDeviceKey = nowKey)
+                                MeasureStep.ReferenceBefore -> it.copy(
+                                    referenceDeviceKey = nowKey,
+                                    // 절대 레벨을 옮길 때 이 경로의 보정값을
+                                    // 찾는다. 기기 열쇠만으로는 채널이 갈리지
+                                    // 않아 모자라다.
+                                    referenceCalKey = capture.openedCalKey,
+                                    referenceOffsetDb = capture.openedOffsetDb,
+                                )
                                 MeasureStep.Target -> it.copy(targetDeviceKey = nowKey)
                                 else -> it
                             }
@@ -354,7 +363,28 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
         )
         calibrateFromSession(result, quality).fold(
             onSuccess = { o ->
-                _state.update { it.copy(session = result, quality = quality, outcome = o) }
+                // **절대 레벨도 함께 셈한다.** 두 마이크가 같은 자리에서
+                // 같은 소리를 들었으므로, 기준 경로가 보정돼 있으면 그
+                // 값을 대상으로 옮길 수 있다(치환법).
+                //
+                // 기준 쪽은 **CAL 전** 값을 쓴다 — 간편 보정이 잡는
+                // 보정값이 CAL 이 걸리지 않는 경로에서 나오기 때문이다.
+                val transfer = computeLevelTransfer(
+                    referenceRawMeanDb = result.referenceRawMeanDb,
+                    targetMeanDb = result.target.meanDb,
+                    referenceOffsetDb = st.referenceOffsetDb,
+                    usable = quality.usable.toBooleanArray(),
+                )
+                _state.update {
+                    it.copy(
+                        session = result,
+                        quality = quality,
+                        outcome = o,
+                        levelTransfer = transfer.getOrNull(),
+                        levelTransferBlockKo =
+                            (transfer.exceptionOrNull() as? TransferBlocked)?.block?.reasonKo,
+                    )
+                }
             },
             onFailure = { e -> _noticeKo.value = e.message ?: "보정 곡선을 만들지 못했습니다." },
         )
