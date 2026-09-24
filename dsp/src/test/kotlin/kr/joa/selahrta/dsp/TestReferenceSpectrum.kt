@@ -19,8 +19,16 @@ internal fun testReferenceSpectrum(
     calSha256: String? = "test",
     fftSize: Int = 8192,
     sampleRate: Int = 48_000,
+    /**
+     * CAL 을 걸기 전 값. 기본은 걸린 것과 같게 둔다 — 대부분의 시험이
+     * 재는 것은 세션의 순서와 셈이지 CAL 의 값이 아니다.
+     *
+     * 절대 레벨 옮기기를 재는 시험만 이 값을 따로 준다.
+     */
+    rawBandsDb: DoubleArray = bandsDb,
 ) = CalibratedReferenceSpectrum(
     bandsDb.copyOf(),
+    rawBandsDb.copyOf(),
     ReferenceCalibrationProof.create(
         calFileName = calFileName,
         calSha256 = calSha256,

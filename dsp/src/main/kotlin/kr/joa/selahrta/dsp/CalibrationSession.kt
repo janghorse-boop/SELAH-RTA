@@ -127,6 +127,15 @@ data class SessionResult(
     /** 앞뒤 기준을 에너지 평균한 것. 이것이 「기준」이다. */
     val referenceMeanDb: DoubleArray,
     /**
+     * 기준 마이크의 **CAL 전** 밴드 평균. 못 구하면 null.
+     *
+     * 절대 레벨을 폰으로 옮길 때 이 값을 쓴다 — 간편 보정이 잡는 기준
+     * 경로의 보정값은 **CAL 이 걸리지 않는** 시간영역 음압계에서 나오기
+     * 때문이다. CAL 이 걸린 값과 빼면 CAL 의 대역 평균만큼이 통째로 폰의
+     * 보정값에 들어간다.
+     */
+    val referenceRawMeanDb: DoubleArray? = null,
+    /**
      * 기준 장에 칸 단위로 CAL 을 건 **증거**(독립 검증 CP04). 없으면 null.
      *
      * [applyReferenceCalibration] 만 만들 수 있으므로, 이것이 있다는
@@ -197,7 +206,15 @@ class CalibrationSession(
             }
         }
         frames.getOrPut(step) { mutableListOf() }.add(spectrum.bandsDb.copyOf())
+        // **CAL 전 값도 따로 쌓는다.** 절대 레벨을 폰으로 옮길 때 쓴다 —
+        // 간편 보정의 기준 보정값이 CAL 안 걸린 경로에서 나오기 때문이다
+        // ([CalibratedReferenceSpectrum.rawBandsDb]).
+        rawReferenceFrames.getOrPut(step) { mutableListOf() }
+            .add(spectrum.rawBandsDb.copyOf())
     }
+
+    /** CAL 을 걸기 전의 기준 장들. 대상 단계에는 없다. */
+    private val rawReferenceFrames = mutableMapOf<MeasureStep, MutableList<DoubleArray>>()
 
     fun frameCount(step: MeasureStep): Int = frames[step]?.size ?: 0
 
@@ -208,6 +225,7 @@ class CalibrationSession(
     /** 처음으로. **증거도 함께 지운다** — 남겨 두면 다음 세션이 물려받는다. */
     fun reset() {
         frames.clear()
+        rawReferenceFrames.clear()
         referenceProof = null
     }
 
@@ -237,6 +255,10 @@ class CalibrationSession(
             10.0 * log10((a + b) / 2.0)
         }
 
+        // **CAL 을 걸기 전의 기준 평균.** 절대 레벨을 옮길 때 쓴다.
+        // 없으면 null — 옛 세션이나 기준을 안 잰 경우다.
+        val rawRefMean = rawMeanOf(MeasureStep.ReferenceBefore, MeasureStep.ReferenceAfter)
+
         val steps = listOf(before, target, after)
         // **세 단계 중 가장 많이 흔들린 것.** 기준이 흔들린 세션은 대상이
         // 얌전해도 못 쓴다. 하나라도 모르면 전체를 모르는 것으로 둔다.
@@ -260,8 +282,29 @@ class CalibrationSession(
             minKeptFramesPerStep = steps.minOf { it.keptFrames },
             minTotalFramesPerStep = steps.minOf { it.totalFrames },
             referenceMeanDb = refMean,
+            referenceRawMeanDb = rawRefMean,
             referenceProof = referenceProof,
         )
+    }
+
+    /**
+     * 두 기준 단계의 **CAL 전** 밴드 평균. 한쪽이라도 없으면 null.
+     *
+     * 걸린 값과 같은 방식으로 — 에너지 평균으로 — 묶는다. 그래야 둘을
+     * 견줄 때 방식 차이가 섞이지 않는다.
+     */
+    private fun rawMeanOf(a: MeasureStep, b: MeasureStep): DoubleArray? {
+        val fa = rawReferenceFrames[a]?.takeIf { it.isNotEmpty() } ?: return null
+        val fb = rawReferenceFrames[b]?.takeIf { it.isNotEmpty() } ?: return null
+        val accA = BandAccumulator(bandCount).also { acc -> fa.forEach(acc::add) }
+        val accB = BandAccumulator(bandCount).also { acc -> fb.forEach(acc::add) }
+        val ma = accA.meanDb() ?: return null
+        val mb = accB.meanDb() ?: return null
+        return DoubleArray(bandCount) {
+            val x = 10.0.pow(ma[it] / 10.0)
+            val y = 10.0.pow(mb[it] / 10.0)
+            10.0 * log10((x + y) / 2.0)
+        }
     }
 
     private fun summarize(step: MeasureStep): StepResult? {
