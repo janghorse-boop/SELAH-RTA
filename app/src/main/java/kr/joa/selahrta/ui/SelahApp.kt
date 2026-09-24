@@ -87,7 +87,7 @@ fun SelahApp() {
     var wizardOpen by rememberSaveable { mutableStateOf(false) }
     var wizardExample by rememberSaveable { mutableStateOf(false) }
     var profilesOpen by rememberSaveable { mutableStateOf(false) }
-    var mode by remember { mutableStateOf(ViewMode.Sermon) }
+    var mode by remember { mutableStateOf(ViewMode.Spl) }
 
     val vm: CaptureViewModel = viewModel()
     val capture by vm.state.collectAsStateWithLifecycle()
@@ -110,22 +110,9 @@ fun SelahApp() {
         wizard.noteSeparation(capture.micProbe?.verdict)
     }
 
-    // **칩을 저장된 구간에 맞춘다.** 구간을 고르는 줄을 없앤 뒤로 칩이
-    // 곧 구간인데, 칩은 늘 「설교」로 시작하고 구간은 지난번에 고른 것이
-    // 저장돼 있다. 맞추지 않으면 칩은 「설교」인데 범위는 「찬양 78~85」인
-    // 화면이 나온다(기기에서 확인).
-    //
-    // **측정 구역일 때만** 맞춘다. RTA·피드백을 보고 있는 사람을 끌어다
-    // 놓으면 안 된다.
-    val storedSegment = capture.meterSettings.segment
-    LaunchedEffect(storedSegment) {
-        if (mode.section == NavSection.Measure) {
-            mode = when (storedSegment) {
-                ChurchSegment.Sermon -> ViewMode.Sermon
-                ChurchSegment.Worship -> ViewMode.Worship
-            }
-        }
-    }
+    // 칩을 저장된 구간에 맞추던 자리였다. 설교·찬양이 SPL 칩 **안으로**
+    // 들어가면서(2026-09-24) 칩과 구간이 더는 같은 것이 아니게 되어
+    // 맞출 일이 없어졌다 — 구간은 화면 안의 고르개가 곧바로 보여 준다.
 
     val context = LocalContext.current
     // 닫기를 고르면 액티비티를 끝낸다. 컨텍스트가 액티비티가 아니면 null 이다.
@@ -295,22 +282,15 @@ fun SelahApp() {
                     // 칩을 누르면 아래 탭도 따라온다. 두 줄이 서로 다른 곳을
                     // 가리키면 지금 어디 있는지 알 수 없다.
                     section = picked.section
-                    // 설교·찬양 칩은 구간도 함께 바꾼다. 칩이 「설교」인데
-                    // 판정은 찬양 범위로 하고 있으면 아무도 이해할 수 없다.
-                    when (picked) {
-                        ViewMode.Sermon -> vm.setSegment(ChurchSegment.Sermon)
-                        ViewMode.Worship -> vm.setSegment(ChurchSegment.Worship)
-                        else -> Unit
-                    }
                 }
             }
 
             Box(Modifier.weight(1f)) {
                 when (section) {
                     NavSection.Measure, NavSection.Analyze -> when (mode) {
-                        ViewMode.Sermon, ViewMode.Worship -> MeasureScreen(
-                            mode = mode,
+                        ViewMode.Spl -> MeasureScreen(
                             capture = capture,
+                            onSegment = vm::setSegment,
                             hasPermission = hasPermission,
                             onRequestPermission = {
                                 askPermission.launch(Manifest.permission.RECORD_AUDIO)

@@ -42,6 +42,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.RoundedCornerShape
+import kr.joa.selahrta.domain.ChurchSegment
 import kr.joa.selahrta.domain.MeasureState
 import kr.joa.selahrta.domain.focusKo
 import kr.joa.selahrta.dsp.Weighting
@@ -76,8 +77,14 @@ import kr.joa.selahrta.ui.theme.SelahColors
  */
 @Composable
 fun MeasureScreen(
-    mode: ViewMode,
     capture: CaptureUiState,
+    /**
+     * 재는 구간을 바꾼다.
+     *
+     * 예전에는 위 칩(설교·찬양)이 하던 일이다. 둘은 **같은 화면의 다른
+     * 권장 범위**일 뿐이라 칩 두 자리를 쓸 까닭이 없었다(2026-09-24).
+     */
+    onSegment: (ChurchSegment) -> Unit,
     hasPermission: Boolean,
     onRequestPermission: () -> Unit,
     onStart: () -> Unit,
@@ -113,6 +120,14 @@ fun MeasureScreen(
             .padding(horizontal = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        // **구간은 화면 안에서 고른다**(2026-09-24). 예전에는 위 칩이
+        // 설교·찬양이었는데, 둘은 같은 화면의 다른 권장 범위일 뿐이라
+        // 칩 두 자리를 쓰면서 화면은 하나였다.
+        SegmentPicker(
+            selected = segment,
+            onPick = onSegment,
+            modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+        )
         when {
             !hasPermission -> InfoBar(
                 "소리의 크기를 재려면 마이크 권한이 필요합니다. " +
@@ -258,16 +273,37 @@ fun MeasureScreen(
             //
             // 가격·구독 전략 3장이 「권장범위의 근거·측정 조건·가중치·
             // **평균시간** 표시」를 요구한 자리가 바로 여기다.
-            Text(
-                "${segment.shortKo} 권장 범위 " +
-                    "${range.avgLowDb.toInt()} ~ ${range.avgHighDb.toInt()} dBA" +
-                    " · Leq(${capture.meterSettings.leqWindow.labelKo}) 기준" +
-                    if (capture.meterSettings.isCustom(segment)) " (고친 값)" else "",
-                color = SelahColors.TextSecondary,
-                fontSize = 13.sp,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(top = 10.dp),
-            )
+            // **눈에 띄게 둔다**(2026-09-24 담당자 지시). 예전에는 흐린
+            // 한 줄이라 계기 옆에서 묻혔다 — 정작 「지금 값이 알맞은가」를
+            // 판단하는 근거가 이 숫자인데.
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 12.dp)
+                    .background(SelahColors.SurfaceVariant, RoundedCornerShape(12.dp))
+                    .border(1.dp, SelahColors.Outline, RoundedCornerShape(12.dp))
+                    .padding(vertical = 10.dp, horizontal = 14.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    "${segment.shortKo} 권장 범위" +
+                        if (capture.meterSettings.isCustom(segment)) " (고친 값)" else "",
+                    color = SelahColors.TextMuted,
+                    fontSize = 11.sp,
+                )
+                Text(
+                    "${range.avgLowDb.toInt()} ~ ${range.avgHighDb.toInt()} dBA",
+                    color = SelahColors.TextPrimary,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    "Leq(${capture.meterSettings.leqWindow.labelKo}) 기준",
+                    color = SelahColors.TextMuted,
+                    fontSize = 11.sp,
+                )
+            }
             if (running && canJudge) {
                 Text(
                     "계기의 큰 숫자는 지금 값이라 더 크게 출렁입니다. " +
@@ -313,7 +349,7 @@ fun MeasureScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             ValueTile(
-                "Leq ()",
+                "Leq (${capture.meterSettings.leqWindow.labelKo})",
                 formatDb(m.leqLong),
                 // 창이 아직 안 찼으면 그 사실을 적는다 — 「1분 평균」이라고
                 // 적어 놓고 실제로는 10초치인 값을 보여 주면 안 된다.
@@ -552,3 +588,43 @@ private fun GaugeArc(
  * 보고 싶으면 설정의 「응답 속도」를 Slow 로 두어야 한다.
  */
 private const val GAUGE_GLIDE_MS = 90
+
+/**
+ * 재는 구간을 고른다 — 설교인가 찬양인가.
+ *
+ * **고르는 것은 권장 범위 하나뿐이다.** 측정 방식이 바뀌는 것이 아니라
+ * 무엇과 견줄지가 바뀐다. 그래서 고르개를 범위 바로 위에 둔다.
+ */
+@Composable
+private fun SegmentPicker(
+    selected: ChurchSegment,
+    onPick: (ChurchSegment) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        ChurchSegment.entries.forEach { s ->
+            val on = s == selected
+            Box(
+                Modifier
+                    .weight(1f)
+                    .background(
+                        if (on) SelahColors.Accent else SelahColors.SurfaceVariant,
+                        RoundedCornerShape(10.dp),
+                    )
+                    .clickable { onPick(s) }
+                    .padding(vertical = 10.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    s.labelKo,
+                    color = if (on) Color(0xFF00201C) else SelahColors.TextSecondary,
+                    fontSize = 13.sp,
+                    fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
+                )
+            }
+        }
+    }
+}

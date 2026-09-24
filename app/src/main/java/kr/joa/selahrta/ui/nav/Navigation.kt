@@ -9,8 +9,14 @@ import kr.joa.selahrta.R
  * 다른 화면이다. 그래서 칩 하나가 곧 「지금 무엇을 보고 있는가」가 된다.
  */
 enum class ViewMode(val labelKo: String, val section: NavSection) {
-    Sermon("설교", NavSection.Measure),
-    Worship("찬양", NavSection.Measure),
+    /**
+     * 음압 계측(2026-09-24 담당자 지시로 설교·찬양을 여기 안으로 넣음).
+     *
+     * 예전에는 「설교」·「찬양」이 각각 칩이었다. 그런데 둘은 **같은 화면의
+     * 다른 권장 범위**일 뿐이라, 칩 두 자리를 쓰면서도 화면은 하나였다.
+     * 구간은 화면 안에서 고른다.
+     */
+    Spl("SPL", NavSection.Measure),
 
     /**
      * 예배 기록(컨셉 화면 7번).
@@ -69,7 +75,7 @@ enum class NavSection(val labelKo: String, val iconRes: Int) {
 
 /** 아래 탭을 눌렀을 때 어느 칩으로 갈지. 마지막에 보던 칩을 기억해 돌아간다. */
 fun NavSection.defaultMode(last: ViewMode): ViewMode = when (this) {
-    NavSection.Measure -> if (last.section == NavSection.Measure) last else ViewMode.Sermon
+    NavSection.Measure -> if (last.section == NavSection.Measure) last else ViewMode.Spl
     NavSection.Analyze -> if (last.section == NavSection.Analyze) last else ViewMode.Rta
     else -> last
 }
