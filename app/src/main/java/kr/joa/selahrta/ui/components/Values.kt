@@ -44,6 +44,13 @@ fun ValueTile(
     unit: String,
     modifier: Modifier = Modifier,
     emphasised: Boolean = false,
+    /**
+     * 값에 입힐 색. null 이면 평소 색이다.
+     *
+     * **범위와 견줄 수 있는 타일에만 준다.** 지금은 Leq 뿐이다 —
+     * 권장 범위가 시간평균 기준이기 때문이다([SegmentRange]).
+     */
+    valueColor: Color? = null,
 ) {
     val hasValue = value != NO_VALUE
     Column(
@@ -65,7 +72,11 @@ fun ValueTile(
             fontSize = if (emphasised) 26.sp else 22.sp,
             fontWeight = FontWeight.Bold,
             // 값이 없으면 흐리게. 있는 값과 같은 밝기면 구별이 안 된다.
-            color = if (hasValue) SelahColors.TextPrimary else SelahColors.TextMuted,
+            color = when {
+                !hasValue -> SelahColors.TextMuted
+                valueColor != null -> valueColor
+                else -> SelahColors.TextPrimary
+            },
         )
         Text(unit, fontSize = 11.sp, color = SelahColors.TextSecondary)
     }
