@@ -68,6 +68,7 @@ import kr.joa.selahrta.ui.screens.HistoryScreen
 import kr.joa.selahrta.ui.screens.MeasureScreen
 import kr.joa.selahrta.ui.screens.RtaScreen
 import kr.joa.selahrta.ui.screens.SettingsScreen
+import kr.joa.selahrta.ui.screens.ToolsScreen
 import kr.joa.selahrta.ui.screens.exampleJudgement
 import kr.joa.selahrta.ui.screens.exampleOutcome
 import kr.joa.selahrta.ui.theme.SelahColors
@@ -289,7 +290,7 @@ fun SelahApp() {
             TopBrandBar(capture)
 
             if (section.hasModeChips) {
-                ModeChips(mode) { picked ->
+                ModeChips(section, mode) { picked ->
                     mode = picked
                     // 칩을 누르면 아래 탭도 따라온다. 두 줄이 서로 다른 곳을
                     // 가리키면 지금 어디 있는지 알 수 없다.
@@ -322,8 +323,17 @@ fun SelahApp() {
                         ViewMode.Feedback -> FeedbackScreen(capture)
                         // 캡처를 쓰지 않는다. 권한이 없어도 그대로 열린다.
                         ViewMode.InstrumentEq -> InstrumentGuideScreen()
+                        // 지난 기록을 보는 화면이라 마이크가 필요 없다.
+                        ViewMode.History -> HistoryScreen()
                     }
-                    NavSection.History -> HistoryScreen()
+
+                    NavSection.Tools -> ToolsScreen(
+                        capture = capture,
+                        onPlaySignal = vm::playSignal,
+                        onStopSignal = vm::stopSignal,
+                        onSignalLevel = vm::setSignalLevel,
+                        onDismissSignalNotice = vm::dismissSignalNotice,
+                    )
                     NavSection.Settings -> SettingsScreen(
                         capture = capture,
                         onSaveCalibration = vm::saveSimpleCalibration,
@@ -572,9 +582,22 @@ private fun StatusPill(text: String, color: Color, dim: Boolean = false) {
     }
 }
 
-/** 컨셉 화면의 상단 칩 네 개. 설교·찬양·RTA·피드백. */
+/**
+ * 상단 칩. **지금 구역의 것만** 그린다.
+ *
+ * 예전에는 모든 모드를 한 줄에 그렸다. 칩이 넷일 때는 괜찮았는데,
+ * 기록과 FR 이 붙으면서 여섯을 한 줄에 욱여넣게 됐다 — 폭을 똑같이
+ * 나누므로 이름이 줄바꿈되어 칩이 세로로 길어진다.
+ *
+ * 아래 탭이 구역을 고르고, 칩이 그 안을 고른다. 칩을 누르면 아래 탭도
+ * 따라오므로 두 줄이 어긋나지 않는다.
+ */
 @Composable
-private fun ModeChips(selected: ViewMode, onSelect: (ViewMode) -> Unit) {
+private fun ModeChips(
+    section: NavSection,
+    selected: ViewMode,
+    onSelect: (ViewMode) -> Unit,
+) {
     // **양쪽을 채운다.** 칩은 가는 길이라 가지런히 놀아 놓으면
     // 한쪽이 비어 보인다. 폭을 똑같이 나눠 갖는다.
     //
@@ -588,7 +611,7 @@ private fun ModeChips(selected: ViewMode, onSelect: (ViewMode) -> Unit) {
             .padding(horizontal = 12.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        ViewMode.entries.forEach { m ->
+        ViewMode.entries.filter { it.section == section }.forEach { m ->
             val on = m == selected
             Box(
                 modifier = Modifier
