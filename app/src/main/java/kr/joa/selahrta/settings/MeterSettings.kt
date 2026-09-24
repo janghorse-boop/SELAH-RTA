@@ -10,8 +10,8 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import androidx.datastore.preferences.core.doublePreferencesKey
-import kr.joa.selahrta.audio.DisconnectPolicy
 import kr.joa.selahrta.domain.ChurchSegment
+import kr.joa.selahrta.domain.MicKind
 import kr.joa.selahrta.domain.DefaultSegmentRanges
 import kr.joa.selahrta.domain.SegmentRange
 import kr.joa.selahrta.dsp.TimeWeight
@@ -52,10 +52,15 @@ data class MeterSettings(
      * (USB 오디오 지시서 9.2: 「UMC404HD / Input 1 / EMM-6」을 각각 관리).
      */
     val inputChannels: Map<String, Int> = emptyMap(),
-    /** 외부 기기가 꽂히면 자동으로 그쪽을 쓸 것인가(명세 2장). */
-    val autoPreferExternal: Boolean = true,
-    /** 쓰던 기기가 빠졌을 때(명세 2장). */
-    val disconnectPolicy: DisconnectPolicy = DisconnectPolicy.FallBack,
+    /**
+     * 한 번이라도 연결됐던 기기들. 지금 꽂혀 있지 않아도 남는다.
+     *
+     * **왜 기억하는가**: 예배당에서는 인터페이스를 늘 꽂아 두지 않는다.
+     * 뺄 때마다 목록에서 사라지면, 다시 꽂을 때까지 「그 기기로 고를
+     * 수 있다」는 사실 자체가 화면에서 없어진다. 보정값은 기기마다
+     * 따로 두므로, 목록에 남아 있어야 무엇이 보정돼 있는지도 보인다.
+     */
+    val knownDevices: List<KnownDevice> = emptyList(),
     /** 지금 재고 있는 예배 구간. */
     val segment: ChurchSegment = ChurchSegment.Sermon,
     /**
@@ -83,8 +88,9 @@ class MeterSettingsStore(private val context: Context) {
 
     /** 기기 열쇠가 길고 임의라 접두어로 모아 둔다. */
     private fun channelKey(deviceKey: String) = intPreferencesKey("$CHANNEL_PREFIX$deviceKey")
-    private val autoExternalKey = stringPreferencesKey("autoPreferExternal")
-    private val disconnectKey = stringPreferencesKey("disconnectPolicy")
+
+    /** 한 번이라도 연결됐던 기기. 값은 `종류|이름`. */
+    private fun knownKey(deviceKey: String) = stringPreferencesKey("$KNOWN_PREFIX$deviceKey")
     private val segmentKey = stringPreferencesKey("segment")
 
     // 범위는 구간마다 네 값이라 열쇠를 만들어 쓴다.
@@ -115,10 +121,17 @@ class MeterSettingsStore(private val context: Context) {
                     if (idx < 0) return@mapNotNull null
                     k.name.removePrefix(CHANNEL_PREFIX) to idx
                 }.toMap(),
-                autoPreferExternal = p[autoExternalKey] != "false",
-                disconnectPolicy = p[disconnectKey]?.let { n ->
-                    DisconnectPolicy.entries.firstOrNull { it.name == n }
-                } ?: DisconnectPolicy.FallBack,
+                knownDevices = p.asMap().mapNotNull { (k, v) ->
+                    if (!k.name.startsWith(KNOWN_PREFIX)) return@mapNotNull null
+                    val s = v as? String ?: return@mapNotNull null
+                    val kind = MicKind.entries.firstOrNull { it.name == s.substringBefore("|") }
+                        ?: return@mapNotNull null
+                    KnownDevice(
+                        key = k.name.removePrefix(KNOWN_PREFIX),
+                        name = s.substringAfter("|"),
+                        kind = kind,
+                    )
+                }.sortedBy { it.name },
                 segment = p[segmentKey]?.let { n ->
                     ChurchSegment.entries.firstOrNull { it.name == n }
                 } ?: ChurchSegment.Sermon,
@@ -142,11 +155,21 @@ class MeterSettingsStore(private val context: Context) {
     suspend fun setLeqWindow(w: LeqWindow) = write { it[leqWindowKey] = w.millis }
     suspend fun setPreferredInput(key: String?) = write { it[preferredInputKey] = key ?: "" }
 
-    /** 그 기기로 쟰 때 쓸 채널을 기억한다. */
+    /**
+     * 이 기기를 **봤다고 기억한다.** 목록에 남기려는 것이다.
+     *
+     * 덮어쓰기라 이름이 바뀌면 새 이름이 남는다 — 같은 열쇠면 같은
+     * 기기이므로 최신 이름이 맞다.
+     */
+    suspend fun rememberDevice(key: String, name: String, kind: MicKind) =
+        write { it[knownKey(key)] = "${kind.name}|$name" }
+
+    /** 기억에서 지운다. 사람이 목록에서 치울 때 쓴다. */
+    suspend fun forgetDevice(key: String) = write { it.remove(knownKey(key)) }
+
+    /** 그 기기로 잴 때 쓸 채널을 기억한다. */
     suspend fun setInputChannel(deviceKey: String, index: Int) =
         write { it[channelKey(deviceKey)] = index.coerceAtLeast(0) }
-    suspend fun setAutoPreferExternal(on: Boolean) = write { it[autoExternalKey] = on.toString() }
-    suspend fun setDisconnectPolicy(p: DisconnectPolicy) = write { it[disconnectKey] = p.name }
     suspend fun setSegment(s: ChurchSegment) = write { it[segmentKey] = s.name }
 
     /** 구간 범위를 고친다. 말이 안 되는 값은 저장하지 않는다. */
@@ -177,3 +200,17 @@ class MeterSettingsStore(private val context: Context) {
 
 /** 채널 설정을 모아 두는 접두어. 기기 열쇠가 뒤에 붙는다. */
 private const val CHANNEL_PREFIX = "inputChannel|"
+private const val KNOWN_PREFIX = "known|"
+
+/**
+ * 한 번이라도 연결됐던 입력 기기.
+ *
+ * 지금 꽂혀 있는 기기는 [kr.joa.selahrta.audio.InputDeviceInfo] 로 오고,
+ * 이것은 **꽂혀 있지 않아도 남는 기억**이다. 둘을 합쳐 화면이 「지금
+ * 연결됨」과 「전에 썼음」을 갈라 보여 준다.
+ */
+data class KnownDevice(
+    val key: String,
+    val name: String,
+    val kind: MicKind,
+)

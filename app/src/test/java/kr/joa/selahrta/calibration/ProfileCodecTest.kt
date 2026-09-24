@@ -59,7 +59,7 @@ class ProfileCodecTest {
         reference = reference,
         quality = ProfileQuality(
             verdict = QualityVerdict.Pass,
-            repeatSpreadDb = 0.8123456789,
+            repeatStdevDb = 0.8123456789,
             referenceDriftDb = -0.2,
             usableBandRatio = 0.9032258064516129,
             worstSnrDb = worstSnrDb,
@@ -93,7 +93,7 @@ class ProfileCodecTest {
     fun `소수가 자릿수까지 살아남는다`() {
         val p = profile()
         val back = decodeProfile(encodeProfile(p)).getOrThrow()
-        assertEquals(p.quality.repeatSpreadDb, back.quality.repeatSpreadDb, 0.0)
+        assertEquals(p.quality.repeatStdevDb, back.quality.repeatStdevDb, 0.0)
         assertEquals(p.quality.usableBandRatio, back.quality.usableBandRatio, 0.0)
         assertEquals(p.levelOffsetDb, back.levelOffsetDb, 0.0)
     }
@@ -640,7 +640,7 @@ class ProfileCodecTest {
         val o = limitedOutcome()
         val q = QualityReport(
             bands = (0 until 31).map { BandNoise(ThirdOctave.exactCenter(it), 70.0, 0.0) },
-            repeatSpreadDb = 0.5,
+            repeatStdevDb = 0.5,
             referenceDriftDb = 0.0,
             referenceBandDriftDb = 0.0,
             minFramesPerStep = 16,

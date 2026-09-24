@@ -43,7 +43,7 @@ internal fun testProfile(
     reference = ReferenceRecord("17860.txt", "abc123", 0, "EMM-6"),
     quality = ProfileQuality(
         verdict = verdict,
-        repeatSpreadDb = 0.8,
+        repeatStdevDb = 0.8,
         referenceDriftDb = -0.2,
         usableBandRatio = 0.9,
         worstSnrDb = worstSnrDb,
@@ -74,7 +74,7 @@ internal fun fakeSession(
     bandCount: Int = ThirdOctave.BAND_COUNT,
     referenceDriftDb: Double = 0.2,
     referenceBandDriftDb: Double = 0.4,
-    repeatSpreadDb: Double? = 0.5,
+    repeatStdevDb: Double? = 0.5,
     keptFrames: Int = 16,
 ): SessionResult = SessionResult(
     referenceBefore = fakeStep(bandCount, keptFrames, noStable),
@@ -82,7 +82,8 @@ internal fun fakeSession(
     referenceAfter = fakeStep(bandCount, keptFrames, noStable),
     referenceDriftDb = referenceDriftDb,
     referenceBandDriftDb = referenceBandDriftDb,
-    repeatSpreadDb = repeatSpreadDb,
+    repeatStdevDb = repeatStdevDb,
+    referenceDriftBand = 0,
     noStableFrames = noStable,
     minKeptFramesPerStep = if (noStable) 0 else keptFrames,
     minTotalFramesPerStep = keptFrames,
@@ -95,7 +96,7 @@ private fun fakeStep(bandCount: Int, kept: Int, noStable: Boolean) = StepResult(
     meanDb = DoubleArray(bandCount) { 70.0 },
     keptFrames = if (noStable) 0 else kept,
     droppedFrames = if (noStable) kept else 0,
-    levelSpreadDb = 0.5,
+    levelStdevDb = 0.5,
     noStableFrames = noStable,
     totalFrames = kept,
 )

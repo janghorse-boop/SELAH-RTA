@@ -229,7 +229,16 @@ fun SelahApp() {
         val running = capture.measure is MeasureState.Running
         AlertDialog(
             onDismissRequest = { askExit = false },
-            containerColor = SelahColors.Surface,
+            // **배경과 뚜렷이 갈라 놓는다.** 예전에는 Surface 를 썼는데 앱
+            // 배경과 밝기가 거의 같아 창이 떠 있는지 구별되지 않았다.
+            containerColor = SelahColors.DialogSurface,
+            tonalElevation = 0.dp,
+            shape = RoundedCornerShape(20.dp),
+            modifier = Modifier.border(
+                1.dp,
+                SelahColors.Outline,
+                RoundedCornerShape(20.dp),
+            ),
             title = { Text("앱을 닫을까요?", color = SelahColors.TextPrimary) },
             // **재고 있을 때만 본문을 둔다.** 안 재고 있을 때 「SELAH RTA 를
             // 닫습니다」는 제목을 한 번 더 말하는 것뿐이라 지웠다. 재고 있을
@@ -324,10 +333,8 @@ fun SelahApp() {
                         onTimeWeight = vm::setTimeWeight,
                         onLeqWindow = vm::setLeqWindow,
                         onPreferredInput = vm::setPreferredInput,
+                        onForgetDevice = vm::forgetDevice,
                         onInputChannel = vm::setInputChannel,
-                        onProbeMicrophones = vm::probeMicrophones,
-                        onAutoPreferExternal = vm::setAutoPreferExternal,
-                        onDisconnectPolicy = vm::setDisconnectPolicy,
                         // 확장자를 못 믿는 제공자가 많아 형식을 넓게 받는다.
                         // 내용으로 판별하므로 잘못 고른 파일은 파서가 거른다.
                         onPickCurveFile = { pickCurve.launch(arrayOf("*/*")) },
@@ -354,6 +361,25 @@ fun SelahApp() {
                 if (wizardOpen) {
                     BackHandler { wizardOpen = false }
                     val example = if (wizardExample) remember { exampleOutcome() } else null
+                    // **잰 것이 있으면 잰 것을 보인다.** 예전에는 예시만
+                    // 넘기고 있어서, 세 번을 다 재고 5단계에 가도 화면이
+                    // 「아직 잰 것이 없습니다」였다 — 저장은 진짜 값으로
+                    // 되는데 **눈으로 볼 자리만 비어 있었다.** 5단계가 있는
+                    // 까닭이 저장 전에 보는 것이므로, 이건 단계 하나가
+                    // 통째로 없던 것과 같다(실기기 확인 2026-09-24).
+                    val shownOutcome = example ?: wizardState.outcome
+                    // 판정은 **저장 관문이 쓰는 것과 같은 함수**로 낸다
+                    // (WizardFlow.saveGate). 화면과 관문이 다른 판정을
+                    // 보이면 어느 쪽이 참인지 알 수 없다.
+                    val shownJudged: kr.joa.selahrta.dsp.QualityResult? = when {
+                        example != null -> exampleJudgement(example)
+                        shownOutcome != null && wizardState.quality != null ->
+                            kr.joa.selahrta.dsp.judgeCalibration(
+                                wizardState.quality!!,
+                                shownOutcome,
+                            )
+                        else -> null
+                    }
                     Box(
                         Modifier
                             .fillMaxSize()
@@ -365,15 +391,21 @@ fun SelahApp() {
                             noticeKo = wizardNotice,
                             busyKo = wizardBusy,
                             canMeasure = capture.opened != null,
-                            outcome = example,
-                            judged = example?.let { exampleJudgement(it) },
+                            outcome = shownOutcome,
+                            judged = shownJudged,
                             showingExample = wizardExample,
                             // 확장자를 못 믿는 제공자가 많아 넓게 받는다.
                             // 내용으로 판별하므로 잘못 고른 파일은 파서가 거른다.
                             onPickCalFile = { pickWizardCal.launch(arrayOf("*/*")) },
                             onChooseReading = wizard::chooseReading,
                             onPhantom = wizard::acknowledgePhantom,
-                            probingMics = capture.measure != MeasureState.Idle,
+                            onChooseHookup = wizard::chooseHookup,
+                            probeBlockedKo = if (capture.measure != MeasureState.Idle) {
+                                "재는 동안에는 탐색할 수 없습니다. 「측정」 화면에서 " +
+                                    "측정을 끝낸 뒤 돌아오십시오."
+                            } else {
+                                null
+                            },
                             onProbeMics = vm::probeMicrophones,
                             onCaseRemoved = wizard::noteCaseRemoved,
                             openedDeviceKey = capture.opened?.deviceKey,
@@ -381,6 +413,12 @@ fun SelahApp() {
                             onRestartMeasurement = wizard::restartMeasurement,
                             savedLabelKo = wizardSaved?.labelKo,
                             canSave = capture.opened != null && wizardSaved == null,
+                            onApplyLevelTransfer = { db ->
+                                vm.saveOffsetDirect(
+                                    db,
+                                    kr.joa.selahrta.calibration.CalibrationSource.FromReferenceMic,
+                                )
+                            },
                             onSave = {
                                 val opened = capture.opened
                                 if (opened != null) {

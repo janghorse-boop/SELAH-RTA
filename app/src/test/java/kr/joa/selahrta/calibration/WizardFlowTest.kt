@@ -59,6 +59,7 @@ class WizardFlowTest {
     /** 1~3단계를 다 갖춘 상태. */
     private fun ready() = WizardState(
         cal = cal,
+        referenceHookup = ReferenceHookup.XlrInterface,
         phantomAcknowledged = true,
         dsp = dsp(DspVerdict.NoTimeVaryingFound),
         effectsAllClear = true,
@@ -71,7 +72,7 @@ class WizardFlowTest {
 
     @Test
     fun `CAL 이 없으면 막힌다`() {
-        val g = gateFor(WizardState(phantomAcknowledged = true), WizardStep.Equipment)
+        val g = gateFor(WizardState(referenceHookup = ReferenceHookup.XlrInterface, phantomAcknowledged = true), WizardStep.Equipment)
         assertTrue(g is StepGate.Blocked)
         assertTrue(g.reasonsKo.toString(), g.reasonsKo.any { it.contains("CAL") })
     }
@@ -84,9 +85,44 @@ class WizardFlowTest {
      */
     @Test
     fun `팬텀전원을 확인받지 않으면 막힌다`() {
-        val g = gateFor(WizardState(cal = cal), WizardStep.Equipment)
+        val g = gateFor(
+            WizardState(cal = cal, referenceHookup = ReferenceHookup.XlrInterface),
+            WizardStep.Equipment,
+        )
         assertTrue(g is StepGate.Blocked)
         assertTrue(g.reasonsKo.toString(), g.reasonsKo.any { it.contains("앱은 이 상태를 알 수 없습니다") })
+    }
+
+    /**
+     * **USB 직결 마이크에는 팬텀전원이 없다.**
+     *
+     * 가격·구독 전략 3장이 「iMM-6C 와 EMM-6 을 품질 등급으로 나누지
+     * 않는다」고 못박았다. 다른 것은 연결 방식뿐이다. 그런데 예전 관문은
+     * 모두에게 +48V 확인을 요구해서, USB 직결을 쓰는 사람은 **자기 장비에
+     * 없는 스위치**를 켰다고 체크해야만 다음으로 갈 수 있었다.
+     */
+    @Test
+    fun `USB 직결이면 팬텀전원을 묻지 않는다`() {
+        val s = WizardState(cal = cal, referenceHookup = ReferenceHookup.UsbDirect)
+        assertEquals(StepGate.Allowed, gateFor(s, WizardStep.Equipment))
+    }
+
+    @Test
+    fun `연결 방식을 안 고르면 막힌다`() {
+        // 안 물어보고 XLR 로 가정하면, USB 직결 사용자에게 없는 스위치를
+        // 켜라고 하게 된다. 모르는 것은 묻는다.
+        val g = gateFor(WizardState(cal = cal), WizardStep.Equipment)
+        assertTrue(g is StepGate.Blocked)
+        assertTrue(g.reasonsKo.toString(), g.reasonsKo.any { it.contains("어떻게 물렸는지") })
+    }
+
+    @Test
+    fun `XLR 이면 팬텀전원을 여전히 묻는다`() {
+        // 접어서 없앤 것이 아니다. 해당되는 경로에서는 그대로 막는다.
+        val s = WizardState(cal = cal, referenceHookup = ReferenceHookup.XlrInterface)
+        val g = gateFor(s, WizardStep.Equipment)
+        assertTrue(g is StepGate.Blocked)
+        assertTrue(g.reasonsKo.toString(), g.reasonsKo.any { it.contains("팬텀전원") })
     }
 
     /**
@@ -100,7 +136,7 @@ class WizardFlowTest {
     fun `CAL 읽는 법이 안 정해지면 막힌다`() {
         val unclear = cal.copy(evidence = SignEvidence.Unknown)
         val g = gateFor(
-            WizardState(cal = unclear, phantomAcknowledged = true),
+            WizardState(cal = unclear, referenceHookup = ReferenceHookup.XlrInterface, phantomAcknowledged = true),
             WizardStep.Equipment,
         )
         assertTrue("$g", g is StepGate.Blocked)
@@ -114,7 +150,7 @@ class WizardFlowTest {
             reading = CurveReading.Correction,
             readingChosenByPerson = true,
         )
-        val s = WizardState(cal = chosen, phantomAcknowledged = true)
+        val s = WizardState(cal = chosen, referenceHookup = ReferenceHookup.XlrInterface, phantomAcknowledged = true)
         assertEquals(StepGate.Allowed, gateFor(s, WizardStep.Equipment))
     }
 
@@ -122,7 +158,7 @@ class WizardFlowTest {
     @Test
     fun `머리글이 보정값이면 골라야 지나간다`() {
         val contrary = cal.copy(evidence = SignEvidence.LooksLikeCorrection)
-        val s = WizardState(cal = contrary, phantomAcknowledged = true)
+        val s = WizardState(cal = contrary, referenceHookup = ReferenceHookup.XlrInterface, phantomAcknowledged = true)
         assertTrue(gateFor(s, WizardStep.Equipment) is StepGate.Blocked)
 
         val settled = contrary.copy(
@@ -131,13 +167,13 @@ class WizardFlowTest {
         )
         assertEquals(
             StepGate.Allowed,
-            gateFor(WizardState(cal = settled, phantomAcknowledged = true), WizardStep.Equipment),
+            gateFor(WizardState(cal = settled, referenceHookup = ReferenceHookup.XlrInterface, phantomAcknowledged = true), WizardStep.Equipment),
         )
     }
 
     @Test
     fun `둘 다 갖추면 지나간다`() {
-        val s = WizardState(cal = cal, phantomAcknowledged = true)
+        val s = WizardState(cal = cal, referenceHookup = ReferenceHookup.XlrInterface, phantomAcknowledged = true)
         assertEquals(StepGate.Allowed, gateFor(s, WizardStep.Equipment))
         assertEquals(WizardStep.InputCheck, nextStep(s))
     }
@@ -294,7 +330,7 @@ class WizardFlowTest {
         bands = (0 until ThirdOctave.BAND_COUNT).map {
             BandNoise(ThirdOctave.exactCenter(it), 70.0, 40.0)
         },
-        repeatSpreadDb = 0.5,
+        repeatStdevDb = 0.5,
         referenceDriftDb = 0.2,
         referenceBandDriftDb = 0.4,
         minFramesPerStep = 16,

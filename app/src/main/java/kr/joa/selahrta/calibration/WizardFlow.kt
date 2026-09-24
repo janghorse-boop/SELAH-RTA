@@ -2,6 +2,7 @@ package kr.joa.selahrta.calibration
 
 import kr.joa.selahrta.audio.MicSeparation
 import kr.joa.selahrta.audio.MicSeparationResult
+import kr.joa.selahrta.dsp.LevelTransfer
 import kr.joa.selahrta.dsp.CalibrationOutcome
 import kr.joa.selahrta.dsp.CurveReading
 import kr.joa.selahrta.dsp.ReadingDecision
@@ -42,10 +43,51 @@ import kr.joa.selahrta.dsp.judgeCalibration
  * 둘을 섞으면 어느 쪽으로든 나쁘다. 다 막으면 아무것도 못 하고, 다
  * 통과시키면 못 믿을 보정이 조용히 걸린다.
  */
+/**
+ * 기준 마이크를 **어떻게 물렸는가.**
+ *
+ * ## 왜 묻는가
+ *
+ * 가격·구독 전략 문서(2026-09-24) 3장이 못박은 원칙이 있다 —
+ * **iMM-6C 와 EMM-6 은 둘 다 개별 CAL 을 적용하는 정식 측정용
+ * 마이크다.** 「간편형/정밀형」처럼 품질 등급으로 나누지 않는다.
+ * 다른 것은 **연결 방식**뿐이다.
+ *
+ * 그런데 마법사 1단계는 EMM-6 만 가정하고 있었다. 팬텀전원(+48V)
+ * 확인을 **모두에게** 요구해서, USB 직결 마이크를 쓰는 사람은 자기
+ * 장비에 **없는 스위치**를 켰다고 체크해야만 다음으로 갈 수 있었다.
+ * 거짓을 체크하게 만드는 관문은 관문이 아니다.
+ *
+ * ## 무엇이 달라지는가
+ *
+ * | 연결 | 팬텀전원 | 게인 노브 |
+ * |---|---|---|
+ * | [XlrInterface] | 인터페이스에서 켠다 | 있다 |
+ * | [UsbDirect] | 없다 | 대개 없다 |
+ *
+ * 측정 품질의 우열이 아니다. 확인할 것이 다를 뿐이다.
+ */
+enum class ReferenceHookup(val labelKo: String, val helpKo: String) {
+    XlrInterface(
+        "XLR 마이크 + 오디오 인터페이스",
+        "EMM-6 처럼 XLR 로 나가는 측정 마이크입니다. 인터페이스에서 " +
+            "팬텀전원(+48V)을 켜고 입력 게인을 맞춥니다.",
+    ),
+    UsbDirect(
+        "USB 직결 측정 마이크",
+        "iMM-6C 처럼 폰에 바로 꽂는 측정 마이크입니다. 팬텀전원도 게인 " +
+            "노브도 없으므로 확인할 것이 없습니다.",
+    ),
+    ;
+
+    /** 이 연결에 팬텀전원 확인이 필요한가. */
+    val needsPhantom: Boolean get() = this == XlrInterface
+}
+
 enum class WizardStep(val titleKo: String, val whatKo: String) {
     Equipment(
-        "장비 · CAL · +48V",
-        "기준 마이크를 꽂고 CAL 파일을 불러옵니다. 팬텀전원은 직접 켜셔야 합니다.",
+        "장비 · CAL · 연결 확인",
+        "기준 마이크를 꽂고 CAL 파일을 불러옵니다. 연결 방식에 따라 확인할 것이 다릅니다.",
     ),
     InputCheck(
         "입력 · DSP 점검",
@@ -53,7 +95,7 @@ enum class WizardStep(val titleKo: String, val whatKo: String) {
     ),
     MicJudgement(
         "물리 마이크 판정",
-        "이 폰이 후면·하단을 따로 열어 주는지 기기에 물어봅니다.",
+        "이 폰이 내장 마이크를 하나하나 따로 열어 주는지 기기에 물어봅니다.",
     ),
     Measure(
         "기준 → 대상 → 기준",
@@ -140,7 +182,16 @@ data class WizardState(
     // 1단계
     val cal: CalInfo? = null,
     /**
+     * 기준 마이크를 **어떻게 물렸는가.** 안 고르면 null.
+     *
+     * 묻는 까닭은 [ReferenceHookup] 참고 — 한마디로 팬텀전원은 XLR
+     * 경로에만 있는 물건이라 모두에게 물으면 안 된다.
+     */
+    val referenceHookup: ReferenceHookup? = null,
+    /**
      * 팬텀전원을 켰다고 **사람이 말했는가.**
+     *
+     * [ReferenceHookup.XlrInterface] 일 때만 본다.
      *
      * 앱은 팬텀전원 상태를 알 수 없다(지시서 3장: 「제어하거나 확정
      * 표시하지 않는다」). 켰는지 확인한 것이 아니라 **켰다고 들은 것**이고,
@@ -167,6 +218,33 @@ data class WizardState(
     val referenceDeviceKey: String? = null,
     /** 대상을 잰 입력의 열쇠. 기준과 **달라야** 한다. */
     val targetDeviceKey: String? = null,
+    /**
+     * 기준을 잰 **경로 전체**의 열쇠. 절대 레벨을 옮길 때 그 경로의
+     * 보정값을 찾는 데 쓴다.
+     *
+     * 기기 열쇠만으로는 모자라다 — 같은 인터페이스라도 채널이 다르면
+     * 다른 마이크이고 보정값도 다르다(USB 지시서 9.2).
+     */
+    val referenceCalKey: CalibrationKey? = null,
+    /**
+     * 기준을 잴 **그때** 그 경로에 저장돼 있던 보정값(dBFS → dB SPL).
+     *
+     * **그때의 값을 붙들어 둔다.** 나중에 저장소를 다시 보면, 그사이
+     * 사람이 기준을 다시 보정했을 수도 있고 그러면 잰 것과 다른 값을
+     * 옮기게 된다. null 이면 기준이 미보정이었다는 뜻이다.
+     */
+    val referenceOffsetDb: Double? = null,
+
+    // 5~6단계
+    /**
+     * 기준에서 대상으로 옮길 **절대 레벨**. 못 옮기면 null.
+     *
+     * 조용히 걸지 않는다 — 음압을 바꾸는 일이라 사람이 보고 정한다
+     * (간편 보정이 계산을 먼저 보여 주는 것과 같은 까닭).
+     */
+    val levelTransfer: LevelTransfer? = null,
+    /** 못 옮기는 까닭. 옮길 수 있으면 null. */
+    val levelTransferBlockKo: String? = null,
 
     // 5단계
     val outcome: CalibrationOutcome? = null,
@@ -195,15 +273,28 @@ private fun equipmentGate(state: WizardState): StepGate {
     val block = mutableListOf<String>()
     val cal = state.cal
     if (cal == null) {
-        block += "EMM-6 CAL 파일을 불러오지 않았습니다. 기준 없이 잰 값은 보정이 되지 않습니다."
+        block += "기준 마이크의 CAL 파일을 불러오지 않았습니다. 기준 없이 잰 값은 보정이 되지 않습니다."
     } else if (!cal.readingSettled) {
         // **관례로 때우지 않는다**(독립 검토 R04). 이 파일이 교정의
         // 기준이라, 부호가 뒤집히면 이 기준으로 만든 프로파일이 전부
         // 같은 방향으로 틀어지고 나중에 봐도 알 수 없다.
         block += cal.readingQuestionKo
     }
-    if (!state.phantomAcknowledged) {
-        block += "팬텀전원(+48V)을 켰는지 확인해 주십시오. 앱은 이 상태를 알 수 없습니다."
+    // **팬텀전원은 XLR 경로에만 있는 물건이다.** 연결 방식을 먼저 묻고,
+    // XLR 일 때만 +48V 를 확인한다. 예전에는 모두에게 물어서, USB 직결
+    // 측정 마이크(iMM-6C 등)를 쓰는 사람은 **자기 장비에 없는 스위치**를
+    // 켰다고 체크해야만 다음으로 갈 수 있었다.
+    when (state.referenceHookup) {
+        null -> block += "기준 마이크를 어떻게 물렸는지 골라 주십시오. " +
+            "연결 방식에 따라 확인할 것이 다릅니다."
+
+        ReferenceHookup.XlrInterface ->
+            if (!state.phantomAcknowledged) {
+                block += "팬텀전원(+48V)을 켰는지 확인해 주십시오. 앱은 이 상태를 알 수 없습니다."
+            }
+
+        // USB 직결에는 팬텀전원이 없다. 확인할 것이 없으므로 막지 않는다.
+        ReferenceHookup.UsbDirect -> Unit
     }
     return if (block.isEmpty()) StepGate.Allowed else StepGate.Blocked(block)
 }
@@ -340,7 +431,7 @@ const val EFFECTS_STILL_ON_KO: String =
         "알린 처리가 남아 있습니다. 고정된 처리는 신호로 가려낼 수 없습니다."
 
 const val INDISTINGUISHABLE_KO: String =
-    "이 폰에서는 후면·하단을 따로 열 수 없어 마이크별 교정을 만들지 않습니다. " +
+    "이 폰에서는 내장 마이크를 하나하나 따로 열 수 없어 마이크별 교정을 만들지 않습니다. " +
         "둘을 임의로 나누면 서로 다른 마이크의 보정이 섞이고, 그건 화면에 보이지 않습니다."
 
 const val LOGICAL_ONLY_KO: String =

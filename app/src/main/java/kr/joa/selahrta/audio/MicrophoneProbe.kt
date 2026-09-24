@@ -70,8 +70,11 @@ class MicrophoneProbe(private val context: Context) {
         val catalogue = catalogue()
         Log.i(TAG, "마이크 목록 ${catalogue.size}개: $catalogue")
 
-        val builtIn = scanner.list().filter { it.kind == kr.joa.selahrta.domain.MicKind.BuiltIn }
-        Log.i(TAG, "내장 후보 ${builtIn.size}개: ${builtIn.map { it.stableKey }}")
+        // **접지 않은 목록으로 묻는다.** 사람에게 보이는 목록은 내장을
+        // 한 줄로 접으므로(2026-09-23), 그것으로 물으면 후보가 늘 하나라
+        // 판정이 언제나 「모른다」가 된다.
+        val builtIn = scanner.listAll().filter { it.kind == kr.joa.selahrta.domain.MicKind.BuiltIn }
+        Log.i(TAG, "내장 후보 ${builtIn.size}개: ${builtIn.map { it.probeKey }}")
 
         val rounds = (1..repeats).map { n ->
             builtIn.map { probeOne(it) }.also { Log.i(TAG, "회차 $n: $it") }
@@ -113,7 +116,7 @@ class MicrophoneProbe(private val context: Context) {
         )
         if (minBytes <= 0) {
             return MicProbeRound(
-                target.stableKey, target.displayName, null, emptyList(),
+                target.probeKey, target.probeLabel, null, emptyList(),
                 "버퍼 크기를 얻지 못했습니다($minBytes).",
             )
         }
@@ -129,14 +132,17 @@ class MicrophoneProbe(private val context: Context) {
             )
             if (rec.state != AudioRecord.STATE_INITIALIZED) {
                 return MicProbeRound(
-                    target.stableKey, target.displayName, null, emptyList(),
+                    target.probeKey, target.probeLabel, null, emptyList(),
                     "열리지 않았습니다(state=${rec.state}).",
                 )
             }
 
-            val raw = scanner.findRaw(target.stableKey)
+            // **id 로 집는다.** 내장 마이크는 열쇠가 하나로 묶여 있어
+            // 열쇠로 찾으면 두 후보가 같은 기기로 간다 — 탐색이 같은
+            // 마이크를 두 번 열고 「갈라진다」고 말하게 된다.
+            val raw = scanner.findRawById(target.id)
             val preferred = raw != null && rec.setPreferredDevice(raw)
-            if (!preferred) Log.w(TAG, "선호 기기 지정 실패: ${target.stableKey}")
+            if (!preferred) Log.w(TAG, "선호 기기 지정 실패: ${target.probeKey}")
 
             rec.startRecording()
             // 실제로 소리를 읽어야 경로가 잡힌다. 읽지 않고 기다리기만 하면
@@ -155,14 +161,14 @@ class MicrophoneProbe(private val context: Context) {
             }
 
             return MicProbeRound(
-                requestedKey = target.stableKey,
-                requestedLabel = target.displayName,
-                routedKey = routed?.stableKey,
+                requestedKey = target.probeKey,
+                requestedLabel = target.probeLabel,
+                routedKey = routed?.probeKey,
                 activeMics = active,
             )
         } catch (t: Throwable) {
             return MicProbeRound(
-                target.stableKey, target.displayName, null, emptyList(),
+                target.probeKey, target.probeLabel, null, emptyList(),
                 "여는 중 실패했습니다: $t",
             )
         } finally {

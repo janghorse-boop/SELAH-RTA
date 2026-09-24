@@ -6,7 +6,6 @@ import androidx.lifecycle.viewModelScope
 import kr.joa.selahrta.audio.AudioBlock
 import kr.joa.selahrta.audio.AudioSource
 import kr.joa.selahrta.audio.ChoiceReason
-import kr.joa.selahrta.audio.DisconnectPolicy
 import kr.joa.selahrta.audio.InputDeviceInfo
 import kr.joa.selahrta.audio.InputDeviceScanner
 import kr.joa.selahrta.audio.MicSource
@@ -436,6 +435,12 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             scanner.watch().collect { list ->
                 val prev = controller.baseState.value.inputs
                 controller.update { st -> st.copy(inputs = list) }
+                // **본 기기는 기억한다.** 빼도 목록에 남아야 다시 꽂기
+                // 전에도 고를 수 있고, 그 기기의 보정이 있다는 사실도
+                // 보인다(2026-09-24 담당자 지시).
+                list.forEach { d ->
+                    settingsStore.rememberDevice(d.stableKey, d.displayName, d.kind)
+                }
                 if (controller.running) controller.onDeviceListChanged(prev, list)
             }
         }
@@ -480,6 +485,11 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     /** 지금 도는 분석기의 (FFT 길이, 샘플레이트). 안 돌면 null. */
     fun rtaSpec(): Pair<Int, Int>? = controller.rtaSpec()
 
+    /** 목록에서 전에 쓴 기기를 지운다. */
+    fun forgetDevice(key: String) {
+        viewModelScope.launch { settingsStore.forgetDevice(key) }
+    }
+
     fun setPreferredInput(key: String?) {
         viewModelScope.launch { settingsStore.setPreferredInput(key) }
     }
@@ -492,14 +502,6 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun setInputChannel(deviceKey: String, index: Int) {
         viewModelScope.launch { settingsStore.setInputChannel(deviceKey, index) }
-    }
-
-    fun setAutoPreferExternal(on: Boolean) {
-        viewModelScope.launch { settingsStore.setAutoPreferExternal(on) }
-    }
-
-    fun setDisconnectPolicy(p: DisconnectPolicy) {
-        viewModelScope.launch { settingsStore.setDisconnectPolicy(p) }
     }
 
     /**
@@ -574,8 +576,8 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      * 「측정 시작」을 누른 그 순간 주 스레드에서 곧바로 돌고, 서비스는
      * 마이크가 열린 직후 같은 호출 안에서 뜬다 — 여전히 앞에 있다.
      */
-    fun start(disconnectFallBack: Boolean = false) {
-        controller.start(disconnectFallBack)
+    fun start() {
+        controller.start()
     }
 
     /**
@@ -868,7 +870,11 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      * 지금 읽고 있는 dBFS 를 기준으로 삼는다. 소리가 안정된 상태에서
      * 눌러야 맞는 값이 나오며, 그렇지 않으면 저장소가 거부한다.
      */
-    fun saveSimpleCalibration(referenceDb: Double) {
+    fun saveSimpleCalibration(
+        referenceDb: Double,
+        source: kr.joa.selahrta.calibration.CalibrationSource =
+            kr.joa.selahrta.calibration.CalibrationSource.Meter,
+    ) {
         val format = controller.confirmedFormat()
         val measured = state.value.meter.currentDbfs
         if (format == null || measured == null) {
@@ -889,6 +895,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             savedAtEpochMs = System.currentTimeMillis(),
             referenceDb = referenceDb,
             measuredDbfs = measured,
+            source = source,
         )
         viewModelScope.launch {
             val notice = when (val r = store.save(CalibrationKey.of(format), cal)) {
@@ -897,6 +904,50 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 is SaveResult.Rejected -> r.reasonKo
             }
             // MAX·PEAK 는 보정 이전 눈금으로 쌓인 값이라 더는 뜻이 없다. 비운다.
+            controller.postToCapture { session -> session.engine.resetPeaks() }
+            controller.update { st -> st.copy(calibrationNoticeKo = notice) }
+        }
+    }
+
+    /**
+     * 보정값을 **그대로** 저장한다. 기준에서 옮겨 온 값에 쓴다.
+     *
+     * [saveSimpleCalibration] 은 「지금 읽는 값」에서 오프셋을 셈하는데,
+     * 옮겨 온 값은 이미 완성된 오프셋이라 다시 셈하면 안 된다. 그리고
+     * 옮길 때는 소리가 나고 있지 않아도 된다 — 견준 것은 아까 잰 두
+     * 측정이지 지금 들어오는 소리가 아니다.
+     */
+    fun saveOffsetDirect(
+        offsetDb: Double,
+        source: kr.joa.selahrta.calibration.CalibrationSource,
+    ) {
+        val format = controller.confirmedFormat()
+        if (format == null) {
+            controller.update { st ->
+                st.copy(
+                    calibrationNoticeKo = "어느 마이크로 열렸는지 아직 확인되지 않았습니다. " +
+                        "확인된 뒤에 보정하십시오 — 지금 저장하면 다른 기기의 " +
+                        "보정값으로 남을 수 있습니다.",
+                )
+            }
+            return
+        }
+        val measured = state.value.meter.currentDbfs
+        val cal = GlobalCalibration(
+            offsetDb = offsetDb,
+            savedAtEpochMs = System.currentTimeMillis(),
+            // 옮겨 온 값에는 「기준 소음계가 가리킨 값」이 없다. 지금
+            // 읽는 값이 있으면 그것으로 되짚을 수 있게 남겨 둔다.
+            referenceDb = measured?.let { it + offsetDb } ?: Double.NaN,
+            measuredDbfs = measured ?: Double.NaN,
+            source = source,
+        )
+        viewModelScope.launch {
+            val notice = when (val r = store.save(CalibrationKey.of(format), cal)) {
+                is SaveResult.Saved ->
+                    "기준 마이크에서 옮긴 보정값 ${"%+.1f".format(offsetDb)} dB 을 저장했습니다."
+                is SaveResult.Rejected -> r.reasonKo
+            }
             controller.postToCapture { session -> session.engine.resetPeaks() }
             controller.update { st -> st.copy(calibrationNoticeKo = notice) }
         }

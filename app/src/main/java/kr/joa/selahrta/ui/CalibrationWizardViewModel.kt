@@ -16,6 +16,7 @@ import kr.joa.selahrta.calibration.CalInfo
 import kr.joa.selahrta.calibration.MeasuredProfile
 import kr.joa.selahrta.calibration.ProfileBuildResult
 import kr.joa.selahrta.calibration.ProfileStore
+import kr.joa.selahrta.calibration.ReferenceHookup
 import kr.joa.selahrta.calibration.blockedNoticeKo
 import kr.joa.selahrta.calibration.buildProfileForSave
 import kr.joa.selahrta.calibration.RunOutcome
@@ -24,6 +25,8 @@ import kr.joa.selahrta.calibration.WizardState
 import kr.joa.selahrta.calibration.WizardStep
 import kr.joa.selahrta.calibration.nextStep
 import kr.joa.selahrta.calibration.previousStep
+import kr.joa.selahrta.dsp.TransferBlocked
+import kr.joa.selahrta.dsp.computeLevelTransfer
 import kr.joa.selahrta.dsp.CalibrationCurve
 import kr.joa.selahrta.dsp.CalibrationFile
 import kr.joa.selahrta.dsp.CalibrationSession
@@ -119,6 +122,22 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
 
     fun acknowledgePhantom(on: Boolean) {
         _state.update { it.copy(phantomAcknowledged = on) }
+    }
+
+    /**
+     * 기준 마이크를 어떻게 물렸는지 고른다.
+     *
+     * **USB 직결로 바꾸면 팬텀 체크를 지운다.** 남겨 두면 「없는 스위치를
+     * 켰다」는 기록이 프로파일에 붙어 다니고, 나중에 XLR 로 되돌렸을 때
+     * 확인하지 않은 것을 확인한 것으로 읽는다.
+     */
+    fun chooseHookup(hookup: ReferenceHookup) {
+        _state.update {
+            it.copy(
+                referenceHookup = hookup,
+                phantomAcknowledged = if (hookup.needsPhantom) it.phantomAcknowledged else false,
+            )
+        }
     }
 
     // ------------------------------------------------------------------
@@ -287,7 +306,14 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
                     is RunOutcome.Done -> {
                         _state.update {
                             when (step) {
-                                MeasureStep.ReferenceBefore -> it.copy(referenceDeviceKey = nowKey)
+                                MeasureStep.ReferenceBefore -> it.copy(
+                                    referenceDeviceKey = nowKey,
+                                    // 절대 레벨을 옮길 때 이 경로의 보정값을
+                                    // 찾는다. 기기 열쇠만으로는 채널이 갈리지
+                                    // 않아 모자라다.
+                                    referenceCalKey = capture.openedCalKey,
+                                    referenceOffsetDb = capture.openedOffsetDb,
+                                )
                                 MeasureStep.Target -> it.copy(targetDeviceKey = nowKey)
                                 else -> it
                             }
@@ -337,7 +363,28 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
         )
         calibrateFromSession(result, quality).fold(
             onSuccess = { o ->
-                _state.update { it.copy(session = result, quality = quality, outcome = o) }
+                // **절대 레벨도 함께 셈한다.** 두 마이크가 같은 자리에서
+                // 같은 소리를 들었으므로, 기준 경로가 보정돼 있으면 그
+                // 값을 대상으로 옮길 수 있다(치환법).
+                //
+                // 기준 쪽은 **CAL 전** 값을 쓴다 — 간편 보정이 잡는
+                // 보정값이 CAL 이 걸리지 않는 경로에서 나오기 때문이다.
+                val transfer = computeLevelTransfer(
+                    referenceRawMeanDb = result.referenceRawMeanDb,
+                    targetMeanDb = result.target.meanDb,
+                    referenceOffsetDb = st.referenceOffsetDb,
+                    usable = quality.usable.toBooleanArray(),
+                )
+                _state.update {
+                    it.copy(
+                        session = result,
+                        quality = quality,
+                        outcome = o,
+                        levelTransfer = transfer.getOrNull(),
+                        levelTransferBlockKo =
+                            (transfer.exceptionOrNull() as? TransferBlocked)?.block?.reasonKo,
+                    )
+                }
             },
             onFailure = { e -> _noticeKo.value = e.message ?: "보정 곡선을 만들지 못했습니다." },
         )
@@ -389,6 +436,21 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         val separation = st.separation?.state ?: MicSeparation.Indistinguishable
+
+        // **대상 마이크로 저장해야 한다.**
+        //
+        // 이 교정이 설명하는 것은 대상(폰 내장)의 응답인데, 저장은 「지금
+        // 열린 경로」로 기록된다. 마법사 순서가 기준 → 대상 → 기준 이라
+        // 마지막에 열려 있는 것은 **언제나 기준 마이크**다. 그대로 두면
+        // 폰 마이크의 보정이 USB 인터페이스의 것으로 기록되어, 정작 폰에는
+        // 걸리지 않고 엉뚱한 경로에 걸릴 수 있다(실기기 확인 2026-09-24).
+        val target = st.targetDeviceKey
+        if (target != null && environment.deviceKey != target) {
+            _noticeKo.value = "지금 열린 입력이 대상 마이크가 아닙니다. " +
+                "이 교정은 대상 마이크의 응답이므로 그 마이크로 되돌린 뒤 저장해야 합니다 — " +
+                "「측정」 화면에서 입력을 대상으로 바꾸고 다시 시작한 뒤 돌아오십시오."
+            return
+        }
 
         viewModelScope.launch {
             _busyKo.value = "저장하는 중입니다."

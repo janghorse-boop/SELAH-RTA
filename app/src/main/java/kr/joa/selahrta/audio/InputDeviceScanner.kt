@@ -11,6 +11,7 @@ import android.util.Log
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kr.joa.selahrta.domain.MicKind
 
 private const val TAG = "InputDeviceScanner"
 
@@ -41,19 +42,76 @@ class InputDeviceScanner(context: Context) {
                 " ch=${it.channelCounts?.joinToString(",") ?: "?"}" +
                 " fs=${it.sampleRates?.joinToString(",") ?: "?"}"
         })
-        return raw.mapNotNull { it.toInfo() }.dedupeByKey()
+        return listAll().foldBuiltInIntoOne()
     }
 
     /**
-     * 열쇠가 완전히 같은 기기만 합친다.
+     * **접지 않은** 목록. 내장 마이크가 여럿이면 여럿 그대로 나온다.
      *
-     * 갤럭시 S23 은 내장 마이크를 둘 노출한다(실측: 하단·후면). 둘은
-     * 물리적으로 다른 마이크라 **합치지 않는다** — 합치면 보정값이 섞인다.
-     * 주소까지 같은 것만 중복으로 보는데, 그런 경우는 같은 기기가 두 번
-     * 잡힌 것이다.
+     * [MicrophoneProbe] 가 「이 폰이 물리 마이크를 갈라 주는가」를 물을 때
+     * 쓴다. 사람에게 보이는 목록([list])은 접혀 있어서 여기를 쓸 수 없다 —
+     * 접힌 목록으로 물으면 후보가 하나뿐이라 **언제나 「모른다」**가 되어,
+     * 갈라 주는 폰이 나와도 알아채지 못한다.
      */
-    private fun List<InputDeviceInfo>.dedupeByKey(): List<InputDeviceInfo> =
-        distinctBy { it.stableKey }
+    fun listAll(): List<InputDeviceInfo> =
+        audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS)
+            .mapNotNull { it.toInfo() }
+            .distinctBy { it.id }
+
+    /**
+     * 내장 마이크를 **한 줄로 접는다**(2026-09-23 담당자 지시).
+     *
+     * ## 왜 접는가 — 갈라 놓을 수가 없다
+     *
+     * 예전에는 하단·상단(안드로이드 표기 `bottom`·`back`)을 따로 띄우고
+     * 각각 보정을 두려 했다. 지시서 2.5 가 그것을 요구했기 때문이다.
+     *
+     * **실측이 그 전제를 무너뜨렸다**(2026-09-23, S23 Ultra):
+     *
+     * | 고른 것 | 실제로 켜진 마이크 |
+     * |---|---|
+     * | 하단 | `[22]` |
+     * | 상단 | `[22, 24]` |
+     *
+     * 「상단」을 골라도 **하단이 함께 켜진다.** 빔포밍이 두 마이크를 섞어
+     * 쓰기 때문이고, 우리가 받는 것은 그 섞인 결과다. 그 소리를 「상단
+     * 마이크의 응답」이라고 부를 수 없다 — 그렇게 잰 보정 곡선은 두
+     * 마이크와 빔포밍 알고리즘이 섞인 무언가다.
+     *
+     * 게다가 주소가 위치와도 맞지 않았다. 안드로이드는 `back` 이라 하는데
+     * 실제 위치는 **상단**이다(담당자 확인). 그러니 화면에 「후면」이라고
+     * 적던 것은 **틀린 안내**였다.
+     *
+     * 고를 수 없고, 이름도 못 믿는 구분은 사람에게 보여 봐야 **잘못
+     * 고르게 할 뿐**이다. 그래서 기기명 한 줄로 접는다.
+     *
+     * ## 접어도 잃지 않는 것
+     *
+     * 갈라지는지 묻는 일([listAll])은 그대로 남는다. 다른 폰이 정말
+     * 갈라 준다면 탐색이 그렇게 말할 것이고, 그때 이 결정을 다시 보면 된다.
+     *
+     * ## 어느 것이 남는가
+     *
+     * **안드로이드가 먼저 알리는 것**을 남긴다. S23 에서는 하단(id 22)이고,
+     * 그것이 빔포밍 없이 홀로 켜지는 유일한 마이크이자 측정에 쓸 것이다.
+     * 주소는 지운다 — 접은 뒤에도 주소가 남아 있으면 열쇠와 이름에 다시
+     * 새어 나와, 폰을 재부팅해 순서가 바뀌면 **같은 마이크가 다른 기기로**
+     * 보인다(보정값이 통째로 떨어져 나간다).
+     */
+    private fun List<InputDeviceInfo>.foldBuiltInIntoOne(): List<InputDeviceInfo> {
+        val folded = ArrayList<InputDeviceInfo>(size)
+        var builtInTaken = false
+        for (d in this) {
+            if (d.kind != MicKind.BuiltIn) {
+                folded += d
+                continue
+            }
+            if (builtInTaken) continue
+            builtInTaken = true
+            folded += d.copy(address = "", typeKo = "내장 마이크")
+        }
+        return folded.distinctBy { it.stableKey }
+    }
 
     /**
      * 목록이 바뀔 때마다 새 목록을 흘린다.
@@ -77,6 +135,18 @@ class InputDeviceScanner(context: Context) {
         audioManager.registerAudioDeviceCallback(cb, Handler(Looper.getMainLooper()))
         awaitClose { audioManager.unregisterAudioDeviceCallback(cb) }
     }
+
+    /**
+     * **id 로** 실제 안드로이드 기기를 집는다. 탐색이 후보 하나하나를
+     * 열어 볼 때 쓴다 — 내장 마이크는 열쇠가 하나로 묶여 있어
+     * [findRaw] 로는 둘을 가를 수 없다.
+     *
+     * id 는 꽂았다 빼면 바뀌므로 **기억해 두는 용도로는 쓰지 않는다.**
+     * 목록을 받은 그 자리에서만 쓴다.
+     */
+    fun findRawById(id: Int): AudioDeviceInfo? =
+        audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS)
+            .firstOrNull { it.id == id }
 
     /** 열쇠로 실제 안드로이드 기기를 찾는다. AudioRecord 에 넘길 때 쓴다. */
     fun findRaw(key: String): AudioDeviceInfo? =

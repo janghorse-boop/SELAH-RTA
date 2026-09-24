@@ -37,6 +37,9 @@ class WizardRunnerTest {
         override var openedDeviceKey: String? = "Usb|UMC404HD|",
         var clipping: Boolean = false,
     ) : WizardCapture {
+        override val openedCalKey: kr.joa.selahrta.calibration.CalibrationKey? = null
+        override val openedOffsetDb: Double? = null
+
         val log = mutableListOf<String>()
         var marks = 0
 

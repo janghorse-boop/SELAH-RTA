@@ -57,7 +57,7 @@ class ProfileStoreTest {
         reference = ReferenceRecord("17860.txt", "abc123", 0, "EMM-6"),
         quality = ProfileQuality(
             verdict = QualityVerdict.Pass,
-            repeatSpreadDb = 0.8,
+            repeatStdevDb = 0.8,
             referenceDriftDb = -0.2,
             usableBandRatio = 0.9,
             worstSnrDb = 13.75,

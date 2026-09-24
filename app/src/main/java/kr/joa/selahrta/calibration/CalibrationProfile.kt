@@ -54,6 +54,57 @@ data class CalibrationKey(
  * dBFS 에 이 값을 더하면 dB SPL 이 된다. 주파수별 보정은 이것과 별개이며
  * Phase 7 에서 붙는다 — 그때 [CalibrationState] 가 FrequencyCalibrated 가 된다.
  */
+/**
+ * 이 보정을 **무엇에 맞췄는가.**
+ *
+ * 등급이 다르다. 음압 교정기는 제 소리를 내는 기구라 **절대값의 근거**가
+ * 되지만, 다른 소음계에 맞춘 것은 그 소음계가 맞다는 가정 위에 선다.
+ * 그 차이를 적어 두지 않으면 나중에 「이 숫자를 믿어도 되나」에 답할 수
+ * 없다(지시서 5장: 절대 SPL 은 별도 절차로 관리한다).
+ */
+enum class CalibrationSource(val labelKo: String, val trustKo: String) {
+    /** 1kHz 음압 교정기. 가중치와 무관하고 절대값의 근거가 된다. */
+    Calibrator(
+        "음압 교정기",
+        "교정기가 내는 1kHz 를 기준으로 맞췄습니다. 1kHz 에서는 A·C 가중이 " +
+            "0dB 이라 가중치와 무관합니다.",
+    ),
+
+    /** 다른 소음계와 맞춤. 그 소음계가 맞다는 가정 위에 선다. */
+    Meter(
+        "기준 소음계",
+        "다른 소음계가 가리킨 값에 맞췄습니다. 그 소음계가 맞다는 가정 위에 " +
+            "서 있고, 두 기기의 가중치가 다르면 그 차이도 섞여 들어갑니다.",
+    ),
+
+    /**
+     * 기준 마이크에서 **옮겨 온** 값(치환법).
+     *
+     * 같은 자리에서 같은 소리를 들은 두 마이크의 레벨 차이로 낸다.
+     * 소음계를 베끼는 쪽보다 낫다 — 가중이 섞여 들어갈 자리가 없고,
+     * 두 마이크가 같은 소리를 듣기 때문이다. 다만 **기준의 정확도를
+     * 물려받는다.**
+     */
+    FromReferenceMic(
+        "기준 마이크",
+        "기준 마이크와 같은 자리에서 같은 소리를 듣고 그 값을 옮겼습니다. " +
+            "기준 마이크의 보정을 물려받으므로, 기준이 틀렸으면 이것도 " +
+            "같은 만큼 틀립니다.",
+    ),
+
+    /** 예전 기록. 무엇에 맞췄는지 적어 두지 않았다. */
+    Unknown(
+        "기록 없음",
+        "무엇에 맞춘 보정인지 적어 두지 않았습니다. 다시 맞추기를 권합니다.",
+    ),
+}
+
+/** 음압 교정기가 흔히 내는 레벨. 기구에 적힌 값을 그대로 쓴다. */
+enum class CalibratorLevel(val db: Double, val labelKo: String) {
+    Db94(94.0, "94 dB"),
+    Db114(114.0, "114 dB"),
+}
+
 data class GlobalCalibration(
     val offsetDb: Double,
     /** 언제 쟀는가. 오래된 보정은 다시 하라고 권할 수 있다. */
@@ -70,6 +121,8 @@ data class GlobalCalibration(
      * 대신한다. **증거가 아니라 단서다**: [judgeGainDrift] 참고.
      */
     val noiseFloorDbfs: Double? = null,
+    /** 무엇에 맞춘 보정인가. 옛 기록은 [CalibrationSource.Unknown]. */
+    val source: CalibrationSource = CalibrationSource.Unknown,
 ) {
     fun toOffset() = CalibrationOffset(offsetDb)
 }

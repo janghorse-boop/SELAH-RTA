@@ -37,12 +37,14 @@ import kr.joa.selahrta.dsp.CalibrationOutcome
 import kr.joa.selahrta.dsp.CurvePoint
 import kr.joa.selahrta.dsp.CurveReading
 import kr.joa.selahrta.dsp.CurveShape
+import kr.joa.selahrta.dsp.LevelTransfer
 import kr.joa.selahrta.dsp.MeasureStep
 import kr.joa.selahrta.dsp.QualityReport
 import kr.joa.selahrta.dsp.QualityResult
 import kr.joa.selahrta.dsp.ThirdOctave
 import kr.joa.selahrta.dsp.calibrateResponse
 import kr.joa.selahrta.dsp.judgeCalibration
+import kr.joa.selahrta.calibration.ReferenceHookup
 import kr.joa.selahrta.ui.components.CalReadingCard
 import kr.joa.selahrta.ui.components.CalibrationCompareCard
 import kr.joa.selahrta.ui.components.InfoBar
@@ -77,9 +79,18 @@ fun CalibrationWizardScreen(
     onPickCalFile: () -> Unit,
     onChooseReading: (CurveReading) -> Unit,
     onPhantom: (Boolean) -> Unit,
+    onChooseHookup: (ReferenceHookup) -> Unit,
     onRunInputCheck: () -> Unit,
     /** 마이크 탐색이 도는 중인가. 재는 중에는 돌릴 수 없다. */
-    probingMics: Boolean,
+    /**
+     * 지금 탐색을 돌릴 수 **없는** 까닭. 돌릴 수 있으면 null.
+     *
+     * 예전 이름은 `probingMics` 였는데, 실제로 넘어오던 값은 「측정 중인가」
+     * 였다. 그래서 재는 동안 버튼이 **「탐색 중…」이라고 거짓말을 했다** —
+     * 탐색은 시작도 안 했는데 사람은 기다리다 만다(실기기 확인 2026-09-23).
+     * 못 하는 까닭을 그대로 들고 다니면 그 거짓말을 할 자리가 없다.
+     */
+    probeBlockedKo: String?,
     onProbeMics: () -> Unit,
     onCaseRemoved: (Boolean?) -> Unit,
     /** 지금 열린 입력의 열쇠. 어느 마이크로 재는지 화면에 적는다. */
@@ -91,6 +102,8 @@ fun CalibrationWizardScreen(
     savedLabelKo: String?,
     canSave: Boolean,
     onSave: () -> Unit,
+    /** 기준에서 옮긴 절대 레벨을 이 경로에 저장한다. */
+    onApplyLevelTransfer: (Double) -> Unit,
     onNext: () -> Unit,
     onBack: () -> Unit,
     onGoTo: (WizardStep) -> Unit,
@@ -146,9 +159,11 @@ fun CalibrationWizardScreen(
                 cal = state.cal,
                 shape = shape,
                 phantom = state.phantomAcknowledged,
+                hookup = state.referenceHookup,
                 onPickCalFile = onPickCalFile,
                 onChooseReading = onChooseReading,
                 onPhantom = onPhantom,
+                onChooseHookup = onChooseHookup,
             )
 
             WizardStep.InputCheck -> InputCheckStep(
@@ -160,7 +175,7 @@ fun CalibrationWizardScreen(
 
             WizardStep.MicJudgement -> MicJudgementStep(
                 state = state,
-                probing = probingMics,
+                blockedKo = probeBlockedKo,
                 onProbe = onProbeMics,
                 onCaseRemoved = onCaseRemoved,
             )
@@ -182,6 +197,9 @@ fun CalibrationWizardScreen(
                 savedLabelKo = savedLabelKo,
                 canSave = canSave,
                 onSave = onSave,
+                transfer = state.levelTransfer,
+                transferBlockKo = state.levelTransferBlockKo,
+                onApplyTransfer = onApplyLevelTransfer,
             )
 
             else -> NotBuiltNotice(state.step)
@@ -213,9 +231,11 @@ private fun EquipmentStep(
     cal: CalInfo?,
     shape: CurveShape?,
     phantom: Boolean,
+    hookup: ReferenceHookup?,
     onPickCalFile: () -> Unit,
     onChooseReading: (CurveReading) -> Unit,
     onPhantom: (Boolean) -> Unit,
+    onChooseHookup: (ReferenceHookup) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Column(
@@ -234,7 +254,8 @@ private fun EquipmentStep(
             )
             Text(
                 if (cal == null) {
-                    "EMM-6 에 딸려 온 개별 CAL 파일을 불러옵니다. 이 파일이 교정의 기준입니다."
+                    "기준 마이크에 딸려 온 개별 CAL 파일을 불러옵니다. " +
+                        "iMM-6C 든 EMM-6 든 이 파일이 교정의 기준입니다."
                 } else {
                     "${cal.fileName} · 점 ${cal.pointCount}개 · " +
                         "${cal.lowestHz.toInt()}Hz ~ ${(cal.highestHz / 1000).toInt()}kHz"
@@ -259,9 +280,63 @@ private fun EquipmentStep(
             )
         }
 
-        PhantomRow(phantom, onPhantom)
+        HookupRow(hookup, onChooseHookup)
+
+        // **팬텀전원은 XLR 경로에만 묻는다.** 없는 스위치를 켰다고
+        // 체크하게 만들면 그 체크는 아무 뜻도 없어진다.
+        if (hookup?.needsPhantom == true) {
+            PhantomRow(phantom, onPhantom)
+        }
     }
 }
+
+/**
+ * 기준 마이크를 어떻게 물렸는가.
+ *
+ * **품질 등급이 아니라 연결 방식이다**(가격·구독 전략 3장). iMM-6C 와
+ * EMM-6 은 둘 다 개별 CAL 을 적용하는 정식 측정용 마이크이고, 다른 것은
+ * 팬텀전원과 게인 노브가 있느냐뿐이다.
+ */
+@Composable
+private fun HookupRow(
+    chosen: ReferenceHookup?,
+    onChoose: (ReferenceHookup) -> Unit,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(SelahColors.Surface, RoundedCornerShape(12.dp))
+            .border(1.dp, SelahColors.Outline, RoundedCornerShape(12.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            "기준 마이크 연결",
+            color = SelahColors.TextPrimary,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            HOOKUP_NOTE_KO,
+            color = SelahColors.TextMuted,
+            fontSize = 11.sp,
+            lineHeight = 16.sp,
+            style = TextStyle(lineBreak = LineBreak.Paragraph),
+        )
+        ReferenceHookup.entries.forEach { h ->
+            ChoiceRow(
+                labelKo = h.labelKo,
+                helpKo = h.helpKo,
+                chosen = chosen == h,
+                onClick = { onChoose(h) },
+            )
+        }
+    }
+}
+
+const val HOOKUP_NOTE_KO: String =
+    "둘 다 개별 CAL 을 적용하는 정식 측정용 마이크입니다. 품질 등급이 아니라 " +
+        "연결 방식의 차이이고, 연결에 따라 확인할 것이 다릅니다."
 
 /**
  * 팬텀전원은 **확인이 아니라 듣는 것이다.**
@@ -308,9 +383,9 @@ private fun PhantomRow(phantom: Boolean, onPhantom: (Boolean) -> Unit) {
 }
 
 const val PHANTOM_NOTE_KO: String =
-    "UMC404HD 뒷면의 +48V 스위치를 직접 켜 주십시오. 앱은 팬텀전원이 켜졌는지 " +
+    "인터페이스의 +48V 스위치를 직접 켜 주십시오. 앱은 팬텀전원이 켜졌는지 " +
         "알 수 없습니다 — 여기 켜 두는 것은 확인이 아니라 「켰다」고 적어 두는 " +
-        "것입니다. 안 켜면 EMM-6 에서 신호가 아예 들어오지 않습니다."
+        "것입니다. 안 켜면 측정 마이크에서 신호가 아예 들어오지 않습니다."
 
 // ----------------------------------------------------------------------
 // 5단계
@@ -459,7 +534,7 @@ fun exampleJudgement(outcome: CalibrationOutcome): QualityResult {
     return judgeCalibration(
         QualityReport(
             bands = bands,
-            repeatSpreadDb = 0.6,
+            repeatStdevDb = 0.6,
             referenceDriftDb = 0.2,
             referenceBandDriftDb = 0.4,
             minFramesPerStep = 16,
@@ -562,7 +637,7 @@ fun dspNumbersKo(dsp: kr.joa.selahrta.dsp.DspProbeResult): String {
 @Composable
 private fun MicJudgementStep(
     state: WizardState,
-    probing: Boolean,
+    blockedKo: String?,
     onProbe: () -> Unit,
     onCaseRemoved: (Boolean?) -> Unit,
 ) {
@@ -604,13 +679,23 @@ private fun MicJudgementStep(
                 )
             }
 
-            TextButton(onClick = onProbe, enabled = !probing) {
+            TextButton(onClick = onProbe, enabled = blockedKo == null) {
                 Text(
                     when {
-                        probing -> "탐색 중…"
                         state.separation == null -> "탐색하기"
                         else -> "다시 탐색하기"
                     },
+                )
+            }
+
+            // **못 하는 까닭을 버튼 옆에 적는다.** 흐려진 버튼만 보고는
+            // 무엇을 해야 눌리는지 알 수 없다.
+            if (blockedKo != null) {
+                Text(
+                    blockedKo,
+                    color = SelahColors.Warn,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
                 )
             }
         }
@@ -620,9 +705,9 @@ private fun MicJudgementStep(
 }
 
 const val MIC_PROBE_HOW_KO: String =
-    "이 폰이 후면·하단 마이크를 따로 열어 주는지 실제로 녹음해 확인합니다. " +
-        "기기 목록에 둘로 보이는 것만으로는 갈린다고 할 수 없습니다. " +
-        "재는 중에는 돌릴 수 없으니 측정을 잠시 멈춰야 할 수 있습니다."
+    "이 폰이 내장 마이크를 하나하나 따로 열어 주는지 실제로 녹음해 확인합니다. " +
+        "기기 목록은 내장을 한 줄로 묶어 보여 주지만, 여기서는 묶기 전 후보를 " +
+        "하나하나 열어 봅니다. 재는 중에는 돌릴 수 없습니다."
 
 /**
  * 케이스 상태. **확인이 아니라 듣는 것이다.**
@@ -665,7 +750,7 @@ private fun CaseRow(removed: Boolean?, onChange: (Boolean?) -> Unit) {
 }
 
 const val CASE_NOTE_KO: String =
-    "후면 마이크는 케이스에 막혀 응답이 크게 달라집니다. 앱은 케이스가 " +
+    "내장 마이크는 케이스에 막히면 응답이 크게 달라집니다. 앱은 케이스가 " +
         "있는지 알 수 없으니, 지금 상태를 골라 두면 나중에 이 보정을 걸 때 " +
         "같은 상태인지 물어볼 수 있습니다."
 
@@ -786,6 +871,11 @@ private fun SaveStepPanel(
     savedLabelKo: String?,
     canSave: Boolean,
     onSave: () -> Unit,
+    /** 기준에서 옮길 절대 레벨. 못 옮기면 null. */
+    transfer: LevelTransfer?,
+    /** 못 옮기는 까닭. 옮길 수 있으면 null. */
+    transferBlockKo: String?,
+    onApplyTransfer: (Double) -> Unit,
 ) {
     Column(
         Modifier
@@ -825,6 +915,91 @@ private fun SaveStepPanel(
                 TextButton(onClick = onSave, enabled = canSave) { Text("저장하기") }
             }
         }
+
+        LevelTransferBlock(transfer, transferBlockKo, onApplyTransfer)
+    }
+}
+
+/**
+ * **기준 마이크의 절대 레벨을 대상으로 옮긴다**(치환법).
+ *
+ * 두 마이크가 같은 자리에서 같은 소리를 들었으므로, 기준 경로가 음압으로
+ * 보정돼 있으면 그 값을 그대로 옮길 수 있다. 소음계를 옆에 두고 눈으로
+ * 맞추는 것보다 낫다 — **같은 소리**를 들었기 때문이다.
+ *
+ * **조용히 걸지 않는다.** 음압을 바꾸는 일이라 사람이 보고 정한다.
+ */
+@Composable
+private fun LevelTransferBlock(
+    transfer: LevelTransfer?,
+    blockKo: String?,
+    onApply: (Double) -> Unit,
+) {
+    if (transfer == null && blockKo == null) return
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(SelahColors.SurfaceVariant, RoundedCornerShape(10.dp))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            "기준 마이크의 음압을 이 마이크로 옮기기",
+            color = SelahColors.TextPrimary,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+
+        if (transfer == null) {
+            Text(
+                blockKo ?: "",
+                color = SelahColors.TextMuted,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+                style = TextStyle(lineBreak = LineBreak.Paragraph),
+            )
+            return
+        }
+
+        Text(
+            "두 마이크가 같은 자리에서 같은 소리를 들었습니다. " +
+                "기준 경로가 %.1fdB 더 작게 받았으므로, 그만큼 옮기면 "
+                    .format(-transfer.pathDifferenceDb) +
+                "이 마이크도 같은 음압을 가리킵니다.",
+            color = SelahColors.TextSecondary,
+            fontSize = 11.sp,
+            lineHeight = 16.sp,
+            style = TextStyle(lineBreak = LineBreak.Paragraph),
+        )
+        Text(
+            "%d~%dHz 의 %d개 대역에서 견줬습니다."
+                .format(
+                    transfer.bandLowHz.toInt(),
+                    transfer.bandHighHz.toInt(),
+                    transfer.bandsUsed,
+                ),
+            color = SelahColors.TextMuted,
+            fontSize = 10.sp,
+        )
+        Text(
+            "옮길 보정값 %+.1f dB".format(transfer.targetOffsetDb),
+            color = SelahColors.Accent,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold,
+        )
+        // **기준의 정확도를 물려받는다.** 교정기로 직접 맞춘 것과 같은
+        // 등급으로 읽히면 안 된다.
+        Text(
+            "이 값은 기준 마이크의 보정을 물려받습니다 — 기준이 틀렸으면 " +
+                "이것도 같은 만큼 틀립니다.",
+            color = SelahColors.TextMuted,
+            fontSize = 10.sp,
+            lineHeight = 15.sp,
+        )
+        TextButton(onClick = { onApply(transfer.targetOffsetDb) }) {
+            Text("이 값으로 보정하기")
+        }
     }
 }
 
@@ -836,3 +1011,57 @@ const val SAVE_HOW_KO: String =
 const val SAVED_NEXT_KO: String =
     "설정 화면의 「프로파일 관리」에서 볼 수 있습니다. 거기서 지금 경로에 " +
         "걸리는지, 걸리지 않으면 왜 그런지 확인할 수 있습니다."
+
+/**
+ * 고를 수 있는 항목 한 줄. 고른 것은 테두리와 「고름」으로 표시한다.
+ *
+ * [kr.joa.selahrta.ui.components.CalReadingCard] 의 선택 줄과 같은 꼴로
+ * 그린다 — 같은 마법사 안에서 「고르는 일」이 두 가지 모습이면 사람이
+ * 둘을 다른 종류의 조작으로 읽는다.
+ */
+@Composable
+private fun ChoiceRow(
+    labelKo: String,
+    helpKo: String,
+    chosen: Boolean,
+    onClick: () -> Unit,
+) {
+    val tone = if (chosen) SelahColors.Accent else SelahColors.Outline
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .background(tone.copy(alpha = if (chosen) 0.14f else 0.06f), RoundedCornerShape(10.dp))
+            .border(1.dp, tone.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                labelKo,
+                color = SelahColors.TextPrimary,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            if (chosen) {
+                Text(
+                    "고름",
+                    color = SelahColors.Accent,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+        Text(
+            helpKo,
+            color = SelahColors.TextMuted,
+            fontSize = 11.sp,
+            lineHeight = 16.sp,
+            style = TextStyle(lineBreak = LineBreak.Paragraph),
+        )
+    }
+}

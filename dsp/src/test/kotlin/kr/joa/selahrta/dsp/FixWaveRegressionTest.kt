@@ -101,28 +101,47 @@ class FixWaveRegressionTest {
      * 곡선을 +10dB 짜리로 갈아 끼운 직후에도 이전 프레임(−9.015380)이
      * 그대로 나왔고, 다음 FFT 뒤에야 −19.030901 로 바뀌었다. 그 사이
      * 화면은 새 곡선의 이름표를 붙이고 있었다.
+     *
+     * ## 2026-09-23 — 재는 자리를 2kHz 로 옮겼다
+     *
+     * 걸리는 곡선이 [CURVE_REFERENCE_HZ](1kHz)에 못이 박히면서, **1kHz
+     * 순음의 값은 어느 곡선을 걸어도 같아졌다**(그것이 그 변경의 목적이다).
+     * 그래서 예전 숫자(−19.03)로는 더 이상 옛 프레임과 새 프레임을 가를 수
+     * 없다 — 시험이 통과해도 아무 말도 하지 않게 된다.
+     *
+     * **허용치를 늘리거나 단언을 지우지 않았다.** 신호와 곡선을 1kHz 가
+     * 아닌 자리로 옮겨, 값이 실제로 움직이는 조건에서 같은 것을 묻는다.
+     * F06 이 물은 것은 「숫자가 얼마냐」가 아니라 「곡선을 바꾼 뒤에도 옛
+     * 프레임을 내놓느냐」다.
      */
     @Test
     fun `곡선을 바꾸면 옛 프레임을 내놓지 않는다`() {
+        // 2kHz 순음. 1kHz 는 못이 박힌 자리라 값이 안 움직인다.
+        val probeHz = 2000.0
+        val probeBand = ThirdOctave.nearestBand(probeHz)
         val engine = RtaEngine(fs, smoothingFactor = 0.0)
+        // 아무 데도 손대지 않는 곡선. 2kHz 에서 0dB 이다.
         engine.setCurve(
-            CalibrationCurve.of(
-                listOf(
-                    CurvePoint(ThirdOctave.lowerEdge(17), -6.0),
-                    CurvePoint(1000.0, 0.0),
-                    CurvePoint(ThirdOctave.upperEdge(17), 6.0),
-                ),
-            ).getOrThrow(),
+            CalibrationCurve.of(listOf(CurvePoint(20.0, 0.0), CurvePoint(20000.0, 0.0)))
+                .getOrThrow(),
         )
-        engine.process(FloatArray(n) { (0.5 * sin(2 * PI * 1000 * it / fs)).toFloat() }, n)
+        engine.process(FloatArray(n) { (0.5 * sin(2 * PI * probeHz * it / fs)).toFloat() }, n)
 
         val old = engine.frame()
         assertNotNull(old)
         val genBefore = old!!.curveGeneration
+        val before = old.bandsDbfs[probeBand]
 
+        // 1kHz 는 그대로 두고 2kHz 만 +10dB 인 곡선. 못이 박혀도 이 자리는
+        // 움직인다.
         engine.setCurve(
-            CalibrationCurve.of(listOf(CurvePoint(20.0, 10.0), CurvePoint(20000.0, 10.0)))
-                .getOrThrow(),
+            CalibrationCurve.of(
+                listOf(
+                    CurvePoint(1000.0, 0.0),
+                    CurvePoint(probeHz, 10.0),
+                    CurvePoint(20000.0, 10.0),
+                ),
+            ).getOrThrow(),
         )
         assertFalse(
             "곡선을 바꾸면 옛 프레임은 사라져야 한다",
@@ -132,11 +151,11 @@ class FixWaveRegressionTest {
         // 다음 FFT 가 돌면 새 곡선으로 계산한 값이 나온다. +10dB 응답을
         // 되돌리므로 10dB 낮아진다.
         engine.process(
-            FloatArray(n / 2) { (0.5 * sin(2 * PI * 1000 * (it + n) / fs)).toFloat() },
+            FloatArray(n / 2) { (0.5 * sin(2 * PI * probeHz * (it + n) / fs)).toFloat() },
             n / 2,
         )
         val fresh = engine.frame()!!
-        assertEquals("새 곡선으로 계산된 값", -19.0309, fresh.bandsDbfs[17], 0.05)
+        assertEquals("새 곡선으로 계산된 값", before - 10.0, fresh.bandsDbfs[probeBand], 0.05)
         assertTrue("세대가 올라가야 한다", fresh.curveGeneration > genBefore)
         assertEquals(
             "엔진이 들고 있는 세대와 같아야 한다",

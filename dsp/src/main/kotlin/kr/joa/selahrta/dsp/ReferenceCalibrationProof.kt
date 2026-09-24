@@ -77,11 +77,32 @@ class ReferenceCalibrationProof private constructor(
 class CalibratedReferenceSpectrum internal constructor(
     /** 1/3옥타브 밴드 dBFS. CAL 이 칸 단위로 걸린 뒤의 값이다. */
     val bandsDb: DoubleArray,
+    /**
+     * **CAL 을 걸기 전** 밴드 dBFS. 같은 장의 원시 값이다.
+     *
+     * ## 왜 둘 다 들고 가는가 (2026-09-24)
+     *
+     * 모양을 견주는 데는 CAL 을 건 값이 맞다. 그런데 **절대 레벨을
+     * 폰으로 옮길 때는 원시 값이라야 한다.**
+     *
+     * 간편 보정이 잡는 기준 경로의 보정값은 **시간영역 음압계**에서
+     * 재는데, 그 경로에는 CAL 이 걸리지 않는다. 그 보정값을 CAL 이
+     * 걸린 레벨과 빼면 **CAL 의 대역 평균만큼이 통째로 폰의 보정값에
+     * 들어간다.**
+     *
+     * 「CAL 을 건 뒤의 밴드 평균」으로 되돌려 셈할 수는 없다 — 밴드
+     * 안에서 응답이 변하면 그 평균이 원시 평균과 다르다(R05 와 같은
+     * 까닭). 그래서 **잴 때 함께 남긴다.**
+     */
+    val rawBandsDb: DoubleArray,
     val proof: ReferenceCalibrationProof,
 ) {
     init {
         require(bandsDb.size == ThirdOctave.BAND_COUNT) {
             "밴드 수가 다르다: ${bandsDb.size} != ${ThirdOctave.BAND_COUNT}"
+        }
+        require(rawBandsDb.size == ThirdOctave.BAND_COUNT) {
+            "원시 밴드 수가 다르다: ${rawBandsDb.size} != ${ThirdOctave.BAND_COUNT}"
         }
     }
 }
@@ -139,6 +160,7 @@ class ReferenceCalibrator(
 ) {
     private val correction = curve.binCorrectionLinear(fftSize, sampleRate)
     private val bandPower = DoubleArray(ThirdOctave.BAND_COUNT)
+    private val rawBandPower = DoubleArray(ThirdOctave.BAND_COUNT)
 
     /** 이 보정기로 만든 모든 장이 달고 나갈 증거. 설정이 같으니 하나면 된다. */
     val proof: ReferenceCalibrationProof = ReferenceCalibrationProof.create(
@@ -160,6 +182,17 @@ class ReferenceCalibrator(
         analyzer.toBandPower(binPower, bandPower, correction)
         val bandsDb = DoubleArray(ThirdOctave.BAND_COUNT)
         analyzer.toBandDbfs(bandPower, bandsDb)
-        return CalibratedReferenceSpectrum(bandsDb = bandsDb, proof = proof)
+
+        // **CAL 을 걸지 않은 같은 장**도 함께 낸다. 절대 레벨을 옮길 때
+        // 쓴다 — 까닭은 [CalibratedReferenceSpectrum.rawBandsDb] 참고.
+        analyzer.toBandPower(binPower, rawBandPower, null)
+        val rawBandsDb = DoubleArray(ThirdOctave.BAND_COUNT)
+        analyzer.toBandDbfs(rawBandPower, rawBandsDb)
+
+        return CalibratedReferenceSpectrum(
+            bandsDb = bandsDb,
+            rawBandsDb = rawBandsDb,
+            proof = proof,
+        )
     }
 }

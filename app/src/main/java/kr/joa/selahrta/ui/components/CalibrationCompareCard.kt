@@ -124,7 +124,7 @@ fun CalibrationCompareCard(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            LegendChip("기준(EMM-6)", REFERENCE, true) {}
+            LegendChip("기준 마이크", REFERENCE, true) {}
             LegendChip("원시", RAW, showRaw) { showRaw = !showRaw }
             LegendChip("정규화", NORMALIZED, showNormalized) { showNormalized = !showNormalized }
             LegendChip("보정 후", CORRECTED, showCorrected) { showCorrected = !showCorrected }

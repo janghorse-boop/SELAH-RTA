@@ -13,29 +13,35 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kr.joa.selahrta.calibration.CalibrationSource
 import kr.joa.selahrta.domain.ChurchSegment
 import kr.joa.selahrta.domain.SEGMENT_CAUTIONS
 import kr.joa.selahrta.domain.SegmentRange
-import kr.joa.selahrta.audio.DisconnectPolicy
 import kr.joa.selahrta.audio.InputDeviceInfo
 import kr.joa.selahrta.audio.SignalLevel
 import kr.joa.selahrta.audio.TestSignal
 import kr.joa.selahrta.domain.MeasureState
 import kr.joa.selahrta.domain.MicKind
 import kr.joa.selahrta.audio.builtInMicNoticeKo
-import kr.joa.selahrta.ui.components.MicProbeCard
 import kr.joa.selahrta.ui.components.SegmentRangeCard
 import kr.joa.selahrta.dsp.TimeWeight
 import kr.joa.selahrta.dsp.Weighting
+import kr.joa.selahrta.settings.KnownDevice
 import kr.joa.selahrta.settings.LeqWindow
 import kr.joa.selahrta.ui.CaptureUiState
 import kr.joa.selahrta.ui.components.CalibrationCard
@@ -80,19 +86,16 @@ fun HistoryScreen() {
 @Composable
 fun SettingsScreen(
     capture: CaptureUiState,
-    onSaveCalibration: (Double) -> Unit,
+    onSaveCalibration: (Double, CalibrationSource) -> Unit,
     onClearCalibration: () -> Unit,
     onDismissCalibrationNotice: () -> Unit,
     onWeighting: (Weighting) -> Unit,
     onTimeWeight: (TimeWeight) -> Unit,
     onLeqWindow: (LeqWindow) -> Unit,
     onPreferredInput: (String?) -> Unit,
+    onForgetDevice: (String) -> Unit,
     /** 기기별로 재는 채널을 고른다. */
     onInputChannel: (String, Int) -> Unit,
-    /** 내장 마이크가 갈라지는지 기기에 물어본다. */
-    onProbeMicrophones: () -> Unit,
-    onAutoPreferExternal: (Boolean) -> Unit,
-    onDisconnectPolicy: (DisconnectPolicy) -> Unit,
     onPickCurveFile: () -> Unit,
     onClearCurve: () -> Unit,
     onToggleCurve: (Boolean) -> Unit,
@@ -122,7 +125,9 @@ fun SettingsScreen(
             // 멈춘 뒤에도 붙어 있으면 닫힌 기기로 재고 있다고 믿게 된다.
             openedKey = capture.opened?.takeIf { it.routeConfirmed }?.deviceKey,
             running = capture.measure is MeasureState.Running,
+            known = capture.meterSettings.knownDevices,
             onPick = onPreferredInput,
+            onForget = onForgetDevice,
         )
 
         // **케이스가 막은 것을 마이크의 응답으로 적지 않게 한다.**
@@ -145,15 +150,12 @@ fun SettingsScreen(
             it.stableKey == capture.meterSettings.preferredInputKey
         } ?: capture.inputs.firstOrNull { it.stableKey == capture.opened?.deviceKey }
         val maxChannels = chosenDevice?.channelCounts?.maxOrNull() ?: 1
-        // **갈리는지부터 묻는다**(S23 개별 자동교정 지시서 2·7장).
-        // 기기 목록 바로 아래에 둔다 — 어느 마이크를 고를 수 있는가의
-        // 바로 다음 물음이 「그게 정말 갈라지는가」이기 때문이다.
-        MicProbeCard(
-            report = capture.micProbe,
-            running = capture.measure is MeasureState.Running,
-            onProbe = onProbeMicrophones,
-            modifier = Modifier.padding(top = 10.dp),
-        )
+        // **내장 마이크 탐색 카드는 여기서 뺐다**(2026-09-24 담당자 지시).
+        //
+        // 탐색 자체는 교정 마법사 3단계에 남아 있다. 거기서는 「이 폰이
+        // 마이크를 갈라 주는가」가 **교정의 관문**이라 필요하다. 설정에도
+        // 두면 같은 일을 두 곳에서 하게 되고, 여기서 돌린 결과는 어디에도
+        // 쓰이지 않았다.
 
         // **내장 마이크에는 띄우지 않는다.** 갤럭시 S23 은 내장 마이크도
         // `ch=1,2` 를 알린다(실측). 그건 「입력이 둘」이 아니라 스테레오로도
@@ -181,28 +183,10 @@ fun SettingsScreen(
                 { onInputChannel(chosenDevice.stableKey, it) },
             )
         }
-        ChoiceRow(
-            "외부 기기 자동 사용",
-            "USB·유선·블루투스 마이크가 꽂히면 그쪽을 먼저 씁니다. 재는 " +
-                "도중에 꽂히면 그 자리에서 측정을 끊고 새 측정을 시작합니다 — " +
-                "한 측정 안에서 마이크를 바꾸면 그 앞뒤 값이 서로 다른 마이크의 " +
-                "값인데 평균은 하나로 합쳐지기 때문입니다. 기기를 직접 고르면 " +
-                "이 설정보다 그쪽이 앞섭니다.",
-            listOf(true, false),
-            capture.meterSettings.autoPreferExternal,
-            { if (it) "자동" else "끔" },
-            onAutoPreferExternal,
-        )
-        ChoiceRow(
-            "기기가 빠졌을 때",
-            DisconnectPolicy.entries.first {
-                it == capture.meterSettings.disconnectPolicy
-            }.helpKo,
-            DisconnectPolicy.entries,
-            capture.meterSettings.disconnectPolicy,
-            { it.labelKo },
-            onDisconnectPolicy,
-        )
+        // 「외부 기기 자동 사용」도 뺐다. 이제 고른 기기가 없거나 빠졌으면
+        // 내장으로 연다 — 그것이 당연한 동작이라는 담당자 판단이다.
+        // 「기기가 빠졌을 때」 설정도 없앴다(2026-09-24 담당자 지시).
+        // 빠지면 멈추고 알린다 — 고를 일이 아니다.
 
         SectionTitle("보정")
         SettingRow(
@@ -360,7 +344,11 @@ private fun InputDevicePicker(
     openedKey: String?,
     /** 재는 중인가. 재는 중에 고른 기기는 다음 시작에야 쓰인다. */
     running: Boolean,
+    /** 한 번이라도 연결됐던 기기들. 지금 없는 것은 흐리게 보여 준다. */
+    known: List<KnownDevice>,
     onPick: (String?) -> Unit,
+    /** 기억에서 지운다. */
+    onForget: (String) -> Unit,
 ) {
     Column(
         Modifier
@@ -383,26 +371,67 @@ private fun InputDevicePicker(
             return@Column
         }
 
-        DeviceRow(
-            "자동으로 고르기",
-            null,
-            selectedKey == null,
-            "설정에 따라 알아서",
-            onPick,
-            // 「자동」은 기기가 아니라 규칙이라 「사용 중」이 될 수 없다.
-            nextStart = running && selectedKey == null && openedKey != null,
-        )
-        inputs.forEach { d ->
-            val open = openedKey != null && d.stableKey == openedKey
+        // **드롭다운으로 접는다**(2026-09-24 담당자 지시).
+        //
+        // 기억한 기기가 쌓이면 줄이 계속 늘어난다. 평소에는 고른 것 하나만
+        // 보이고, 바꿀 때만 펼친다.
+        //
+        // 「자동으로 고르기」 줄은 없앴다. 고른 것이 없거나 빠졌으면
+        // 내장으로 연다 — 규칙을 기기인 척 줄에 띄워 고르게 할 일이 아니다.
+        //
+        // **전에 썼던 기기는 꽂혀 있지 않아도 목록에 둔다.** 인터페이스를
+        // 늘 꽂아 두지는 않는데, 뺄 때마다 사라지면 「그 기기로 잴 수 있다」는
+        // 사실 자체가 화면에서 없어지고 그 기기의 보정이 있다는 것도 안 보인다.
+        val absent = known.filter { k -> inputs.none { it.stableKey == k.key } }
+        var open by remember { mutableStateOf(false) }
+        val picked = inputs.firstOrNull { it.stableKey == selectedKey }
+        val pickedAbsent = absent.firstOrNull { it.key == selectedKey }
+
+        Box {
             DeviceRow(
-                d.displayName,
-                d.stableKey,
-                selectedKey == d.stableKey,
-                if (d.kind == MicKind.Usb) "외부 입력" else "내장",
-                onPick,
-                inUse = open,
-                nextStart = running && !open && selectedKey == d.stableKey,
+                title = picked?.displayName
+                    ?: pickedAbsent?.name
+                    ?: inputs.firstOrNull { it.kind == MicKind.BuiltIn }?.displayName
+                    ?: "고른 기기 없음",
+                key = selectedKey,
+                selected = true,
+                subtitle = when {
+                    picked != null && openedKey == picked.stableKey -> "사용 중 · 눌러서 바꾸기"
+                    pickedAbsent != null -> "연결 안 됨 · 눌러서 바꾸기"
+                    selectedKey == null -> "고른 것이 없어 내장으로 잽니다 · 눌러서 바꾸기"
+                    else -> "눌러서 바꾸기"
+                },
+                onPick = { open = true },
+                inUse = picked != null && openedKey == picked.stableKey,
+                nextStart = running && picked != null && openedKey != picked.stableKey,
             )
+            DropdownMenu(
+                expanded = open,
+                onDismissRequest = { open = false },
+                modifier = Modifier.background(SelahColors.DialogSurface),
+            ) {
+                inputs.forEach { d ->
+                    DeviceMenuItem(
+                        name = d.displayName,
+                        note = if (d.kind == MicKind.Usb) "외부 입력 · 연결됨" else "내장 · 연결됨",
+                        selected = selectedKey == d.stableKey,
+                        onClick = { onPick(d.stableKey); open = false },
+                    )
+                }
+                absent.forEach { k ->
+                    DeviceMenuItem(
+                        name = k.name,
+                        note = if (k.kind == MicKind.Usb) {
+                            "외부 입력 · 연결 안 됨"
+                        } else {
+                            "내장 · 연결 안 됨"
+                        },
+                        selected = selectedKey == k.key,
+                        onClick = { onPick(k.key); open = false },
+                        onForget = { onForget(k.key); open = false },
+                    )
+                }
+            }
         }
 
         if (openedLabel != null || lastLabel != null) {
@@ -455,6 +484,15 @@ private fun DeviceRow(
     inUse: Boolean = false,
     /** 골라 두었지만 다음 시작에야 쓰이는가. */
     nextStart: Boolean = false,
+    /**
+     * 지금 **연결돼 있는가.** 전에 쓴 기기는 false 다.
+     *
+     * 꺼진 줄도 **고를 수는 있다** — 다시 꽂을 기기를 미리 골라 두는
+     * 것이 자연스럽고, 고른 것이 없으면 어차피 내장으로 열린다.
+     */
+    enabled: Boolean = true,
+    /** 기억에서 지우기. 전에 쓴 기기에만 붙는다. */
+    onForget: (() -> Unit)? = null,
 ) {
     Row(
         Modifier
@@ -476,11 +514,20 @@ private fun DeviceRow(
         Column {
             Text(
                 title,
-                color = if (selected) SelahColors.Accent else SelahColors.TextPrimary,
+                color = when {
+                    selected -> SelahColors.Accent
+                    !enabled -> SelahColors.TextMuted
+                    else -> SelahColors.TextPrimary
+                },
                 fontSize = 12.sp,
                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
             )
             Text(subtitle, color = SelahColors.TextMuted, fontSize = 10.sp)
+        }
+        if (onForget != null) {
+            TextButton(onClick = onForget) {
+                Text("지우기", color = SelahColors.TextMuted, fontSize = 11.sp)
+            }
         }
         // 색만으로 알리지 않는다(명세 11장).
         when {
@@ -597,3 +644,45 @@ private fun SettingRow(
 }
 
 
+
+/**
+ * 드롭다운 안의 기기 한 줄.
+ *
+ * **연결 여부를 글자로 적는다.** 흐리게만 그리면 색을 못 보는 사람에게
+ * 아무 말도 하지 않는다(명세 11장). 꺼진 기기도 **고를 수는 있다** —
+ * 다시 꽂을 기기를 미리 골라 두는 것이 자연스럽고, 그때까지는 어차피
+ * 내장으로 열린다.
+ */
+@Composable
+private fun DeviceMenuItem(
+    name: String,
+    note: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    /** 기억에서 지우기. 연결 안 된 기기에만 붙는다. */
+    onForget: (() -> Unit)? = null,
+) {
+    DropdownMenuItem(
+        onClick = onClick,
+        text = {
+            Column {
+                Text(
+                    name,
+                    color = if (selected) SelahColors.Accent else SelahColors.TextPrimary,
+                    fontSize = 13.sp,
+                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                )
+                Text(note, color = SelahColors.TextMuted, fontSize = 10.sp)
+            }
+        },
+        trailingIcon = if (onForget == null) {
+            null
+        } else {
+            {
+                TextButton(onClick = onForget) {
+                    Text("지우기", color = SelahColors.TextMuted, fontSize = 11.sp)
+                }
+            }
+        },
+    )
+}

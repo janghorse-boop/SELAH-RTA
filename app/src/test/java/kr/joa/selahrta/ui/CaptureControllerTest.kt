@@ -1,7 +1,6 @@
 package kr.joa.selahrta.ui
 
 import kr.joa.selahrta.audio.CaptureEnd
-import kr.joa.selahrta.audio.DisconnectPolicy
 import kr.joa.selahrta.audio.InputDeviceInfo
 import kr.joa.selahrta.audio.OpenedFormat
 import kr.joa.selahrta.calibration.ActiveCalibration
@@ -231,18 +230,25 @@ class CaptureControllerTest {
     // ---- 분리 정책: 두 순서를 바꿔 본다 ----
 
     /**
-     * **F03 — 읽기 오류가 먼저 와도 분리 정책이 돈다.**
+     * **F03 — 어느 소식이 먼저 와도 같은 일이 일어난다.**
      *
      * 예전에는 오류가 먼저 오면 `stop()` 이 `source` 를 비워, 뒤따라온
-     * 목록 변경 처리를 건너뛰어 정책이 통째로 실행되지 않았다.
+     * 목록 변경 처리를 건너뛰어 처리가 통째로 실행되지 않았다. 순서는
+     * 기기마다 다르므로 둘 다 확인한다.
+     *
+     * **2026-09-24: 기대하는 결과가 바뀌었다.** 분리 정책 설정을 없애고
+     * 「멈추고 알린다」로 고정했다(담당자 지시). 예전에는 내장으로
+     * 갈아타는 선택지가 있었는데, 그 시점부터 다른 마이크·다른 보정값인
+     * 값이 같은 Leq·MAX 에 합쳐지는 쪽이라 위험했다.
      */
     @Test
-    fun `읽기 오류가 먼저 와도 내장으로 전환한다`() {
+    fun `읽기 오류가 먼저 와도 멈추고 알린다`() {
         build(deviceList = listOf(usbMic(), builtInMic()))
-        controller.update { it.copy(meterSettings = it.meterSettings.copy(
-            preferredInputKey = usbMic().stableKey,
-            disconnectPolicy = DisconnectPolicy.FallBack,
-        )) }
+        controller.update {
+            it.copy(
+                meterSettings = it.meterSettings.copy(preferredInputKey = usbMic().stableKey),
+            )
+        }
         controller.start()
         assertEquals("USB 로 열렸다", usbMic().stableKey, state.opened?.deviceKey)
 
@@ -250,44 +256,24 @@ class CaptureControllerTest {
         devices.removeAll { it.kind == kr.joa.selahrta.domain.MicKind.Usb }
         sources.last().endWith(CaptureEnd.DeviceLost)
 
-        assertTrue("다시 돌아야 한다", controller.running)
-        assertEquals(
-            "내장으로 바뀌어야 한다",
-            kr.joa.selahrta.domain.MicKind.BuiltIn,
-            state.opened?.micKind,
-        )
+        assertFalse("멈춰야 한다", controller.running)
+        assertEquals(MeasureState.Failed(FailureReason.DeviceLost), state.measure)
+        // 읽기 오류로 온 경우는 CaptureEnd 의 문구가 그대로 간다.
+        // 어느 쪽이든 **멈췄다는 것과 다음에 할 일**을 말해야 한다.
+        assertTrue("멈췄다고 알려야 한다", state.errorKo?.contains("멈췄습니다") == true)
+        assertTrue("다음에 할 일을 알려야 한다", state.errorKo?.contains("다른 기기") == true)
     }
 
     /** 목록 변경이 먼저 와도 결과가 같아야 한다. */
     @Test
-    fun `목록 변경이 먼저 와도 내장으로 전환한다`() {
+    fun `목록 변경이 먼저 와도 멈추고 알린다`() {
         val before = listOf(usbMic(), builtInMic())
         build(deviceList = before)
-        controller.update { it.copy(meterSettings = it.meterSettings.copy(
-            preferredInputKey = usbMic().stableKey,
-            disconnectPolicy = DisconnectPolicy.FallBack,
-        )) }
-        controller.start()
-
-        devices.removeAll { it.kind == kr.joa.selahrta.domain.MicKind.Usb }
-        controller.onDeviceListChanged(before, devices)
-
-        assertTrue(controller.running)
-        assertEquals(
-            kr.joa.selahrta.domain.MicKind.BuiltIn,
-            state.opened?.micKind,
-        )
-    }
-
-    /** 「멈추고 기다리기」 정책이면 멈춘 채로 둔다. */
-    @Test
-    fun `분리 정책이 멈추기면 다시 시작하지 않는다`() {
-        val before = listOf(usbMic(), builtInMic())
-        build(deviceList = before)
-        controller.update { it.copy(meterSettings = it.meterSettings.copy(
-            preferredInputKey = usbMic().stableKey,
-            disconnectPolicy = DisconnectPolicy.Pause,
-        )) }
+        controller.update {
+            it.copy(
+                meterSettings = it.meterSettings.copy(preferredInputKey = usbMic().stableKey),
+            )
+        }
         controller.start()
 
         devices.removeAll { it.kind == kr.joa.selahrta.domain.MicKind.Usb }
@@ -305,9 +291,6 @@ class CaptureControllerTest {
     @Test
     fun `재는 도중 경로가 바뀌면 그 세션을 끝낸다`() {
         build(deviceList = listOf(builtInMic(1, "bottom"), builtInMic(2, "back")))
-        controller.update { it.copy(meterSettings = it.meterSettings.copy(
-            disconnectPolicy = DisconnectPolicy.Pause,
-        )) }
         controller.start()
         val first = last
 

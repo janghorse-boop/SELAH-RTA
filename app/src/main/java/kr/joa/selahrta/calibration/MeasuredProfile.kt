@@ -81,8 +81,14 @@ data class ProfileEnvironment(
 /** 프로파일에 남기는 품질 요약(지시서 6장 「품질 지표」). */
 data class ProfileQuality(
     val verdict: QualityVerdict,
-    /** 대상 측정이 얼마나 흔들렸는가(dB). */
-    val repeatSpreadDb: Double,
+    /**
+     * 재는 동안 레벨이 얼마나 흔들렸는가 — **표준편차**(dB).
+     *
+     * 2026-09-24 이전 프로파일은 이 자리에 min−max 를 담고 있었다.
+     * 다른 양이라 그대로 읽으면 안 된다 — 코덱이 **새 열쇠**로 읽고,
+     * 옛 파일에서는 NaN(모름)이 된다.
+     */
+    val repeatStdevDb: Double,
     /** 앞뒤 기준 측정의 차이(dB). 부호를 살린다. */
     val referenceDriftDb: Double,
     /** 보정에 쓸 수 있었던 대역의 비율. */

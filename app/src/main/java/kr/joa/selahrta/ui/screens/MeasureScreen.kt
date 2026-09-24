@@ -248,14 +248,37 @@ fun MeasureScreen(
         }
 
         if (range != null) {
+            // **무엇을 재서 견주는 범위인지 적는다.**
+            //
+            // 예전에는 「설교 권장 범위 68 ~ 75 dBA」까지만 적었다. 그런데
+            // 이 범위는 **시간평균(LAeq) 기준**이고
+            // ([kr.joa.selahrta.domain.ReferenceRange]), 계기가 그리는 큰
+            // 숫자는 **순간값**이다. 어느 것과 견주라는 말이 없으니 말
+            // 한마디에 계기가 빨개지는 것을 「너무 크다」로 읽게 된다.
+            //
+            // 가격·구독 전략 3장이 「권장범위의 근거·측정 조건·가중치·
+            // **평균시간** 표시」를 요구한 자리가 바로 여기다.
             Text(
                 "${segment.shortKo} 권장 범위 " +
                     "${range.avgLowDb.toInt()} ~ ${range.avgHighDb.toInt()} dBA" +
+                    " · Leq(${capture.meterSettings.leqWindow.labelKo}) 기준" +
                     if (capture.meterSettings.isCustom(segment)) " (고친 값)" else "",
                 color = SelahColors.TextSecondary,
                 fontSize = 13.sp,
+                textAlign = TextAlign.Center,
                 modifier = Modifier.padding(top = 10.dp),
             )
+            if (running && canJudge) {
+                Text(
+                    "계기의 큰 숫자는 지금 값이라 더 크게 출렁입니다. " +
+                        "범위에 드는지는 아래 Leq 의 색으로 보십시오.",
+                    color = SelahColors.TextMuted,
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
             // **색을 칠하지 않는 까닭은 글자로 적는다.** 배지를 없앤 뒤로
             // 판정은 바의 색 하나로만 말하는데, 색이 안 들어오는 상태를
             // 설명하지 않으면 고장처럼 보인다(명세 11장).
@@ -290,12 +313,27 @@ fun MeasureScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             ValueTile(
-                "Leq (${capture.meterSettings.leqWindow.labelKo})",
+                "Leq ()",
                 formatDb(m.leqLong),
                 // 창이 아직 안 찼으면 그 사실을 적는다 — 「1분 평균」이라고
                 // 적어 놓고 실제로는 10초치인 값을 보여 주면 안 된다.
                 if (m.leqLong != null && !m.leqLongFull) "모으는 중" else weighting.unitSuffix,
                 Modifier.weight(1f),
+                // **권장 범위와 견줄 수 있는 것은 이 값이다.**
+                //
+                // 권장 범위는 시간평균(LAeq) 기준으로 정해져 있다
+                // ([kr.joa.selahrta.domain.ReferenceRange]). 그런데 색은
+                // 계기에만 있었고 계기는 **순간값**을 그린다 — 말 한마디에
+                // 크게 튀는 값이라, 실제 Leq 가 범위 안에 얌전히 있어도
+                // 계기는 빨개졌다 나왔다 한다.
+                //
+                // 창이 안 찼으면 칠하지 않는다. 10초치를 1분 평균인 양
+                // 판정하는 것이기 때문이다.
+                valueColor = if (canJudge && m.leqLongFull) {
+                    levelColor(m.leqLong, range?.avgLowDb, range?.avgHighDb)
+                } else {
+                    null
+                },
             )
             ValueTile("MAX", formatDb(m.maxSpl), weighting.unitSuffix, Modifier.weight(1f))
             // 잘린 피크는 측정값이 아니라 하한이다. 「≥」를 붙여 그 사실을

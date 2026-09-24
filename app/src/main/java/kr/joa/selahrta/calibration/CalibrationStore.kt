@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.doublePreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.longPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
@@ -32,6 +33,9 @@ class CalibrationStore(private val context: Context) {
     /** 교정할 때의 입력 잡음 바닥(dBFS). 옛 기록에는 없다(독립 검토 R06). */
     private fun noiseKey(k: CalibrationKey) = doublePreferencesKey("${k.storageKey()}|noiseFloor")
 
+    /** 무엇에 맞춘 보정인가(교정기·소음계). 옛 기록에는 없다. */
+    private fun sourceKey(k: CalibrationKey) = stringPreferencesKey("${k.storageKey()}|calSource")
+
     /**
      * 이 조합의 보정값을 지켜본다. 없으면 null 이 흐른다.
      *
@@ -52,6 +56,10 @@ class CalibrationStore(private val context: Context) {
                     // 0dBFS 잡음은 말이 안 되고, 그 값으로 견주면 늘
                     // 「이득이 바뀌었다」가 된다.
                     noiseFloorDbfs = prefs[noiseKey(key)],
+                    // 모르는 이름이면 「기록 없음」이다. 임의로 고르지 않는다.
+                    source = prefs[sourceKey(key)]
+                        ?.let { runCatching { CalibrationSource.valueOf(it) }.getOrNull() }
+                        ?: CalibrationSource.Unknown,
                 )
             }
 
@@ -87,6 +95,7 @@ class CalibrationStore(private val context: Context) {
                 // 늘 「이득이 바뀌었다」가 된다.
                 val noise = cal.noiseFloorDbfs
                 if (noise != null && noise.isFinite()) p[noiseKey(key)] = noise else p.remove(noiseKey(key))
+                p[sourceKey(key)] = cal.source.name
             }
             SaveResult.Saved
         } catch (e: IOException) {
