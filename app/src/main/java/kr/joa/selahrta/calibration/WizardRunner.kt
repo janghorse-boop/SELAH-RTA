@@ -1,6 +1,6 @@
 package kr.joa.selahrta.calibration
 
-import kr.joa.selahrta.audio.SignalLevel
+import kr.joa.selahrta.audio.MEASURE_AMPLITUDE
 import kr.joa.selahrta.audio.TestSignal
 import kr.joa.selahrta.dsp.CalibrationCurve
 import kr.joa.selahrta.dsp.CalibrationSession
@@ -57,7 +57,7 @@ interface WizardCapture {
      * 경우가 많은데, 잔여 DSP 검사는 SNR 이 넉넉해야 뜻이 있다 — 신호가
      * 잡음에 가까우면 이득이 변해도 잡음에 묻혀 안 보인다.
      */
-    fun playSignal(signal: TestSignal, level: SignalLevel)
+    fun playSignal(signal: TestSignal, amplitude: Double)
     fun stopSignal()
 }
 
@@ -318,4 +318,4 @@ const val NOT_AUDIBLE_KO: String =
  * 두고, 모자라면 사람이 스피커 볼륨을 올리는 편이 낫다 — 그쪽이 방의
  * 실제 음장을 바꾸므로 측정에 맞는 조절이다.
  */
-val MEASURE_LEVEL: SignalLevel = SignalLevel.Medium
+val MEASURE_LEVEL: Double = MEASURE_AMPLITUDE

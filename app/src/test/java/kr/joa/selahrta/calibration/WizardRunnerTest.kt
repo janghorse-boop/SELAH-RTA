@@ -60,10 +60,10 @@ class WizardRunnerTest {
             taps--; log += "tap-"
         }
 
-        var level: kr.joa.selahrta.audio.SignalLevel? = null
+        var level: Double? = null
 
-        override fun playSignal(signal: TestSignal, level: kr.joa.selahrta.audio.SignalLevel) {
-            playing = signal; this.level = level; log += "play:${signal.name}"
+        override fun playSignal(signal: TestSignal, amplitude: Double) {
+            playing = signal; this.level = amplitude; log += "play:${signal.name}"
         }
 
         override fun stopSignal() {

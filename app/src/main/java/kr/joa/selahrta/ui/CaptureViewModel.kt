@@ -17,7 +17,13 @@ import kr.joa.selahrta.audio.CaptureGeneration
 import kr.joa.selahrta.audio.CaptureService
 import kr.joa.selahrta.audio.CaptureServiceBridge
 import kr.joa.selahrta.audio.TestSignal
-import kr.joa.selahrta.audio.SignalLevel
+import kr.joa.selahrta.audio.DEFAULT_AMPLITUDE
+import kr.joa.selahrta.audio.MAX_AMPLITUDE
+import kr.joa.selahrta.audio.MAX_TONE_HZ
+import kr.joa.selahrta.audio.MIN_AMPLITUDE
+import kr.joa.selahrta.audio.MIN_TONE_HZ
+import kr.joa.selahrta.audio.SignalChannels
+import kr.joa.selahrta.audio.SignalRequest
 import kr.joa.selahrta.audio.SignalPlayer
 import kr.joa.selahrta.audio.OpenFailure
 import kr.joa.selahrta.audio.OpenResult
@@ -171,8 +177,12 @@ data class CaptureUiState(
     val curveGeneration: Long = 0,
     /** 지금 스피커로 내보내고 있는 시험 신호. 안 내보내면 null. */
     val playingSignal: TestSignal? = null,
-    /** 내보내는 세기. */
-    val signalLevel: SignalLevel = SignalLevel.Low,
+    /** 내보내는 세기(진폭 0~1). 단계가 아니라 이어진 값이다. */
+    val signalAmplitude: Double = DEFAULT_AMPLITUDE,
+    /** [TestSignal.Custom] 으로 낼 주파수. */
+    val signalToneHz: Double = 1_000.0,
+    /** 어느 쪽 스피커로 낼 것인가. */
+    val signalChannels: SignalChannels = SignalChannels.Both,
     /** 신호 발생기에 관해 알릴 것. */
     val signalNoticeKo: String? = null,
     /**
@@ -511,10 +521,18 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      * 스피커에서 나온 소리가 제 마이크로 돌아오므로 하울링 탐지를 확인할
      * 수 있다.
      */
-    fun playSignal(signal: TestSignal, level: SignalLevel? = null) {
-        // 레벨을 받으면 그것으로 튼다. 교정 측정은 저장된 「작게」가 아니라
-        // 제 쓰임에 맞는 레벨이 필요하다(독립 검토 뒤 실기기에서 조정).
-        val gen = player.start(signal, level ?: controller.baseState.value.signalLevel)
+    fun playSignal(signal: TestSignal, amplitude: Double? = null) {
+        val st0 = controller.baseState.value
+        // 세기를 받으면 그것으로 튼다. 교정 측정은 사람이 고른 값이 아니라
+        // 제 쓰임에 맞는 세기가 필요하다(독립 검토 뒤 실기기에서 조정).
+        val gen = player.start(
+            SignalRequest(
+                signal = signal,
+                amplitude = amplitude ?: st0.signalAmplitude,
+                toneHz = st0.signalToneHz,
+                channels = st0.signalChannels,
+            ),
+        )
         playGeneration = gen
         val ok = gen != SignalPlayer.NONE
         controller.update { st -> st.copy(
@@ -607,8 +625,32 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** 세기를 바꾼다. 내보내는 중이면 그 자리에서 바꿔 끼운다. */
-    fun setSignalLevel(level: SignalLevel) {
-        controller.update { st -> st.copy(signalLevel = level) }
+    fun setSignalLevel(amplitude: Double) {
+        controller.update { st ->
+            st.copy(signalAmplitude = amplitude.coerceIn(MIN_AMPLITUDE, MAX_AMPLITUDE))
+        }
+        controller.baseState.value.playingSignal?.let { playSignal(it) }
+    }
+
+    /**
+     * 직접 고른 주파수를 바꾼다.
+     *
+     * **내보내는 중이면 바로 따라간다** — 슬라이더를 끌면서 어디가 하울링
+     * 자리인지 귀로 찾는 쓰임이라, 멈췄다 다시 눌러야 하면 못 찾는다.
+     * 다만 순음을 내고 있을 때만이다. 핑크 잡음 중에 주파수를 만졌다고
+     * 순음으로 갈아 끼우면 놀란다.
+     */
+    fun setSignalToneHz(hz: Double) {
+        controller.update { st ->
+            st.copy(signalToneHz = hz.coerceIn(MIN_TONE_HZ, MAX_TONE_HZ))
+        }
+        val playing = controller.baseState.value.playingSignal
+        if (playing == TestSignal.Custom) playSignal(playing)
+    }
+
+    /** 어느 쪽 스피커로 낼지 바꾼다. 내보내는 중이면 그 자리에서 바꿔 끼운다. */
+    fun setSignalChannels(channels: SignalChannels) {
+        controller.update { st -> st.copy(signalChannels = channels) }
         controller.baseState.value.playingSignal?.let { playSignal(it) }
     }
 

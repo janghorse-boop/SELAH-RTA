@@ -36,7 +36,7 @@ class SignalPlayerProbeTest {
         val entered = CountDownLatch(1)
         val unblock = CountDownLatch(1)
         val released = CountDownLatch(1)
-        override fun open(sampleRate: Int, frames: Int) = true
+        override fun open(sampleRate: Int, frames: Int, channels: Int) = true
         override fun write(buf: FloatArray, offset: Int, frames: Int): Int {
             entered.countDown()
             check(unblock.await(5, TimeUnit.SECONDS))
@@ -63,7 +63,7 @@ class SignalPlayerProbeTest {
         @Volatile
         var releasedDuringStop = false
 
-        override fun open(sampleRate: Int, frames: Int) = true
+        override fun open(sampleRate: Int, frames: Int, channels: Int) = true
         override fun write(buf: FloatArray, offset: Int, frames: Int): Int {
             entered.countDown()
             check(writeGate.await(5, TimeUnit.SECONDS))
@@ -97,7 +97,7 @@ class SignalPlayerProbeTest {
         @Volatile
         var secondOffset = -1
 
-        override fun open(sampleRate: Int, frames: Int) = true
+        override fun open(sampleRate: Int, frames: Int, channels: Int) = true
         override fun write(buf: FloatArray, offset: Int, frames: Int): Int {
             if (calls.incrementAndGet() == 1) return 128
             secondOffset = offset
@@ -130,7 +130,7 @@ class SignalPlayerProbeTest {
 
         var startedCycles = 0
         repeat(6) {
-            if (p.start(TestSignal.Sine1k, SignalLevel.Low) != SignalPlayer.NONE) {
+            if (p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE)) != SignalPlayer.NONE) {
                 startedCycles++
                 check(sinks.last().entered.await(5, TimeUnit.SECONDS))
             }
@@ -162,7 +162,7 @@ class SignalPlayerProbeTest {
     fun `멈추는 동안 놓기가 겹치지 않는다`() {
         val race = StopRaceSink()
         val q = SignalPlayer(openSink = { race }, warn = {})
-        q.start(TestSignal.Sine1k, SignalLevel.Low)
+        q.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
         check(race.entered.await(5, TimeUnit.SECONDS))
 
         val stopper = Thread { q.stop() }.apply { start() }
@@ -197,16 +197,18 @@ class SignalPlayerProbeTest {
     fun `적게 쓰이면 그만큼만 나아간다`() {
         val partial = PartialSink()
         val r = SignalPlayer(openSink = { partial }, warn = {})
-        r.start(TestSignal.Sine1k, SignalLevel.Low)
+        r.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
         check(partial.secondEntered.await(5, TimeUnit.SECONDS))
 
-        // 128 표본만 나갔으니, 다음에 나갈 첫 표본은 128번째여야 한다.
-        val expected = (SignalLevel.Low.amplitude * sin(2 * PI * 1000 * 128 / 48000)).toFloat()
+        // 128 **칸**만 나갔다. 출력은 두 채널이라 칸 128 개는 프레임 64 개다
+        // — 다음에 나갈 첫 칸은 프레임 64 의 왼쪽이다. 칸과 프레임을
+        // 섞으면 여기서 두 배로 어긋난다.
+        val expected = (DEFAULT_AMPLITUDE * sin(2 * PI * 1000 * 64 / 48000)).toFloat()
         println(
-            "[P3] 다음 표본 ${partial.secondStart} · 128 뒤 기대값 $expected · offset ${partial.secondOffset}",
+            "[P3] 다음 칸 ${partial.secondStart} · 프레임 64 의 기대값 $expected · offset ${partial.secondOffset}",
         )
         assertEquals(
-            "128 만 나갔으면 다음은 128번째 표본이어야 한다",
+            "칸 128 만 나갔으면 다음은 프레임 64 여야 한다",
             expected,
             partial.secondStart,
             1e-4f,

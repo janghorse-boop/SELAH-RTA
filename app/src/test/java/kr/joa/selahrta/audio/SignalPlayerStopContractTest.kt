@@ -50,7 +50,7 @@ class SignalPlayerStopContractTest {
         /** **놓은 뒤에 멈추라고 했는가.** 실제 `AudioTrack` 이면 터진다. */
         @Volatile var stoppedAfterRelease = false
 
-        override fun open(sampleRate: Int, frames: Int): Boolean = true
+        override fun open(sampleRate: Int, frames: Int, channels: Int): Boolean = true
         override fun write(buf: FloatArray, offset: Int, frames: Int): Int = frames
         override fun stop() {
             if (released) stoppedAfterRelease = true
@@ -70,7 +70,7 @@ class SignalPlayerStopContractTest {
         repeat(rounds) {
             val sink = Sink()
             val player = SignalPlayer(onEnded = { _, _ -> }, openSink = { sink }, warn = {})
-            player.start(TestSignal.Sine1k, SignalLevel.Low)
+            player.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
             // 스레드가 실제로 돌기 시작할 틈만 준다. 길게 자면 늘 같은
             // 순서로만 끝나 경합이 드러나지 않는다.
             Thread.sleep(2)
@@ -120,7 +120,7 @@ class SignalPlayerStopContractTest {
         class IdleSink : SignalSink {
             @Volatile var stopped = false
             @Volatile var released = false
-            override fun open(sampleRate: Int, frames: Int): Boolean = true
+            override fun open(sampleRate: Int, frames: Int, channels: Int): Boolean = true
 
             /** 늘 0 — 맴돌이 상한에 걸려 재생이 스스로 끝난다. */
             override fun write(buf: FloatArray, offset: Int, frames: Int): Int = 0
@@ -134,7 +134,7 @@ class SignalPlayerStopContractTest {
 
         val sink = IdleSink()
         val player = SignalPlayer(onEnded = { _, _ -> }, openSink = { sink }, warn = {})
-        player.start(TestSignal.Sine1k, SignalLevel.Low)
+        player.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
 
         assertTrue("재생이 스스로 끝나야 한다", releasedLatch.await(10, TimeUnit.SECONDS))
         assertTrue("끝났으면 놓았어야 한다", sink.released)

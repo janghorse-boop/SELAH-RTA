@@ -33,7 +33,7 @@ import kr.joa.selahrta.domain.ChurchSegment
 import kr.joa.selahrta.domain.SEGMENT_CAUTIONS
 import kr.joa.selahrta.domain.SegmentRange
 import kr.joa.selahrta.audio.InputDeviceInfo
-import kr.joa.selahrta.audio.SignalLevel
+import kr.joa.selahrta.audio.SignalChannels
 import kr.joa.selahrta.audio.TestSignal
 import kr.joa.selahrta.domain.MeasureState
 import kr.joa.selahrta.domain.MicKind
@@ -109,7 +109,9 @@ fun SettingsScreen(
     onResetRange: (ChurchSegment) -> Unit,
     onPlaySignal: (TestSignal) -> Unit,
     onStopSignal: () -> Unit,
-    onSignalLevel: (SignalLevel) -> Unit,
+    onSignalLevel: (Double) -> Unit,
+    onSignalToneHz: (Double) -> Unit,
+    onSignalChannels: (SignalChannels) -> Unit,
     onDismissSignalNotice: () -> Unit,
 ) {
     Column(
@@ -236,11 +238,15 @@ fun SettingsScreen(
         SectionTitle("시험 신호")
         SignalGeneratorCard(
             playing = capture.playingSignal,
-            level = capture.signalLevel,
+            amplitude = capture.signalAmplitude,
+            toneHz = capture.signalToneHz,
+            channels = capture.signalChannels,
             noticeKo = capture.signalNoticeKo,
             onPlay = onPlaySignal,
             onStop = onStopSignal,
             onLevel = onSignalLevel,
+            onToneHz = onSignalToneHz,
+            onChannels = onSignalChannels,
             onDismissNotice = onDismissSignalNotice,
         )
 

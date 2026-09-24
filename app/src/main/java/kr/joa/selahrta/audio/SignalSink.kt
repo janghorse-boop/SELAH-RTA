@@ -25,13 +25,21 @@ interface SignalSink {
     /**
      * 내보낼 준비를 한다.
      *
+     * @param channels 1 이면 모노, 2 면 스테레오. 스테레오면 [write] 의
+     *   버퍼는 **L·R 이 번갈아 든** 모양이다(2026-09-24 L/R 시험을 넣으며
+     *   더했다). 좌우를 가르려면 출력 자체가 두 채널이라야 한다 — 모노로
+     *   열어 두고 한쪽만 내보내는 길은 없다.
      * @return 열었으면 true. 못 열면 false — 부르는 쪽이 「내보내는 중」으로
      *   남기지 않도록 반드시 본다.
      */
-    fun open(sampleRate: Int, frames: Int): Boolean
+    fun open(sampleRate: Int, frames: Int, channels: Int): Boolean
 
     /**
      * [buf] 의 [offset] 부터 [frames] 개를 내보낸다. **버퍼가 빌 때까지 막는다.**
+     *
+     * **세는 단위는 배열의 「칸」이지 「프레임」이 아니다.** `AudioTrack` 의
+     * float 쓰기가 칸을 세기 때문이다 — 스테레오면 프레임 하나가 두 칸이다.
+     * 모노일 때 둘이 같아서 이름이 이렇게 굳었다.
      *
      * @return **실제로 쓴 개수.** 요청보다 적을 수 있다 — `AudioTrack` 은
      *   `WRITE_BLOCKING` 이어도 멈춤·일시정지·입출력 오류 중에 적게 받을 수
@@ -71,10 +79,16 @@ class AudioTrackSink : SignalSink {
 
     private var track: AudioTrack? = null
 
-    override fun open(sampleRate: Int, frames: Int): Boolean {
+    override fun open(sampleRate: Int, frames: Int, channels: Int): Boolean {
+        require(channels == 1 || channels == 2) { "채널 수는 1 또는 2 다: $channels" }
+        val mask = if (channels == 2) {
+            AudioFormat.CHANNEL_OUT_STEREO
+        } else {
+            AudioFormat.CHANNEL_OUT_MONO
+        }
         val minBytes = AudioTrack.getMinBufferSize(
             sampleRate,
-            AudioFormat.CHANNEL_OUT_MONO,
+            mask,
             AudioFormat.ENCODING_PCM_FLOAT,
         )
         if (minBytes <= 0) {
@@ -94,7 +108,7 @@ class AudioTrackSink : SignalSink {
                     AudioFormat.Builder()
                         .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
                         .setSampleRate(sampleRate)
-                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                        .setChannelMask(mask)
                         .build(),
                 )
                 // 최소의 네 배. 작게 잡으면 소리가 끊긴다.

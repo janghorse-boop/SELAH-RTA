@@ -65,7 +65,7 @@ class ReleaseCompletionTest {
         val writeGate = CountDownLatch(1)
         val releaseCalls = AtomicInteger()
 
-        override fun open(sampleRate: Int, frames: Int) = true
+        override fun open(sampleRate: Int, frames: Int, channels: Int) = true
 
         override fun write(buf: FloatArray, offset: Int, frames: Int): Int {
             writing.countDown()
@@ -98,7 +98,7 @@ class ReleaseCompletionTest {
 
         var starts = 0
         repeat(cap + 3) {
-            val id = p.start(TestSignal.Sine1k, SignalLevel.Low)
+            val id = p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
             if (id == SignalPlayer.NONE) return@repeat
             starts++
             check(sinks.last().writing.await(10, TimeUnit.SECONDS))

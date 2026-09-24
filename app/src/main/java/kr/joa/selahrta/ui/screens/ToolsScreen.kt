@@ -8,7 +8,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import kr.joa.selahrta.audio.SignalLevel
+import kr.joa.selahrta.audio.SignalChannels
 import kr.joa.selahrta.audio.TestSignal
 import kr.joa.selahrta.ui.CaptureUiState
 import kr.joa.selahrta.ui.components.SignalGeneratorCard
@@ -39,7 +39,9 @@ fun ToolsScreen(
     capture: CaptureUiState,
     onPlaySignal: (TestSignal) -> Unit,
     onStopSignal: () -> Unit,
-    onSignalLevel: (SignalLevel) -> Unit,
+    onSignalLevel: (Double) -> Unit,
+    onSignalToneHz: (Double) -> Unit,
+    onSignalChannels: (SignalChannels) -> Unit,
     onDismissSignalNotice: () -> Unit,
 ) {
     Column(
@@ -50,11 +52,15 @@ fun ToolsScreen(
     ) {
         SignalGeneratorCard(
             playing = capture.playingSignal,
-            level = capture.signalLevel,
+            amplitude = capture.signalAmplitude,
+            toneHz = capture.signalToneHz,
+            channels = capture.signalChannels,
             noticeKo = capture.signalNoticeKo,
             onPlay = onPlaySignal,
             onStop = onStopSignal,
             onLevel = onSignalLevel,
+            onToneHz = onSignalToneHz,
+            onChannels = onSignalChannels,
             onDismissNotice = onDismissSignalNotice,
             modifier = Modifier.padding(top = 4.dp, bottom = 16.dp),
         )

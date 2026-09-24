@@ -339,6 +339,8 @@ fun SelahApp() {
                         onPlaySignal = vm::playSignal,
                         onStopSignal = vm::stopSignal,
                         onSignalLevel = vm::setSignalLevel,
+                        onSignalToneHz = vm::setSignalToneHz,
+                        onSignalChannels = vm::setSignalChannels,
                         onDismissSignalNotice = vm::dismissSignalNotice,
                     )
 
@@ -362,6 +364,8 @@ fun SelahApp() {
                             onPlaySignal = vm::playSignal,
                             onStopSignal = vm::stopSignal,
                             onSignalLevel = vm::setSignalLevel,
+                            onSignalToneHz = vm::setSignalToneHz,
+                            onSignalChannels = vm::setSignalChannels,
                             onDismissSignalNotice = vm::dismissSignalNotice,
                         )
                         // 캡처를 쓰지 않는다. 권한이 없어도 그대로 열린다.
