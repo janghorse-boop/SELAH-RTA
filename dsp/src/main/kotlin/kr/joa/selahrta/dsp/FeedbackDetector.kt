@@ -191,6 +191,21 @@ class FeedbackDetector(
     private val minContinuity: Double = 0.85,
     /** 이만큼 안 보이면 끊긴 것으로 본다. */
     private val gapMs: Long = 250,
+    /**
+     * 흔들림·연속성을 **최근 이만큼**에서 잰다(독립 검토 UA-01).
+     *
+     * 예전에는 트랙이 생긴 뒤의 **전 구간**에서 쟀다. 그래서 올라오면서
+     * 주파수가 한 번 움직이면 그 기록이 영영 남아, 뒤에 아무리 오래
+     * 자리를 잡아도 「흔들리는 소리」로 남았다 — 무음으로 트랙이 사라져야
+     * 풀렸다. 검토자가 1kHz 에서 2초 동안 40cent 올라간 뒤 28초를 고정한
+     * 소리로 재현했다(후보 0회).
+     *
+     * 길이를 정한 근거: 노래의 비브라토는 4~7Hz 라 한 주기가 143~250ms 다.
+     * 600ms 면 가장 느린 4Hz 도 두 주기 넘게 들어와 흔들림이 드러난다.
+     * 한편 올라오다 자리를 잡은 소리는 창이 비워지는 600ms 뒤부터 다시
+     * 시간을 세므로, 「지속」까지 약 1.5초면 된다.
+     */
+    private val stabilityWindowMs: Long = 600,
 ) {
     private val finder = SpectralPeakFinder(fftSize, sampleRate)
 
@@ -386,30 +401,81 @@ class FeedbackDetector(
     /** 한 주파수에 머무는 소리 하나를 따라간다. */
     private inner class Track(peak: SpectralPeak, now: Long, atFrame: Long, harmonic: Boolean) {
         var hz = peak.hz
-        var minHz = peak.hz
-        var maxHz = peak.hz
         var power = peak.power
         var prominenceDb = peak.prominenceDb
         val firstSeenMs = now
         var lastSeenMs = now
-        val firstFrame = atFrame
         var lastFrame = atFrame
-        var framesSeen = 1L
         var harmonicSeen = harmonic
 
         /** 이 소리가 남긴 기록. 「지속」이 된 뒤에 생긴다. */
         var event: FeedbackEvent? = null
 
+        /**
+         * 최근 [stabilityWindowMs] 안의 관측. 흔들림·연속성을 여기서 잰다.
+         *
+         * 세 줄을 나란히 든다 — 시각·프레임 번호·주파수. 객체를 만들면
+         * 프레임마다 쓰레기가 생기고, 이 셋은 늘 함께 움직인다.
+         */
+        private val recentMs = ArrayDeque<Long>()
+        private val recentFrame = ArrayDeque<Long>()
+        private val recentHz = ArrayDeque<Double>()
+
+        /**
+         * 최근 창이 **처음으로** 안정해진 때. 흔들리면 다시 null 이 된다.
+         *
+         * 등급을 올리는 시간은 여기서부터 센다 — 「얼마나 울렸나」가 아니라
+         * **「얼마나 자리를 잡고 있나」**가 하울링을 가르기 때문이다.
+         */
+        private var stableSinceMs: Long? = null
+
+        /** 최근 창에서 잰 값. 화면이 판정 근거로 그대로 보여 준다. */
+        private var windowDriftCents = 0.0
+        private var windowContinuity = 1.0
+
+        init {
+            observe(peak.hz, now, atFrame)
+        }
+
+        /**
+         * 관측 하나를 창에 넣고 창의 흔들림·연속성을 다시 잰다.
+         *
+         * 창을 비울 때 **한 개는 남긴다.** 다 비우면 방금 넣은 것마저
+         * 사라져 흔들림을 잴 것이 없어진다.
+         */
+        private fun observe(peakHz: Double, now: Long, atFrame: Long) {
+            recentMs.addLast(now)
+            recentFrame.addLast(atFrame)
+            recentHz.addLast(peakHz)
+            while (recentMs.size > 1 && now - recentMs.first() > stabilityWindowMs) {
+                recentMs.removeFirst()
+                recentFrame.removeFirst()
+                recentHz.removeFirst()
+            }
+
+            var lo = Double.MAX_VALUE
+            var hi = -Double.MAX_VALUE
+            for (h in recentHz) {
+                if (h < lo) lo = h
+                if (h > hi) hi = h
+            }
+            windowDriftCents = cents(hi, lo)
+            windowContinuity = recentMs.size.toDouble() / (atFrame - recentFrame.first() + 1)
+
+            val stable = windowDriftCents <= maxDriftCents && windowContinuity >= minContinuity
+            // **안정해진 시각은 창의 맨 앞이다.** 창이 안정하다는 것은 그
+            // 시각부터 지금까지가 안정했다는 뜻이므로, 그만큼은 세어 준다.
+            stableSinceMs = if (stable) (stableSinceMs ?: recentMs.first()) else null
+        }
+
         fun matches(other: Double): Boolean = cents(other, hz) <= matchCents
 
         fun update(peak: SpectralPeak, now: Long, atFrame: Long, harmonic: Boolean) {
-            framesSeen++
             lastFrame = atFrame
             // 주파수는 천천히 따라간다. 한 프레임의 흔들림에 끌려가면
             // 흔들림 자체를 못 보게 된다.
             hz = hz * 0.8 + peak.hz * 0.2
-            minHz = min(minHz, peak.hz)
-            maxHz = max(maxHz, peak.hz)
+            observe(peak.hz, now, atFrame)
             power = max(power, peak.power)
             prominenceDb = max(prominenceDb, peak.prominenceDb)
             lastSeenMs = now
@@ -479,9 +545,7 @@ class FeedbackDetector(
          */
         fun toCandidate(): FeedbackCandidate {
             val duration = lastSeenMs - firstSeenMs
-            val drift = cents(maxHz, minHz)
             val needed = if (harmonicSeen) (persistentMs * harmonicPatience).toLong() else persistentMs
-            val continuity = framesSeen.toDouble() / (lastFrame - firstFrame + 1)
             // **안정성은 「의심」에도 건다**(2026-09-24).
             //
             // 예전에는 흔들림·연속성을 「지속」에서만 봤다. 그래서 「의심」은
@@ -499,22 +563,36 @@ class FeedbackDetector(
             //
             // **탐지가 늦어지지는 않는다.** 여전히 0.3초면 「의심」이 된다 —
             // 흔들리지 않은 0.3초여야 할 뿐이다.
-            val stable = drift <= maxDriftCents && continuity >= minContinuity
+            // **흔들림은 최근 창에서 본다**(2026-09-25 독립 검토 UA-01).
+            //
+            // 전 구간에서 재던 것을 고쳤다. 한 번 움직인 기록이 영영 남아,
+            // 올라오면서 주파수가 움직인 **진짜 하울링**이 자리를 잡은
+            // 뒤에도 계속 후보에서 빠졌다. 관문을 「의심」까지 올린 것이
+            // 그 증상을 더 나쁘게 만들었다 — 예전에는 적어도 후보로는 떴다.
+            //
+            // **등급 시간도 안정해진 뒤부터 센다.** 「얼마나 울렸나」가
+            // 아니라 「얼마나 자리를 잡고 있나」가 하울링을 가른다.
+            val steady = stableSinceMs?.let { lastSeenMs - it }
             val state = when {
-                !stable -> FeedbackState.None
-                duration >= needed -> FeedbackState.Persistent
-                duration >= suspectMs -> FeedbackState.Suspect
+                steady == null -> FeedbackState.None
+                steady >= needed -> FeedbackState.Persistent
+                steady >= suspectMs -> FeedbackState.Suspect
                 else -> FeedbackState.None
             }
             return FeedbackCandidate(
                 hz = hz,
                 levelDbfs = amplitudeToDbfs(kotlin.math.sqrt(power)).value,
                 prominenceDb = prominenceDb,
+                // **울린 시간은 그대로 전 구간이다.** 기록에 적히는 값이라
+                // 「이 소리가 언제부터 났나」여야 한다. 판정에 쓰는 시간과
+                // 다른 것이 맞다.
                 durationMs = duration,
                 firstSeenMs = firstSeenMs,
                 state = state,
-                driftCents = drift,
-                continuity = continuity,
+                // 판정에 쓴 값을 그대로 보인다 — 화면의 근거와 판정이
+                // 다른 숫자를 말하면 어느 쪽이 참인지 알 수 없다.
+                driftCents = windowDriftCents,
+                continuity = windowContinuity,
                 hasHarmonics = harmonicSeen,
             )
         }
