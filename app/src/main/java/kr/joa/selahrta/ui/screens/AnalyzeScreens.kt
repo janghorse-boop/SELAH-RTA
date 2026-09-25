@@ -26,9 +26,14 @@ import kr.joa.selahrta.dsp.ThirdOctave
 import kr.joa.selahrta.dsp.FeedbackCandidate
 import kr.joa.selahrta.dsp.FeedbackEvent
 import kr.joa.selahrta.dsp.FeedbackState
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import kr.joa.selahrta.ui.nav.NavSection
+import kr.joa.selahrta.ui.nav.ViewMode
 import kr.joa.selahrta.ui.CaptureUiState
 import androidx.compose.ui.platform.LocalConfiguration
-import kr.joa.selahrta.ui.LockLandscape
 import kr.joa.selahrta.ui.components.BAND_SLOT_WIDE
 import kr.joa.selahrta.ui.components.formatHz
 import kr.joa.selahrta.ui.components.hzUnit
@@ -50,17 +55,22 @@ import kr.joa.selahrta.ui.theme.SelahColors
  * 눈으로 구별할 수 없다.
  */
 @Composable
-fun RtaScreen(capture: CaptureUiState) {
-    // **이 화면만 눕힌다**(담당자 지시). 31밴드는 가로로 늘어선 그림이라
-    // 세로 화면에서는 막대가 실오라기처럼 보인다. 떠나면 [LockLandscape] 가
-    // 원래 방향으로 돌려놓는다.
-    LockLandscape()
-
+fun RtaScreen(
+    capture: CaptureUiState,
+    /** 분석 모드를 바꾼다. 고르개는 차트 상자 안에 있다. */
+    onMode: (ViewMode) -> Unit = {},
+) {
     val rta = capture.rta
     val (floor, ceil) = rtaRange(rta)
+    // 축을 SPL 이라 부를 수 있는가. 보정이 없으면 밴드 값은 dBFS 그대로다.
+    val calibrated = !capture.calibration.isReferenceOnly
     val unresolved = rta?.resolved?.indexOfFirst { it }?.takeIf { it > 0 }
 
     val running = capture.measure is MeasureState.Running
+    // 눕히는 일은 분석 **구역**이 한다(`SelahApp` 의 `LockLandscape`), 이 화면이
+    // 아니다. 그래도 세로 배치를 남겨 두는 까닭은 **잠금이 듣지 않는 자리가
+    // 있어서**다 — 화면 분할·접는 폰에서는 방향 요청이 무시돼 세로로 뜬다.
+    // 그때 빈 화면을 보이는 것보다는 좁게라도 그리는 편이 낫다.
     val cfg = LocalConfiguration.current
     val landscape = cfg.screenWidthDp > cfg.screenHeightDp
 
@@ -82,6 +92,7 @@ fun RtaScreen(capture: CaptureUiState) {
             ceil,
             Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 6.dp),
             chartHeight = null,
+            modes = { AnalyzeModes(ViewMode.Rta, onMode) },
             // **눕히면 31칸이 다 들어온다 — 늘이지 않는다.**
             //
             // 늘여 두었더니(칸당 30dp = 930dp) 화면보다 넓어져 6.3k 위가
@@ -93,6 +104,7 @@ fun RtaScreen(capture: CaptureUiState) {
             // 남는다. 늘일 까닭이 없다.
             minSlotWidth = 0.dp,
             feedback = capture.feedback,
+            calibrated = calibrated,
         )
         return
     }
@@ -114,8 +126,10 @@ fun RtaScreen(capture: CaptureUiState) {
             ceil,
             Modifier.fillMaxWidth(),
             chartHeight = 260.dp,
+            modes = { AnalyzeModes(ViewMode.Rta, onMode) },
             minSlotWidth = BAND_SLOT_WIDE,
             feedback = capture.feedback,
+            calibrated = calibrated,
         )
 
         FeedbackStrip(
@@ -405,3 +419,49 @@ private fun CandidateRow(c: FeedbackCandidate) {
     }
 }
 
+
+
+/**
+ * 차트 상자 안에 얹는 작은 모드 고르개(2026-09-25 담당자 지시).
+ *
+ * ## 이름을 FFT 로 짓지 않는다
+ *
+ * 담당자는 「FFT 버튼」이라 했는데, 검토안
+ * (`inbox/SELAH_RTA_RTA_Spectrum_Spectrogram_개발반영안-1.pdf`)이 그 자리를
+ * 정확히 짚었다:
+ *
+ * > FFT 는 주파수 성분을 계산하는 분석 방법(알고리즘)이고, Spectrum 은 그
+ * > 계산 결과를 주파수별로 보여주는 표시 방식이다.
+ *
+ * 맞는 지적이다. 화면 이름은 **보는 것**이어야 하고, FFT 는 그 화면이 쓰는
+ * 셈이다 — FFT 크기·창 함수는 Spectrum 의 **설정**으로 들어갈 것이다.
+ * 「RTA | FFT」로 나란히 두면 밴드 묶음과 계산법을 같은 층으로 놓는 셈이라,
+ * 나중에 Spectrogram 이 붙을 때 어디에 둘지가 없어진다.
+ */
+@Composable
+internal fun AnalyzeModes(
+    current: ViewMode,
+    onPick: (ViewMode) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        ViewMode.entries.filter { it.section == NavSection.Analyze }.forEach { m ->
+            val on = m == current
+            Text(
+                m.labelKo,
+                color = if (on) Color(0xFF00201C) else SelahColors.TextSecondary,
+                fontSize = 10.sp,
+                fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
+                softWrap = false,
+                modifier = Modifier
+                    .background(
+                        if (on) SelahColors.Accent else SelahColors.SurfaceVariant,
+                        RoundedCornerShape(999.dp),
+                    )
+                    .clickable { onPick(m) }
+                    .padding(horizontal = 10.dp, vertical = 5.dp)
+                    .semantics { stateDescription = if (on) "선택됨" else "선택 안 됨" },
+            )
+        }
+    }
+}

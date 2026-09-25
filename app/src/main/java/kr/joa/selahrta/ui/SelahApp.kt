@@ -283,6 +283,23 @@ fun SelahApp() {
             }
         },
     ) { inner ->
+        // **지금 떠 있는 화면**을 한 번만 셈한다(`null` = 설정).
+        //
+        // 화면은 칩이 정하고 설정만 예외인데, 머리글·화면 방향처럼 「어느
+        // 화면인가」에 달린 것들이 저마다 조건을 다시 적고 있었다. 그래서
+        // RTA 를 보다 설정으로 가면 — 칩은 RTA 에 머물러 있으므로 —
+        // **설정 화면에 머리글이 없었다.** 한 값을 함께 보면 어긋날 수 없다.
+        val screen: ViewMode? = if (section == NavSection.Settings) null else mode
+
+        // **분석은 구역째 눕힌다**(2026-09-25 담당자 지시: 「RTA와 FR은 모두
+        // 가로형으로만 보이면 좋을 것 같습니다」).
+        //
+        // 화면마다 걸지 않고 여기서 거는 까닭: RTA 와 FR 이 각자 잠그면
+        // 오갈 때마다 앞 화면의 잠금이 풀렸다 걸려, 폰이 한 번 섰다가 다시
+        // 눕는다. 구역에 걸어 두면 분석 안에서 움직이는 동안은 계속 걸려
+        // 있다. 분석을 떠나면 `onDispose` 가 원래 방향으로 돌려놓는다.
+        if (screen?.section == NavSection.Analyze) LockLandscape()
+
         Column(Modifier.fillMaxSize().padding(inner)) {
             // **RTA 에서는 머리글을 접는다**(2026-09-24 담당자 지시: 「SELAH RTA
             // 제목 포함, USB MIC·미보정 표시도 없어도 된다 — RTA 만 해당」).
@@ -293,7 +310,7 @@ fun SelahApp() {
             //
             // **다른 화면에서는 접지 않는다.** 미보정 배지는 그 숫자가 아직
             // 짐작임을 말하는 자리라, 절대 음압을 읽는 화면에서 숨기면 안 된다.
-            if (mode != ViewMode.Rta) TopBrandBar(capture)
+            if (screen != ViewMode.Rta) TopBrandBar(capture)
 
             if (section.hasModeChips) {
                 // RTA 는 차트가 화면을 꽉 채우는 화면이라 칩도 낮게 그린다.
@@ -312,8 +329,8 @@ fun SelahApp() {
                 // 구역에서 둘이 어긋났다.
                 //
                 // 설정만 칩이 없어 따로 둔다.
-                when {
-                    section == NavSection.Settings -> SettingsScreen(
+                when (screen) {
+                    null -> SettingsScreen(
                         capture = capture,
                         onSaveCalibration = vm::saveSimpleCalibration,
                         onClearCalibration = vm::clearCalibration,
@@ -341,42 +358,40 @@ fun SelahApp() {
                         onRenameSegment = vm::setSegmentName,
                     )
 
-                    else -> when (mode) {
-                        ViewMode.Spl -> MeasureScreen(
-                            capture = capture,
-                            onSegment = vm::setSegment,
-                            hasPermission = hasPermission,
-                            onRequestPermission = {
-                                askPermission.launch(Manifest.permission.RECORD_AUDIO)
-                            },
-                            onStart = beginMeasure,
-                            onStop = vm::stop,
-                            onDismissDeviceNotice = vm::dismissDeviceNotice,
-                        )
-                        ViewMode.Rta -> RtaScreen(capture)
-                        ViewMode.Fr -> FrScreen(
-                            capture = capture,
-                            onMeasure = vm::measureResponse,
-                            onMeasureQuiet = vm::measureResponseQuiet,
-                            onMeasureSignal = vm::measureResponseSignal,
-                            onCancel = vm::cancelResponse,
-                            onPlayHere = vm::setResponsePlayHere,
-                            onDismissNotice = vm::dismissResponseNotice,
-                        )
-                        // 지난 기록을 보는 화면이라 마이크가 필요 없다.
-                        ViewMode.History -> HistoryScreen()
-                        ViewMode.Signal -> ToolsScreen(
-                            capture = capture,
-                            onPlaySignal = vm::playSignal,
-                            onStopSignal = vm::stopSignal,
-                            onSignalLevel = vm::setSignalLevel,
-                            onSignalToneHz = vm::setSignalToneHz,
-                            onSignalChannels = vm::setSignalChannels,
-                            onDismissSignalNotice = vm::dismissSignalNotice,
-                        )
-                        // 캡처를 쓰지 않는다. 권한이 없어도 그대로 열린다.
-                        ViewMode.InstrumentEq -> InstrumentGuideScreen()
-                    }
+                    ViewMode.Spl -> MeasureScreen(
+                        capture = capture,
+                        onSegment = vm::setSegment,
+                        hasPermission = hasPermission,
+                        onRequestPermission = {
+                            askPermission.launch(Manifest.permission.RECORD_AUDIO)
+                        },
+                        onStart = beginMeasure,
+                        onStop = vm::stop,
+                        onDismissDeviceNotice = vm::dismissDeviceNotice,
+                    )
+                    ViewMode.Rta -> RtaScreen(capture, onMode = { mode = it })
+                    ViewMode.Fr -> FrScreen(
+                        capture = capture,
+                        onMeasure = vm::measureResponse,
+                        onMeasureQuiet = vm::measureResponseQuiet,
+                        onMeasureSignal = vm::measureResponseSignal,
+                        onCancel = vm::cancelResponse,
+                        onPlayHere = vm::setResponsePlayHere,
+                        onDismissNotice = vm::dismissResponseNotice,
+                    )
+                    // 지난 기록을 보는 화면이라 마이크가 필요 없다.
+                    ViewMode.History -> HistoryScreen()
+                    ViewMode.Signal -> ToolsScreen(
+                        capture = capture,
+                        onPlaySignal = vm::playSignal,
+                        onStopSignal = vm::stopSignal,
+                        onSignalLevel = vm::setSignalLevel,
+                        onSignalToneHz = vm::setSignalToneHz,
+                        onSignalChannels = vm::setSignalChannels,
+                        onDismissSignalNotice = vm::dismissSignalNotice,
+                    )
+                    // 캡처를 쓰지 않는다. 권한이 없어도 그대로 열린다.
+                    ViewMode.InstrumentEq -> InstrumentGuideScreen()
                 }
 
                 // **탭 내용 위에 덮는다.** 탭으로 두면 측정 중에 잘못

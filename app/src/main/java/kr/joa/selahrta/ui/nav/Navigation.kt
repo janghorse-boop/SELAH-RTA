@@ -37,8 +37,10 @@ enum class ViewMode(val labelKo: String, val section: NavSection) {
      * 머리로 맞춰 봐야 했다. 지금은 차트 위에 후보를 표식으로 찍고 바로
      * 아래에 정확한 주파수를 적는다.
      *
-     * **이 화면만 가로로 눕는다**(`LockLandscape`). 31밴드는 가로로 늘어선
-     * 그림이라 세로에서는 막대가 실오라기처럼 보인다.
+     * **분석 구역은 가로로만 본다**(`LockLandscape`, 2026-09-25 담당자 지시).
+     * 31밴드는 가로로 늘어선 그림이라 세로에서는 막대가 실오라기처럼 보인다.
+     * 잠금은 화면이 아니라 **구역**에 걸려 있다(`SelahApp`) — 화면마다 걸면
+     * RTA↔FR 을 오갈 때 폰이 한 번 섰다가 다시 눕는다.
      */
     Rta("RTA", NavSection.Analyze),
 
@@ -51,6 +53,9 @@ enum class ViewMode(val labelKo: String, val section: NavSection) {
      *
      * **전달함수가 아니다.** 화면이 그 말을 맨 앞에 적는다 — 위상은 알 수
      * 없고, 잰 것은 소리원·방·마이크를 합친 결과다.
+     *
+     * RTA 와 함께 **가로로만 본다**(2026-09-25 담당자 지시). 31밴드 곡선은
+     * 여기서도 가로로 늘어선 그림이다.
      */
     Fr("FR", NavSection.Analyze),
 
@@ -135,4 +140,22 @@ fun NavSection.defaultMode(last: ViewMode): ViewMode = when (this) {
  * 한 개짜리 고르개가 그대로 남는다. 세어 보면 잊을 수가 없다.
  */
 val NavSection.hasModeChips: Boolean
-    get() = ViewMode.entries.count { it.section == this } > 1
+    get() = !hasOwnModeSwitch && ViewMode.entries.count { it.section == this } > 1
+
+/**
+ * **이 구역은 고르개를 화면 안에서 그린다** — 위 칩을 쓰지 않는다
+ * (2026-09-25 담당자 지시: 「RTA 창안에 RTA, FR 버튼은 없애주고 박스안에 …
+ * 작게 만들어서」).
+ *
+ * 분석의 모드는 「차트가 무엇을 그리는가」라서, 고르개가 가리키는 것과 붙어
+ * 있는 편이 읽힌다. RTA 는 차트 상자 안에, FR 은 맨 위 한 줄에 둔다. 위에
+ * 따로 칩 줄을 쓰면 눕힌 화면에서 차트가 그만큼 줄어든다.
+ *
+ * **[hasModeChips] 가 이 값을 본다.** 두 곳에 따로 적었다가 한쪽만 고치면,
+ * 위 칩과 화면 안 고르개가 같이 떠서 같은 것을 두 번 묻게 된다.
+ *
+ * 측정(SPL·기록)은 그대로 위 칩이다 — 그쪽은 서로 다른 화면이라 안에 넣을
+ * 자리가 없다.
+ */
+val NavSection.hasOwnModeSwitch: Boolean
+    get() = this == NavSection.Analyze

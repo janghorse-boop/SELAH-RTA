@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -153,6 +154,26 @@ fun BandMeter(
      * 글자가 「2.49kHz」를 말한다 — 그림 위에 숫자를 겹쳐 쓰면 막대를 가린다.
      */
     feedback: List<FeedbackCandidate> = emptyList(),
+    /**
+     * 차트 **상자 안**에 얹을 모드 고르개(2026-09-25 담당자 지시).
+     *
+     * 위에 한 줄을 따로 쓰던 것을 여기로 넣었다. 고르개가 가리키는 것
+     * 바로 위에 있어야 「이 차트를 무엇으로 볼까」로 읽히고, 눕힌 화면에서
+     * 차트가 그만큼 넓어진다. null 이면 안 그린다.
+     */
+    modes: (@Composable () -> Unit)? = null,
+    /**
+     * 세로축 숫자가 **dB SPL 인가**(2026-09-25).
+     *
+     * 값은 `bandsDbfs + offsetDb` 다. 보정이 없으면 오프셋이 0 이라 그대로
+     * **dBFS**(0 이 만재, 음수)가 나온다 — 담당자 지시대로 축에 「SPL」이라
+     * 적어 놓고 보니, 미보정 기기에서 `0 · -15 · -30` 위에 SPL 이라 적혀
+     * 있었다(기기에서 확인).
+     *
+     * 어느 쪽인지는 밴드 값만 봐서는 알 수 없고, RTA 는 머리글을 접는
+     * 화면이라 「미보정」 배지도 없다. 그래서 축 이름을 바깥에서 받는다.
+     */
+    calibrated: Boolean,
 ) {
     // **눈금 글자는 막대와 함께 밀려야 한다.** 따로 두면 밀고 난 뒤 막대와
     // 글자가 어긋나, 솟은 자리의 주파수를 잘못 읽는다.
@@ -171,7 +192,10 @@ fun BandMeter(
                 .border(1.dp, SelahColors.Outline, RoundedCornerShape(12.dp))
                 .padding(8.dp),
         ) {
-            val chartWidth = maxOf(maxWidth, minSlotWidth * ThirdOctave.BAND_COUNT)
+            // 세로축이 가져가는 폭을 빼고 그린다 — 안 빼면 오른쪽 끝
+            // 밴드가 상자 밖으로 밀린다.
+            val plotWidth = (maxWidth - Y_AXIS_WIDTH - 4.dp).coerceAtLeast(0.dp)
+            val chartWidth = maxOf(plotWidth, minSlotWidth * ThirdOctave.BAND_COUNT)
             val slotWidth = chartWidth / ThirdOctave.BAND_COUNT
             val labelEvery = slotWidth >= WIDE_LABEL_SLOT
             val labelSize = if (slotWidth >= ROOMY_LABEL_SLOT) 9.sp else 8.sp
@@ -179,7 +203,25 @@ fun BandMeter(
             // 자리만 더 빼면 막대가 쓸 높이가 된다 — 바깥에서 준 높이가
             // 고정이든 weight 든 똑같이 맞는다.
             val barsHeight = (maxHeight - LABEL_ROW_HEIGHT).coerceAtLeast(0.dp)
-            Column(Modifier.horizontalScroll(scroll)) {
+
+            // **세로축은 밀리지 않는다**(2026-09-25 담당자 지적: 「Y축에는
+            // SPL(dB) 표시가 있어야 하는게 아닌지?」).
+            //
+            // 맞는 지적이다. 가로눈금 다섯 줄만 있고 숫자가 없어, 막대가
+            // 얼마인지는 아래 설명 줄의 「세로 30 ~ 80 dB」를 읽고 머리로
+            // 나눠야 했다.
+            //
+            // **가로 스크롤 밖에 둔다.** 안에 넣으면 옆으로 민 순간 세로축이
+            // 따라 밀려 화면에서 사라진다 — 세로축은 어디를 보든 그 자리에
+            // 있어야 하는 것이다.
+            Row(Modifier.fillMaxWidth()) {
+                YAxis(
+                    floorDb = floorDb,
+                    ceilDb = ceilDb,
+                    height = barsHeight,
+                    modifier = Modifier.padding(end = 4.dp),
+                )
+                Column(Modifier.horizontalScroll(scroll)) {
                 Canvas(Modifier.width(chartWidth).height(barsHeight)) {
                 val span = (ceilDb - floorDb).coerceAtLeast(1.0)
 
@@ -340,6 +382,16 @@ fun BandMeter(
                         }
                     }
                 }
+                }
+            }
+
+            // 모드 고르개는 차트 **위에 얹는다**. 자리를 따로 내주면 그만큼
+            // 막대가 줄어드는데, 위쪽은 대개 비어 있다.
+            //
+            // **오른쪽에 둔다.** 왼쪽에 두었더니 세로축 맨 위 숫자를 가렸다
+            // (기기에서 확인) — 눈금 숫자는 가려지면 축이 반쪽이 된다.
+            modes?.let {
+                Box(Modifier.align(Alignment.TopEnd)) { it() }
             }
 
             // **안내는 밀리지 않는다.** 스크롤 안에 두면 옆으로 민 뒤 사라져,
@@ -355,7 +407,15 @@ fun BandMeter(
         }
         Text(
             buildString {
-                append("주파수 (Hz) · 세로 ${floorDb.toInt()} ~ ${ceilDb.toInt()} dB")
+                // 세로축이 무엇인지 적는다 — 숫자만으로는 dBFS 인지
+                // dB SPL 인지 알 수 없다(담당자 지적, 2026-09-25).
+                //
+                // **미보정이면 SPL 이라 부르지 않는다.** 그 숫자는 아직 이
+                // 기기의 dBFS 이고, SPL 이라 적는 순간 「85」가 음압으로
+                // 읽힌다 — 그렇게 읽으면 소음 판정이 통째로 틀린다.
+                append("가로 주파수(Hz) · 세로 ")
+                append(if (calibrated) "SPL" else "dBFS(미보정)")
+                append(" ${floorDb.toInt()} ~ ${ceilDb.toInt()} dB")
                 // **밀 수 있을 때만 밀라고 한다.** 태블릿처럼 넓은 화면에서는
                 // 31칸이 다 들어와 밀 것이 없다. maxValue 가 그 사실을 안다.
                 if (scroll.maxValue > 0) append(" · 옆으로 밀면 나머지 대역")
@@ -388,3 +448,37 @@ fun rtaRange(rta: RtaView?, resolvedOnly: Boolean = true): Pair<Double, Double> 
     return (ceil - 50.0) to ceil
 }
 
+
+
+/** 세로축이 가져가는 폭. 「110」까지 들어가면 넉넉하다. */
+private val Y_AXIS_WIDTH = 26.dp
+
+/**
+ * 세로축 — **막대가 얼마인지 눈으로 읽게 한다.**
+ *
+ * 가로눈금과 **같은 자리에** 숫자를 놓는다. 눈금은 다섯 줄이고, 위가
+ * 천장(`ceilDb`) 아래가 바닥(`floorDb`)이다.
+ *
+ * 눈금 자체는 캔버스가 그리므로 여기서는 숫자만 맞춰 놓는다 — 둘이 서로
+ * 다른 셈으로 자리를 잡으면 반올림 때문에 어긋난다. 같은 다섯 등분을 쓴다.
+ */
+@Composable
+private fun YAxis(floorDb: Double, ceilDb: Double, height: Dp, modifier: Modifier = Modifier) {
+    Column(
+        modifier.width(Y_AXIS_WIDTH).height(height),
+        horizontalAlignment = Alignment.End,
+        verticalArrangement = Arrangement.SpaceBetween,
+    ) {
+        // 위에서 아래로 — 천장부터 바닥까지 다섯 칸.
+        repeat(5) { i ->
+            val db = ceilDb - (ceilDb - floorDb) * i / 4.0
+            Text(
+                "%.0f".format(db),
+                color = SelahColors.TextSecondary,
+                fontSize = 8.sp,
+                maxLines = 1,
+                softWrap = false,
+            )
+        }
+    }
+}
