@@ -30,6 +30,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.material3.AlertDialog
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kr.joa.selahrta.calibration.ActiveCurve
@@ -58,6 +60,7 @@ fun CurveCard(
     onDismissNotice: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var confirmClear by remember { mutableStateOf(false) }
     Column(
         modifier
             .fillMaxWidth()
@@ -226,13 +229,24 @@ fun CurveCard(
                     fontSize = 13.sp,
                 )
             }
-            TextButton(onClick = onClear, enabled = curve != null) {
+            // **묻고 나서 지운다.** 보정값과 같은 까닭이다 — 이 파일은
+            // 마이크 한 개에 딸려 온 개별 보정이라, 지우면 그 파일을 다시
+            // 찾아와야 한다. 기기에서 만든 곡선이면 다시 재야 한다.
+            TextButton(onClick = { confirmClear = true }, enabled = curve != null) {
                 Text(
                     "초기화",
                     color = if (curve != null) SelahColors.TextSecondary else SelahColors.TextMuted,
                     fontSize = 13.sp,
                 )
             }
+        }
+
+        if (confirmClear && curve != null) {
+            ClearCurveDialog(
+                curve = curve,
+                onConfirm = { onClear(); confirmClear = false },
+                onCancel = { confirmClear = false },
+            )
         }
 
         if (!canImport) {
@@ -336,6 +350,98 @@ private fun CurveGraph(curve: CalibrationCurve, modifier: Modifier = Modifier) {
             color = SelahColors.TextMuted,
             fontSize = 8.sp,
             modifier = Modifier.align(Alignment.BottomStart),
+        )
+    }
+}
+
+
+/**
+ * 보정 곡선을 지우기 전에 **어느 파일이 사라지는지 적는다.**
+ *
+ * 파일 이름이 곧 그 마이크의 신원이다 — `EMM-6_17860.txt` 는 시리얼
+ * 17860 한 개의 것이고, 다시 얻으려면 제조사 페이지에서 그 시리얼로
+ * 내려받거나 기준 마이크로 다시 재야 한다.
+ *
+ * **끄는 것과 지우는 것은 다르다는 것도 적는다.** 잠시 안 걸고 싶은
+ * 것이라면 위의 켜고 끄는 고르개로 충분한데, 그것을 모르면 지우게 된다.
+ */
+@Composable
+private fun ClearCurveDialog(
+    curve: ActiveCurve,
+    onConfirm: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onCancel,
+        containerColor = SelahColors.DialogSurface,
+        tonalElevation = 0.dp,
+        shape = RoundedCornerShape(20.dp),
+        modifier = Modifier.border(1.dp, SelahColors.Outline, RoundedCornerShape(20.dp)),
+        title = { Text("보정 곡선을 지울까요?", color = SelahColors.TextPrimary) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("지워지는 파일", color = SelahColors.TextMuted, fontSize = 11.sp)
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(SelahColors.SurfaceVariant, RoundedCornerShape(10.dp))
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    CurveClearRow("파일", curve.fileName)
+                    CurveClearRow("점 개수", "${curve.pointCount}개")
+                    if (curve.micName.isNotBlank()) {
+                        CurveClearRow("마이크", curve.micName)
+                    }
+                    CurveClearRow("지금", if (curve.enabled) "걸려 있음" else "꺼 둠")
+                }
+                Text(
+                    "이 파일은 마이크 한 개에 딸린 개별 보정입니다. 지우면 " +
+                        "되돌릴 수 없고, 다시 얻으려면 제조사에서 그 시리얼의 " +
+                        "파일을 내려받거나 기준 마이크로 다시 재야 합니다.",
+                    color = SelahColors.TextSecondary,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
+                )
+                if (curve.enabled) {
+                    Text(
+                        "잠시 안 걸고 싶은 것뿐이라면 지우지 말고 위의 " +
+                            "고르개를 끄십시오 — 파일은 그대로 두고 적용만 " +
+                            "멈춥니다.",
+                        color = SelahColors.Warn,
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text("지웁니다", color = SelahColors.High, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onCancel) {
+                Text("그대로 둡니다", color = SelahColors.Accent)
+            }
+        },
+    )
+}
+
+@Composable
+private fun CurveClearRow(label: String, value: String) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(label, color = SelahColors.TextMuted, fontSize = 11.sp, softWrap = false)
+        Text(
+            value,
+            color = SelahColors.TextPrimary,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.End,
+            modifier = Modifier.padding(start = 10.dp),
         )
     }
 }

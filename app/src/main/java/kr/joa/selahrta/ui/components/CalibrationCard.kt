@@ -28,6 +28,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.material3.AlertDialog
+import androidx.compose.ui.text.style.TextAlign
+import kr.joa.selahrta.calibration.GlobalCalibration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kr.joa.selahrta.calibration.CalibrationSource
@@ -56,6 +59,7 @@ fun CalibrationCard(
     modifier: Modifier = Modifier,
 ) {
     var input by remember { mutableStateOf("") }
+    var confirmClear by remember { mutableStateOf(false) }
     val measured = capture.meter.currentDbfs
     val reference = input.trim().toDoubleOrNull()
     val offset = if (measured != null && reference != null) {
@@ -270,8 +274,15 @@ fun CalibrationCard(
             ) {
                 Text("보정값 저장", fontWeight = FontWeight.Bold, fontSize = 13.sp)
             }
+            // **묻고 나서 지운다**(2026-09-25 담당자 지적: 「보정값 초기화를
+            // 눌렀더니 물어보지도 않고 그냥 지워지네요」).
+            //
+            // 맞는 지적이다. 이 값은 **기준 소음계나 교정기를 들고 재서**
+            // 얻은 것이라 한 번 지우면 장비를 다시 꺼내야 되찾는다. 저장할
+            // 때는 계산을 먼저 보여 주고 사람이 확인하게 해 놓고, 지울 때는
+            // 한 번에 사라지게 두었던 것이 앞뒤가 안 맞았다.
             TextButton(
-                onClick = { input = ""; onClear() },
+                onClick = { confirmClear = true },
                 enabled = capture.calibration.saved != null,
             ) {
                 Text(
@@ -284,6 +295,17 @@ fun CalibrationCard(
                     fontSize = 13.sp,
                 )
             }
+        }
+
+        if (confirmClear) {
+            capture.calibration.saved?.let { saved ->
+                ClearCalibrationDialog(
+                    saved = saved,
+                    deviceLabel = capture.inputForDisplay?.deviceLabel ?: "이 기기",
+                    onConfirm = { input = ""; onClear(); confirmClear = false },
+                    onCancel = { confirmClear = false },
+                )
+            } ?: run { confirmClear = false }
         }
 
         capture.calibration.saved?.let { saved ->
@@ -359,5 +381,103 @@ private fun RowScope.CalibratorButton(
         ),
     ) {
         Text("교정기 ${level.labelKo}", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+    }
+}
+
+
+/**
+ * 보정값을 지우기 전에 **무엇이 사라지는지 낱낱이 적는다.**
+ *
+ * 「정말 지울까요?」만으로는 모자라다. 지워지는 것이 무엇으로 언제 어떻게
+ * 얻은 값인지 보여 줘야, 사람이 「그건 아까워서 안 되겠다」거나 「그건
+ * 잘못 잰 거라 지워도 된다」를 스스로 가를 수 있다.
+ *
+ * **되돌릴 수 없다는 것도 적는다.** 되돌리기가 없는 일에서 그 사실을 안
+ * 적으면, 사람은 되돌릴 수 있다고 가정한다.
+ */
+@Composable
+private fun ClearCalibrationDialog(
+    saved: GlobalCalibration,
+    deviceLabel: String,
+    onConfirm: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    val savedAt = remember(saved.savedAtEpochMs) {
+        java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.KOREA)
+            .format(java.util.Date(saved.savedAtEpochMs))
+    }
+    AlertDialog(
+        onDismissRequest = onCancel,
+        containerColor = SelahColors.DialogSurface,
+        tonalElevation = 0.dp,
+        shape = RoundedCornerShape(20.dp),
+        modifier = Modifier.border(1.dp, SelahColors.Outline, RoundedCornerShape(20.dp)),
+        title = { Text("보정값을 지울까요?", color = SelahColors.TextPrimary) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "지워지는 값",
+                    color = SelahColors.TextMuted,
+                    fontSize = 11.sp,
+                )
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(SelahColors.SurfaceVariant, RoundedCornerShape(10.dp))
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    ClearRow("기기", deviceLabel)
+                    ClearRow("보정값", "%+.1f dB".format(saved.offsetDb))
+                    ClearRow("무엇에 맞췄나", saved.source.labelKo)
+                    ClearRow("기준값", "%.1f dB".format(saved.referenceDb))
+                    ClearRow("맞춘 때", savedAt)
+                }
+                Text(
+                    "이 값은 기준 소음계나 1kHz 교정기로 재서 얻은 것입니다. " +
+                        "지우면 되돌릴 수 없고, 다시 얻으려면 장비를 들고 처음부터 " +
+                        "재야 합니다.",
+                    color = SelahColors.TextSecondary,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
+                )
+                Text(
+                    "지운 뒤에는 이 기기의 음압이 다시 「미보정」이 되어, " +
+                        "화면의 숫자가 실제와 10dB 넘게 차이 날 수 있습니다. " +
+                        "주파수 보정 곡선은 그대로 남습니다 — 다른 값입니다.",
+                    color = SelahColors.Warn,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text("지웁니다", color = SelahColors.High, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onCancel) {
+                Text("그대로 둡니다", color = SelahColors.Accent)
+            }
+        },
+    )
+}
+
+@Composable
+private fun ClearRow(label: String, value: String) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(label, color = SelahColors.TextMuted, fontSize = 11.sp, softWrap = false)
+        Text(
+            value,
+            color = SelahColors.TextPrimary,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.End,
+            modifier = Modifier.padding(start = 10.dp),
+        )
     }
 }
