@@ -172,8 +172,13 @@ fun topSpectrumPeak(
     highHz: Double = 20_000.0,
 ): SpectrumPeak? {
     val binHz = sampleRateHz.toDouble() / fftSize
-    // 0번 칸(직류)은 보지 않는다. 마이크의 직류 치우침이 늘 가장 큰 칸이 된다.
-    val from = (lowHz / binHz).toInt().coerceAtLeast(1)
+    // **[lowHz] 위의 칸부터 본다.** `toInt()` 로 잘랐더니 20Hz 를 달라 했을 때
+    // 1번 칸(48k/4096 이면 11.7Hz)이 들어왔다 — 버림은 **아래쪽** 칸을 집는다.
+    // 마이크의 직류 치우침과 초저역 울림이 그 칸에 몰려 있어, 화면에 적히는
+    // 「가장 큰 봉우리」가 들리지도 않는 주파수가 될 수 있었다.
+    //
+    // 0번 칸(직류)은 어느 경우에도 보지 않는다.
+    val from = kotlin.math.ceil(lowHz / binHz).toInt().coerceAtLeast(1)
     val to = (highHz / binHz).toInt().coerceAtMost(power.size - 2)
     if (to <= from) return null
 

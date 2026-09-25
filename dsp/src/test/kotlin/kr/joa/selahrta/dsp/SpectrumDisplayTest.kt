@@ -107,6 +107,25 @@ class SpectrumDisplayTest {
         }
     }
 
+    /**
+     * **20Hz 아래를 봉우리라고 하지 않는다.**
+     *
+     * 화면에 적히는 「가장 큰 봉우리」는 사람이 EQ 로 손댈 자리를 가리키는
+     * 숫자다. 마이크의 직류 치우침과 초저역 울림은 1번 칸(11.7Hz)에 몰려
+     * 있어, 아래쪽으로 한 칸만 넘겨도 **들리지도 않는 주파수**가 그 자리를
+     * 차지한다. 범위를 자르는 셈이 버림이면 그렇게 된다.
+     */
+    @Test
+    fun `아래 끝 밖의 칸은 봉우리로 치지 않는다`() {
+        val p = DoubleArray(n / 2 + 1)
+        // 11.7Hz(1번 칸)에 아주 큰 값, 1kHz 에 작은 값.
+        p[1] = 1_000.0
+        p[(1_000.0 / binHz).toInt()] = 1.0
+        val top = topSpectrumPeak(p, fs, n, lowHz = 20.0)
+        assertNotNull(top)
+        assertTrue("11.7Hz 를 집었다: ${"%.1f".format(top!!.hz)}Hz", top.hz >= 20.0)
+    }
+
     @Test
     fun `아무 소리도 없으면 봉우리가 없다`() {
         assertNull(topSpectrumPeak(DoubleArray(n / 2 + 1), fs, n))
