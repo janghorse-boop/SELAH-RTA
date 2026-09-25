@@ -51,6 +51,17 @@ fun ValueTile(
      * 권장 범위가 시간평균 기준이기 때문이다([SegmentRange]).
      */
     valueColor: Color? = null,
+    /**
+     * 흐리게 그릴 것인가 — **미보정일 때**다(2026-09-25 PEAK 검토안 2장).
+     *
+     * 큰 계기 숫자는 이미 그렇게 하고 있었는데 타일은 또렷했다. 같은
+     * 화면에서 한쪽은 「짐작」이라 말하고 다른 쪽은 「측정값」처럼 보이면,
+     * 눈은 또렷한 쪽을 믿는다.
+     *
+     * **범위 색([valueColor])이 있으면 그쪽이 이긴다.** 색은 「범위의
+     * 어디쯤인가」라는 다른 이야기라, 흐리게 하느라 지우면 안 된다.
+     */
+    dim: Boolean = false,
 ) {
     val hasValue = value != NO_VALUE
     Column(
@@ -75,6 +86,7 @@ fun ValueTile(
             color = when {
                 !hasValue -> SelahColors.TextMuted
                 valueColor != null -> valueColor
+                dim -> SelahColors.TextSecondary
                 else -> SelahColors.TextPrimary
             },
         )

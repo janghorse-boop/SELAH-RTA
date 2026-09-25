@@ -355,8 +355,15 @@ fun MeasureScreen(
                 } else {
                     null
                 },
+                dim = uncalibrated,
             )
-            ValueTile("MAX", formatDb(m.maxSpl), weighting.unitSuffix, Modifier.weight(1f))
+            ValueTile(
+                "MAX",
+                formatDb(m.maxSpl),
+                weighting.unitSuffix,
+                Modifier.weight(1f),
+                dim = uncalibrated,
+            )
             // 잘린 피크는 측정값이 아니라 하한이다. 「≥」를 붙여 그 사실을
             // 숫자 옆에 적는다 — 각주로 미루면 아무도 안 읽는다.
             //
@@ -365,11 +372,17 @@ fun MeasureScreen(
             // 같은 가중의 값처럼 읽힌다. 125Hz 순음에서 A 가중은 16dB 을
             // 깎지만 PEAK 는 꿈쩍도 안 한다(독립 검증 R10). 클리핑은 입력단의
             // 사건이라 가중 전에서 재는 것이고, 그래서 표기도 고정이다.
+            // **무엇을 재는 값인지 단위 줄에 적는다**(2026-09-25 PEAK 검토안
+            // 4장). 「PEAK」만 적어 두면 MAX 와 뭐가 다른지 알 수 없다 —
+            // MAX 는 가중·시간가중을 거친 **지속된** 최대이고, 이쪽은
+            // 표본 하나까지 보는 **순간** 최대다. 그래서 둘이 20dB 넘게
+            // 벌어지는 것이 정상이다(`PeakVersusMaxTest`).
             ValueTile(
                 "PEAK",
                 if (m.peakClipped && m.peakSpl != null) "≥${formatDb(m.peakSpl)}" else formatDb(m.peakSpl),
-                if (m.peakClipped) "잘림 · 가중없음" else "dB 가중없음",
+                if (m.peakClipped) "잘림 · 순간최고" else "순간최고 · 가중없음",
                 Modifier.weight(1f),
+                dim = uncalibrated,
             )
         }
 
