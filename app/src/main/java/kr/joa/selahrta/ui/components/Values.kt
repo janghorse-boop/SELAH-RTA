@@ -1,6 +1,7 @@
 package kr.joa.selahrta.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -62,12 +63,25 @@ fun ValueTile(
      * 어디쯤인가」라는 다른 이야기라, 흐리게 하느라 지우면 안 된다.
      */
     dim: Boolean = false,
+    /**
+     * 누르면 할 일. null 이면 누를 수 없다.
+     *
+     * **누를 수 있다는 것을 보여 준다**(2026-09-25 담당자 지시로 지표 설명을
+     * 붙이며). 누르면 뜻이 나오는데 눌러 볼 생각이 안 들면 없는 기능이다 —
+     * 테두리를 한 단 밝혀 둔다.
+     */
+    onClick: (() -> Unit)? = null,
 ) {
     val hasValue = value != NO_VALUE
     Column(
         modifier = modifier
             .background(SelahColors.Surface, RoundedCornerShape(12.dp))
-            .border(1.dp, SelahColors.Outline, RoundedCornerShape(12.dp))
+            .border(
+                1.dp,
+                if (onClick != null) SelahColors.TextMuted else SelahColors.Outline,
+                RoundedCornerShape(12.dp),
+            )
+            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
             .padding(vertical = 12.dp, horizontal = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(2.dp),

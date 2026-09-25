@@ -15,6 +15,14 @@ data class SplFrame(
     val leqSessionDbfs: Dbfs?,
     /** 시간가중 레벨의 최대값(MAX). */
     val maxDbfs: Dbfs,
+    /**
+     * 시간가중 레벨의 **최소값**(MIN). 아직 자리를 안 잡았으면 null.
+     *
+     * **자리를 잡은 뒤부터 센다.** 시작 직후 τ 동안은 0 에서 올라오는
+     * 중이라, 그 구간을 넣으면 MIN 이 늘 그 시작 구간으로 굳어 이후
+     * 아무리 조용해도 바뀌지 않는다([BlockWeighting.min]).
+     */
+    val minDbfs: Dbfs?,
     /** 파형 절대값의 최대(PEAK). MAX 와 다른 지표다(명세 6장). */
     val peakDbfs: Dbfs,
     /** 그 피크가 풀스케일에 닿았는가. 닿았으면 그 값은 하한일 뿐이다. */
@@ -62,6 +70,7 @@ class SplEngine(
     private val leqSession = EnergyAverage()
 
     private var maxMeanSquare = 0.0
+    private var minMeanSquare = Double.POSITIVE_INFINITY
     private var peakAbs = 0.0
     private var peakClipped = false
     private var anyInput = false
@@ -98,6 +107,7 @@ class SplEngine(
         // 0.74dB 이 갈렸다(독립 검증 R06).
         val bw = timeWeighting.pushBlock(work, frames)
         if (frames > 0 && bw.max > maxMeanSquare) maxMeanSquare = bw.max
+        if (bw.min.isFinite() && bw.min < minMeanSquare) minMeanSquare = bw.min
 
         leqShort.addBlock(work, frames)
         leqLong.addBlock(work, frames)
@@ -110,6 +120,11 @@ class SplEngine(
             leqLongDbfs = leqLong.leqDbfs(),
             leqSessionDbfs = leqSession.dbfs(),
             maxDbfs = amplitudeToDbfs(kotlin.math.sqrt(maxMeanSquare)),
+            minDbfs = if (minMeanSquare.isFinite()) {
+                amplitudeToDbfs(kotlin.math.sqrt(minMeanSquare))
+            } else {
+                null
+            },
             peakDbfs = amplitudeToDbfs(peakAbs),
             peakClipped = peakClipped,
             leqLongFull = leqLong.isFull,
@@ -122,6 +137,7 @@ class SplEngine(
 
     /** MAX·PEAK 만 다시 센다. 새 구간을 재기 시작할 때 쓴다. */
     fun resetPeaks() {
+        minMeanSquare = Double.POSITIVE_INFINITY
         maxMeanSquare = 0.0
         peakAbs = 0.0
         peakClipped = false

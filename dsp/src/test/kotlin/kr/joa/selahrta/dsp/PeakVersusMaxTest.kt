@@ -196,3 +196,77 @@ class PeakVersusMaxTest {
         assertTrue("작으면 잘림이 아니다", !quiet.peakClipped)
     }
 }
+
+/**
+ * **MIN 이 시작 구간으로 굳지 않는가**(2026-09-25 담당자 지시로 MIN 을
+ * 넣으며 만든 시험).
+ *
+ * 시간가중은 0 에서 올라온다. 그 구간을 세면 MIN 은 **늘 시작 직후의 값**이
+ * 되고, 이후 아무리 조용해도 바뀌지 않는다 — 변하지 않는 값은 지표가
+ * 아니다. 그래서 `settled` 뒤부터만 센다.
+ */
+class MinLevelTest {
+
+    private val fs = 48_000
+
+    private fun engine(w: Weighting = Weighting.Z, t: TimeWeight = TimeWeight.Fast) =
+        SplEngine(fs, w, t)
+
+    private fun tone(f: Double, amp: Double, ms: Int): FloatArray {
+        val n = fs * ms / 1000
+        val d = SignalGenerator.sine(f, fs, n, amp)
+        return FloatArray(n) { d[it].toFloat() }
+    }
+
+    /** 자리를 잡기 전에는 MIN 이 없다. 「모르는 값」을 0 으로 적지 않는다. */
+    @Test
+    fun `자리를 잡기 전에는 MIN 이 없다`() {
+        // Fast 의 τ 는 125ms, 자리 잡는 데 그 3배가 든다. 100ms 만 넣는다.
+        val f = engine().process(tone(1000.0, 0.5, 100), fs / 10)
+        assertTrue("아직 자리를 안 잡았다", !f.settled)
+        assertTrue("MIN 은 아직 없어야 한다", f.minDbfs == null)
+    }
+
+    /**
+     * **시작 구간이 MIN 을 잡아먹지 않는다.**
+     *
+     * 앞은 크고 뒤는 작은 신호를 넣는다. 올바르면 MIN 은 **뒤의 작은
+     * 구간**이다. 시작 구간을 셌다면 0 에 가까운 값이 나온다.
+     */
+    @Test
+    fun `MIN 은 뒤의 조용한 구간을 잡는다`() {
+        val loud = tone(1000.0, 0.5, 2000)
+        val quiet = tone(1000.0, 0.05, 2000) // 20dB 아래
+        val x = FloatArray(loud.size + quiet.size)
+        loud.copyInto(x)
+        quiet.copyInto(x, loud.size)
+
+        val f = engine().process(x, x.size)
+        val min = f.minDbfs!!.value
+        val max = f.maxDbfs.value
+        println("[MIN] 큰 구간 → 작은 구간 · MAX %.1f · MIN %.1f dBFS".format(max, min))
+
+        // 작은 구간의 정상 상태는 −0.5 진폭 대비 20dB 아래다.
+        assertEquals("MIN 은 뒤 구간의 레벨이어야 한다", max - 20.0, min, 1.0)
+    }
+
+    /** 조용하다가 커지면 MIN 은 앞의 조용한 구간에 머문다. */
+    @Test
+    fun `커진 뒤에도 MIN 은 조용했던 값을 지킨다`() {
+        val quiet = tone(1000.0, 0.05, 2000)
+        val loud = tone(1000.0, 0.5, 2000)
+        val x = FloatArray(quiet.size + loud.size)
+        quiet.copyInto(x)
+        loud.copyInto(x, quiet.size)
+
+        val f = engine().process(x, x.size)
+        assertEquals("MIN 은 앞 구간", f.maxDbfs.value - 20.0, f.minDbfs!!.value, 1.0)
+    }
+
+    /** MIN 은 MAX 를 넘지 않는다 — 같은 시간가중 레벨을 양끝에서 본 값이다. */
+    @Test
+    fun `MIN 은 MAX 보다 크지 않다`() {
+        val f = engine().process(tone(1000.0, 0.3, 3000), fs * 3)
+        assertTrue("MIN ≤ MAX", f.minDbfs!!.value <= f.maxDbfs.value + 1e-9)
+    }
+}

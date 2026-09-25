@@ -92,6 +92,13 @@ data class MeterReading(
     val leqLongFull: Boolean = false,
     /** 측정을 시작한 뒤의 최대 레벨. */
     val maxSpl: Double? = null,
+    /**
+     * 측정을 시작한 뒤의 **최소** 레벨. 시간가중이 자리를 잡기 전에는 null.
+     *
+     * 자리를 잡기 전 값을 세면 MIN 이 늘 시작 구간으로 굳는다
+     * ([kr.joa.selahrta.dsp.SplFrame.minDbfs]).
+     */
+    val minSpl: Double? = null,
     /** 파형 최대(순간). MAX 와 다른 지표다(명세 6장). */
     val peakSpl: Double? = null,
     /**
@@ -1338,6 +1345,7 @@ internal fun CaptureUiState.withMeasurement(m: MeasurementSnapshot?): CaptureUiS
                 leqLong = f.leqLongDbfs?.toSpl(offset)?.value,
                 leqLongFull = f.leqLongFull,
                 maxSpl = f.maxDbfs.toSpl(offset).value,
+                minSpl = f.minDbfs?.toSpl(offset)?.value,
                 peakSpl = f.peakDbfs.toSpl(offset).value,
                 peakClipped = f.peakClipped,
                 anyClipping = m.anyClipping,

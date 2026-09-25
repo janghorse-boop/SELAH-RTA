@@ -24,7 +24,21 @@ enum class TimeWeight(val labelKo: String, val tauSeconds: Double) {
  *     y[n] = y[n-1] + α·(x[n]² - y[n-1]),   α = 1 - exp(-T/τ)
  */
 /** 덩어리 하나를 처리한 결과. 마지막 값과 그 안의 최대를 함께 준다. */
-data class BlockWeighting(val last: Double, val max: Double)
+/**
+ * 한 덩어리를 밀어 넣은 결과.
+ *
+ * [min] 만 **자리를 잡은 뒤의 표본에서** 센다. 시작 직후 τ 동안은 0 에서
+ * 올라오는 중이라, 그 구간을 넣으면 **MIN 이 늘 그 시작 구간으로 굳는다** —
+ * 이후 아무리 조용해도 바뀌지 않는 값이 되어 뜻을 잃는다. 자리 잡은 표본이
+ * 하나도 없으면 [Double.POSITIVE_INFINITY] 다.
+ *
+ * [max] 는 그 문제가 없다. 0 에서 올라오는 값이 최대를 끌어올리지는 않는다.
+ */
+data class BlockWeighting(
+    val last: Double,
+    val max: Double,
+    val min: Double = Double.POSITIVE_INFINITY,
+)
 
 class ExponentialTimeWeighting(
     private val timeWeight: TimeWeight,
@@ -74,13 +88,18 @@ class ExponentialTimeWeighting(
     fun pushBlock(buf: DoubleArray, frames: Int): BlockWeighting {
         require(frames in 0..buf.size) { "frames=$frames 이 범위를 벗어난다" }
         var peak = Double.NEGATIVE_INFINITY
+        var low = Double.POSITIVE_INFINITY
         for (i in 0 until frames) {
             val v = push(buf[i])
             if (v > peak) peak = v
+            // **자리를 잡은 뒤에만 최소를 센다.** `push` 가 표본을 세므로
+            // 이 검사는 덩어리 한가운데에서 참이 될 수 있다.
+            if (settled && v < low) low = v
         }
         return BlockWeighting(
             last = meanSquare,
             max = if (peak.isFinite()) peak else meanSquare,
+            min = low,
         )
     }
 

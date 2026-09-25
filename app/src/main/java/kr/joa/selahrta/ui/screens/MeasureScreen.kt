@@ -207,10 +207,10 @@ fun MeasureScreen(
                 }
             }
 
-            else -> InfoBar(
-                "아래 버튼을 눌러 마이크를 엽니다.",
-                Modifier.padding(top = 4.dp, bottom = 12.dp),
-            )
+            // 「아래 버튼을 눌러 마이크를 엽니다」는 **뺐다**(2026-09-25
+            // 담당자 지시). 버튼에 「측정 시작」이라 적혀 있고 그것 말고는
+            // 누를 것도 없다 — 시킬 것이 없는 안내였다.
+            else -> Unit
         }
 
         // 기기가 바뀌거나 빠진 일은 숫자보다 먼저 알려야 한다 —
@@ -240,9 +240,6 @@ fun MeasureScreen(
             range = range,
             isCustom = capture.meterSettings.isCustom(segment),
             leqLabelKo = capture.meterSettings.leqWindow.labelKo,
-            // 구간 설명은 **고를 때** 쓸모가 있다. 재는 동안에는 이미 고른
-            // 뒤라, 그 자리를 비워 숫자와 버튼을 끌어올린다.
-            showFocus = !running,
             modifier = Modifier.padding(top = 4.dp, bottom = 4.dp),
         )
 
@@ -281,7 +278,14 @@ fun MeasureScreen(
                 },
                 maxMark = m.maxSpl?.let { gaugeFraction(it) },
             )
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            // **숫자를 호의 그릇 쪽으로 내린다**(2026-09-25 담당자 지시:
+            // 「값이 너무 위쪽에 있습니다」). 반원의 중심은 캔버스 **아래
+            // 끝**이라, 상자 한가운데에 두면 호의 빈 위쪽에 떠 보인다.
+            // 위쪽에 여백을 주어 가운데정렬의 기준을 아래로 민다.
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.padding(top = 40.dp),
+            ) {
                 Text(
                     formatDb(m.currentSpl),
                     fontSize = 52.sp,
@@ -330,10 +334,26 @@ fun MeasureScreen(
             )
         }
 
+        // **세 지표를 눌러 뜻을 본다**(2026-09-25 담당자 지시).
+        //
+        // 「Leq」·「MAX」·「MIN」 은 음향 쪽 낱말이라, 적어 두는 것만으로는
+        // 무엇을 재는지 알 수 없다. 누르면 그 자리에서 알려 준다 — 설명을
+        // 화면에 늘 펼쳐 두면 정작 숫자가 밀린다.
+        var shownMetric by rememberSaveable { mutableStateOf<Metric?>(null) }
         Row(
             Modifier.fillMaxWidth().padding(top = 14.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            ValueTile(
+                "MIN",
+                formatDb(m.minSpl),
+                // 자리를 잡기 전에는 값이 없다. 「모르는 값」을 0 으로 적지
+                // 않는다(`SplFrame.minDbfs`).
+                if (running && m.minSpl == null) "자리 잡는 중" else weighting.unitSuffix,
+                Modifier.weight(1f),
+                dim = uncalibrated,
+                onClick = { shownMetric = Metric.Min },
+            )
             ValueTile(
                 "Leq (${capture.meterSettings.leqWindow.labelKo})",
                 formatDb(m.leqLong),
@@ -344,59 +364,39 @@ fun MeasureScreen(
                 // **권장 범위와 견줄 수 있는 것은 이 값이다.**
                 //
                 // 권장 범위는 시간평균(LAeq) 기준으로 정해져 있다
-                // ([kr.joa.selahrta.domain.SegmentRange]). 그런데 색은
-                // 계기에만 있었고 계기는 **순간값**을 그린다 — 말 한마디에
-                // 크게 튀는 값이라, 실제 Leq 가 범위 안에 얌전히 있어도
-                // 계기는 빨개졌다 나왔다 한다.
-                //
-                // 창이 안 찼으면 칠하지 않는다. 10초치를 1분 평균인 양
-                // 판정하는 것이기 때문이다.
+                // ([kr.joa.selahrta.domain.SegmentRange]). 창이 안 찼으면
+                // 칠하지 않는다 — 10초치를 1분 평균인 양 판정하는 것이다.
                 valueColor = if (canJudge && m.leqLongFull) {
                     levelColor(m.leqLong, range?.avgLowDb, range?.avgHighDb)
                 } else {
                     null
                 },
-                emphasised = true,
                 dim = uncalibrated,
+                onClick = { shownMetric = Metric.Leq },
             )
-            // **「현재」 타일은 두지 않는다**(2026-09-25 담당자 지적:
-            // 「현재 값이 동일하게 표시되는데 … 하나만 나오면 됩니다」).
-            //
-            // 지금 값은 **계기가 맡는다.** 어두운 예배당에서 흘끗 볼 때
-            // 52sp 와 22sp 는 전혀 다르게 읽히고, 계기가 있는 까닭이 바로
-            // 그 읽히는 거리다. 같은 값을 작은 타일로 옮기면 읽기가
-            // 나빠지기만 한다.
-            //
-            // 그래서 위계를 이렇게 둔다 — **지금 값은 계기가 크게**, 그
-            // 아래에 **이어지는 값(Leq)과 가장 컸던 값(MAX)**. 타일이 둘로
-            // 줄면서 폭이 넓어져 「Leq (1분)」 라벨도 덜 끼고 숫자를 한 호
-            // 키울 수 있다.
             ValueTile(
                 "MAX",
                 formatDb(m.maxSpl),
                 weighting.unitSuffix,
                 Modifier.weight(1f),
-                emphasised = true,
                 dim = uncalibrated,
+                onClick = { shownMetric = Metric.Max },
             )
         }
 
         // **PEAK 는 눌러서 본다**(2026-09-25 담당자 지시).
         //
-        // 예배 음량을 판단하는 데 늘 봐야 하는 값이 아니다 — 그러면서 타일
-        // 한 자리를 차지했고, MAX 와 20~30dB 벌어져 있어 설명 없이는
-        // 오해를 샀다.
+        // 예배 음량을 판단하는 데 늘 봐야 하는 값이 아니면서 타일 한 자리를
+        // 차지했고, MAX 와 20~30dB 벌어져 있어 설명 없이는 오해를 샀다.
         //
         // **숨기는 것이 안전한 까닭**은 잘림을 따로 알리기 때문이다. 파형이
-        // 잘리면 바로 아래 경고가 뜨고(`m.anyClipping`), 이 줄도 경고색이
-        // 된다. PEAK 가 화면에서 내려가도 「이 측정은 잘렸다」는 소식은
-        // 내려가지 않는다.
-        var peakOpen by rememberSaveable { mutableStateOf(false) }
+        // 잘리면 바로 아래 경고가 뜨고, 이 줄도 경고색이 된다 — PEAK 가
+        // 화면에서 내려가도 「이 측정은 잘렸다」는 소식은 내려가지 않는다.
         Row(
             Modifier
                 .fillMaxWidth()
                 .padding(top = 8.dp)
-                .clickable { peakOpen = true }
+                .clickable { shownMetric = Metric.Peak }
                 .padding(vertical = 6.dp),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
@@ -408,12 +408,15 @@ fun MeasureScreen(
                 fontWeight = if (m.peakClipped) FontWeight.SemiBold else FontWeight.Normal,
             )
         }
-        if (peakOpen) {
-            PeakDialog(
-                peakSpl = m.peakSpl,
-                clipped = m.peakClipped,
+        shownMetric?.let { metric ->
+            MetricDialog(
+                metric = metric,
+                meter = m,
+                weighting = weighting,
+                leqLabelKo = capture.meterSettings.leqWindow.labelKo,
+                timeWeightKo = capture.meterSettings.timeWeight.labelKo,
                 uncalibrated = uncalibrated,
-                onClose = { peakOpen = false },
+                onClose = { shownMetric = null },
             )
         }
 
@@ -550,27 +553,70 @@ fun MeasureScreen(
 }
 
 /**
- * PEAK 를 눌렀을 때 뜨는 창 — **값과 함께 그 값이 무엇인지 적는다**
- * (2026-09-25 담당자 지시: 「PEAK의 의미도 설명이 되어야 할 것 같습니다」).
+ * 눌러서 보는 지표 넷.
  *
- * ## 왜 설명이 필요한가
+ * **낱말만으로는 뜻이 안 통한다.** Leq·MAX·MIN·PEAK 는 음향 쪽 말이라,
+ * 화면에 적어 두는 것만으로는 무엇을 재는지 알 수 없다. 설명을 늘 펼쳐
+ * 두면 정작 숫자가 밀리므로, 누를 때만 나오게 한다.
+ */
+private enum class Metric { Min, Leq, Max, Peak }
+
+/**
+ * 지표 하나의 뜻을 값과 함께 적는 창.
  *
- * PEAK 와 MAX 는 예배당에서 20~30dB 벌어진다(`PeakVersusMaxTest` 에서
- * 잰 값: 흉내 신호 25.5dB). 설명 없이 두 숫자만 나란히 두면 **둘 중
- * 하나가 고장 난 것으로 읽힌다** — 실제로 그런 검토 의견이 올라왔다.
+ * ## 가중 이름을 글에 박지 않는다
  *
- * 벌어지는 까닭은 둘이다:
- * - **가중**: A 가중은 MAX 만 깎는다. PEAK 는 가중 전 파형에서 잰다.
- * - **시간**: MAX 는 125ms 로 평균한 뒤의 최대라 짧은 충격이 눌린다.
- *   PEAK 는 표본 하나만 커도 그 값을 그대로 받는다.
+ * 설명에 「A 가중」이라고 못박으면 설정에서 C·Z 로 바꾼 순간 **글이
+ * 거짓말이 된다.** 지금 걸린 가중의 이름을 받아서 쓴다.
+ *
+ * ## PEAK 만 말이 긴 까닭
+ *
+ * PEAK 와 MAX 는 예배당에서 20~30dB 벌어진다(`PeakVersusMaxTest` 에서 잰
+ * 값: 흉내 신호 25.5dB). 설명 없이 두 숫자만 나란히 두면 **둘 중 하나가
+ * 고장 난 것으로 읽힌다** — 실제로 그런 검토 의견이 올라왔다.
  */
 @Composable
-private fun PeakDialog(
-    peakSpl: Double?,
-    clipped: Boolean,
+private fun MetricDialog(
+    metric: Metric,
+    meter: kr.joa.selahrta.ui.MeterReading,
+    weighting: Weighting,
+    leqLabelKo: String,
+    timeWeightKo: String,
     uncalibrated: Boolean,
     onClose: () -> Unit,
 ) {
+    val clipped = metric == Metric.Peak && meter.peakClipped
+    val value = when (metric) {
+        Metric.Min -> formatDb(meter.minSpl)
+        Metric.Leq -> formatDb(meter.leqLong)
+        Metric.Max -> formatDb(meter.maxSpl)
+        Metric.Peak ->
+            if (clipped && meter.peakSpl != null) "≥${formatDb(meter.peakSpl)}" else formatDb(meter.peakSpl)
+    }
+    val unit = if (metric == Metric.Peak) "dB · 가중없음" else weighting.unitSuffix
+    val title = when (metric) {
+        Metric.Min -> "MIN — 가장 조용했던 값"
+        Metric.Leq -> "Leq ($leqLabelKo) — 등가소음도"
+        Metric.Max -> "MAX — 가장 컸던 값"
+        Metric.Peak -> "PEAK — 순간 최고"
+    }
+    val body = when (metric) {
+        Metric.Min ->
+            "측정 중 ${weighting.labelKo} SPL 의 최소값입니다. " +
+                "시간가중($timeWeightKo)을 거친 레벨이 가장 낮았던 순간입니다."
+        Metric.Leq ->
+            "$leqLabelKo 동안의 에너지를 평균한 등가소음도입니다. " +
+                "큰 소리와 작은 소리를 에너지로 더해 평균하므로, 잠깐 튄 소리 " +
+                "하나에 크게 흔들리지 않습니다."
+        Metric.Max ->
+            "측정 중 ${weighting.labelKo} SPL 의 최대값입니다. " +
+                "시간가중($timeWeightKo)을 거친 레벨이 가장 높았던 순간입니다."
+        Metric.Peak ->
+            "측정을 시작한 뒤 파형이 닿은 가장 높은 순간입니다. " +
+                "표본 하나만 커도 그 값이 그대로 남습니다 — 박수 한 번, " +
+                "마이크를 스치는 소리, 드럼 타격이 여기 걸립니다."
+    }
+
     AlertDialog(
         onDismissRequest = onClose,
         // 배경과 뚜렷이 갈라 놓는다 — 앱 배경과 밝기가 비슷하면 창이 떠
@@ -579,18 +625,18 @@ private fun PeakDialog(
         tonalElevation = 0.dp,
         shape = RoundedCornerShape(20.dp),
         modifier = Modifier.border(1.dp, SelahColors.Outline, RoundedCornerShape(20.dp)),
-        title = { Text("PEAK — 순간 최고", color = SelahColors.TextPrimary) },
+        title = { Text(title, color = SelahColors.TextPrimary) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(verticalAlignment = Alignment.Bottom) {
                     Text(
-                        if (clipped && peakSpl != null) "≥${formatDb(peakSpl)}" else formatDb(peakSpl),
+                        value,
                         color = if (clipped) SelahColors.High else SelahColors.TextPrimary,
                         fontSize = 34.sp,
                         fontWeight = FontWeight.Bold,
                     )
                     Text(
-                        "  dB · 가중없음",
+                        "  $unit",
                         color = SelahColors.TextMuted,
                         fontSize = 12.sp,
                         modifier = Modifier.padding(bottom = 5.dp),
@@ -598,49 +644,81 @@ private fun PeakDialog(
                 }
 
                 Text(
-                    "측정을 시작한 뒤 파형이 닿은 가장 높은 순간입니다. " +
-                        "표본 하나만 커도 그 값이 그대로 남습니다 — 박수 한 번, " +
-                        "마이크를 스치는 소리, 드럼 타격이 여기 걸립니다.",
+                    body,
                     color = SelahColors.TextSecondary,
                     fontSize = 12.sp,
                     lineHeight = 17.sp,
                 )
 
-                Text(
-                    "MAX 와 20~30dB 벌어지는 것이 정상입니다",
-                    color = SelahColors.TextPrimary,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                    "MAX 는 A 가중을 거치고 125ms 로 평균한 뒤의 최대라 " +
-                        "「이만큼이 이어졌다」를 말합니다. PEAK 는 가중 전 파형의 " +
-                        "순간 최대라 「이만큼까지 닿았다」를 말합니다. 재는 것이 " +
-                        "달라서 생기는 차이이지 고장이 아닙니다.",
-                    color = SelahColors.TextMuted,
-                    fontSize = 11.sp,
-                    lineHeight = 16.sp,
-                )
-
-                if (clipped) {
-                    Text(
-                        "파형이 잘렸습니다 — 이 값은 측정값이 아니라 하한입니다. " +
-                            "실제로는 더 높았고 얼마나 높았는지는 알 수 없습니다. " +
-                            "그 구간의 Leq·MAX 도 실제보다 낮습니다. 마이크를 " +
-                            "소리원에서 떼어 놓고 다시 재십시오.",
-                        color = SelahColors.High,
-                        fontSize = 11.sp,
-                        lineHeight = 16.sp,
-                    )
-                } else {
-                    Text(
-                        "이 값이 풀스케일에 닿으면 파형이 잘렸다는 뜻이고, " +
-                            "그때는 다른 숫자들도 모두 실제보다 낮아집니다. " +
-                            "PEAK 를 두는 까닭이 그것입니다.",
+                when (metric) {
+                    Metric.Leq -> Text(
+                        "권장 범위와 견주는 값이 이것입니다 — 범위 자체가 " +
+                            "시간평균 기준으로 정해져 있습니다. 창이 다 차기 " +
+                            "전에는 이름보다 짧은 구간의 평균이라 색을 칠하지 " +
+                            "않습니다.",
                         color = SelahColors.TextMuted,
                         fontSize = 11.sp,
                         lineHeight = 16.sp,
                     )
+
+                    Metric.Min -> Text(
+                        "시간가중이 자리를 잡은 뒤부터 셉니다. 시작 직후의 " +
+                            "값은 0 에서 올라오는 중이라, 그것까지 세면 MIN 이 " +
+                            "늘 시작 구간으로 굳어 버립니다. 예배당에서는 대개 " +
+                            "방의 배경 소음 수준으로 내려가 머뭅니다.",
+                        color = SelahColors.TextMuted,
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                    )
+
+                    Metric.Max -> Text(
+                        "시간가중($timeWeightKo)을 거친 값이라 「이만큼이 " +
+                            "이어졌다」를 말합니다. 짧은 충격은 평균에 눌려 " +
+                            "여기 다 나타나지 않습니다 — 그것은 PEAK 가 봅니다.",
+                        color = SelahColors.TextMuted,
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                    )
+
+                    Metric.Peak -> {
+                        Text(
+                            "MAX 와 20~30dB 벌어지는 것이 정상입니다",
+                            color = SelahColors.TextPrimary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            "MAX 는 가중을 거치고 시간가중으로 평균한 뒤의 " +
+                                "최대라 「이만큼이 이어졌다」를 말합니다. PEAK 는 " +
+                                "가중 전 파형의 순간 최대라 「이만큼까지 닿았다」를 " +
+                                "말합니다. 재는 것이 달라서 생기는 차이이지 " +
+                                "고장이 아닙니다.",
+                            color = SelahColors.TextMuted,
+                            fontSize = 11.sp,
+                            lineHeight = 16.sp,
+                        )
+                        if (clipped) {
+                            Text(
+                                "파형이 잘렸습니다 — 이 값은 측정값이 아니라 " +
+                                    "하한입니다. 실제로는 더 높았고 얼마나 높았는지는 " +
+                                    "알 수 없습니다. 그 구간의 Leq·MAX 도 실제보다 " +
+                                    "낮습니다. 마이크를 소리원에서 떼어 놓고 다시 " +
+                                    "재십시오.",
+                                color = SelahColors.High,
+                                fontSize = 11.sp,
+                                lineHeight = 16.sp,
+                            )
+                        } else {
+                            Text(
+                                "이 값이 풀스케일에 닿으면 파형이 잘렸다는 뜻이고, " +
+                                    "그때는 다른 숫자들도 모두 실제보다 낮아집니다. " +
+                                    "PEAK 를 두는 까닭이 그것입니다.",
+                                color = SelahColors.TextMuted,
+                                fontSize = 11.sp,
+                                lineHeight = 16.sp,
+                            )
+                        }
+                    }
                 }
 
                 if (uncalibrated) {
@@ -828,8 +906,6 @@ private fun RangeCard(
     range: SegmentRange?,
     isCustom: Boolean,
     leqLabelKo: String,
-    /** 구간 설명을 함께 보일지. 재는 동안에는 자리를 비운다. */
-    showFocus: Boolean,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -884,14 +960,10 @@ private fun RangeCard(
             }
             SegmentPills(segment, onSegment)
         }
-        if (showFocus) {
-            Text(
-                segment.focusKo,
-                color = SelahColors.TextMuted,
-                fontSize = 11.sp,
-                lineHeight = 15.sp,
-            )
-        }
+        // 구간 설명(「말이 또렷한지가 먼저입니다…」)은 **뺐다**
+        // (2026-09-25 담당자 지시). 고를 것이 설교·찬양 둘뿐이라 알약만
+        // 보고도 무엇을 고르는지 알고, 한 번 읽으면 그만인 글이 상자에
+        // 늘 붙어 있었다.
     }
 }
 
