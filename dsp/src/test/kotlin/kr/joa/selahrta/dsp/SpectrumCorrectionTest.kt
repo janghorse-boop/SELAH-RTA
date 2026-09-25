@@ -56,6 +56,15 @@ class SpectrumCorrectionTest {
     private fun columnAt(a: SpectrumAxis, hz: Double): Int =
         a.hz.indices.minByOrNull { abs(a.hz[it] - hz) }!!
 
+    /**
+     * **이 시험이 보이는 것의 한계**(독립 검토 2026-09-25의 정정).
+     *
+     * 쓰는 곡선이 4kHz 둘레에서 평평해서 두 값이 같은 만큼 움직인다.
+     * 밴드 안에서 계수가 달라지면 전력 **합**과 **최대값**의 이동량은
+     * 일반적으로 다르다 — 그때도 같기를 요구하면 안 된다. 여기서 못박는
+     * 것은 **「화면이 RTA 와 같은 보정을 받는다」**이지 「어떤 곡선에서도
+     * 같은 숫자만큼 움직인다」가 아니다.
+     */
     @Test
     fun `보정이 걸리면 화면 스펙트럼이 RTA 밴드와 같은 만큼 움직인다`() {
         val plain = run(null)
