@@ -27,7 +27,7 @@ private val Context.curveDataStore: DataStore<Preferences>
 /**
  * 지금 적용 중인 주파수 보정.
  *
- * **이 보정은 RTA 막대에만 걸린다.** 아래 [FREQUENCY_SCOPE_NOTE] 참고.
+ * **이 보정은 주파수를 나눠 보는 화면에만 걸린다.** 아래 [FREQUENCY_SCOPE_NOTE] 참고.
  */
 data class ActiveCurve(
     val curve: CalibrationCurve,
@@ -64,7 +64,12 @@ data class ActiveCurve(
 /**
  * 주파수 보정이 어디까지 걸리는지.
  *
- * **RTA 막대에만 건다. 큰 음압 숫자(dBA·Leq·MAX·PEAK)에는 걸지 않는다.**
+ * **주파수를 나눠 보는 화면(RTA·Spectrum·Spectrogram)에 건다. 큰 음압
+ * 숫자(dBA·Leq·MAX·PEAK)에는 걸지 않는다.**
+ *
+ * 2026-09-25 에 Spectrum·Spectrogram 이 생기면서 걸리는 곳이 늘었다. 셋은
+ * 같은 FFT 한 장에서 나오고 보정도 같은 자리에서 한 번 걸리므로
+ * ([RtaEngine]), 셋이 어긋날 수가 없다.
  *
  * 왜 그런가 — 주파수별 보정을 광대역 음압에 제대로 걸려면 시간 영역에서
  * 역응답 필터(FIR/IIR)를 통과시켜야 한다. 「밴드마다 고쳐서 다시 합치는」
@@ -87,7 +92,8 @@ data class ActiveCurve(
  * 나중에 역응답 필터를 넣으면 그때 광대역에도 건다.
  */
 const val FREQUENCY_SCOPE_NOTE: String =
-    "주파수 보정은 RTA 막대에만 적용됩니다. 큰 음압 숫자(dBA·Leq·MAX·PEAK)는 " +
+    "주파수 보정은 RTA·Spectrum·Spectrogram 에 적용됩니다. " +
+        "큰 음압 숫자(dBA·Leq·MAX·PEAK)는 " +
         "전대역 보정값만 씁니다 — 마이크 응답이 고르지 않으면, 보정을 맞춘 " +
         "주파수와 실제 소리가 놓인 주파수의 응답 차이만큼 오차가 남습니다."
 

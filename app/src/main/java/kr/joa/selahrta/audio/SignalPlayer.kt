@@ -10,17 +10,16 @@ import kotlin.random.Random
 private const val TAG = "SignalPlayer"
 
 /**
- * 내보낼 세기. **귀와 스피커를 다치게 할 수 있어 단계로만 고르게 한다.**
+ * 교정 마법사가 쓰는 세기.
  *
- * 순음은 같은 크기의 음악보다 훨씬 날카롭게 들린다. 예배당 PA 에 물린
- * 채로 크게 틀면 트위터가 상할 수 있다 — 그래서 제일 작은 단계에서
- * 시작하도록 기본값을 낮게 둔다.
+ * 사람이 고르는 값이 아니라 **측정이 요구하는 값**이다 — 너무 작으면
+ * SNR 이 모자라 밴드가 버려지고, 너무 크면 마이크가 잘린다. 예전 「보통」
+ * 단계와 같은 −16.5 dBFS 로, 실기기에서 맞춘 값이다.
+ *
+ * 사람이 고르는 쪽은 [MIN_AMPLITUDE]~[MAX_AMPLITUDE] 사이의 **이어진**
+ * 값이다([SignalRequest.amplitude], 2026-09-24 담당자 지시).
  */
-enum class SignalLevel(val labelKo: String, val amplitude: Double) {
-    Low("작게", 0.05),
-    Medium("보통", 0.15),
-    High("크게", 0.4),
-}
+const val MEASURE_AMPLITUDE = 0.15
 
 /**
  * 시험용 소리를 **스피커로 내보낸다**(명세 16장의 SignalGenerator 를
@@ -197,7 +196,7 @@ class SignalPlayer(
      *
      * @return 시작한 재생의 세대. 못 열면 [NONE].
      */
-    fun start(signal: TestSignal, level: SignalLevel): Long {
+    fun start(req: SignalRequest): Long {
         stop()
         // **자리를 비켜 준 것만** 치운다 — 놓기를 끝냈고 성공한 것.
         // 놓는 중인 것도, 놓기에 실패한 것도 상한에 센다.
@@ -212,7 +211,10 @@ class SignalPlayer(
         }
 
         val s = openSink()
-        if (!s.open(SAMPLE_RATE, FRAMES)) {
+        // **늘 두 채널로 연다.** 「양쪽」일 때도 그렇다 — 채널 수에 따라
+        // 버퍼 모양과 위상 셈이 갈라지면, 좌우 시험에서만 나는 버그가
+        // 생긴다. 양쪽이면 같은 값을 두 칸에 넣는다.
+        if (!s.open(SAMPLE_RATE, FLOATS, CHANNELS)) {
             s.release()
             return NONE
         }
@@ -222,8 +224,8 @@ class SignalPlayer(
             generation++
             pb = Playback(generation, s, warn)
             current = pb
-            playing = signal
-            thread = Thread({ loop(pb, signal, level) }, "selah-signal-out").apply {
+            playing = req.signal
+            thread = Thread({ loop(pb, req) }, "selah-signal-out").apply {
                 isDaemon = true
             }
         }
@@ -231,22 +233,30 @@ class SignalPlayer(
         return pb.id
     }
 
-    private fun loop(pb: Playback, signal: TestSignal, level: SignalLevel) {
+    private fun loop(pb: Playback, req: SignalRequest) {
         runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO) }
-        val buf = FloatArray(FRAMES)
+        val buf = FloatArray(FLOATS)
         val rng = Random(System.nanoTime())
         val pink = PinkNoise(rng)
+        val amp = req.safeAmplitude
+        val hz = req.effectiveHz ?: 1_000.0
+        val toLeft = req.channels != SignalChannels.Right
+        val toRight = req.channels != SignalChannels.Left
         var sample = 0L
 
         while (pb.running.get()) {
-            for (i in 0 until FRAMES) {
-                val time = (sample + i).toDouble() / SAMPLE_RATE
-                val v = when (signal) {
+            for (f in 0 until FRAMES) {
+                val time = (sample + f).toDouble() / SAMPLE_RATE
+                val v = when (req.signal) {
                     TestSignal.Pink -> pink.next()
                     TestSignal.Sweep -> sin(sweepPhase(time))
-                    else -> sin(2 * PI * (signal.toneHz ?: 1000.0) * time)
+                    else -> sin(2 * PI * hz * time)
                 }
-                buf[i] = (level.amplitude * v).toFloat()
+                val s = (amp * v).toFloat()
+                // L·R 이 번갈아 든다. 안 내보내는 쪽은 **0 을 채운다** —
+                // 건너뛰면 지난 덩어리의 값이 남아 그쪽에서도 소리가 난다.
+                buf[f * CHANNELS] = if (toLeft) s else 0f
+                buf[f * CHANNELS + 1] = if (toRight) s else 0f
             }
 
             // **적게 쓰이면 남은 만큼을 이어서 쓴다.** 예전에는 반환값이
@@ -255,8 +265,8 @@ class SignalPlayer(
             // 어긋난다(독립 검증 SP02).
             var sent = 0
             var idleRounds = 0
-            while (sent < FRAMES && pb.running.get()) {
-                val wrote = pb.sink.write(buf, sent, FRAMES - sent)
+            while (sent < FLOATS && pb.running.get()) {
+                val wrote = pb.sink.write(buf, sent, FLOATS - sent)
                 if (wrote < 0) {
                     warn("write 오류로 재생을 끝낸다: $wrote")
                     endWithError(pb, wrote)
@@ -279,7 +289,11 @@ class SignalPlayer(
 
             // **실제로 나간 만큼만** 나아간다. 사람이 멈춰 남은 부분을
             // 못 쓴 경우에는 그것을 버리는 것이 맞다.
-            sample += sent
+            //
+            // 칸을 프레임으로 되돌린다. `AudioTrack` 은 프레임 단위로 받아
+            // 주므로 나누어떨어지고, 설령 반 프레임이 남더라도 위상이
+            // 표본 하나만큼 어긋날 뿐이라 들리지 않는다.
+            sample += sent / CHANNELS
         }
 
         // 사람이 멈춰서 빠져나왔다. **여기서 놓는다** — `stop()` 의 기다림이
@@ -383,7 +397,26 @@ class SignalPlayer(
         const val NONE = 0L
 
         private const val SAMPLE_RATE = 48_000
+
+        /**
+         * 늘 두 채널로 낸다. 「양쪽」이어도 그렇다.
+         *
+         * 채널 수에 따라 버퍼 모양과 위상 셈이 갈라지면, **좌우 시험에서만
+         * 나는 버그**가 생긴다 — 가장 늦게 발견되고 가장 재현하기 어려운
+         * 종류다. 양쪽이면 같은 값을 두 칸에 넣는다.
+         */
+        private const val CHANNELS = 2
+
+        /** 한 덩어리의 프레임 수. */
         private const val FRAMES = 1024
+
+        /**
+         * 한 덩어리의 **칸** 수. `AudioTrack` 의 float 쓰기가 세는 단위다.
+         *
+         * 프레임과 칸을 섞어 쓰면 스테레오에서 절반만 나가거나 두 배를
+         * 읽는다. 이름을 갈라 두면 부를 때 어느 쪽인지 생각하게 된다.
+         */
+        private const val FLOATS = FRAMES * CHANNELS
 
         /** 내보내는 스레드를 기다리는 시간. */
         internal const val JOIN_MS = 500L

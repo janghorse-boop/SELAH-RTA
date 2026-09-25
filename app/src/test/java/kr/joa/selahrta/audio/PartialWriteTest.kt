@@ -28,6 +28,16 @@ class PartialWriteTest {
 
     private companion object {
         const val FRAMES = 1024
+
+        /**
+         * 출력은 **늘 두 채널**이다(2026-09-24 L/R 시험을 넣으며 그렇게 됐다).
+         *
+         * 그래서 한 덩어리의 「칸」 수는 프레임의 두 배이고, `write` 가 세는
+         * 것은 칸이다. 이 시험이 파형을 칸 단위로 견주므로 둘을 갈라 둔다 —
+         * 섞으면 절반만 견주고도 통과한다.
+         */
+        const val CHANNELS = 2
+        const val FLOATS = FRAMES * CHANNELS
         const val SAMPLE_RATE = 48_000
     }
 
@@ -50,14 +60,14 @@ class PartialWriteTest {
         /** 시험이 「그만 받자」고 할 때까지 돈다. */
         val enough = CountDownLatch(1)
 
-        override fun open(sampleRate: Int, frames: Int) = true
+        override fun open(sampleRate: Int, frames: Int, channels: Int) = true
 
         @Synchronized
         override fun write(buf: FloatArray, offset: Int, frames: Int): Int {
             val n = accept(calls.incrementAndGet(), frames)
             if (n > 0) {
                 for (i in 0 until n) taken.add(buf[offset + i])
-                if (taken.size >= FRAMES * 2) enough.countDown()
+                if (taken.size >= FLOATS * 2) enough.countDown()
             }
             return n
         }
@@ -75,9 +85,16 @@ class PartialWriteTest {
         fun snapshot(): FloatArray = taken.toFloatArray()
     }
 
-    /** 1kHz 순음의 [n] 번째 표본. 재생이 내야 할 원래 파형이다. */
+    /**
+     * 1kHz 순음의 앞 [n] **칸**. 재생이 내야 할 원래 파형이다.
+     *
+     * **L·R 이 번갈아 든다.** 「양쪽」이라 두 칸에 같은 값이 들어가므로,
+     * 칸 번호를 둘로 나눈 것이 프레임 번호다. 이 나눗셈을 빼먹으면 주파수가
+     * 두 배로 보이고 — 그것이 바로 인터리브를 틀렸을 때 나는 증상이다.
+     */
     private fun expected(n: Int): FloatArray = FloatArray(n) { i ->
-        (SignalLevel.Low.amplitude * sin(2 * PI * 1000 * i / SAMPLE_RATE)).toFloat()
+        val frame = i / CHANNELS
+        (DEFAULT_AMPLITUDE * sin(2 * PI * 1000 * frame / SAMPLE_RATE)).toFloat()
     }
 
     /**
@@ -96,16 +113,16 @@ class PartialWriteTest {
             }
         }
         val p = SignalPlayer(openSink = { sink }, warn = {})
-        p.start(TestSignal.Sine1k, SignalLevel.Low)
+        p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
         assertTrue("두 덩어리는 나가야 한다", sink.enough.await(5, TimeUnit.SECONDS))
         p.stop()
 
         val got = sink.snapshot()
-        assertTrue("충분히 받았어야 한다 (${got.size})", got.size >= FRAMES * 2)
+        assertTrue("충분히 받았어야 한다 (${got.size})", got.size >= FLOATS * 2)
         assertArrayEquals(
             "나간 파형이 원본과 같아야 한다",
-            expected(FRAMES * 2),
-            got.copyOf(FRAMES * 2),
+            expected(FLOATS * 2),
+            got.copyOf(FLOATS * 2),
             1e-6f,
         )
     }
@@ -126,7 +143,7 @@ class PartialWriteTest {
             openSink = { sink },
             warn = {},
         )
-        p.start(TestSignal.Sine1k, SignalLevel.Low)
+        p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
 
         assertTrue("끝났다고 알려야 한다", ended.await(5, TimeUnit.SECONDS))
         assertNull("내보내는 중이 아니어야 한다", p.playing)
@@ -154,7 +171,7 @@ class PartialWriteTest {
         }
         val ended = java.util.concurrent.atomic.AtomicInteger(0)
         val p = SignalPlayer(onEnded = { _, _ -> ended.incrementAndGet() }, openSink = { sink }, warn = {})
-        p.start(TestSignal.Sine1k, SignalLevel.Low)
+        p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
         assertTrue("두 덩어리는 나가야 한다", sink.enough.await(10, TimeUnit.SECONDS))
         p.stop()
 
@@ -162,8 +179,8 @@ class PartialWriteTest {
         val got = sink.snapshot()
         assertArrayEquals(
             "0 을 건너뛴 뒤에도 파형이 이어져야 한다",
-            expected(FRAMES * 2),
-            got.copyOf(FRAMES * 2),
+            expected(FLOATS * 2),
+            got.copyOf(FLOATS * 2),
             1e-6f,
         )
     }
@@ -179,7 +196,7 @@ class PartialWriteTest {
             openSink = { sink },
             warn = {},
         )
-        p.start(TestSignal.Sine1k, SignalLevel.Low)
+        p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
         assertTrue(latch.await(5, TimeUnit.SECONDS))
         Thread.sleep(100)
         p.stop()
@@ -194,7 +211,7 @@ class PartialWriteTest {
         val sink = RecordingSink { _, _ -> started.countDown(); 0 }
         val count = java.util.concurrent.atomic.AtomicInteger(0)
         val p = SignalPlayer(onEnded = { _, _ -> count.incrementAndGet() }, openSink = { sink }, warn = {})
-        p.start(TestSignal.Sine1k, SignalLevel.Low)
+        p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
         assertTrue(started.await(5, TimeUnit.SECONDS))
 
         p.stop()
@@ -223,7 +240,7 @@ class PartialWriteTest {
             openSink = { sink },
             warn = {},
         )
-        p.start(TestSignal.Sine1k, SignalLevel.Low)
+        p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
 
         assertTrue("끝났다고 알려야 한다", ended.await(5, TimeUnit.SECONDS))
         assertTrue(
@@ -250,7 +267,7 @@ class PartialWriteTest {
             val calls = AtomicInteger()
             val taken = AtomicInteger()
             val released = CountDownLatch(1)
-            override fun open(sampleRate: Int, frames: Int) = true
+            override fun open(sampleRate: Int, frames: Int, channels: Int) = true
             override fun write(buf: FloatArray, offset: Int, frames: Int): Int {
                 val call = calls.incrementAndGet()
                 if (call == 1) {
@@ -269,7 +286,7 @@ class PartialWriteTest {
             }
         }
         val p = SignalPlayer(openSink = { sink }, warn = {})
-        p.start(TestSignal.Sine1k, SignalLevel.Low)
+        p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
         assertTrue(entered.await(5, TimeUnit.SECONDS))
 
         p.stop() // stop() 이 hold 를 풀고, write 는 128 만 받고 돌아온다

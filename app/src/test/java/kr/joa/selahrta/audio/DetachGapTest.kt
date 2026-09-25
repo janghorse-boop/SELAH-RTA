@@ -35,7 +35,7 @@ class DetachGapTest {
         val entered = CountDownLatch(1)
         val gate = CountDownLatch(1)
 
-        override fun open(sampleRate: Int, frames: Int) = true
+        override fun open(sampleRate: Int, frames: Int, channels: Int) = true
 
         override fun write(buf: FloatArray, offset: Int, frames: Int): Int {
             entered.countDown()
@@ -96,12 +96,12 @@ class DetachGapTest {
             )
 
             // A — 곧바로 오류로 끝나고 놓기도 실패한다.
-            p.start(TestSignal.Sine1k, SignalLevel.Low)
+            p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
             check(firstEnded.await(5, TimeUnit.SECONDS))
             assertEquals("A 가 자리를 하나 차지해야 한다", 1, p.pendingCount)
 
             // B — 게이트를 풀면 오류로 끝난다.
-            p.start(TestSignal.Sine1k, SignalLevel.Low)
+            p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
             check(sinks[1].entered.await(5, TimeUnit.SECONDS))
             sinks[1].gate.countDown()
 
@@ -110,7 +110,7 @@ class DetachGapTest {
             while (p.playing != null && System.nanoTime() < until) Thread.onSpinWait()
             check(p.playing == null) { "B 가 끝나지 않았다" }
 
-            val third = p.start(TestSignal.Sine1k, SignalLevel.Low)
+            val third = p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
             check(secondEnded.await(5, TimeUnit.SECONDS))
 
             if (third != SignalPlayer.NONE) {

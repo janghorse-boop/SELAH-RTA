@@ -50,6 +50,22 @@ object ThirdOctave {
         return (Math.round(n).toInt() + 17).coerceIn(0, BAND_COUNT - 1)
     }
 
+    /**
+     * [hz] 가 31칸 중 **어디쯤**인가 — 칸 사이 소수까지 돌려준다.
+     *
+     * [nearestBand] 는 「어느 칸이냐」를 묻고, 이쪽은 「그 칸의 어디냐」를
+     * 묻는다. 차트에 봉우리를 찍을 때 필요하다 — 한 밴드는 23% 나 넓어서
+     * 칸 가운데에 찍으면 실제 주파수와 눈에 띄게 어긋난다.
+     *
+     * 범위 밖이면 0 미만이거나 [BAND_COUNT]−1 을 넘는 값이 그대로 나온다.
+     * **자르지 않는다** — 자르면 20Hz 아래 소리가 20Hz 자리에 찍혀, 없는
+     * 대역에 봉우리가 있는 것처럼 보인다. 부르는 쪽이 범위를 보고 버린다.
+     */
+    fun bandPosition(hz: Double): Double {
+        require(hz > 0.0) { "주파수는 양수여야 한다: $hz" }
+        return 17.0 + 10.0 * log10(hz / 1000.0)
+    }
+
     /** 아래쪽 경계(Hz). 중심에서 1/6 옥타브 아래. */
     fun lowerEdge(index: Int): Double = exactCenter(index) / RATIO
 

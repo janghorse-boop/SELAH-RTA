@@ -34,7 +34,7 @@ class StuckPlaybackCapTest {
         val releaseFinished = CountDownLatch(1)
         val releaseCalls = AtomicInteger()
 
-        override fun open(sampleRate: Int, frames: Int) = true
+        override fun open(sampleRate: Int, frames: Int, channels: Int) = true
 
         override fun write(buf: FloatArray, offset: Int, frames: Int): Int {
             writing.countDown()
@@ -70,7 +70,7 @@ class StuckPlaybackCapTest {
         var starts = 0
         try {
             repeat(cap + 3) {
-                val id = p.start(TestSignal.Sine1k, SignalLevel.Low)
+                val id = p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
                 if (id != SignalPlayer.NONE) {
                     starts++
                     check(sinks.last().writing.await(10, TimeUnit.SECONDS))
@@ -96,7 +96,7 @@ class StuckPlaybackCapTest {
 
         // 놓기가 끝나면 **다시 시작할 수 있어야** 한다.
         assertTrue("모두 정확히 한 번씩 놓여야 한다", sinks.all { it.releaseCalls.get() == 1 })
-        val again = p.start(TestSignal.Sine1k, SignalLevel.Low)
+        val again = p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
         assertNotEquals("풀린 뒤에는 다시 열려야 한다", SignalPlayer.NONE, again)
         sinks.last().writeGate.countDown()
         sinks.last().releaseGate.countDown()
@@ -108,7 +108,7 @@ class StuckPlaybackCapTest {
         val writing = CountDownLatch(1)
         val writeGate = CountDownLatch(1)
         val released = CountDownLatch(1)
-        override fun open(sampleRate: Int, frames: Int) = true
+        override fun open(sampleRate: Int, frames: Int, channels: Int) = true
         override fun write(buf: FloatArray, offset: Int, frames: Int): Int {
             writing.countDown()
             check(writeGate.await(10, TimeUnit.SECONDS))
@@ -149,13 +149,13 @@ class StuckPlaybackCapTest {
 
         try {
             // A — 쓰기 안에서 붙들린다.
-            check(p.start(TestSignal.Sine1k, SignalLevel.Low) != SignalPlayer.NONE)
+            check(p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE)) != SignalPlayer.NONE)
             check(a.writing.await(10, TimeUnit.SECONDS))
             p.stop()
             assertEquals("A 는 아직 write 안이라 놓이지 않았다", 1L, a.released.count)
 
             // B — 쓰기는 풀리지만 놓기에서 멈춘다.
-            check(p.start(TestSignal.Sine2k, SignalLevel.Low) != SignalPlayer.NONE)
+            check(p.start(SignalRequest(TestSignal.Sine2k, DEFAULT_AMPLITUDE)) != SignalPlayer.NONE)
             check(b.writing.await(10, TimeUnit.SECONDS))
             p.stop()
             check(b.releaseEntered.await(10, TimeUnit.SECONDS))
@@ -167,7 +167,7 @@ class StuckPlaybackCapTest {
             assertEquals(
                 "상한에 닿으면 열지 않는다",
                 SignalPlayer.NONE,
-                p.start(TestSignal.Sine4k, SignalLevel.Low),
+                p.start(SignalRequest(TestSignal.Sine4k, DEFAULT_AMPLITUDE)),
             )
             assertEquals("새 출력을 만들지도 않는다", 2, made.size)
 
@@ -188,7 +188,7 @@ class StuckPlaybackCapTest {
         assertNotEquals(
             "다시 시작할 수 있어야 한다",
             SignalPlayer.NONE,
-            p.start(TestSignal.Sine1k, SignalLevel.Low),
+            p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE)),
         )
         p.stop()
     }

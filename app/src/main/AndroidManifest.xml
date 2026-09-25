@@ -42,9 +42,18 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.SelahRta">
 
+        <!--
+            화면이 돌아가도 액티비티를 다시 만들지 않는다.
+
+            RTA 를 고르면 가로로 눕힌다(사용자 지시). 기본값으로 두면 그때마다
+            액티비티가 통째로 새로 만들어지는데, 재는 도중이면 그 사이 소리가
+            끊긴다 — 측정 중에는 절대 일어나면 안 되는 일이다. Compose 는
+            설정 변경을 스스로 따라가므로 다시 만들 까닭이 없다.
+        -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
             android:theme="@style/Theme.SelahRta">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

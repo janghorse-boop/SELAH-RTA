@@ -9,7 +9,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -57,17 +59,20 @@ import kr.joa.selahrta.domain.ChurchSegment
 import kr.joa.selahrta.domain.MeasureState
 import kr.joa.selahrta.domain.MicKind
 import kr.joa.selahrta.ui.nav.NavSection
-import kr.joa.selahrta.ui.instrument.InstrumentGuideScreen
 import kr.joa.selahrta.ui.nav.ViewMode
 import kr.joa.selahrta.ui.nav.defaultMode
 import kr.joa.selahrta.ui.nav.hasModeChips
 import kr.joa.selahrta.ui.screens.CalibrationProfilesScreen
 import kr.joa.selahrta.ui.screens.CalibrationWizardScreen
-import kr.joa.selahrta.ui.screens.FeedbackScreen
+import kr.joa.selahrta.ui.instrument.InstrumentGuideScreen
+import kr.joa.selahrta.ui.screens.FrScreen
 import kr.joa.selahrta.ui.screens.HistoryScreen
 import kr.joa.selahrta.ui.screens.MeasureScreen
 import kr.joa.selahrta.ui.screens.RtaScreen
+import kr.joa.selahrta.ui.screens.SpectrogramScreen
+import kr.joa.selahrta.ui.screens.SpectrumScreen
 import kr.joa.selahrta.ui.screens.SettingsScreen
+import kr.joa.selahrta.ui.screens.ToolsScreen
 import kr.joa.selahrta.ui.screens.exampleJudgement
 import kr.joa.selahrta.ui.screens.exampleOutcome
 import kr.joa.selahrta.ui.theme.SelahColors
@@ -86,7 +91,7 @@ fun SelahApp() {
     var wizardOpen by rememberSaveable { mutableStateOf(false) }
     var wizardExample by rememberSaveable { mutableStateOf(false) }
     var profilesOpen by rememberSaveable { mutableStateOf(false) }
-    var mode by remember { mutableStateOf(ViewMode.Sermon) }
+    var mode by remember { mutableStateOf(ViewMode.Spl) }
 
     val vm: CaptureViewModel = viewModel()
     val capture by vm.state.collectAsStateWithLifecycle()
@@ -109,22 +114,9 @@ fun SelahApp() {
         wizard.noteSeparation(capture.micProbe?.verdict)
     }
 
-    // **칩을 저장된 구간에 맞춘다.** 구간을 고르는 줄을 없앤 뒤로 칩이
-    // 곧 구간인데, 칩은 늘 「설교」로 시작하고 구간은 지난번에 고른 것이
-    // 저장돼 있다. 맞추지 않으면 칩은 「설교」인데 범위는 「찬양 78~85」인
-    // 화면이 나온다(기기에서 확인).
-    //
-    // **측정 구역일 때만** 맞춘다. RTA·피드백을 보고 있는 사람을 끌어다
-    // 놓으면 안 된다.
-    val storedSegment = capture.meterSettings.segment
-    LaunchedEffect(storedSegment) {
-        if (mode.section == NavSection.Measure) {
-            mode = when (storedSegment) {
-                ChurchSegment.Sermon -> ViewMode.Sermon
-                ChurchSegment.Worship -> ViewMode.Worship
-            }
-        }
-    }
+    // 칩을 저장된 구간에 맞추던 자리였다. 설교·찬양이 SPL 칩 **안으로**
+    // 들어가면서(2026-09-24) 칩과 구간이 더는 같은 것이 아니게 되어
+    // 맞출 일이 없어졌다 — 구간은 화면 안의 고르개가 곧바로 보여 준다.
 
     val context = LocalContext.current
     // 닫기를 고르면 액티비티를 끝낸다. 컨텍스트가 액티비티가 아니면 null 이다.
@@ -270,10 +262,28 @@ fun SelahApp() {
         )
     }
 
+    // **지금 떠 있는 화면**을 한 번만 셈한다(`null` = 설정).
+    //
+    // 화면은 칩이 정하고 설정만 예외인데, 머리글·아래 탭·화면 방향처럼
+    // 「어느 화면인가」에 달린 것들이 저마다 조건을 다시 적고 있었다. 그래서
+    // RTA 를 보다 설정으로 가면 — 칩은 RTA 에 머물러 있으므로 — **설정
+    // 화면에 머리글이 없었다.** 한 값을 함께 보면 어긋날 수 없다.
+    //
+    // 아래 탭(`bottomBar`)도 이 값을 보므로 Scaffold 보다 먼저 셈한다.
+    val screen: ViewMode? = if (section == NavSection.Settings) null else mode
+
     Scaffold(
         containerColor = SelahColors.Background,
         bottomBar = {
-            BottomBar(section) { picked ->
+            // **분석 화면에서는 아래 탭을 줄인다**(2026-09-25
+            // 담당자 지시: 「RTA와 같이 수정해주세요. 그래프가 최대한 크게
+            // 보이게 하기 위해서입니다」).
+            //
+            // 줄이면 글자가 빠지고 46dp 가 된다. 눕힌 화면의 세로가 380dp
+            // 안팎이라 그 차이가 차트 높이의 한 자리를 좌우한다. RTA 만
+            // 줄여 두었는데, 분석은 넷 다 눕는 화면이라 나머지 셋만 글자가
+            // 붙어 있었다.
+            BottomBar(section, compact = screen?.section == NavSection.Analyze) { picked ->
                 section = picked
                 // **탭을 옮기면 마법사를 닫는다.** 마법사는 탭 내용 위에
                 // 덮여 있어서, 닫지 않으면 다른 탭으로 가도 그대로 얹혀
@@ -281,50 +291,66 @@ fun SelahApp() {
                 wizardOpen = false
                 profilesOpen = false
                 // 측정·분석으로 오면 그 구역에서 마지막에 보던 칩으로 돌아간다.
-                if (picked.hasModeChips) mode = picked.defaultMode(mode)
+                //
+                // **칩이 보이는지와 무관하다.** 예전에는 `hasModeChips` 로
+                // 감쌌는데, 분석에 RTA 하나만 남아 칩이 사라지자(2026-09-24)
+                // 이 줄이 통째로 건너뛰어졌다 — 아래 탭은 「분석」인데 화면은
+                // 측정이 그대로 떠 있었다(기기에서 확인). 칩은 **보여 주는**
+                // 일이고 이것은 **어디로 가느냐**라, 애초에 같은 조건일 까닭이
+                // 없었다. 도구·설정은 `defaultMode` 가 그대로 돌려준다.
+                mode = picked.defaultMode(mode)
             }
         },
     ) { inner ->
+        // **분석은 구역째 눕힌다**(2026-09-25 담당자 지시: 「RTA와 FR은 모두
+        // 가로형으로만 보이면 좋을 것 같습니다」).
+        //
+        // 화면마다 걸지 않고 여기서 거는 까닭: RTA 와 FR 이 각자 잠그면
+        // 오갈 때마다 앞 화면의 잠금이 풀렸다 걸려, 폰이 한 번 섰다가 다시
+        // 눕는다. 구역에 걸어 두면 분석 안에서 움직이는 동안은 계속 걸려
+        // 있다. 분석을 떠나면 `onDispose` 가 원래 방향으로 돌려놓는다.
+        if (screen?.section == NavSection.Analyze) LockLandscape()
+
         Column(Modifier.fillMaxSize().padding(inner)) {
-            TopBrandBar(capture)
+            // **RTA 에서는 머리글을 접는다**(2026-09-24 담당자 지시: 「SELAH RTA
+            // 제목 포함, USB MIC·미보정 표시도 없어도 된다 — RTA 만 해당」).
+            //
+            // 눕힌 화면은 세로가 380dp 안팎뿐이라, 머리글 한 줄이 차트의
+            // 가로축 주파수 눈금을 화면 밖으로 밀어냈다. RTA 는 「어느 대역이
+            // 솟았나」를 보는 화면이라 기기·보정 배지 없이도 읽힌다.
+            //
+            // **Spectrum 도 같이 접는다**(2026-09-25). 지시를 받을 때는 없던
+            // 화면이지만 사정이 똑같다 — 눕혀서 차트만 띄우는 화면이고, 접어
+            // 사라지는 「미보정」 배지는 **차트 설명 줄이 대신 적는다**
+            // (`세로 SPL(미보정 · 참고용)`). 배지가 그냥 없어지는 것이
+            // 아니므로 접어도 된다.
+            //
+            // **FR 과 측정에서는 접지 않는다.** FR 은 단추가 있는 스크롤
+            // 화면이라 머리글이 차트를 밀지 않고, 측정은 절대 음압을 읽는
+            // 화면이라 배지를 숨기면 안 된다.
+            if (screen !in CHART_ONLY_MODES) TopBrandBar(capture)
 
             if (section.hasModeChips) {
-                ModeChips(mode) { picked ->
+                // RTA 는 차트가 화면을 꽉 채우는 화면이라 칩도 낮게 그린다.
+                // 이 줄은 측정(SPL·기록)에만 나온다. 분석은 고르개를 차트
+                // 안에서 그린다([NavSection.hasOwnModeSwitch]).
+                ModeChips(section, mode) { picked ->
                     mode = picked
                     // 칩을 누르면 아래 탭도 따라온다. 두 줄이 서로 다른 곳을
                     // 가리키면 지금 어디 있는지 알 수 없다.
                     section = picked.section
-                    // 설교·찬양 칩은 구간도 함께 바꾼다. 칩이 「설교」인데
-                    // 판정은 찬양 범위로 하고 있으면 아무도 이해할 수 없다.
-                    when (picked) {
-                        ViewMode.Sermon -> vm.setSegment(ChurchSegment.Sermon)
-                        ViewMode.Worship -> vm.setSegment(ChurchSegment.Worship)
-                        else -> Unit
-                    }
                 }
             }
 
             Box(Modifier.weight(1f)) {
-                when (section) {
-                    NavSection.Measure, NavSection.Analyze -> when (mode) {
-                        ViewMode.Sermon, ViewMode.Worship -> MeasureScreen(
-                            mode = mode,
-                            capture = capture,
-                            hasPermission = hasPermission,
-                            onRequestPermission = {
-                                askPermission.launch(Manifest.permission.RECORD_AUDIO)
-                            },
-                            onStart = beginMeasure,
-                            onStop = vm::stop,
-                            onDismissDeviceNotice = vm::dismissDeviceNotice,
-                        )
-                        ViewMode.Rta -> RtaScreen(capture)
-                        ViewMode.Feedback -> FeedbackScreen(capture)
-                        // 캡처를 쓰지 않는다. 권한이 없어도 그대로 열린다.
-                        ViewMode.InstrumentEq -> InstrumentGuideScreen()
-                    }
-                    NavSection.History -> HistoryScreen()
-                    NavSection.Settings -> SettingsScreen(
+                // **칩이 화면을 정한다.** 구역은 칩을 고르는 자리일 뿐이고,
+                // `defaultMode` 가 「이 구역에 맞는 칩」을 보장한다. 예전에는
+                // 구역으로 먼저 갈랐는데, 칩이 하나뿐이라 칩 줄이 사라진
+                // 구역에서 둘이 어긋났다.
+                //
+                // 설정만 칩이 없어 따로 둔다.
+                when (screen) {
+                    null -> SettingsScreen(
                         capture = capture,
                         onSaveCalibration = vm::saveSimpleCalibration,
                         onClearCalibration = vm::clearCalibration,
@@ -349,11 +375,53 @@ fun SelahApp() {
                         },
                         onSaveRange = vm::setRange,
                         onResetRange = vm::resetRange,
+                        onRenameSegment = vm::setSegmentName,
+                    )
+
+                    ViewMode.Spl -> MeasureScreen(
+                        capture = capture,
+                        onSegment = vm::setSegment,
+                        hasPermission = hasPermission,
+                        onRequestPermission = {
+                            askPermission.launch(Manifest.permission.RECORD_AUDIO)
+                        },
+                        onStart = beginMeasure,
+                        onStop = vm::stop,
+                        onDismissDeviceNotice = vm::dismissDeviceNotice,
+                    )
+                    ViewMode.Rta -> RtaScreen(capture, onMode = { mode = it })
+                    ViewMode.Spectrogram -> SpectrogramScreen(
+                        capture = capture,
+                        onSpectrumEnabled = vm::setSpectrumEnabled,
+                        onMode = { mode = it },
+                    )
+                    ViewMode.Spectrum -> SpectrumScreen(
+                        capture = capture,
+                        onSpectrumEnabled = vm::setSpectrumEnabled,
+                        onMode = { mode = it },
+                    )
+                    ViewMode.Fr -> FrScreen(
+                        capture = capture,
+                        onMeasure = vm::measureResponse,
+                        onMeasureQuiet = vm::measureResponseQuiet,
+                        onMeasureSignal = vm::measureResponseSignal,
+                        onCancel = vm::cancelResponse,
+                        onPlayHere = vm::setResponsePlayHere,
+                        onDismissNotice = vm::dismissResponseNotice,
+                    )
+                    // 지난 기록을 보는 화면이라 마이크가 필요 없다.
+                    ViewMode.History -> HistoryScreen()
+                    ViewMode.Signal -> ToolsScreen(
+                        capture = capture,
                         onPlaySignal = vm::playSignal,
                         onStopSignal = vm::stopSignal,
                         onSignalLevel = vm::setSignalLevel,
+                        onSignalToneHz = vm::setSignalToneHz,
+                        onSignalChannels = vm::setSignalChannels,
                         onDismissSignalNotice = vm::dismissSignalNotice,
                     )
+                    // 캡처를 쓰지 않는다. 권한이 없어도 그대로 열린다.
+                    ViewMode.InstrumentEq -> InstrumentGuideScreen()
                 }
 
                 // **탭 내용 위에 덮는다.** 탭으로 두면 측정 중에 잘못
@@ -572,9 +640,22 @@ private fun StatusPill(text: String, color: Color, dim: Boolean = false) {
     }
 }
 
-/** 컨셉 화면의 상단 칩 네 개. 설교·찬양·RTA·피드백. */
+/**
+ * 상단 칩. **지금 구역의 것만** 그린다.
+ *
+ * 예전에는 모든 모드를 한 줄에 그렸다. 칩이 넷일 때는 괜찮았는데,
+ * 기록과 FR 이 붙으면서 여섯을 한 줄에 욱여넣게 됐다 — 폭을 똑같이
+ * 나누므로 이름이 줄바꿈되어 칩이 세로로 길어진다.
+ *
+ * 아래 탭이 구역을 고르고, 칩이 그 안을 고른다. 칩을 누르면 아래 탭도
+ * 따라오므로 두 줄이 어긋나지 않는다.
+ */
 @Composable
-private fun ModeChips(selected: ViewMode, onSelect: (ViewMode) -> Unit) {
+private fun ModeChips(
+    section: NavSection,
+    selected: ViewMode,
+    onSelect: (ViewMode) -> Unit,
+) {
     // **양쪽을 채운다.** 칩은 가는 길이라 가지런히 놀아 놓으면
     // 한쪽이 비어 보인다. 폭을 똑같이 나눠 갖는다.
     //
@@ -588,7 +669,7 @@ private fun ModeChips(selected: ViewMode, onSelect: (ViewMode) -> Unit) {
             .padding(horizontal = 12.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        ViewMode.entries.forEach { m ->
+        ViewMode.entries.filter { it.section == section }.forEach { m ->
             val on = m == selected
             Box(
                 modifier = Modifier
@@ -614,14 +695,38 @@ private fun ModeChips(selected: ViewMode, onSelect: (ViewMode) -> Unit) {
 }
 
 @Composable
-private fun BottomBar(current: NavSection, onSelect: (NavSection) -> Unit) {
-    NavigationBar(containerColor = SelahColors.Surface) {
+private fun BottomBar(
+    current: NavSection,
+    /**
+     * 낮게 그린다 — RTA 전용(2026-09-24 담당자 지시: 「아래 측정부터 설정까지
+     * 버튼은 최소화해 달라. 클 필요가 없다」).
+     *
+     * 눕힌 화면은 세로가 380dp 안팎뿐인데 기본 탭 바가 80dp 를 가져간다.
+     * 그 화면에서 탭은 **나가는 길**일 뿐 보고 있는 것이 아니라, 아이콘만
+     * 남겨도 어디로 가는지 알 수 있다.
+     *
+     * **글자를 지우고 설명은 남긴다.** 읽어 주는 쪽에는 `contentDescription`
+     * 으로 같은 말이 간다 — 좁히는 것과 안 알리는 것은 다른 일이다.
+     */
+    compact: Boolean,
+    onSelect: (NavSection) -> Unit,
+) {
+    NavigationBar(
+        containerColor = SelahColors.Surface,
+        modifier = if (compact) Modifier.height(46.dp) else Modifier,
+    ) {
         NavSection.entries.forEach { s ->
             NavigationBarItem(
                 selected = s == current,
                 onClick = { onSelect(s) },
-                icon = { Icon(painterResource(s.iconRes), contentDescription = null) },
-                label = { Text(s.labelKo, fontSize = 11.sp) },
+                icon = {
+                    Icon(
+                        painterResource(s.iconRes),
+                        contentDescription = if (compact) s.labelKo else null,
+                        modifier = if (compact) Modifier.size(18.dp) else Modifier,
+                    )
+                },
+                label = if (compact) null else ({ Text(s.labelKo, fontSize = 11.sp) }),
                 colors = NavigationBarItemDefaults.colors(
                     selectedIconColor = SelahColors.Accent,
                     selectedTextColor = SelahColors.Accent,
@@ -633,3 +738,12 @@ private fun BottomBar(current: NavSection, onSelect: (NavSection) -> Unit) {
         }
     }
 }
+
+/**
+ * 머리글을 접는 화면들 — **눕혀서 차트로 꽉 채우는** 화면이다.
+ *
+ * [ViewMode] 안에 두지 않고 여기 나열하는 까닭: 「차트로 꽉 채우는가」는
+ * 칩이 스스로 아는 성질이 아니라 **그 화면을 어떻게 그렸는가**라서,
+ * 그리는 코드 곁에 두어야 화면을 고칠 때 함께 눈에 들어온다.
+ */
+private val CHART_ONLY_MODES = setOf(ViewMode.Rta, ViewMode.Spectrum, ViewMode.Spectrogram)

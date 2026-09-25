@@ -24,7 +24,7 @@ data class EffectState(
             !available -> "기기에 없음"
             !disabled -> "켜진 채 — 못 끔"
             wasEnabled -> "껐음"
-            else -> "원래 꺼짐"
+            else -> "꺼짐"
         }
 }
 

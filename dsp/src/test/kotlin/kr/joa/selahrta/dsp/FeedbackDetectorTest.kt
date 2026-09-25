@@ -203,6 +203,22 @@ class FeedbackDetectorTest {
      */
     @Test
     fun `비브라토가 있는 노랫소리는 지속까지 가지 않는다`() {
+        // **대조군을 먼저 잰다.** 같은 세기·같은 길이인데 흔들리지만 않는
+        // 순음이다. 이것이 잡혀야 「비브라토가 안 잡힌 것」이 흔들림 때문임을
+        // 말할 수 있다 — 소리가 작아서·짧아서 안 잡힌 것이라면 아래 검사는
+        // 아무것도 증명하지 못한다.
+        //
+        // 예전에는 「후보 자체는 잡혀야 한다」 한 줄로 이 공허함을 막았다.
+        // 그런데 흔들림·연속성을 「의심」에도 걸면서(2026-09-24) 비브라토는
+        // **후보가 아예 안 되도록** 바뀌었고 — 바라던 바다 — 그 줄이 깨졌다.
+        // 막으려던 것은 그대로 두고 대조군으로 옮긴다.
+        val control = detector()
+        run(control, 3_000) { i -> 0.25 * sin(2 * PI * 440.0 * i / fs) }
+        assertTrue(
+            "대조군(안 흔들리는 440Hz)이 잡혀야 이 시험이 뜻이 있다",
+            control.candidates.isNotEmpty(),
+        )
+
         val d = detector()
         run(d, 3_000) { i ->
             val t = i.toDouble() / fs
@@ -235,7 +251,6 @@ class FeedbackDetectorTest {
             "도중에도 지속이 없어야 한다 (기록 ${d.events.map { it.hz.toInt() }})",
             d.events.isEmpty(),
         )
-        assertTrue("후보 자체는 잡혀야 시험이 뜻이 있다", d.candidates.isNotEmpty())
     }
 
     /**

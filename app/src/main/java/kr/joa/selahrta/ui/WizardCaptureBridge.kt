@@ -1,6 +1,6 @@
 package kr.joa.selahrta.ui
 
-import kr.joa.selahrta.audio.SignalLevel
+import kr.joa.selahrta.audio.MEASURE_AMPLITUDE
 import kr.joa.selahrta.audio.TestSignal
 import kr.joa.selahrta.calibration.CalibrationKey
 import kr.joa.selahrta.calibration.WizardCapture
@@ -53,8 +53,8 @@ class WizardCaptureBridge(private val vm: CaptureViewModel) : WizardCapture {
 
     override fun removeTap(tap: MeasurementTap) = vm.removeMeasurementTap(tap)
 
-    override fun playSignal(signal: TestSignal, level: SignalLevel) =
-        vm.playSignal(signal, level)
+    override fun playSignal(signal: TestSignal, amplitude: Double) =
+        vm.playSignal(signal, amplitude)
 
     override fun stopSignal() = vm.stopSignal()
 }

@@ -1,6 +1,7 @@
 package kr.joa.selahrta.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -31,7 +32,16 @@ import kr.joa.selahrta.ui.theme.SelahColors
 const val NO_VALUE = "—"
 
 /** 숫자를 보여주되, 없으면 없다고 보여준다. */
-fun formatDb(value: Double?, decimals: Int = 1): String =
+/**
+ * 음압을 화면에 적는다. **소수점 없이 정수 dB 로**(2026-09-25 담당자 지시).
+ *
+ * 소수 한 자리는 **없는 정밀도를 주장한다.** 2급 소음계의 허용오차가
+ * ±1.5dB 이고, 이 앱은 보정 전이면 그보다 훨씬 크게 틀릴 수 있다. 그런
+ * 값에 0.1dB 을 적어 두면 읽는 사람이 그만큼 믿게 된다.
+ *
+ * 덤으로 화면도 조용해진다 — 끝자리가 쉴 새 없이 바뀌던 것이 멎는다.
+ */
+fun formatDb(value: Double?, decimals: Int = 0): String =
     value?.let { String.format("%.${decimals}f", it) } ?: NO_VALUE
 
 /**
@@ -51,12 +61,67 @@ fun ValueTile(
      * 권장 범위가 시간평균 기준이기 때문이다([SegmentRange]).
      */
     valueColor: Color? = null,
+    /**
+     * 흐리게 그릴 것인가 — **미보정일 때**다(2026-09-25 PEAK 검토안 2장).
+     *
+     * 큰 계기 숫자는 이미 그렇게 하고 있었는데 타일은 또렷했다. 같은
+     * 화면에서 한쪽은 「짐작」이라 말하고 다른 쪽은 「측정값」처럼 보이면,
+     * 눈은 또렷한 쪽을 믿는다.
+     *
+     * **범위 색([valueColor])이 있으면 그쪽이 이긴다.** 색은 「범위의
+     * 어디쯤인가」라는 다른 이야기라, 흐리게 하느라 지우면 안 된다.
+     */
+    dim: Boolean = false,
+    /**
+     * 누르면 할 일. null 이면 누를 수 없다.
+     *
+     * **누를 수 있다는 것을 보여 준다**(2026-09-25 담당자 지시로 지표 설명을
+     * 붙이며). 누르면 뜻이 나오는데 눌러 볼 생각이 안 들면 없는 기능이다 —
+     * 테두리를 한 단 밝혀 둔다.
+     */
+    onClick: (() -> Unit)? = null,
+    /**
+     * 이 타일이 **가장 중요한 값**인가(2026-09-25 담당자 지시).
+     *
+     * 예배에서는 순간 레벨보다 Leq 가 중요하다 — 권장 범위 자체가
+     * 시간평균 기준이고, 「지금 잠깐 컸다」보다 「이만큼으로 이어지고
+     * 있다」가 판단할 값이다. 셋이 똑같이 생기면 눈이 어디를 먼저 볼지
+     * 모른다.
+     */
+    highlight: Boolean = false,
 ) {
     val hasValue = value != NO_VALUE
     Column(
         modifier = modifier
-            .background(SelahColors.Surface, RoundedCornerShape(12.dp))
-            .border(1.dp, SelahColors.Outline, RoundedCornerShape(12.dp))
+            // **강조 상자의 바탕은 판정을 따른다**(2026-09-25 담당자 지시:
+            // 「권장 범위일 경우에 배경색은 다른 박스와 다르게」).
+            //
+            // 값의 색만 바꾸면 글자 한 줄이고, 흘끗 볼 때는 **면이 먼저
+            // 눈에 든다.** 바탕을 같은 색으로 아주 옅게 깔면 멀리서도
+            // 「초록 상자 = 범위 안」으로 읽힌다.
+            //
+            // 아주 옅게(14%) 두는 까닭은, 진하면 그 위의 숫자가 묻히고
+            // 화면에 색이 두 번 크게 나와 어느 쪽을 읽을지 흩어지기
+            // 때문이다. 담당자 말대로 「살짝」이면 된다.
+            .background(
+                when {
+                    highlight && valueColor != null -> valueColor.copy(alpha = 0.14f)
+                    highlight -> SelahColors.Accent.copy(alpha = 0.10f)
+                    else -> SelahColors.Surface
+                },
+                RoundedCornerShape(12.dp),
+            )
+            .border(
+                if (highlight) 2.dp else 1.dp,
+                when {
+                    highlight && valueColor != null -> valueColor
+                    highlight -> SelahColors.Accent
+                    onClick != null -> SelahColors.TextMuted
+                    else -> SelahColors.Outline
+                },
+                RoundedCornerShape(12.dp),
+            )
+            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
             .padding(vertical = 12.dp, horizontal = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -64,7 +129,12 @@ fun ValueTile(
         Text(
             label,
             fontSize = 11.sp,
-            color = SelahColors.TextSecondary,
+            color = when {
+                highlight && valueColor != null -> valueColor
+                highlight -> SelahColors.Accent
+                else -> SelahColors.TextSecondary
+            },
+            fontWeight = if (highlight) FontWeight.SemiBold else FontWeight.Normal,
             textAlign = TextAlign.Center,
         )
         Text(
@@ -75,6 +145,7 @@ fun ValueTile(
             color = when {
                 !hasValue -> SelahColors.TextMuted
                 valueColor != null -> valueColor
+                dim -> SelahColors.TextSecondary
                 else -> SelahColors.TextPrimary
             },
         )
@@ -115,6 +186,26 @@ fun levelColor(db: Double?, low: Double?, high: Double?): Color? {
 
 /** 색이 건너가는 폭(dB). 재서 고른 값이 아니다. */
 const val FADE_DB: Double = 5.0
+
+/**
+ * 같은 판정을 **섞지 않고 셋 중 하나로** 돌려준다.
+ *
+ * [levelColor] 는 경계에서 색을 5dB 에 걸쳐 섞는다 — 계기처럼 순간마다
+ * 크게 튀는 값에는 그래야 경계에서 색이 깜박이지 않는다.
+ *
+ * **Leq 는 사정이 다르다.** 느리게 움직이는 값이라 깜박일 일이 없고,
+ * 이쪽은 「범위에 드는가」를 실제로 판정하는 자리다(2026-09-25 담당자 지시:
+ * 「아래면 노란색, 범위이면 녹색, 초과하면 빨간색」). 섞으면 범위 바로
+ * 아래가 초록에 가깝게 보여 판정이 흐려진다.
+ */
+fun levelColorSteps(db: Double?, low: Double?, high: Double?): Color? {
+    if (db == null || low == null || high == null) return null
+    return when {
+        db < low -> SelahColors.Low
+        db > high -> SelahColors.High
+        else -> SelahColors.InRange
+    }
+}
 
 /** 화면 위쪽 한 줄 안내. 경고가 아니라 사실을 알리는 자리다. */
 @Composable

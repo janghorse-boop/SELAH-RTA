@@ -42,7 +42,7 @@ class AutoEndTrackingTest {
         val releaseCalls = AtomicInteger()
         val releaseEntered = CountDownLatch(1)
 
-        override fun open(sampleRate: Int, frames: Int) = true
+        override fun open(sampleRate: Int, frames: Int, channels: Int) = true
 
         override fun write(buf: FloatArray, offset: Int, frames: Int): Int = failCode
 
@@ -72,7 +72,7 @@ class AutoEndTrackingTest {
         var starts = 0
         repeat(times) {
             ended = CountDownLatch(1)
-            if (p.start(TestSignal.Sine1k, SignalLevel.Low) == SignalPlayer.NONE) return@repeat
+            if (p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE)) == SignalPlayer.NONE) return@repeat
             starts++
             // **알림을 기다린다** — 동시 실행을 가정하지 않는다.
             check(ended.await(5, TimeUnit.SECONDS)) { "끝났다는 알림이 오지 않았다" }
@@ -150,7 +150,7 @@ class AutoEndTrackingTest {
         )
 
         try {
-            assertNotEquals(SignalPlayer.NONE, p.start(TestSignal.Sine1k, SignalLevel.Low))
+            assertNotEquals(SignalPlayer.NONE, p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE)))
             // 놓기 안에 들어갔지만 아직 돌아오지 않았다.
             assertTrue(sinks.last().releaseEntered.await(5, TimeUnit.SECONDS))
 
@@ -177,7 +177,7 @@ class AutoEndTrackingTest {
 
         repeat(4) {
             ended = CountDownLatch(1)
-            assertNotEquals("늘 다시 열려야 한다", SignalPlayer.NONE, p.start(TestSignal.Sine1k, SignalLevel.Low))
+            assertNotEquals("늘 다시 열려야 한다", SignalPlayer.NONE, p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE)))
             assertTrue(ended.await(5, TimeUnit.SECONDS))
             Thread.sleep(30)
         }

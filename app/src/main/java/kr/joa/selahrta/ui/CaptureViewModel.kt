@@ -17,7 +17,14 @@ import kr.joa.selahrta.audio.CaptureGeneration
 import kr.joa.selahrta.audio.CaptureService
 import kr.joa.selahrta.audio.CaptureServiceBridge
 import kr.joa.selahrta.audio.TestSignal
-import kr.joa.selahrta.audio.SignalLevel
+import kr.joa.selahrta.audio.DEFAULT_AMPLITUDE
+import kr.joa.selahrta.audio.MAX_AMPLITUDE
+import kr.joa.selahrta.audio.MAX_TONE_HZ
+import kr.joa.selahrta.audio.MIN_AMPLITUDE
+import kr.joa.selahrta.audio.MIN_TONE_HZ
+import kr.joa.selahrta.audio.SignalChannels
+import kr.joa.selahrta.audio.SignalRequest
+import kr.joa.selahrta.audio.MEASURE_AMPLITUDE
 import kr.joa.selahrta.audio.SignalPlayer
 import kr.joa.selahrta.audio.OpenFailure
 import kr.joa.selahrta.audio.OpenResult
@@ -46,7 +53,12 @@ import kr.joa.selahrta.dsp.FeedbackCandidate
 import kr.joa.selahrta.dsp.FeedbackDetector
 import kr.joa.selahrta.dsp.FeedbackEvent
 import kr.joa.selahrta.dsp.FeedbackState
+import kr.joa.selahrta.dsp.BandAccumulator
+import kr.joa.selahrta.dsp.ROOM_MIN_FRAMES
+import kr.joa.selahrta.dsp.RoomResponse
+import kr.joa.selahrta.dsp.computeRoomResponse
 import kr.joa.selahrta.dsp.RtaEngine
+import kr.joa.selahrta.dsp.SpectrumFrame
 import kr.joa.selahrta.dsp.SpectrumSink
 import kr.joa.selahrta.dsp.RtaFrame
 import kr.joa.selahrta.dsp.LowEnergyHint
@@ -81,6 +93,13 @@ data class MeterReading(
     val leqLongFull: Boolean = false,
     /** 측정을 시작한 뒤의 최대 레벨. */
     val maxSpl: Double? = null,
+    /**
+     * 측정을 시작한 뒤의 **최소** 레벨. 시간가중이 자리를 잡기 전에는 null.
+     *
+     * 자리를 잡기 전 값을 세면 MIN 이 늘 시작 구간으로 굳는다
+     * ([kr.joa.selahrta.dsp.SplFrame.minDbfs]).
+     */
+    val minSpl: Double? = null,
     /** 파형 최대(순간). MAX 와 다른 지표다(명세 6장). */
     val peakSpl: Double? = null,
     /**
@@ -115,6 +134,19 @@ data class MeterReading(
     val settled: Boolean = false,
 )
 
+/**
+ * FR 측정의 단계.
+ *
+ * **배경이 먼저다.** 어느 밴드를 믿어도 되는지는 배경보다 얼마나 큰가로
+ * 가르므로, 순서가 바뀌면 판정할 근거가 없다.
+ */
+enum class ResponsePhase(val labelKo: String) {
+    Idle("멈춤"),
+    Quiet("배경 재는 중 — 조용히 해 주십시오"),
+    Signal("응답 재는 중 — 소리를 그대로 두십시오"),
+    Done("다 쟀습니다"),
+}
+
 data class CaptureUiState(
     val measure: MeasureState = MeasureState.Idle,
     val opened: OpenedFormat? = null,
@@ -123,6 +155,8 @@ data class CaptureUiState(
     val calibration: ActiveCalibration = ActiveCalibration.assumed,
     /** 31밴드 RTA. 아직 첫 FFT 가 안 찼으면 null. */
     val rta: RtaView? = null,
+    /** 연속 스펙트럼. Spectrum 화면이 열려 있을 때만 채워진다. */
+    val spectrum: SpectrumView? = null,
     /** 하울링 후보(명세 9장). 센 것부터. 없으면 빈 목록이다. */
     val feedback: List<FeedbackCandidate> = emptyList(),
     /**
@@ -171,10 +205,32 @@ data class CaptureUiState(
     val curveGeneration: Long = 0,
     /** 지금 스피커로 내보내고 있는 시험 신호. 안 내보내면 null. */
     val playingSignal: TestSignal? = null,
-    /** 내보내는 세기. */
-    val signalLevel: SignalLevel = SignalLevel.Low,
+    /** 내보내는 세기(진폭 0~1). 단계가 아니라 이어진 값이다. */
+    val signalAmplitude: Double = DEFAULT_AMPLITUDE,
+    /** [TestSignal.Custom] 으로 낼 주파수. */
+    val signalToneHz: Double = 1_000.0,
+    /** 어느 쪽 스피커로 낼 것인가. */
+    val signalChannels: SignalChannels = SignalChannels.Both,
     /** 신호 발생기에 관해 알릴 것. */
     val signalNoticeKo: String? = null,
+    /** FR — 지금 어느 단계인가. */
+    val responsePhase: ResponsePhase = ResponsePhase.Idle,
+    /** 그 단계가 얼마나 찼는가(0~1). */
+    val responseProgress: Float = 0f,
+    /** 마지막으로 잰 응답. 아직 없으면 null. */
+    val responseResult: RoomResponse? = null,
+    /** FR 에 관해 알릴 것. */
+    val responseNoticeKo: String? = null,
+    /** 재는 동안 이 폰이 핑크 잡음을 함께 낼 것인가. */
+    val responsePlayHere: Boolean = true,
+    /**
+     * 배경을 재 두었는가.
+     *
+     * **밖에서 소리를 낼 때 필요하다.** PA 가 핑크 잡음을 계속 내고 있으면
+     * 「배경 3초」가 그 소리를 배경으로 재어 SNR 이 0 이 된다. 그래서 밖에서
+     * 낼 때는 사람이 소리를 끈 채로 배경을 먼저 재고, 켠 뒤에 응답을 잰다.
+     */
+    val responseQuietReady: Boolean = false,
     /**
      * 내장 마이크 탐색 결과. 아직 안 돌렸으면 null.
      *
@@ -209,6 +265,8 @@ data class MeasurementSnapshot(
     /** A·C·Z 를 함께 담는다. 가중치 선택은 주 스레드의 설정이다. */
     val spl: MultiWeightFrame?,
     val rta: RtaFrame?,
+    /** 연속 스펙트럼. 화면이 꺼져 있으면 null 이다. */
+    val spectrum: SpectrumFrame?,
     val anyClipping: Boolean,
     /**
      * 하울링 후보(명세 9장). 센 것부터.
@@ -221,6 +279,29 @@ data class MeasurementSnapshot(
     /** 이번 측정에서 「지속」까지 간 것들의 기록. 새것부터. */
     val feedbackLog: List<FeedbackEvent>,
 )
+
+/**
+ * 화면에 그릴 연속 스펙트럼 한 장. 값은 [RtaView] 와 **같은 잣대**다.
+ *
+ * 같은 오프셋을 걸어야 두 화면이 같은 소리를 같은 숫자로 말한다. 엔진
+ * 안에서 이미 마이크 곡선을 맞춰 두었고([RtaEngine.updateSpectrum]),
+ * 여기서 절대 레벨만 옮긴다.
+ */
+class SpectrumView(
+    val columnsSpl: DoubleArray,
+    val holdSpl: DoubleArray,
+    /** 칸 가운데 주파수. 엔진의 배열을 그대로 가리킨다 — 읽기만 한다. */
+    val hz: DoubleArray,
+    /** FFT 칸 폭(Hz). 화면이 분해능으로 적는다. */
+    val binHz: Double,
+    /** 가장 큰 봉우리. 아무 소리도 없으면 null. */
+    val topHz: Double?,
+    val topSpl: Double?,
+) {
+    // [RtaView] 와 같은 까닭 — 프레임마다 새 배열이라 값 비교가 무의미하다.
+    override fun equals(other: Any?): Boolean = this === other
+    override fun hashCode(): Int = System.identityHashCode(this)
+}
 
 /**
  * 화면에 그릴 RTA 한 프레임. 값은 보정을 거친 dB SPL 이다.
@@ -414,6 +495,41 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 지금 내보내고 있는 재생의 세대. 늦게 온 소식을 가린다. */
     private var playGeneration = SignalPlayer.NONE
+
+    /** 지금 도는 FR 측정. 겹쳐 돌지 않게 붙들어 둔다. */
+    private var responseJob: Job? = null
+
+    /**
+     * 마지막으로 잰 배경의 밴드 평균.
+     *
+     * **상태에 담지 않는다.** 화면이 쓸 일이 없고, 31칸짜리 배열이 상태
+     * 비교에 끼면 화면이 쓸데없이 다시 그려진다. 있는지 없는지만
+     * [CaptureUiState.responseQuietReady] 로 알린다.
+     */
+    private var responseQuietMean: DoubleArray? = null
+
+    private companion object {
+        /**
+         * 배경을 몇 장 모을 것인가. 48kHz·FFT4096·50% 겹침이면 초당 23장쯤이라
+         * 3초쯤이다.
+         *
+         * **짧게 잡는다.** 사람을 조용히 시켜 놓는 시간이라 길면 안 지켜진다.
+         * 배경은 응답만큼 정밀할 필요도 없다 — 밴드를 가르는 문턱으로만 쓴다.
+         */
+        const val QUIET_FRAMES = 70
+
+        /**
+         * 응답을 몇 장 모을 것인가. 10초쯤이다.
+         *
+         * 핑크 잡음은 순간마다 출렁이므로 짧게 재면 그 출렁임이 방의
+         * 응답처럼 보인다. 길수록 좋지만, 예배당에서 사람을 세워 두는
+         * 시간이라 10초에서 끊는다.
+         */
+        const val SIGNAL_FRAMES = 230
+
+        /** 진행을 얼마나 자주 볼 것인가(ms). */
+        const val RESPONSE_TICK_MS = 100L
+    }
     private var calibrationJob: Job? = null
     private var curveJob: Job? = null
     private var settingsJob: Job? = null
@@ -474,6 +590,204 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      * 대입이 아니라 더하기라 하울링 탐지기가 밀려나지 않는다. 재는 중이
      * 아니면 아무 일도 일어나지 않는다 — 붙일 세션이 없다.
      */
+    /**
+     * 방·PA 의 크기 응답을 잰다(FR 화면).
+     *
+     * ## 배경을 먼저 재는 까닭
+     *
+     * 어느 밴드를 믿어도 되는지는 **배경보다 얼마나 큰가**로 가른다.
+     * 배경 없이 곡선을 내놓으면 예배당 공조기 소리를 방의 저역 부스트로
+     * 읽게 된다 — 그리고 그걸 보고 저역을 깎는다.
+     *
+     * ## 소리원을 누가 내는가
+     *
+     * [CaptureUiState.responsePlayHere] 가 true 면 이 폰이 핑크 잡음을
+     * 함께 낸다. 그러면 **폰 스피커의 기울기가 결과에 섞인다** — 화면이
+     * 그 사실을 적는다. PA 로 내면 PA 의 기울기가 섞이는데, 대개는 그쪽이
+     * 알고 싶은 것이다.
+     */
+    fun measureResponse() = runResponse(quiet = true, signal = true)
+
+    /**
+     * 배경만 잰다 — **밖에서 소리를 낼 때** 쓴다.
+     *
+     * PA 나 다른 폰이 핑크 잡음을 계속 내고 있으면 한 번에 이어서 잴 수
+     * 없다. 「배경 3초」가 그 소리를 배경으로 재어 버려 SNR 이 0 이 되고,
+     * 모든 밴드가 「못 씀」이 된다. 사람이 소리를 끈 채로 이것부터 누른다.
+     */
+    fun measureResponseQuiet() = runResponse(quiet = true, signal = false)
+
+    /** 응답만 잰다. 배경을 미리 재 두었어야 한다. */
+    fun measureResponseSignal() = runResponse(quiet = false, signal = true)
+
+    /**
+     * 방·PA 의 크기 응답을 잰다(FR 화면).
+     *
+     * ## 배경을 먼저 재는 까닭
+     *
+     * 어느 밴드를 믿어도 되는지는 **배경보다 얼마나 큰가**로 가른다.
+     * 배경 없이 곡선을 내놓으면 예배당 공조기 소리를 방의 저역 부스트로
+     * 읽게 된다 — 그리고 그걸 보고 저역을 깎는다.
+     *
+     * ## 소리원을 누가 내는가
+     *
+     * [CaptureUiState.responsePlayHere] 가 true 면 이 폰이 핑크 잡음을
+     * 함께 낸다. 그러면 **폰 스피커의 기울기가 결과에 섞인다** — 화면이
+     * 그 사실을 적는다. PA 로 내면 PA 의 기울기가 섞이는데, 대개는 그쪽이
+     * 알고 싶은 것이다.
+     */
+    private fun runResponse(quiet: Boolean, signal: Boolean) {
+        if (controller.baseState.value.measure !is MeasureState.Running) {
+            controller.update { st ->
+                st.copy(responseNoticeKo = "먼저 「측정」에서 마이크를 여십시오.")
+            }
+            return
+        }
+        if (responseJob?.isActive == true) return
+        if (signal && !quiet && responseQuietMean == null) {
+            controller.update { st ->
+                st.copy(responseNoticeKo = "배경을 먼저 재십시오.")
+            }
+            return
+        }
+
+        val spec = rtaSpec() ?: run {
+            controller.update { st ->
+                st.copy(responseNoticeKo = "분석기가 아직 돌지 않습니다. 잠시 뒤 다시 누르십시오.")
+            }
+            return
+        }
+
+        responseJob = viewModelScope.launch {
+            val tap = kr.joa.selahrta.dsp.MeasurementTap(spec.first, spec.second)
+            installMeasurementTap(tap)
+            try {
+                if (quiet) {
+                    // 1단계 — 배경. **소리를 내지 않는다.**
+                    controller.update { st ->
+                        st.copy(
+                            responsePhase = ResponsePhase.Quiet,
+                            responseProgress = 0f,
+                            responseNoticeKo = null,
+                            responseResult = if (signal) null else st.responseResult,
+                        )
+                    }
+                    tap.startTarget()
+                    val ok = collectFrames(tap, QUIET_FRAMES) { p ->
+                        controller.update { st -> st.copy(responseProgress = p) }
+                    }
+                    tap.stop()
+                    val frames = tap.drainTarget()
+                    if (!ok || frames.size < ROOM_MIN_FRAMES) {
+                        failResponse("배경을 재지 못했습니다. 마이크가 열려 있는지 확인하십시오.")
+                        return@launch
+                    }
+                    val acc = BandAccumulator(frames.first().size)
+                    frames.forEach { acc.add(it) }
+                    responseQuietMean = acc.meanDb()
+                    controller.update { st -> st.copy(responseQuietReady = true) }
+                }
+
+                if (!signal) {
+                    controller.update { st ->
+                        st.copy(responsePhase = ResponsePhase.Idle, responseProgress = 0f)
+                    }
+                    return@launch
+                }
+
+                // 2단계 — 소리. 이 폰이 낼지는 사람이 정한다.
+                val playHere = controller.baseState.value.responsePlayHere
+                if (playHere) playSignal(TestSignal.Pink, MEASURE_AMPLITUDE)
+                controller.update { st ->
+                    st.copy(responsePhase = ResponsePhase.Signal, responseProgress = 0f)
+                }
+                tap.startTarget()
+                val signalOk = collectFrames(tap, SIGNAL_FRAMES) { p ->
+                    controller.update { st -> st.copy(responseProgress = p) }
+                }
+                tap.stop()
+                if (playHere) stopSignal()
+                val signalFrames = tap.drainTarget()
+                if (!signalOk && signalFrames.size < ROOM_MIN_FRAMES) {
+                    failResponse("소리를 트는 동안 장이 모자랐습니다. 다시 재 보십시오.")
+                    return@launch
+                }
+
+                computeRoomResponse(signalFrames, responseQuietMean).fold(
+                    onSuccess = { res ->
+                        controller.update { st ->
+                            st.copy(
+                                responsePhase = ResponsePhase.Done,
+                                responseResult = res,
+                                responseProgress = 1f,
+                                responseNoticeKo = null,
+                            )
+                        }
+                    },
+                    onFailure = { e -> failResponse(e.message ?: "응답을 셈하지 못했습니다.") },
+                )
+            } finally {
+                removeMeasurementTap(tap)
+                // **어디서 빠져나오든 소리는 끈다.** 취소된 경우까지
+                // 포함이다 — 예배당에서 핑크 잡음이 계속 나면 회중이 듣는다.
+                if (controller.baseState.value.playingSignal != null) stopSignal()
+            }
+        }
+    }
+
+    /** 재는 도중에 그만둔다. 화면을 떠날 때도 부른다. */
+    fun cancelResponse() {
+        responseJob?.cancel()
+        responseJob = null
+        controller.update { st ->
+            st.copy(
+                responsePhase = if (st.responseResult != null) ResponsePhase.Done else ResponsePhase.Idle,
+                responseProgress = 0f,
+            )
+        }
+    }
+
+    /** 이 폰이 핑크 잡음을 함께 낼 것인가. */
+    fun setResponsePlayHere(on: Boolean) {
+        controller.update { st -> st.copy(responsePlayHere = on) }
+    }
+
+    fun dismissResponseNotice() {
+        controller.update { st -> st.copy(responseNoticeKo = null) }
+    }
+
+    private fun failResponse(reasonKo: String) {
+        controller.update { st ->
+            st.copy(
+                responsePhase = ResponsePhase.Idle,
+                responseProgress = 0f,
+                responseNoticeKo = reasonKo,
+            )
+        }
+    }
+
+    /**
+     * [target] 장이 모일 때까지 기다린다.
+     *
+     * **틱마다 진행을 알린다.** 10초를 아무 표시 없이 기다리게 하면
+     * 멈춘 줄 알고 화면을 떠난다.
+     */
+    private suspend fun collectFrames(
+        tap: kr.joa.selahrta.dsp.MeasurementTap,
+        target: Int,
+        onProgress: (Float) -> Unit,
+    ): Boolean {
+        var ticks = 0
+        val maxTicks = target * 4 + 40
+        while (tap.count < target && ticks < maxTicks) {
+            kotlinx.coroutines.delay(RESPONSE_TICK_MS)
+            onProgress((tap.count.toFloat() / target).coerceIn(0f, 1f))
+            ticks++
+        }
+        onProgress(1f)
+        return tap.count >= target
+    }
+
     fun installMeasurementTap(tap: kr.joa.selahrta.dsp.MeasurementTap) {
         controller.postToCapture { session -> session.rta.addSpectrumSink(tap) }
     }
@@ -511,10 +825,18 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      * 스피커에서 나온 소리가 제 마이크로 돌아오므로 하울링 탐지를 확인할
      * 수 있다.
      */
-    fun playSignal(signal: TestSignal, level: SignalLevel? = null) {
-        // 레벨을 받으면 그것으로 튼다. 교정 측정은 저장된 「작게」가 아니라
-        // 제 쓰임에 맞는 레벨이 필요하다(독립 검토 뒤 실기기에서 조정).
-        val gen = player.start(signal, level ?: controller.baseState.value.signalLevel)
+    fun playSignal(signal: TestSignal, amplitude: Double? = null) {
+        val st0 = controller.baseState.value
+        // 세기를 받으면 그것으로 튼다. 교정 측정은 사람이 고른 값이 아니라
+        // 제 쓰임에 맞는 세기가 필요하다(독립 검토 뒤 실기기에서 조정).
+        val gen = player.start(
+            SignalRequest(
+                signal = signal,
+                amplitude = amplitude ?: st0.signalAmplitude,
+                toneHz = st0.signalToneHz,
+                channels = st0.signalChannels,
+            ),
+        )
         playGeneration = gen
         val ok = gen != SignalPlayer.NONE
         controller.update { st -> st.copy(
@@ -607,8 +929,32 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** 세기를 바꾼다. 내보내는 중이면 그 자리에서 바꿔 끼운다. */
-    fun setSignalLevel(level: SignalLevel) {
-        controller.update { st -> st.copy(signalLevel = level) }
+    fun setSignalLevel(amplitude: Double) {
+        controller.update { st ->
+            st.copy(signalAmplitude = amplitude.coerceIn(MIN_AMPLITUDE, MAX_AMPLITUDE))
+        }
+        controller.baseState.value.playingSignal?.let { playSignal(it) }
+    }
+
+    /**
+     * 직접 고른 주파수를 바꾼다.
+     *
+     * **내보내는 중이면 바로 따라간다** — 슬라이더를 끌면서 어디가 하울링
+     * 자리인지 귀로 찾는 쓰임이라, 멈췄다 다시 눌러야 하면 못 찾는다.
+     * 다만 순음을 내고 있을 때만이다. 핑크 잡음 중에 주파수를 만졌다고
+     * 순음으로 갈아 끼우면 놀란다.
+     */
+    fun setSignalToneHz(hz: Double) {
+        controller.update { st ->
+            st.copy(signalToneHz = hz.coerceIn(MIN_TONE_HZ, MAX_TONE_HZ))
+        }
+        val playing = controller.baseState.value.playingSignal
+        if (playing == TestSignal.Custom) playSignal(playing)
+    }
+
+    /** 어느 쪽 스피커로 낼지 바꾼다. 내보내는 중이면 그 자리에서 바꿔 끼운다. */
+    fun setSignalChannels(channels: SignalChannels) {
+        controller.update { st -> st.copy(signalChannels = channels) }
         controller.baseState.value.playingSignal?.let { playSignal(it) }
     }
 
@@ -639,6 +985,17 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
 
     fun resetRange(s: ChurchSegment) {
         viewModelScope.launch { settingsStore.resetRange(s) }
+    }
+
+    /**
+     * 구간 이름을 고친다. 빈 이름이면 기본값으로 되돌린다.
+     *
+     * **이름은 화면에 적히는 글자일 뿐이다.** 어느 구간의 범위인지는
+     * [ChurchSegment] 가 그대로 쥐고 있어, 이름을 바꿔도 저장된 범위를
+     * 잃지 않는다.
+     */
+    fun setSegmentName(s: ChurchSegment, name: String) {
+        viewModelScope.launch { settingsStore.setSegmentName(s, name) }
     }
 
     fun setWeighting(w: Weighting) { viewModelScope.launch { settingsStore.setWeighting(w) } }
@@ -966,6 +1323,19 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         controller.update { st -> st.copy(calibrationNoticeKo = null) }
     }
 
+    /**
+     * Spectrum 화면이 열렸는가를 엔진에 알린다.
+     *
+     * 켜져 있을 때만 엔진이 칸 2049개를 곱하고 줄인다. RTA 만 보는 동안
+     * 그 일을 할 까닭이 없다.
+     */
+    fun setSpectrumEnabled(on: Boolean) {
+        controller.spectrumEnabled = on
+        // 끌 때는 화면 상태에서도 지운다. 남겨 두면 다시 열었을 때 몇 분 전
+        // 그림이 한 장 스쳐 보이고, 그것을 지금 소리로 읽는다.
+        if (!on) controller.update { st -> st.copy(spectrum = null) }
+    }
+
     /** RTA 의 Peak Hold 를 다시 센다. */
     fun resetRtaHold() {
         controller.postToCapture { session -> session.rta.resetHold() }
@@ -1027,6 +1397,7 @@ internal fun CaptureUiState.withMeasurement(m: MeasurementSnapshot?): CaptureUiS
                 leqLong = f.leqLongDbfs?.toSpl(offset)?.value,
                 leqLongFull = f.leqLongFull,
                 maxSpl = f.maxDbfs.toSpl(offset).value,
+                minSpl = f.minDbfs?.toSpl(offset)?.value,
                 peakSpl = f.peakDbfs.toSpl(offset).value,
                 peakClipped = f.peakClipped,
                 anyClipping = m.anyClipping,
@@ -1040,6 +1411,7 @@ internal fun CaptureUiState.withMeasurement(m: MeasurementSnapshot?): CaptureUiS
         // 프레임이 **그 곡선으로 계산된 것일 때만** 보정 적용이라고 적는다.
         feedback = m.feedback,
         feedbackLog = m.feedbackLog,
+        spectrum = m.spectrum?.toView(offset.db) ?: spectrum,
         rta = m.rta?.toView(
             offsetDb = offset.db,
             // 꺼 둔 곱선은 그리지도 않는다 — 엔진이 안 걸고 있는데 그리면
@@ -1058,6 +1430,21 @@ internal fun CaptureUiState.withMeasurement(m: MeasurementSnapshot?): CaptureUiS
  * 보정하면 밴드 안에서 응답이 변하는 구간에서 틀린 값을 뺀다
  * (독립 검증 R05).
  */
+/**
+ * dBFS 칸을 dB SPL 로 옮긴다. [RtaFrame.toView] 와 **같은 오프셋**이다.
+ *
+ * 마이크 곡선은 여기서 걸지 않는다 — 엔진이 칸마다 이미 걸었다. 두 번
+ * 걸면 고역이 곡선만큼 더 깎인다.
+ */
+private fun SpectrumFrame.toView(offsetDb: Double) = SpectrumView(
+    columnsSpl = DoubleArray(columnsDbfs.size) { columnsDbfs[it] + offsetDb },
+    holdSpl = DoubleArray(holdDbfs.size) { holdDbfs[it] + offsetDb },
+    hz = hz,
+    binHz = binHz,
+    topHz = top?.hz,
+    topSpl = top?.dbfs?.plus(offsetDb),
+)
+
 private fun RtaFrame.toView(
     offsetDb: Double,
     curve: CalibrationCurve?,

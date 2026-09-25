@@ -26,15 +26,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kr.joa.selahrta.calibration.ActiveCalibration
+import kr.joa.selahrta.calibration.ActiveCurve
 import kr.joa.selahrta.calibration.CalibrationSource
 import kr.joa.selahrta.domain.ChurchSegment
 import kr.joa.selahrta.domain.SEGMENT_CAUTIONS
 import kr.joa.selahrta.domain.SegmentRange
 import kr.joa.selahrta.audio.InputDeviceInfo
-import kr.joa.selahrta.audio.SignalLevel
-import kr.joa.selahrta.audio.TestSignal
 import kr.joa.selahrta.domain.MeasureState
 import kr.joa.selahrta.domain.MicKind
 import kr.joa.selahrta.audio.builtInMicNoticeKo
@@ -46,7 +47,6 @@ import kr.joa.selahrta.settings.LeqWindow
 import kr.joa.selahrta.ui.CaptureUiState
 import kr.joa.selahrta.ui.components.CalibrationCard
 import kr.joa.selahrta.ui.components.CurveCard
-import kr.joa.selahrta.ui.components.SignalGeneratorCard
 import kr.joa.selahrta.ui.components.InfoBar
 import kr.joa.selahrta.ui.components.NotYet
 import kr.joa.selahrta.ui.theme.SelahColors
@@ -107,10 +107,8 @@ fun SettingsScreen(
     onOpenCalibrationProfiles: () -> Unit,
     onSaveRange: (ChurchSegment, SegmentRange) -> Unit,
     onResetRange: (ChurchSegment) -> Unit,
-    onPlaySignal: (TestSignal) -> Unit,
-    onStopSignal: () -> Unit,
-    onSignalLevel: (SignalLevel) -> Unit,
-    onDismissSignalNotice: () -> Unit,
+    /** 구간 이름을 고친다. 빈 값이면 기본 이름으로 되돌린다. */
+    onRenameSegment: (ChurchSegment, String) -> Unit,
 ) {
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
@@ -126,6 +124,8 @@ fun SettingsScreen(
             openedKey = capture.opened?.takeIf { it.routeConfirmed }?.deviceKey,
             running = capture.measure is MeasureState.Running,
             known = capture.meterSettings.knownDevices,
+            calibration = capture.calibration,
+            curve = capture.curve,
             onPick = onPreferredInput,
             onForget = onForgetDevice,
         )
@@ -193,12 +193,6 @@ fun SettingsScreen(
             "샘플레이트 / 형식",
             capture.inputForDisplay?.let { "${it.sampleRate} Hz · ${it.encoding.bitsLabel}" } ?: "—",
         )
-        SettingRow(
-            "보정 상태",
-            capture.calibration.state.labelKo,
-            warn = capture.calibration.isReferenceOnly,
-        )
-
         CalibrationCard(
             capture = capture,
             onSave = onSaveCalibration,
@@ -233,16 +227,13 @@ fun SettingsScreen(
             TextButton(onClick = onOpenCalibrationProfiles) { Text("프로파일 관리") }
         }
 
-        SectionTitle("시험 신호")
-        SignalGeneratorCard(
-            playing = capture.playingSignal,
-            level = capture.signalLevel,
-            noticeKo = capture.signalNoticeKo,
-            onPlay = onPlaySignal,
-            onStop = onStopSignal,
-            onLevel = onSignalLevel,
-            onDismissNotice = onDismissSignalNotice,
-        )
+        // **시험 신호는 여기 없다**(2026-09-24 담당자 지시: 「도구와 설정이
+        // 중복됩니다. 이 부분은 도구에만 남으면 될 것 같습니다」).
+        //
+        // 아래 탭에 「도구」가 생기면서 이쪽이 그대로 남아 같은 카드가 두
+        // 곳에 떴다. 소리를 내보내는 일은 값을 바꿔 두는 일이 아니라
+        // **하는 일**이라 도구가 제자리다 — 설정에 둘 까닭이 애초에
+        // 없었다(`ToolsScreen` 참고).
 
         SectionTitle("측정 설정")
         ChoiceRow(
@@ -277,8 +268,11 @@ fun SettingsScreen(
                     segment = seg,
                     range = r,
                     isCustom = capture.meterSettings.isCustom(seg),
+                    name = capture.meterSettings.nameFor(seg),
+                    isCustomName = capture.meterSettings.isCustomName(seg),
                     onSave = { onSaveRange(seg, it) },
                     onReset = { onResetRange(seg) },
+                    onRename = { onRenameSegment(seg, it) },
                 )
             }
         }
@@ -310,10 +304,10 @@ fun SettingsScreen(
         SectionTitle("앱 정보")
         SettingRow("SELAH RTA", "v0.1.0 (Phase 8)")
         Text(
-            // 만든 사람과 소속 팀은 다른 것이다. 팀만 적으면 누가 만들었는지가
+            // 만든 사람과 회사는 다른 것이다. 회사만 적으면 누가 만들었는지가
             // 사라진다.
             "Real-Time Worship Audio Analyzer\n" +
-                "개발 장훈 (JANGHUN) · Jesus On Air (JOA)",
+                "개발 장훈 (JANGHUN) · 조아웍스 | JOA Works",
             color = SelahColors.TextMuted,
             fontSize = 11.sp,
             modifier = Modifier.padding(top = 4.dp, bottom = 24.dp),
@@ -333,6 +327,80 @@ fun SettingsScreen(
  * **「자동」도 하나의 선택지로 둔다.** 목록에서 고르기만 하게 하면,
  * 나중에 그 기기를 안 쓸 때 되돌릴 방법이 없다.
  */
+/**
+ * 기기 카드 안에 적는 **그 기기의 보정 상태**(2026-09-25 담당자 지시).
+ *
+ * ## 왜 기기 카드 안인가
+ *
+ * 보정은 **기기마다** 따로 있다. 그런데 상태는 저 아래 「보정」 구역에
+ * 따로 떠 있어서, 어느 기기의 이야기인지 이어지지 않았다 — 기기를 바꾸고도
+ * 위쪽 숫자를 그 기기의 것으로 읽게 된다.
+ *
+ * ## 둘을 갈라서 적는다
+ *
+ * **절대 레벨 보정과 주파수 보정은 다른 일이다**(CLAUDE.md §6). 하나로
+ * 뭉쳐 「보정됨」이라고 적으면, 곡선만 넣고 절대 음압까지 맞은 줄 안다.
+ * 교정기는 1kHz 한 점의 크기만 맞추고, 곡선은 주파수마다 얼마나 더·덜
+ * 잡는지를 되돌린다 — 둘 다 있어야 숫자를 믿을 수 있다.
+ */
+@Composable
+private fun DeviceCalibration(
+    deviceLabel: String,
+    calibration: ActiveCalibration,
+    curve: ActiveCurve?,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 6.dp)
+            .background(SelahColors.SurfaceVariant, RoundedCornerShape(8.dp))
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            "이 기기의 보정 · $deviceLabel",
+            color = SelahColors.TextMuted,
+            fontSize = 10.sp,
+        )
+        CalibRow(
+            "절대 레벨",
+            calibration.state.labelKo,
+            warn = calibration.isReferenceOnly,
+        )
+        CalibRow(
+            "주파수 곡선",
+            when {
+                curve == null -> "없음"
+                // **파일이 있는 것과 걸려 있는 것은 다르다.** 꺼 두었으면
+                // 「적용됨」이 아니다.
+                !curve.enabled -> "${curve.fileName} · 꺼 둠"
+                else -> "${curve.fileName} · 걸림"
+            },
+            warn = curve == null || !curve.enabled,
+        )
+    }
+}
+
+/** 이름과 값 한 줄. 색만으로 알리지 않으려고 값을 글자로 적는다(명세 11장). */
+@Composable
+private fun CalibRow(label: String, value: String, warn: Boolean) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, color = SelahColors.TextMuted, fontSize = 11.sp, softWrap = false)
+        Text(
+            value,
+            color = if (warn) SelahColors.Warn else SelahColors.InRange,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.End,
+            modifier = Modifier.padding(start = 10.dp),
+        )
+    }
+}
+
 @Composable
 private fun InputDevicePicker(
     inputs: List<InputDeviceInfo>,
@@ -346,6 +414,10 @@ private fun InputDevicePicker(
     running: Boolean,
     /** 한 번이라도 연결됐던 기기들. 지금 없는 것은 흐리게 보여 준다. */
     known: List<KnownDevice>,
+    /** 지금 숫자가 나오는 경로의 절대 레벨 보정. */
+    calibration: ActiveCalibration,
+    /** 그 경로에 걸린 주파수 보정 곡선. 없으면 null. */
+    curve: ActiveCurve?,
     onPick: (String?) -> Unit,
     /** 기억에서 지운다. */
     onForget: (String) -> Unit,
@@ -445,6 +517,21 @@ private fun InputDevicePicker(
                 fontSize = 10.sp,
                 modifier = Modifier.padding(top = 4.dp),
             )
+            // **보정 상태를 기기 카드 안에서 말한다**(2026-09-25 담당자 지시).
+            //
+            // 보정은 **기기마다** 따로 있는데, 상태는 저 아래 「보정」 구역에
+            // 따로 떠 있었다. 어느 기기의 이야기인지 이어지지 않아, 기기를
+            // 바꾸고도 위쪽 숫자를 그 기기의 것으로 읽게 된다.
+            //
+            // **고른 기기가 아니라 열린 기기의 것이다.** 재는 도중에 다른
+            // 기기를 고르면 그것은 다음 시작에야 쓰이므로(바로 위 경고),
+            // 여기 적는 값은 지금 숫자가 나오고 있는 경로의 것이다. 그래서
+            // 제목에 기기 이름을 함께 적는다.
+            DeviceCalibration(
+                deviceLabel = openedLabel ?: lastLabel.orEmpty(),
+                calibration = calibration,
+                curve = curve,
+            )
         }
         if (running) {
             // 재는 도중에 고른 기기가 곧바로 쓰이지 않는다는 사실을 적는다.
@@ -511,7 +598,11 @@ private fun DeviceRow(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column {
+        // **남는 폭은 기기 이름이 가져간다.** 무게를 주지 않았더니 긴 USB
+        // 이름이 줄을 다 먹고, 오른쪽 배지가 한 글자씩 세로로 쪼개졌다
+        // ―「선/택/함」(기기에서 확인). 한국어는 기본값에서 글자 단위로
+        // 끊기기 때문이다.
+        Column(Modifier.weight(1f)) {
             Text(
                 title,
                 color = when {
@@ -526,28 +617,32 @@ private fun DeviceRow(
         }
         if (onForget != null) {
             TextButton(onClick = onForget) {
-                Text("지우기", color = SelahColors.TextMuted, fontSize = 11.sp)
+                Text("지우기", color = SelahColors.TextMuted, fontSize = 11.sp, softWrap = false)
             }
         }
         // 색만으로 알리지 않는다(명세 11장).
+        // **배지는 끊지 않는다.** 짧은 라벨이라 줄바꿈할 자리가 없다.
         when {
             inUse -> Text(
                 "사용 중",
                 color = SelahColors.Accent,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.SemiBold,
+                softWrap = false,
             )
             nextStart -> Text(
                 "다음 시작에 사용",
                 color = SelahColors.Warn,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.SemiBold,
+                softWrap = false,
             )
             selected -> Text(
                 "선택함",
                 color = SelahColors.Accent,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.SemiBold,
+                softWrap = false,
             )
         }
     }

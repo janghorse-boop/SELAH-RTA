@@ -53,7 +53,7 @@ class FakeSink(
     /** 막힌 write 에 들어갔음을 알린다. */
     val entered = CountDownLatch(1)
 
-    override fun open(sampleRate: Int, frames: Int): Boolean {
+    override fun open(sampleRate: Int, frames: Int, channels: Int): Boolean {
         if (openFails) return false
         opened = true
         return true
