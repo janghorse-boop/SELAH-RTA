@@ -244,6 +244,7 @@ fun MeasureScreen(
             range = range,
             isCustom = capture.meterSettings.isCustom(segment),
             leqLabelKo = capture.meterSettings.leqWindow.labelKo,
+            nameOf = { capture.meterSettings.nameFor(it) },
             // **아래를 넉넉히 띄운다**(2026-09-25 담당자 지시: 「간격이 너무
             // 좁아서 답답해 보입니다」). 상자와 계기가 붙어 있으면 둘이 한
             // 덩어리로 보여, 눈이 어디서 끊어 읽어야 할지 모른다.
@@ -380,6 +381,10 @@ fun MeasureScreen(
                 },
                 dim = uncalibrated,
                 onClick = { shownMetric = Metric.Leq },
+                // **이 값이 판단의 기준이다.** 권장 범위가 시간평균 기준이라
+                // 「지금 잠깐 컸다」가 아니라 「이만큼으로 이어지고 있다」를
+                // 봐야 한다(2026-09-25 담당자 지시).
+                highlight = true,
             )
             ValueTile(
                 "MAX",
@@ -409,7 +414,7 @@ fun MeasureScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                if (m.peakClipped) "PEAK 순간최고 — 잘렸습니다 · 눌러서 보기" else "PEAK 순간최고 보기",
+                if (m.peakClipped) "PEAK 순간최고 — 클리핑 · 눌러서 보기" else "PEAK 순간최고 보기",
                 color = if (m.peakClipped) SelahColors.High else SelahColors.TextMuted,
                 fontSize = 11.sp,
                 fontWeight = if (m.peakClipped) FontWeight.SemiBold else FontWeight.Normal,
@@ -431,7 +436,7 @@ fun MeasureScreen(
         // 말이라, 화면에서 내려가면 안 되는 종류의 경고다.
         if (m.anyClipping) {
             InfoBar(
-                "소리가 너무 커서 파형이 잘린 구간이 있습니다. 그 구간의 음압은 " +
+                "클리핑 — 소리가 너무 커서 파형이 잘린 구간이 있습니다. 그 구간의 음압은 " +
                     "화면 값보다 높으며 얼마나 높은지는 알 수 없습니다. " +
                     "마이크를 소리원에서 떼어 놓으십시오.",
                 Modifier.padding(top = 12.dp),
@@ -472,45 +477,19 @@ fun MeasureScreen(
             )
         }
 
-        // 저역이 얼마나 많은가(명세 10장). 찬양에서 특히 중요하다 —
-        // A 가중 숫자만 보면 저음이 많은지 전혀 드러나지 않는다.
-        if (running && m.cMinusA != null && m.lowEnergyHint != null) {
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(top = 12.dp)
-                    .background(SelahColors.Surface, RoundedCornerShape(10.dp))
-                    .border(1.dp, SelahColors.Outline, RoundedCornerShape(10.dp))
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(3.dp),
-            ) {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Text("저역 비중 (C-A)", color = SelahColors.TextMuted, fontSize = 11.sp)
-                    Text(
-                        "%+.1f dB · %s".format(m.cMinusA, m.lowEnergyHint.labelKo),
-                        color = SelahColors.TextPrimary,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
-                Text(
-                    m.lowEnergyHint.noteKo,
-                    color = SelahColors.TextMuted,
-                    fontSize = 10.sp,
-                    lineHeight = 14.sp,
-                )
-            }
-        }
+        // 저역 비중(C−A) 카드는 **뺐다**(2026-09-25 담당자 지시).
+        //
+        // 저역이 얼마나 많은지는 RTA 가 대역별로 그대로 보여 준다 — 한
+        // 숫자로 뭉쳐 놓은 것보다 그쪽이 자세하고, 측정 화면에서는 두 줄을
+        // 늘 차지하고 있었다. 셈 자체는 남아 있어 되살리기 쉽다
+        // (`MeterReading.cMinusA`).
 
         if (running) {
-            InputLevelBar(
-                capture.diagnostics.lastPeakAbs,
-                capture.diagnostics.lastRmsAbs,
-                Modifier.fillMaxWidth().padding(top = 18.dp),
-            )
+            // 입력 레벨 막대는 **뺐다**(2026-09-25 담당자 지시). 잘림은 위에서
+            // 세 번 알리고(경고줄·PEAK 줄·진단의 「잘린 덩어리」), 소리가 안
+            // 들어오는 것은 바로 아래 안내가 말한다. 게인을 맞출 때 보는
+            // dBFS 숫자만 진단 패널로 옮겼다 — 인터페이스 노브는 그 값을
+            // 보고 돌린다.
 
             // **입력 자체가 이상하면 여기서 말한다.** 값이 아니라 입력의
             // 상태다 — 잘리고 있으면 그 구간 값이 실제보다 낮고, 아무것도
@@ -833,7 +812,10 @@ private fun GaugeArc(
             val ca = kotlin.math.cos(rad).toFloat()
             val sa = kotlin.math.sin(rad).toFloat()
             drawLine(
-                color = SelahColors.Outline,
+                // **흐리게 두지 않는다**(2026-09-25 담당자 지적: 「눈금표시와
+                // 이름 글자색이 너무 어둡네요」). Outline 은 카드 테두리에
+                // 쓰는 색이라 검은 배경에서 거의 안 보였다.
+                color = SelahColors.TextSecondary,
                 start = Offset(cx + tickInner * ca, cy + tickInner * sa),
                 end = Offset(cx + tickOuter * ca, cy + tickOuter * sa),
                 strokeWidth = 2.dp.toPx(),
@@ -844,7 +826,7 @@ private fun GaugeArc(
             if ((db - GAUGE_LOW_DB) % 20.0 < 1e-9) {
                 val laid = measurer.measure(
                     AnnotatedString("%.0f".format(db)),
-                    style = TextStyle(fontSize = 8.sp, color = SelahColors.TextMuted),
+                    style = TextStyle(fontSize = 9.sp, color = SelahColors.TextSecondary),
                 )
                 // 눈금 바로 안쪽에 붙인다. 더 안으로 넣으면 가운데 큰
                 // 숫자와 부딪힌다 — 60 이 「63.1」의 6 에 닿았다.
@@ -961,6 +943,8 @@ private fun RangeCard(
     range: SegmentRange?,
     isCustom: Boolean,
     leqLabelKo: String,
+    /** 구간 이름. 사용자가 고칠 수 있다(`MeterSettings.nameFor`). */
+    nameOf: (ChurchSegment) -> String,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -1013,7 +997,7 @@ private fun RangeCard(
                     }
                 }
             }
-            SegmentPills(segment, onSegment)
+            SegmentPills(segment, nameOf, onSegment)
         }
         // 구간 설명(「말이 또렷한지가 먼저입니다…」)은 **뺐다**
         // (2026-09-25 담당자 지시). 고를 것이 설교·찬양 둘뿐이라 알약만
@@ -1033,6 +1017,8 @@ private fun RangeCard(
 @Composable
 private fun SegmentPills(
     selected: ChurchSegment,
+    /** 구간 이름. 사용자가 고친 이름이 있으면 그것이 온다. */
+    nameOf: (ChurchSegment) -> String,
     onPick: (ChurchSegment) -> Unit,
 ) {
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1052,7 +1038,7 @@ private fun SegmentPills(
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    s.shortKo,
+                    nameOf(s),
                     color = if (on) Color(0xFF00201C) else SelahColors.TextSecondary,
                     fontSize = 13.sp,
                     fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,

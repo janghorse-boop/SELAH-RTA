@@ -338,6 +338,7 @@ fun SelahApp() {
                         },
                         onSaveRange = vm::setRange,
                         onResetRange = vm::resetRange,
+                        onRenameSegment = vm::setSegmentName,
                     )
 
                     else -> when (mode) {

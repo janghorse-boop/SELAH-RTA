@@ -70,6 +70,19 @@ data class MeterSettings(
      * 예배당마다 알맞은 값이 다르다.
      */
     val ranges: Map<ChurchSegment, SegmentRange> = emptyMap(),
+    /**
+     * 구간의 **이름**. 고친 것이 없으면 기본 이름을 쓴다.
+     *
+     * **예배당마다 부르는 말이 다르다**(2026-09-25 담당자 지시: 「지금은
+     * 설교, 찬양이라고 했지만 나중에 사용자가 안전 또는 다른 용어로 변경할
+     * 수 있게」). 어떤 곳은 「말씀·경배」로, 산업 현장에서 쓰면 「작업·안전」
+     * 으로 부를 것이다.
+     *
+     * **속뜻은 그대로다.** 바뀌는 것은 화면에 적히는 글자뿐이고, 어느
+     * 구간의 범위인지는 [ChurchSegment] 가 그대로 쥔다 — 이름을 열쇠로
+     * 삼았다면 이름을 바꿀 때마다 저장된 범위를 잃었을 것이다.
+     */
+    val names: Map<ChurchSegment, String> = emptyMap(),
 ) {
     /** 이 구간의 참고 범위. 고친 값이 있으면 그것을, 없으면 초기값을. */
     fun rangeFor(s: ChurchSegment): SegmentRange? =
@@ -77,7 +90,24 @@ data class MeterSettings(
 
     /** 이 구간의 범위를 사용자가 고쳤는가. 화면이 「기본값으로」를 띄울 근거다. */
     fun isCustom(s: ChurchSegment): Boolean = ranges.containsKey(s)
+
+    /** 화면에 적을 이름(짧은 쪽). 고친 이름이 있으면 그것을. */
+    fun nameFor(s: ChurchSegment): String = names[s] ?: s.shortKo
+
+    /** 긴 이름. 고친 이름이 있으면 짧은 것과 같다 — 사람이 하나만 적는다. */
+    fun longNameFor(s: ChurchSegment): String = names[s] ?: s.labelKo
+
+    /** 이 구간의 이름을 사용자가 고쳤는가. */
+    fun isCustomName(s: ChurchSegment): Boolean = names.containsKey(s)
 }
+
+/**
+ * 구간 이름으로 받아 줄 길이.
+ *
+ * 화면의 알약에 들어가야 하므로 짧아야 한다. 길면 알약이 범위 상자를
+ * 밀어내고, 좁은 화면에서 글자가 쪼개진다.
+ */
+const val SEGMENT_NAME_MAX = 8
 
 class MeterSettingsStore(private val context: Context) {
 
@@ -96,6 +126,14 @@ class MeterSettingsStore(private val context: Context) {
     // 범위는 구간마다 네 값이라 열쇠를 만들어 쓴다.
     private fun rangeKey(s: ChurchSegment, part: String) =
         doublePreferencesKey("range|${s.name}|$part")
+
+    /**
+     * 구간 이름.
+     *
+     * **열쇠는 enum 이름이다.** 사람이 지은 이름을 열쇠로 삼았다면 이름을
+     * 고칠 때마다 그 구간에 저장해 둔 범위를 잃었을 것이다.
+     */
+    private fun nameKey(s: ChurchSegment) = stringPreferencesKey("segName|${s.name}")
 
     val settings: Flow<MeterSettings> = context.meterDataStore.data
         .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
@@ -147,6 +185,10 @@ class MeterSettingsStore(private val context: Context) {
                     // 손으로 건드린 경우다.
                     if (r.isSane) seg to r else null
                 }.toMap(),
+                names = ChurchSegment.entries.mapNotNull { seg ->
+                    val n = p[nameKey(seg)]?.trim()
+                    if (n.isNullOrBlank()) null else seg to n.take(SEGMENT_NAME_MAX)
+                }.toMap(),
             )
         }
 
@@ -183,6 +225,20 @@ class MeterSettingsStore(private val context: Context) {
         }
         return true
     }
+
+    /**
+     * 구간 이름을 고친다. 빈 이름은 **되돌리기**로 본다.
+     *
+     * 길이를 잘라 저장한다 — 화면의 알약에 들어가야 하므로 긴 이름은
+     * 상자를 밀어낸다.
+     */
+    suspend fun setSegmentName(s: ChurchSegment, name: String) = write {
+        val trimmed = name.trim().take(SEGMENT_NAME_MAX)
+        if (trimmed.isEmpty()) it.remove(nameKey(s)) else it[nameKey(s)] = trimmed
+    }
+
+    /** 이름을 기본값으로 되돌린다. */
+    suspend fun resetSegmentName(s: ChurchSegment) = write { it.remove(nameKey(s)) }
 
     /** 초기값으로 되돌린다. */
     suspend fun resetRange(s: ChurchSegment) = write {

@@ -12,6 +12,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import kr.joa.selahrta.settings.SEGMENT_NAME_MAX
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -42,11 +43,18 @@ fun SegmentRangeCard(
     segment: ChurchSegment,
     range: SegmentRange,
     isCustom: Boolean,
+    /** 화면에 적을 이름. 사용자가 고친 이름이 있으면 그것이 온다. */
+    name: String,
+    /** 이름을 사용자가 고쳤는가. */
+    isCustomName: Boolean,
     onSave: (SegmentRange) -> Unit,
     onReset: () -> Unit,
+    /** 이름을 고친다. 빈 값이면 기본 이름으로 되돌린다. */
+    onRename: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var editing by remember(segment) { mutableStateOf(false) }
+    var renaming by remember(segment) { mutableStateOf(false) }
 
     Column(
         modifier
@@ -64,11 +72,19 @@ fun SegmentRangeCard(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    segment.labelKo,
+                    name,
                     color = SelahColors.TextPrimary,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
                 )
+                if (isCustomName) {
+                    Text(
+                        "  고친 이름",
+                        color = SelahColors.Accent,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
                 if (isCustom) {
                     Text(
                         "  고친 값",
@@ -78,12 +94,70 @@ fun SegmentRangeCard(
                     )
                 }
             }
-            TextButton(onClick = { editing = !editing }) {
-                Text(
-                    if (editing) "접기" else "고치기",
-                    color = SelahColors.Accent,
-                    fontSize = 12.sp,
+            Row {
+                TextButton(onClick = { renaming = !renaming }) {
+                    Text(
+                        if (renaming) "접기" else "이름",
+                        color = SelahColors.Accent,
+                        fontSize = 12.sp,
+                    )
+                }
+                TextButton(onClick = { editing = !editing }) {
+                    Text(
+                        if (editing) "접기" else "범위",
+                        color = SelahColors.Accent,
+                        fontSize = 12.sp,
+                    )
+                }
+            }
+        }
+
+        // **이름을 고친다**(2026-09-25 담당자 지시: 「지금은 설교, 찬양이라고
+        // 했지만 나중에 사용자가 안전 또는 다른 용어로 변경할 수 있게」).
+        //
+        // 바뀌는 것은 화면에 적히는 글자뿐이다. 어느 구간의 범위인지는
+        // 속으로 그대로 쥐고 있어, 이름을 바꿔도 저장한 범위를 잃지 않는다.
+        if (renaming) {
+            var draft by remember(segment, name) { mutableStateOf(name) }
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                OutlinedTextField(
+                    value = draft,
+                    onValueChange = { draft = it.take(SEGMENT_NAME_MAX) },
+                    singleLine = true,
+                    label = { Text("이름", fontSize = 11.sp) },
+                    supportingText = {
+                        Text(
+                            "${SEGMENT_NAME_MAX}자까지. 비우면 기본 이름(${segment.shortKo})으로 돌아갑니다.",
+                            fontSize = 10.sp,
+                        )
+                    },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = SelahColors.TextPrimary,
+                        unfocusedTextColor = SelahColors.TextPrimary,
+                        focusedBorderColor = SelahColors.Accent,
+                        unfocusedBorderColor = SelahColors.Outline,
+                        focusedLabelColor = SelahColors.Accent,
+                        unfocusedLabelColor = SelahColors.TextMuted,
+                        focusedSupportingTextColor = SelahColors.TextMuted,
+                        unfocusedSupportingTextColor = SelahColors.TextMuted,
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
                 )
+                Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                    TextButton(onClick = { onRename(draft); renaming = false }) {
+                        Text("저장", color = SelahColors.Accent, fontSize = 12.sp)
+                    }
+                    TextButton(
+                        onClick = { onRename(""); renaming = false },
+                        enabled = isCustomName,
+                    ) {
+                        Text(
+                            "기본 이름으로",
+                            color = if (isCustomName) SelahColors.TextSecondary else SelahColors.TextMuted,
+                            fontSize = 12.sp,
+                        )
+                    }
+                }
             }
         }
 

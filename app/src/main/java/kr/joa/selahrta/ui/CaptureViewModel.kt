@@ -959,6 +959,17 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { settingsStore.resetRange(s) }
     }
 
+    /**
+     * 구간 이름을 고친다. 빈 이름이면 기본값으로 되돌린다.
+     *
+     * **이름은 화면에 적히는 글자일 뿐이다.** 어느 구간의 범위인지는
+     * [ChurchSegment] 가 그대로 쥐고 있어, 이름을 바꿔도 저장된 범위를
+     * 잃지 않는다.
+     */
+    fun setSegmentName(s: ChurchSegment, name: String) {
+        viewModelScope.launch { settingsStore.setSegmentName(s, name) }
+    }
+
     fun setWeighting(w: Weighting) { viewModelScope.launch { settingsStore.setWeighting(w) } }
     fun setTimeWeight(t: TimeWeight) { viewModelScope.launch { settingsStore.setTimeWeight(t) } }
     fun setLeqWindow(w: LeqWindow) { viewModelScope.launch { settingsStore.setLeqWindow(w) } }

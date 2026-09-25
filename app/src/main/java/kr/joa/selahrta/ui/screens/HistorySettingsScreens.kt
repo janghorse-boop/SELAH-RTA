@@ -107,6 +107,8 @@ fun SettingsScreen(
     onOpenCalibrationProfiles: () -> Unit,
     onSaveRange: (ChurchSegment, SegmentRange) -> Unit,
     onResetRange: (ChurchSegment) -> Unit,
+    /** 구간 이름을 고친다. 빈 값이면 기본 이름으로 되돌린다. */
+    onRenameSegment: (ChurchSegment, String) -> Unit,
 ) {
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
@@ -266,8 +268,11 @@ fun SettingsScreen(
                     segment = seg,
                     range = r,
                     isCustom = capture.meterSettings.isCustom(seg),
+                    name = capture.meterSettings.nameFor(seg),
+                    isCustomName = capture.meterSettings.isCustomName(seg),
                     onSave = { onSaveRange(seg, it) },
                     onReset = { onResetRange(seg) },
+                    onRename = { onRenameSegment(seg, it) },
                 )
             }
         }

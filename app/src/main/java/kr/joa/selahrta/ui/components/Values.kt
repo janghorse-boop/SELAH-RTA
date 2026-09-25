@@ -71,14 +71,30 @@ fun ValueTile(
      * 테두리를 한 단 밝혀 둔다.
      */
     onClick: (() -> Unit)? = null,
+    /**
+     * 이 타일이 **가장 중요한 값**인가(2026-09-25 담당자 지시).
+     *
+     * 예배에서는 순간 레벨보다 Leq 가 중요하다 — 권장 범위 자체가
+     * 시간평균 기준이고, 「지금 잠깐 컸다」보다 「이만큼으로 이어지고
+     * 있다」가 판단할 값이다. 셋이 똑같이 생기면 눈이 어디를 먼저 볼지
+     * 모른다.
+     */
+    highlight: Boolean = false,
 ) {
     val hasValue = value != NO_VALUE
     Column(
         modifier = modifier
-            .background(SelahColors.Surface, RoundedCornerShape(12.dp))
+            .background(
+                if (highlight) SelahColors.Accent.copy(alpha = 0.10f) else SelahColors.Surface,
+                RoundedCornerShape(12.dp),
+            )
             .border(
-                1.dp,
-                if (onClick != null) SelahColors.TextMuted else SelahColors.Outline,
+                if (highlight) 2.dp else 1.dp,
+                when {
+                    highlight -> SelahColors.Accent
+                    onClick != null -> SelahColors.TextMuted
+                    else -> SelahColors.Outline
+                },
                 RoundedCornerShape(12.dp),
             )
             .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
@@ -89,7 +105,8 @@ fun ValueTile(
         Text(
             label,
             fontSize = 11.sp,
-            color = SelahColors.TextSecondary,
+            color = if (highlight) SelahColors.Accent else SelahColors.TextSecondary,
+            fontWeight = if (highlight) FontWeight.SemiBold else FontWeight.Normal,
             textAlign = TextAlign.Center,
         )
         Text(
