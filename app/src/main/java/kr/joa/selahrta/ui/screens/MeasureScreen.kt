@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
@@ -357,6 +358,20 @@ fun MeasureScreen(
                 },
                 dim = uncalibrated,
             )
+            // **가운데는 지금 값이다**(2026-09-25 담당자 지시: 「메인을
+            // Leq·현재 측정되는 값·MAX로」). 셋이 평균 → 지금 → 최대 로
+            // 이어져, 한 줄만 읽어도 소리가 어디에 있는지 알 수 있다.
+            //
+            // 계기의 큰 숫자와 같은 값이다. 겹쳐 보이지만 하는 일이 다르다 —
+            // 계기는 **범위의 어디쯤인지**를 색과 길이로 보이고, 이 타일은
+            // 옆의 둘과 **같은 자리에서 견줄 숫자**를 준다.
+            ValueTile(
+                "현재",
+                formatDb(m.currentSpl),
+                weighting.unitSuffix,
+                Modifier.weight(1f),
+                dim = uncalibrated,
+            )
             ValueTile(
                 "MAX",
                 formatDb(m.maxSpl),
@@ -364,25 +379,41 @@ fun MeasureScreen(
                 Modifier.weight(1f),
                 dim = uncalibrated,
             )
-            // 잘린 피크는 측정값이 아니라 하한이다. 「≥」를 붙여 그 사실을
-            // 숫자 옆에 적는다 — 각주로 미루면 아무도 안 읽는다.
-            //
-            // **단위는 가중과 무관하다.** PEAK 는 가중 전 파형의 최대라
-            // A 로 바꿔도 숫자가 그대로인데, 거기에 dBA 를 붙이면 MAX·Leq 와
-            // 같은 가중의 값처럼 읽힌다. 125Hz 순음에서 A 가중은 16dB 을
-            // 깎지만 PEAK 는 꿈쩍도 안 한다(독립 검증 R10). 클리핑은 입력단의
-            // 사건이라 가중 전에서 재는 것이고, 그래서 표기도 고정이다.
-            // **무엇을 재는 값인지 단위 줄에 적는다**(2026-09-25 PEAK 검토안
-            // 4장). 「PEAK」만 적어 두면 MAX 와 뭐가 다른지 알 수 없다 —
-            // MAX 는 가중·시간가중을 거친 **지속된** 최대이고, 이쪽은
-            // 표본 하나까지 보는 **순간** 최대다. 그래서 둘이 20dB 넘게
-            // 벌어지는 것이 정상이다(`PeakVersusMaxTest`).
-            ValueTile(
-                "PEAK",
-                if (m.peakClipped && m.peakSpl != null) "≥${formatDb(m.peakSpl)}" else formatDb(m.peakSpl),
-                if (m.peakClipped) "잘림 · 순간최고" else "순간최고 · 가중없음",
-                Modifier.weight(1f),
-                dim = uncalibrated,
+        }
+
+        // **PEAK 는 눌러서 본다**(2026-09-25 담당자 지시).
+        //
+        // 예배 음량을 판단하는 데 늘 봐야 하는 값이 아니다 — 그러면서 타일
+        // 한 자리를 차지했고, MAX 와 20~30dB 벌어져 있어 설명 없이는
+        // 오해를 샀다.
+        //
+        // **숨기는 것이 안전한 까닭**은 잘림을 따로 알리기 때문이다. 파형이
+        // 잘리면 바로 아래 경고가 뜨고(`m.anyClipping`), 이 줄도 경고색이
+        // 된다. PEAK 가 화면에서 내려가도 「이 측정은 잘렸다」는 소식은
+        // 내려가지 않는다.
+        var peakOpen by rememberSaveable { mutableStateOf(false) }
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp)
+                .clickable { peakOpen = true }
+                .padding(vertical = 6.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                if (m.peakClipped) "PEAK 순간최고 — 잘렸습니다 · 눌러서 보기" else "PEAK 순간최고 보기",
+                color = if (m.peakClipped) SelahColors.High else SelahColors.TextMuted,
+                fontSize = 11.sp,
+                fontWeight = if (m.peakClipped) FontWeight.SemiBold else FontWeight.Normal,
+            )
+        }
+        if (peakOpen) {
+            PeakDialog(
+                peakSpl = m.peakSpl,
+                clipped = m.peakClipped,
+                uncalibrated = uncalibrated,
+                onClose = { peakOpen = false },
             )
         }
 
@@ -516,6 +547,119 @@ fun MeasureScreen(
             DiagnosticsPanel(it, capture.diagnostics, Modifier.padding(top = 16.dp, bottom = 24.dp))
         }
     }
+}
+
+/**
+ * PEAK 를 눌렀을 때 뜨는 창 — **값과 함께 그 값이 무엇인지 적는다**
+ * (2026-09-25 담당자 지시: 「PEAK의 의미도 설명이 되어야 할 것 같습니다」).
+ *
+ * ## 왜 설명이 필요한가
+ *
+ * PEAK 와 MAX 는 예배당에서 20~30dB 벌어진다(`PeakVersusMaxTest` 에서
+ * 잰 값: 흉내 신호 25.5dB). 설명 없이 두 숫자만 나란히 두면 **둘 중
+ * 하나가 고장 난 것으로 읽힌다** — 실제로 그런 검토 의견이 올라왔다.
+ *
+ * 벌어지는 까닭은 둘이다:
+ * - **가중**: A 가중은 MAX 만 깎는다. PEAK 는 가중 전 파형에서 잰다.
+ * - **시간**: MAX 는 125ms 로 평균한 뒤의 최대라 짧은 충격이 눌린다.
+ *   PEAK 는 표본 하나만 커도 그 값을 그대로 받는다.
+ */
+@Composable
+private fun PeakDialog(
+    peakSpl: Double?,
+    clipped: Boolean,
+    uncalibrated: Boolean,
+    onClose: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onClose,
+        // 배경과 뚜렷이 갈라 놓는다 — 앱 배경과 밝기가 비슷하면 창이 떠
+        // 있는지 구별되지 않는다(담당자 지적으로 정한 규칙).
+        containerColor = SelahColors.DialogSurface,
+        tonalElevation = 0.dp,
+        shape = RoundedCornerShape(20.dp),
+        modifier = Modifier.border(1.dp, SelahColors.Outline, RoundedCornerShape(20.dp)),
+        title = { Text("PEAK — 순간 최고", color = SelahColors.TextPrimary) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(
+                        if (clipped && peakSpl != null) "≥${formatDb(peakSpl)}" else formatDb(peakSpl),
+                        color = if (clipped) SelahColors.High else SelahColors.TextPrimary,
+                        fontSize = 34.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        "  dB · 가중없음",
+                        color = SelahColors.TextMuted,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(bottom = 5.dp),
+                    )
+                }
+
+                Text(
+                    "측정을 시작한 뒤 파형이 닿은 가장 높은 순간입니다. " +
+                        "표본 하나만 커도 그 값이 그대로 남습니다 — 박수 한 번, " +
+                        "마이크를 스치는 소리, 드럼 타격이 여기 걸립니다.",
+                    color = SelahColors.TextSecondary,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
+                )
+
+                Text(
+                    "MAX 와 20~30dB 벌어지는 것이 정상입니다",
+                    color = SelahColors.TextPrimary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    "MAX 는 A 가중을 거치고 125ms 로 평균한 뒤의 최대라 " +
+                        "「이만큼이 이어졌다」를 말합니다. PEAK 는 가중 전 파형의 " +
+                        "순간 최대라 「이만큼까지 닿았다」를 말합니다. 재는 것이 " +
+                        "달라서 생기는 차이이지 고장이 아닙니다.",
+                    color = SelahColors.TextMuted,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                )
+
+                if (clipped) {
+                    Text(
+                        "파형이 잘렸습니다 — 이 값은 측정값이 아니라 하한입니다. " +
+                            "실제로는 더 높았고 얼마나 높았는지는 알 수 없습니다. " +
+                            "그 구간의 Leq·MAX 도 실제보다 낮습니다. 마이크를 " +
+                            "소리원에서 떼어 놓고 다시 재십시오.",
+                        color = SelahColors.High,
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                    )
+                } else {
+                    Text(
+                        "이 값이 풀스케일에 닿으면 파형이 잘렸다는 뜻이고, " +
+                            "그때는 다른 숫자들도 모두 실제보다 낮아집니다. " +
+                            "PEAK 를 두는 까닭이 그것입니다.",
+                        color = SelahColors.TextMuted,
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                    )
+                }
+
+                if (uncalibrated) {
+                    Text(
+                        "지금은 미보정이라 이 숫자도 짐작입니다. 절대 음압은 " +
+                            "기준 소음계나 1kHz 교정기로 맞춘 뒤에야 뜻이 있습니다.",
+                        color = SelahColors.Warn,
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onClose) {
+                Text("닫기", color = SelahColors.Accent)
+            }
+        },
+    )
 }
 
 /**
