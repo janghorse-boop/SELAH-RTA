@@ -152,6 +152,16 @@ class SpectrumFrame(
     val top: SpectrumPeak?,
     /** 몇 번째 보정 곡선으로 계산했는가. 화면이 제 상태와 견준다. */
     val curveGeneration: Long,
+    /**
+     * **몇 번째 장인가.** FFT 한 장마다 하나씩 오른다.
+     *
+     * 화면은 상태가 바뀔 때마다 다시 그려지는데, 그때 **같은 장이 새
+     * 껍데기에 담겨 다시 온다**(`withMeasurement` 가 기본 상태 변화에도
+     * 새 View 를 만든다). 스펙트로그램은 장을 쌓는 화면이라 그것을 구별
+     * 못 하면 같은 순간을 여러 칸에 늘여 그린다 — 시간축이 늘어난다
+     * (독립 검토 UA-04).
+     */
+    val seq: Long,
 )
 
 /**
@@ -182,13 +192,38 @@ fun topSpectrumPeak(
     val to = (highHz / binHz).toInt().coerceAtMost(power.size - 2)
     if (to <= from) return null
 
-    var best = from
-    for (b in from..to) if (power[b] > power[best]) best = b
-    if (power[best] <= 0.0) return null
+    // **보간한 뒤에 범위를 본다**(독립 검토 UA-05).
+    //
+    // 칸을 고르는 범위만 자르는 것으로는 모자랐다. `refineBinHz` 는 이웃
+    // 칸까지 보고 ±0.5칸 옮긴 값을 돌려주므로, 2번 칸(23.44Hz)을 골라도
+    // 17.58Hz 가 나올 수 있다 — 검토자가 19Hz 순음에서 18.99Hz 를
+    // 재현했다. 범위 밖 초저역의 누설이 화면의 「가장 큰 봉우리」를
+    // 차지하던 셈이다.
+    //
+    // **20Hz 로 끌어당기지 않는다.** 그러면 범위 밖 신호가 20Hz 신호로
+    // 둔갑한다. 대신 그 칸을 빼고 **다음으로 큰 것**을 찾는다.
+    //
+    // 경계에 딱 걸친 신호(정확히 20Hz)는 추정 오차 때문에 빠질 수 있다.
+    // 그래도 허용오차를 두지 않는다 — 4096점 FFT 는 20Hz 를 애초에
+    // 분해하지 못하고(칸 폭 11.7Hz), 그 자리의 숫자는 EQ 에 쓸 수 없다.
+    // 빠지면 화면이 다음 봉우리를 말하고, 그것이 더 정직하다.
+    var best = -1
+    var bestPower = 0.0
+    var bestHz = 0.0
+    for (b in from..to) {
+        val p = power[b]
+        if (p <= bestPower) continue
+        val hz = refineBinHz(power, b, binHz)
+        if (hz < lowHz || hz > highHz) continue
+        best = b
+        bestPower = p
+        bestHz = hz
+    }
+    if (best < 0 || bestPower <= 0.0) return null
 
     return SpectrumPeak(
-        hz = refineBinHz(power, best, binHz),
-        dbfs = (10.0 * log10(power[best])).coerceAtLeast(SILENCE_DBFS),
+        hz = bestHz,
+        dbfs = (10.0 * log10(bestPower)).coerceAtLeast(SILENCE_DBFS),
     )
 }
 

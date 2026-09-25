@@ -18,7 +18,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -126,12 +125,21 @@ fun SpectrogramChart(
                         drawRect(SelahColors.Background)
                         if (state.frames > 0) drawSpectrogram(state)
                     }
-                    // 가로축 — 흘러간 시간. 「0」이 지금이다.
+                    // 가로축 — **그 자리에 실제로 놓인 장의 시각**을 적는다.
+                    //
+                    // 예전에는 전체 폭에 `spanMs` 를 고르게 나눠 적었다.
+                    // 그런데 아직 다 차지 않았을 때 그림은 **오른쪽에만**
+                    // 그려지므로, 왼쪽이 빈 상태에서 눈금은 거기에도 시간을
+                    // 적었다 — 720칸 중 360칸일 때 약 18초 틀렸다(독립 검토
+                    // UA-04). 장이 고르게 들어오지 않는 것까지 합치면 가운데
+                    // 눈금은 믿을 수 없었다.
+                    //
+                    // 이제 자리마다 그 칸의 시각을 되찾아 적고, 데이터가
+                    // 없는 자리에는 아무것도 적지 않는다.
                     Canvas(Modifier.width(plotWidth).height(LABEL_ROW_HEIGHT)) {
-                        val spanMs = state.spanMs
-                        if (spanMs <= 0L) return@Canvas
                         for (f in TIME_TICKS) {
-                            val secondsAgo = spanMs * (1.0 - f) / 1000.0
+                            val ago = state.agoMsAt(f) ?: continue
+                            val secondsAgo = ago / 1000.0
                             val label = if (secondsAgo < 0.5) "지금" else "-${secondsAgo.roundToInt()}초"
                             val laid = measurer.measure(
                                 AnnotatedString(label),
@@ -319,8 +327,20 @@ class SpectrogramState(
     var frames: Int by mutableIntStateOf(0)
         private set
 
-    var spanMs: Long by mutableLongStateOf(0L)
-        private set
+    /**
+     * 화면 가로 자리 [fraction](0..1) 에 놓인 장이 **몇 ms 전인가.**
+     * 그 자리에 장이 없으면 null.
+     *
+     * 그림은 아직 다 차지 않았을 때 **오른쪽에만** 그려진다
+     * ([drawSpectrogram]). 눈금도 같은 셈을 써야 가리키는 곳이 맞는다.
+     * 장이 고르게 들어오지 않아도 시각을 되찾으므로 어긋나지 않는다.
+     */
+    fun agoMsAt(fraction: Double): Long? {
+        // **`frames` 를 먼저 읽는다.** 상태 읽기가 있어야 새 장이 들어올 때
+        // 이 그리기가 다시 불린다([SpectrogramTimeline] 은 상태가 아니다).
+        if (frames < 1) return null
+        return timeline.agoMsAt(fraction)
+    }
 
     /**
      * 장 하나를 밀어 넣는다. [columnsDb] 는 **낮은 주파수부터**다.
@@ -350,7 +370,6 @@ class SpectrogramState(
     private fun publish() {
         head = timeline.head
         frames = timeline.size
-        spanMs = timeline.spanMs
     }
 }
 

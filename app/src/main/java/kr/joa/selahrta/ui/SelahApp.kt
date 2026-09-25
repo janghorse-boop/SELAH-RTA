@@ -197,7 +197,14 @@ fun SelahApp() {
         val obs = LifecycleEventObserver { _, event ->
             // 신호는 멈춘다. 예배당에서 순음을 켜 놓고 앱을 나가면 멈출
             // 방법이 화면에 없다. 측정은 조용하지만 신호는 그렇지 않다.
-            if (event == Lifecycle.Event.ON_STOP) vm.onBackground()
+            //
+            // **FR 작업도 함께 끊는다**(독립 검토 UA-03) — 그 작업은 배경을
+            // 다 재면 **스스로** 핑크 잡음을 튼다.
+            when (event) {
+                Lifecycle.Event.ON_STOP -> vm.onBackground()
+                Lifecycle.Event.ON_START -> vm.onForeground()
+                else -> Unit
+            }
         }
         lifecycleOwner.lifecycle.addObserver(obs)
         onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }

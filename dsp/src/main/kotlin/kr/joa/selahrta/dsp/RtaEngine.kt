@@ -100,6 +100,9 @@ class RtaEngine(
     @Volatile
     private var latestSpectrum: SpectrumFrame? = null
 
+    /** 화면 스펙트럼 장 번호. 한 장마다 하나씩 오른다. */
+    private var spectrumSeq = 0L
+
     /**
      * 화면 스펙트럼을 함께 낼 것인가. Spectrum 화면이 열려 있을 때만 켠다.
      *
@@ -261,6 +264,12 @@ class RtaEngine(
      *
      * 그래서 여기서 곡선을 한 번 더 건다. [BandAnalyzer.toBandPower] 가
      * 묶으면서 거는 것과 **같은 계수**이므로 두 그림이 같이 움직인다.
+     *
+     * **「항상 같은 dB 만큼」은 아니다**(독립 검토 2026-09-25의 정정).
+     * 밴드 안에서 계수가 달라지면 전력 **합**과 **최대값**의 이동량은
+     * 일반적으로 다르다. 곡선이 그 대역에서 평평하거나 순음의 주엽에서
+     * 거의 일정할 때만 같다. 여기서 지키는 것은 「같은 보정을 받는다」
+     * 이지 「같은 숫자만큼 움직인다」가 아니다.
      */
     private fun updateSpectrum() {
         val corr = binCorrection
@@ -282,6 +291,7 @@ class RtaEngine(
             // 정밀도가 칸 폭까지 떨어져, 이 화면의 값어치가 없어진다.
             top = topSpectrumPeak(corrected, sampleRateHz, fftSize),
             curveGeneration = curveGeneration,
+            seq = ++spectrumSeq,
         )
     }
 

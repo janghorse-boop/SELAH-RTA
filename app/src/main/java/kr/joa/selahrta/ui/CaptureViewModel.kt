@@ -267,6 +267,14 @@ data class MeasurementSnapshot(
     val rta: RtaFrame?,
     /** 연속 스펙트럼. 화면이 꺼져 있으면 null 이다. */
     val spectrum: SpectrumFrame?,
+    /**
+     * 이 덩어리를 받은 **단조 시각**(ms).
+     *
+     * 스펙트로그램의 가로축이 이 값을 쓴다. 예전에는 화면이 그릴 때의
+     * `System.currentTimeMillis()` 를 썼는데, 그것은 UI 가 밀린 만큼
+     * 어긋나고 벽시계를 바꾸면 뛴다(독립 검토 UA-04).
+     */
+    val atMonotonicMs: Long,
     val anyClipping: Boolean,
     /**
      * 하울링 후보(명세 9장). 센 것부터.
@@ -288,6 +296,10 @@ data class MeasurementSnapshot(
  * 여기서 절대 레벨만 옮긴다.
  */
 class SpectrumView(
+    /** 몇 번째 장인가. 같은 장이 두 번 쌓이는 것을 막는다. */
+    val seq: Long,
+    /** 이 장을 받은 단조 시각(ms). 스펙트로그램의 가로축이 쓴다. */
+    val atMs: Long,
     val columnsSpl: DoubleArray,
     val holdSpl: DoubleArray,
     /** 칸 가운데 주파수. 엔진의 배열을 그대로 가리킨다 — 읽기만 한다. */
@@ -500,13 +512,82 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     private var responseJob: Job? = null
 
     /**
-     * 마지막으로 잰 배경의 밴드 평균.
+     * 마지막으로 잰 배경. **어디서 잰 것인지 함께 붙들고 있다.**
      *
      * **상태에 담지 않는다.** 화면이 쓸 일이 없고, 31칸짜리 배열이 상태
      * 비교에 끼면 화면이 쓸데없이 다시 그려진다. 있는지 없는지만
      * [CaptureUiState.responseQuietReady] 로 알린다.
      */
-    private var responseQuietMean: DoubleArray? = null
+    private var responseQuiet: QuietBackground? = null
+
+    /**
+     * 잰 배경 하나와 **어느 입력에서 쟀는지**.
+     *
+     * ## 왜 표를 붙이는가 (독립 검토 UA-02)
+     *
+     * 예전에는 배열 하나만 들고 있었다. 그래서 입력 A 로 배경을 재고,
+     * 측정을 멈췄다가 입력 B 로 다시 시작해도 「2. 응답 재기」가 그대로
+     * 눌렸다 — **B 의 소리를 A 의 배경과 견주었다.**
+     *
+     * 조용히 틀린다는 것이 나쁘다. 검토자가 실제 `computeRoomResponse` 로
+     * 재 보니, 옛 배경(−70dBFS)을 쓰면 31밴드가 모두 「믿을 수 있음」으로
+     * 나오고 지금 배경(−42dBFS)을 쓰면 아예 밴드가 모자라 실패했다.
+     * 배경에 묻힌 대역을 멀쩡한 응답으로 승인하게 된다.
+     *
+     * 그래서 **쓰기 직전에 맞춰 본다.** 하나라도 다르면 배경을 버린다.
+     */
+    private data class QuietBackground(
+        val meanDb: DoubleArray,
+        /** 어느 캡처 세션에서 쟀는가. 멈췄다 다시 열면 번호가 바뀐다. */
+        val session: Long,
+        /** 어느 기기·채널인가. 마이크가 다르면 배경도 다르다. */
+        val deviceKey: String,
+        val channelIndex: Int,
+        /** 셈의 눈금. 바뀌면 밴드 값의 잣대가 달라진다. */
+        val sampleRate: Int,
+        val fftSize: Int,
+    ) {
+        // DoubleArray 를 든 data class 는 equals 가 참조 비교다. 값 비교를
+        // 할 일이 없으므로 명시해 경고를 없앤다.
+        override fun equals(other: Any?): Boolean = this === other
+        override fun hashCode(): Int = System.identityHashCode(this)
+    }
+
+    /**
+     * 지금 입력이 [responseQuiet] 를 잰 그 입력인가.
+     *
+     * 아니면 배경을 버린다 — 「남아 있는데 못 쓰는 값」은 다음 사람이
+     * 왜 안 되는지 알 수 없다.
+     */
+    private fun usableQuiet(): QuietBackground? {
+        val q = responseQuiet ?: return null
+        val st = controller.baseState.value
+        val opened = st.opened
+        val spec = rtaSpec()
+        val same = opened != null && spec != null &&
+            q.session == st.session &&
+            q.deviceKey == opened.deviceKey &&
+            q.channelIndex == opened.channelIndex &&
+            q.sampleRate == spec.second &&
+            q.fftSize == spec.first
+        if (!same) {
+            responseQuiet = null
+            controller.update { it.copy(responseQuietReady = false) }
+            return null
+        }
+        return q
+    }
+
+    /**
+     * 화면이 앞에 있는가.
+     *
+     * **소리를 내기 직전에 본다.** FR 은 스스로 두 단계를 이어 달리므로,
+     * 배경을 재는 동안 앱을 나가면 **나간 뒤에** 핑크 잡음이 시작될 수
+     * 있었다(독립 검토 UA-03). 작업을 끊는 것과 별개로, 내보내는 자리에서
+     * 한 번 더 본다 — 끊기와 재생 사이에 틈이 있을 수 있다.
+     */
+    @Volatile
+    private var inForeground: Boolean = true
 
     private companion object {
         /**
@@ -644,7 +725,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         if (responseJob?.isActive == true) return
-        if (signal && !quiet && responseQuietMean == null) {
+        if (signal && !quiet && usableQuiet() == null) {
             controller.update { st ->
                 st.copy(responseNoticeKo = "배경을 먼저 재십시오.")
             }
@@ -684,7 +765,20 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     val acc = BandAccumulator(frames.first().size)
                     frames.forEach { acc.add(it) }
-                    responseQuietMean = acc.meanDb()
+                    val openedNow = controller.baseState.value.opened
+                    val meanDb = acc.meanDb()
+                    if (openedNow == null || meanDb == null) {
+                        failResponse("입력이 닫혔습니다. 마이크를 다시 열고 재 보십시오.")
+                        return@launch
+                    }
+                    responseQuiet = QuietBackground(
+                        meanDb = meanDb,
+                        session = controller.baseState.value.session,
+                        deviceKey = openedNow.deviceKey,
+                        channelIndex = openedNow.channelIndex,
+                        sampleRate = spec.second,
+                        fftSize = spec.first,
+                    )
                     controller.update { st -> st.copy(responseQuietReady = true) }
                 }
 
@@ -696,6 +790,15 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 }
 
                 // 2단계 — 소리. 이 폰이 낼지는 사람이 정한다.
+                //
+                // **앞에 없으면 여기서 멈춘다**(독립 검토 UA-03). 배경을
+                // 재는 3초 사이에 홈으로 나가면, 예전에는 살아 있는 이
+                // 작업이 나간 뒤에 핑크 잡음을 틀었다 — 화면에 멈출 방법이
+                // 없는 채로 예배당에서 소리가 난다.
+                if (!inForeground) {
+                    failResponse("화면을 나가서 멈췄습니다. 다시 「응답 재기」를 누르십시오.")
+                    return@launch
+                }
                 val playHere = controller.baseState.value.responsePlayHere
                 if (playHere) playSignal(TestSignal.Pink, MEASURE_AMPLITUDE)
                 controller.update { st ->
@@ -713,7 +816,14 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                     return@launch
                 }
 
-                computeRoomResponse(signalFrames, responseQuietMean).fold(
+                // **쓰기 직전에 한 번 더 맞춰 본다.** 배경을 잰 뒤 이 줄에
+                // 닿기까지 10초가 흐르고, 그 사이에 기기가 바뀔 수 있다.
+                val quietNow = usableQuiet()
+                if (quietNow == null) {
+                    failResponse("입력이 바뀌어 배경을 다시 재야 합니다.")
+                    return@launch
+                }
+                computeRoomResponse(signalFrames, quietNow.meanDb).fold(
                     onSuccess = { res ->
                         controller.update { st ->
                             st.copy(
@@ -924,8 +1034,29 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      * 했고, PA 에 물려 있으면 회중이 듣는다. 측정은 조용하지만 신호는
      * 그렇지 않다.
      */
+    /**
+     * 화면이 뒤로 갔다. **소리를 내는 모든 것을 멈춘다.**
+     *
+     * 예전에는 `stopSignal()` 뿐이었다. 그런데 FR 작업은
+     * `viewModelScope` 에 있어 살아남고, 배경 70장이 모이면 **스스로**
+     * 핑크 잡음을 틀었다(독립 검토 UA-03). 「백그라운드에서는 소리만
+     * 멈춘다」는 이 앱의 약속이 거기서 깨졌다.
+     *
+     * 측정 자체는 멈추지 않는다 — 포그라운드 서비스가 마이크를 붙들고
+     * 있고, 그것이 조용한 일이기 때문이다.
+     *
+     * **돌아와도 저절로 이어지지 않는다.** 소리를 내는 일은 사람이 다시
+     * 눌러야 한다.
+     */
     fun onBackground() {
+        inForeground = false
         stopSignal()
+        cancelResponse()
+    }
+
+    /** 화면이 앞으로 돌아왔다. 멈춘 것을 저절로 되살리지는 않는다. */
+    fun onForeground() {
+        inForeground = true
     }
 
     /** 세기를 바꾼다. 내보내는 중이면 그 자리에서 바꿔 끼운다. */
@@ -1411,7 +1542,7 @@ internal fun CaptureUiState.withMeasurement(m: MeasurementSnapshot?): CaptureUiS
         // 프레임이 **그 곡선으로 계산된 것일 때만** 보정 적용이라고 적는다.
         feedback = m.feedback,
         feedbackLog = m.feedbackLog,
-        spectrum = m.spectrum?.toView(offset.db) ?: spectrum,
+        spectrum = m.spectrum?.toView(offset.db, m.atMonotonicMs) ?: spectrum,
         rta = m.rta?.toView(
             offsetDb = offset.db,
             // 꺼 둔 곱선은 그리지도 않는다 — 엔진이 안 걸고 있는데 그리면
@@ -1436,7 +1567,9 @@ internal fun CaptureUiState.withMeasurement(m: MeasurementSnapshot?): CaptureUiS
  * 마이크 곡선은 여기서 걸지 않는다 — 엔진이 칸마다 이미 걸었다. 두 번
  * 걸면 고역이 곡선만큼 더 깎인다.
  */
-private fun SpectrumFrame.toView(offsetDb: Double) = SpectrumView(
+private fun SpectrumFrame.toView(offsetDb: Double, atMs: Long) = SpectrumView(
+    seq = seq,
+    atMs = atMs,
     columnsSpl = DoubleArray(columnsDbfs.size) { columnsDbfs[it] + offsetDb },
     holdSpl = DoubleArray(holdDbfs.size) { holdDbfs[it] + offsetDb },
     hz = hz,
