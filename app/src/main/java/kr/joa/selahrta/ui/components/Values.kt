@@ -32,7 +32,16 @@ import kr.joa.selahrta.ui.theme.SelahColors
 const val NO_VALUE = "—"
 
 /** 숫자를 보여주되, 없으면 없다고 보여준다. */
-fun formatDb(value: Double?, decimals: Int = 1): String =
+/**
+ * 음압을 화면에 적는다. **소수점 없이 정수 dB 로**(2026-09-25 담당자 지시).
+ *
+ * 소수 한 자리는 **없는 정밀도를 주장한다.** 2급 소음계의 허용오차가
+ * ±1.5dB 이고, 이 앱은 보정 전이면 그보다 훨씬 크게 틀릴 수 있다. 그런
+ * 값에 0.1dB 을 적어 두면 읽는 사람이 그만큼 믿게 된다.
+ *
+ * 덤으로 화면도 조용해진다 — 끝자리가 쉴 새 없이 바뀌던 것이 멎는다.
+ */
+fun formatDb(value: Double?, decimals: Int = 0): String =
     value?.let { String.format("%.${decimals}f", it) } ?: NO_VALUE
 
 /**
@@ -158,6 +167,26 @@ fun levelColor(db: Double?, low: Double?, high: Double?): Color? {
 
 /** 색이 건너가는 폭(dB). 재서 고른 값이 아니다. */
 const val FADE_DB: Double = 5.0
+
+/**
+ * 같은 판정을 **섞지 않고 셋 중 하나로** 돌려준다.
+ *
+ * [levelColor] 는 경계에서 색을 5dB 에 걸쳐 섞는다 — 계기처럼 순간마다
+ * 크게 튀는 값에는 그래야 경계에서 색이 깜박이지 않는다.
+ *
+ * **Leq 는 사정이 다르다.** 느리게 움직이는 값이라 깜박일 일이 없고,
+ * 이쪽은 「범위에 드는가」를 실제로 판정하는 자리다(2026-09-25 담당자 지시:
+ * 「아래면 노란색, 범위이면 녹색, 초과하면 빨간색」). 섞으면 범위 바로
+ * 아래가 초록에 가깝게 보여 판정이 흐려진다.
+ */
+fun levelColorSteps(db: Double?, low: Double?, high: Double?): Color? {
+    if (db == null || low == null || high == null) return null
+    return when {
+        db < low -> SelahColors.Low
+        db > high -> SelahColors.High
+        else -> SelahColors.InRange
+    }
+}
 
 /** 화면 위쪽 한 줄 안내. 경고가 아니라 사실을 알리는 자리다. */
 @Composable

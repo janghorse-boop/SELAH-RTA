@@ -67,6 +67,7 @@ import kr.joa.selahrta.ui.components.NO_VALUE
 import kr.joa.selahrta.ui.components.ValueTile
 import kr.joa.selahrta.ui.components.formatDb
 import kr.joa.selahrta.ui.components.levelColor
+import kr.joa.selahrta.ui.components.levelColorSteps
 import kr.joa.selahrta.ui.components.levelSpeechKo
 import kr.joa.selahrta.ui.components.levelStateKo
 import kr.joa.selahrta.ui.nav.ViewMode
@@ -372,10 +373,19 @@ fun MeasureScreen(
                 // **권장 범위와 견줄 수 있는 것은 이 값이다.**
                 //
                 // 권장 범위는 시간평균(LAeq) 기준으로 정해져 있다
-                // ([kr.joa.selahrta.domain.SegmentRange]). 창이 안 찼으면
-                // 칠하지 않는다 — 10초치를 1분 평균인 양 판정하는 것이다.
-                valueColor = if (canJudge && m.leqLongFull) {
-                    levelColor(m.leqLong, range?.avgLowDb, range?.avgHighDb)
+                // ([kr.joa.selahrta.domain.SegmentRange]).
+                //
+                // **창이 차기 전에도 칠한다**(2026-09-25 담당자 지시).
+                // 예전에는 1분이 다 차야 색이 들어왔는데, 예배 중에 1분을
+                // 아무 신호 없이 기다리는 것은 길다. 지금까지 모인 평균이
+                // 범위의 어디인지는 **그 자체로 참인 정보**이고, 아직
+                // 짧다는 사실은 아래 「모으는 중」이 그대로 말한다.
+                //
+                // **색을 섞지 않는다**(`levelColorSteps`). Leq 는 느리게
+                // 움직여 경계에서 깜박일 일이 없고, 섞으면 범위 바로 아래가
+                // 초록에 가깝게 보여 판정이 흐려진다.
+                valueColor = if (canJudge) {
+                    levelColorSteps(m.leqLong, range?.avgLowDb, range?.avgHighDb)
                 } else {
                     null
                 },
