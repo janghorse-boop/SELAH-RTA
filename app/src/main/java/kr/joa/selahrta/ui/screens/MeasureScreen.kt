@@ -149,33 +149,60 @@ fun MeasureScreen(
                             "낮게 나옵니다."
                     else -> null
                 }
+                // **소리를 실제로 건드리고 있을 때만 띄운다**(2026-09-25
+                // 담당자 지시: 「가공 없는 입력이 아닙니다… 박스 삭제해
+                // 주세요. 미보정 상태는 우측 상단에 표기가 되어 있어서」).
+                //
+                // 맞는 정리다. 그 문구가 하던 말 — 「절대 음압은 기준
+                // 소음계와 맞춰 봐야 합니다」 — 는 **미보정 배지가 이미
+                // 하고 있다.** 같은 말을 두 곳에서 하면서 예배 내내 두
+                // 줄을 차지했다. 어느 입력 경로로 열렸는지는 아래 진단
+                // 패널의 「입력 경로」에 그대로 남는다.
+                //
+                // **AGC·잡음억제·반향제거가 켜진 채인 것은 다른 이야기라
+                // 남긴다.** 그건 「아직 안 맞췄다」가 아니라 **지금 소리를
+                // 바꾸고 있다**는 뜻이라, 보정을 마친 경로에서도 숫자를
+                // 틀리게 만든다. 미보정 배지가 대신 말해 주지 못한다.
+                val effectsOn = f?.effects?.stillOn.orEmpty()
                 val tone = when {
                     warming != null -> SelahColors.Warn
-                    f?.trustIsWarning == true -> SelahColors.Warn
+                    effectsOn.isNotEmpty() -> SelahColors.Warn
                     else -> SelahColors.InRange
                 }
-                if (warming != null || f == null) {
-                    InfoBar(warming ?: "재고 있습니다.", Modifier.padding(top = 4.dp, bottom = 12.dp), tone = tone)
-                } else {
-                    // **한 줄로 접어 둔다.** 세 줄짜리 안내가 예배 내내
-                    // 자리를 차지해 숫자와 버튼을 아래로 밀었다(기기에서
-                    // 확인). 눌러서 펴면 원래 문구가 그대로 나온다 —
-                    // 줄이되 지우지 않는다.
-                    var expanded by rememberSaveable { mutableStateOf(false) }
-                    InfoBar(
-                        if (expanded) f.trustNoteKo else f.trustShortKo,
-                        Modifier
-                            .padding(top = 4.dp, bottom = 12.dp)
-                            .then(
-                                if (f.trustHasDetail) {
-                                    Modifier.clickable { expanded = !expanded }
-                                } else {
-                                    Modifier
-                                }
-                            ),
+                when {
+                    warming != null || f == null -> InfoBar(
+                        warming ?: "재고 있습니다.",
+                        Modifier.padding(top = 4.dp, bottom = 12.dp),
                         tone = tone,
-                        trailingKo = if (!f.trustHasDetail) null else if (expanded) "접기" else "자세히",
                     )
+
+                    effectsOn.isNotEmpty() -> {
+                        var expanded by rememberSaveable { mutableStateOf(false) }
+                        InfoBar(
+                            if (expanded) f.trustNoteKo else f.trustShortKo,
+                            Modifier
+                                .padding(top = 4.dp, bottom = 12.dp)
+                                .then(
+                                    if (f.trustHasDetail) {
+                                        Modifier.clickable { expanded = !expanded }
+                                    } else {
+                                        Modifier
+                                    }
+                                ),
+                            tone = tone,
+                            trailingKo = if (!f.trustHasDetail) {
+                                null
+                            } else if (expanded) {
+                                "접기"
+                            } else {
+                                "자세히"
+                            },
+                        )
+                    }
+
+                    // 그 밖에는 띄우지 않는다. 재고 있다는 것은 계기가
+                    // 움직이는 것으로 이미 보인다.
+                    else -> Unit
                 }
             }
 
@@ -662,39 +689,49 @@ private fun RangeCard(
             .padding(vertical = 10.dp, horizontal = 14.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+        // **글자는 왼쪽에 쌓고 알약은 오른쪽에, 세로 가운데로 맞춘다**
+        // (2026-09-25 담당자 지시). 예전에는 라벨과 알약이 한 줄, 숫자가
+        // 그 아래 한 줄이라 상자가 두 줄 높이를 썼다. 알약이 숫자 옆으로
+        // 오면 **상자가 한 줄만큼 낮아진다** — 그만큼 아래가 올라온다.
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                "권장 범위" + if (isCustom) " (고친 값)" else "",
-                color = SelahColors.TextMuted,
-                fontSize = 11.sp,
-            )
-            SegmentPills(segment, onSegment)
-        }
-        if (range == null) {
-            Text(
-                "이 구간에는 권장 범위가 없습니다.",
-                color = SelahColors.TextSecondary,
-                fontSize = 13.sp,
-            )
-        } else {
-            Row(verticalAlignment = Alignment.Bottom) {
+            Column(
+                Modifier.weight(1f).padding(end = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
                 Text(
-                    "${range.avgLowDb.toInt()} ~ ${range.avgHighDb.toInt()} dBA",
-                    color = SelahColors.TextPrimary,
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Bold,
-                )
-                Text(
-                    "  Leq($leqLabelKo) 기준",
+                    "권장 범위" + if (isCustom) " (고친 값)" else "",
                     color = SelahColors.TextMuted,
                     fontSize = 11.sp,
-                    modifier = Modifier.padding(bottom = 3.dp),
                 )
+                if (range == null) {
+                    Text(
+                        "이 구간에는 권장 범위가 없습니다.",
+                        color = SelahColors.TextSecondary,
+                        fontSize = 13.sp,
+                    )
+                } else {
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        Text(
+                            "${range.avgLowDb.toInt()} ~ ${range.avgHighDb.toInt()} dBA",
+                            color = SelahColors.TextPrimary,
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.Bold,
+                            softWrap = false,
+                        )
+                        Text(
+                            "  Leq($leqLabelKo) 기준",
+                            color = SelahColors.TextMuted,
+                            fontSize = 11.sp,
+                            modifier = Modifier.padding(bottom = 3.dp),
+                        )
+                    }
+                }
             }
+            SegmentPills(segment, onSegment)
         }
         if (showFocus) {
             Text(
