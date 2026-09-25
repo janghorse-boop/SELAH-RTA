@@ -366,12 +366,21 @@ fun SpectrogramScreen(
     val state = remember { SpectrogramState(SpectrumAxis.DEFAULT_COLUMNS, SPECTROGRAM_FRAMES) }
     var frozen by remember { mutableStateOf(false) }
 
-    // 장이 새로 오면 한 줄 밀어 넣는다. `SpectrumView` 는 장마다 다른
-    // 객체라(동일성 비교) 이 키가 곧 「새 장이 왔는가」다.
+    // 장이 새로 오면 한 줄 밀어 넣는다.
+    //
+    // **객체가 아니라 장 번호를 본다**(독립 검토 UA-04). `SpectrumView` 는
+    // 같은 FFT 한 장이라도 기본 상태가 바뀌면 새 껍데기로 다시 온다
+    // (`withMeasurement`). 객체를 키로 쓰면 같은 순간이 여러 칸에 늘여
+    // 그려져 시간축이 부풀었다.
+    //
+    // 시각도 **덩어리를 받은 단조 시각**을 쓴다. 그릴 때의 벽시계를 쓰면
+    // UI 가 밀린 만큼 어긋나고, 시계를 바꾸면 뛴다.
     val spectrum = capture.spectrum
-    LaunchedEffect(spectrum, frozen) {
-        if (!frozen && spectrum != null) {
-            state.push(spectrum.columnsSpl, System.currentTimeMillis())
+    var lastSeq by remember { mutableStateOf(-1L) }
+    LaunchedEffect(spectrum?.seq, frozen) {
+        if (!frozen && spectrum != null && spectrum.seq > lastSeq) {
+            lastSeq = spectrum.seq
+            state.push(spectrum.columnsSpl, spectrum.atMs)
         }
     }
 

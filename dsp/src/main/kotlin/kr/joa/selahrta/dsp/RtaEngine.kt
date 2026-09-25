@@ -100,6 +100,9 @@ class RtaEngine(
     @Volatile
     private var latestSpectrum: SpectrumFrame? = null
 
+    /** 화면 스펙트럼 장 번호. 한 장마다 하나씩 오른다. */
+    private var spectrumSeq = 0L
+
     /**
      * 화면 스펙트럼을 함께 낼 것인가. Spectrum 화면이 열려 있을 때만 켠다.
      *
@@ -282,6 +285,7 @@ class RtaEngine(
             // 정밀도가 칸 폭까지 떨어져, 이 화면의 값어치가 없어진다.
             top = topSpectrumPeak(corrected, sampleRateHz, fftSize),
             curveGeneration = curveGeneration,
+            seq = ++spectrumSeq,
         )
     }
 

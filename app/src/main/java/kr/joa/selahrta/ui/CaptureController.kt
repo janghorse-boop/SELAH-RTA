@@ -561,6 +561,8 @@ class CaptureController(
             spl = splFrame,
             rta = session.rta.frame(),
             spectrum = session.rta.spectrumFrame(),
+            // **덩어리를 받은 때**다. 화면이 그릴 때가 아니다.
+            atMonotonicMs = block.monotonicNs / 1_000_000,
             anyClipping = session.clippedBlocks > 0,
             feedback = session.feedback.candidates,
             feedbackLog = session.feedback.events,

@@ -2,6 +2,7 @@ package kr.joa.selahrta.dsp
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -66,6 +67,60 @@ class SpectrogramTest {
             blocked = true
         }
         assertTrue("없는 장을 그냥 돌려줬다", blocked)
+    }
+
+    /**
+     * **UA-04** — 아직 다 차지 않았을 때 눈금이 데이터와 다른 자리를 가리켰다.
+     *
+     * 720칸 중 360칸을 100ms 간격으로 넣으면 실제 폭은 35.9초다. 그림은
+     * 오른쪽 절반에만 그려지므로 가장 오래된 장은 화면 한가운데 있다.
+     * 그런데 예전 눈금은 전체 폭에 폭을 나눠 한가운데를 「−18초」라고 적었다.
+     */
+    @Test
+    fun `절반만 찼을 때 눈금이 데이터 자리를 가리킨다`() {
+        val t = SpectrogramTimeline(capacity = 720)
+        for (i in 0 until 360) t.push(i * 100L)
+
+        assertEquals("가장 최근", 0L, t.agoMsAt(1.0))
+        // 왼쪽 절반에는 장이 없다 — 시간을 적으면 안 된다.
+        assertNull("빈 자리에 시간을 적었다", t.agoMsAt(0.25))
+        assertNull(t.agoMsAt(0.49))
+        // 한가운데가 가장 오래된 장이다. 35.9초 전이지 18초 전이 아니다.
+        assertEquals("가장 오래된 장", 35_900L, t.agoMsAt(0.5)!!.toLong())
+    }
+
+    /**
+     * 장이 고르게 들어오지 않아도 눈금이 맞아야 한다. 칸 번호로 되돌린 뒤
+     * **그 칸의 시각**을 읽기 때문이다.
+     */
+    @Test
+    fun `띄엄띄엄 들어와도 그 칸의 시각을 읽는다`() {
+        val t = SpectrogramTimeline(capacity = 4)
+        // 간격이 10 · 1000 · 10 ms 로 제각각이다.
+        t.push(0L)
+        t.push(10L)
+        t.push(1_010L)
+        t.push(1_020L)
+
+        assertEquals(0L, t.agoMsAt(1.0))
+        assertEquals("한 칸 앞", 10L, t.agoMsAt(2.0 / 3.0))
+        assertEquals("두 칸 앞 — 폭으로 나누면 틀린다", 1_010L, t.agoMsAt(1.0 / 3.0))
+        assertEquals("가장 오래된 장", 1_020L, t.agoMsAt(0.0))
+    }
+
+    @Test
+    fun `가득 차면 왼쪽 끝부터 데이터가 있다`() {
+        val t = SpectrogramTimeline(capacity = 3)
+        for (i in 1..5) t.push(i * 10L)
+        assertEquals(0L, t.agoMsAt(1.0))
+        assertEquals("맨 왼쪽도 장이 있다", 20L, t.agoMsAt(0.0))
+    }
+
+    @Test
+    fun `장이 없으면 눈금도 없다`() {
+        val t = SpectrogramTimeline(capacity = 4)
+        assertNull(t.agoMsAt(0.0))
+        assertNull(t.agoMsAt(1.0))
     }
 
     private fun sweep(): List<Int> =

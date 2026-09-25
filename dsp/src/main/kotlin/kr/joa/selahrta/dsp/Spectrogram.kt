@@ -1,5 +1,7 @@
 package kr.joa.selahrta.dsp
 
+import kotlin.math.roundToInt
+
 /**
  * 스펙트로그램에 쌓인 장들의 **시각**을 담는 고리.
  *
@@ -46,6 +48,33 @@ class SpectrogramTimeline(
 
     /** 화면에 든 시간 폭(ms). 두 장이 안 되면 0. */
     val spanMs: Long get() = if (size < 2) 0L else timeAt(0) - timeAt(size - 1)
+
+    /**
+     * 화면 가로 자리 [fraction](0..1) 에 놓인 장이 **몇 ms 전인가.**
+     * 그 자리에 장이 없으면 null.
+     *
+     * ## 왜 폭으로 나누지 않는가 (독립 검토 UA-04)
+     *
+     * 그림은 **가득 차기 전에는 오른쪽에만** 그려진다 — 왼쪽을 비워 두어야
+     * 「아직 이만큼밖에 안 쌓였다」가 보인다. 그런데 눈금은 전체 폭에
+     * `spanMs` 를 고르게 나눠 적고 있었다. 720칸 중 360칸일 때 **약 18초**
+     * 틀렸다.
+     *
+     * 게다가 장은 고르게 들어오지 않는다(화면 갱신 간격·기기 부하). 폭으로
+     * 셈하면 바쁜 구간에서 또 어긋난다.
+     *
+     * 그래서 자리를 **칸 번호로 되돌린 뒤 그 칸의 시각을 읽는다.** 두 가지가
+     * 한꺼번에 맞는다.
+     */
+    fun agoMsAt(fraction: Double): Long? {
+        if (size < 1) return null
+        val filled = size.toDouble() / capacity
+        val start = 1.0 - filled
+        if (fraction < start) return null
+        val fromOldest = ((fraction - start) / filled) * (size - 1)
+        val age = ((size - 1) - fromOldest).roundToInt().coerceIn(0, size - 1)
+        return timeAt(0) - timeAt(age)
+    }
 
     fun clear() {
         head = 0
