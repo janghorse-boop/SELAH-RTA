@@ -26,8 +26,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kr.joa.selahrta.calibration.ActiveCalibration
+import kr.joa.selahrta.calibration.ActiveCurve
 import kr.joa.selahrta.calibration.CalibrationSource
 import kr.joa.selahrta.domain.ChurchSegment
 import kr.joa.selahrta.domain.SEGMENT_CAUTIONS
@@ -119,6 +122,8 @@ fun SettingsScreen(
             openedKey = capture.opened?.takeIf { it.routeConfirmed }?.deviceKey,
             running = capture.measure is MeasureState.Running,
             known = capture.meterSettings.knownDevices,
+            calibration = capture.calibration,
+            curve = capture.curve,
             onPick = onPreferredInput,
             onForget = onForgetDevice,
         )
@@ -186,12 +191,6 @@ fun SettingsScreen(
             "샘플레이트 / 형식",
             capture.inputForDisplay?.let { "${it.sampleRate} Hz · ${it.encoding.bitsLabel}" } ?: "—",
         )
-        SettingRow(
-            "보정 상태",
-            capture.calibration.state.labelKo,
-            warn = capture.calibration.isReferenceOnly,
-        )
-
         CalibrationCard(
             capture = capture,
             onSave = onSaveCalibration,
@@ -323,6 +322,80 @@ fun SettingsScreen(
  * **「자동」도 하나의 선택지로 둔다.** 목록에서 고르기만 하게 하면,
  * 나중에 그 기기를 안 쓸 때 되돌릴 방법이 없다.
  */
+/**
+ * 기기 카드 안에 적는 **그 기기의 보정 상태**(2026-09-25 담당자 지시).
+ *
+ * ## 왜 기기 카드 안인가
+ *
+ * 보정은 **기기마다** 따로 있다. 그런데 상태는 저 아래 「보정」 구역에
+ * 따로 떠 있어서, 어느 기기의 이야기인지 이어지지 않았다 — 기기를 바꾸고도
+ * 위쪽 숫자를 그 기기의 것으로 읽게 된다.
+ *
+ * ## 둘을 갈라서 적는다
+ *
+ * **절대 레벨 보정과 주파수 보정은 다른 일이다**(CLAUDE.md §6). 하나로
+ * 뭉쳐 「보정됨」이라고 적으면, 곡선만 넣고 절대 음압까지 맞은 줄 안다.
+ * 교정기는 1kHz 한 점의 크기만 맞추고, 곡선은 주파수마다 얼마나 더·덜
+ * 잡는지를 되돌린다 — 둘 다 있어야 숫자를 믿을 수 있다.
+ */
+@Composable
+private fun DeviceCalibration(
+    deviceLabel: String,
+    calibration: ActiveCalibration,
+    curve: ActiveCurve?,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 6.dp)
+            .background(SelahColors.SurfaceVariant, RoundedCornerShape(8.dp))
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            "이 기기의 보정 · $deviceLabel",
+            color = SelahColors.TextMuted,
+            fontSize = 10.sp,
+        )
+        CalibRow(
+            "절대 레벨",
+            calibration.state.labelKo,
+            warn = calibration.isReferenceOnly,
+        )
+        CalibRow(
+            "주파수 곡선",
+            when {
+                curve == null -> "없음"
+                // **파일이 있는 것과 걸려 있는 것은 다르다.** 꺼 두었으면
+                // 「적용됨」이 아니다.
+                !curve.enabled -> "${curve.fileName} · 꺼 둠"
+                else -> "${curve.fileName} · 걸림"
+            },
+            warn = curve == null || !curve.enabled,
+        )
+    }
+}
+
+/** 이름과 값 한 줄. 색만으로 알리지 않으려고 값을 글자로 적는다(명세 11장). */
+@Composable
+private fun CalibRow(label: String, value: String, warn: Boolean) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, color = SelahColors.TextMuted, fontSize = 11.sp, softWrap = false)
+        Text(
+            value,
+            color = if (warn) SelahColors.Warn else SelahColors.InRange,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.End,
+            modifier = Modifier.padding(start = 10.dp),
+        )
+    }
+}
+
 @Composable
 private fun InputDevicePicker(
     inputs: List<InputDeviceInfo>,
@@ -336,6 +409,10 @@ private fun InputDevicePicker(
     running: Boolean,
     /** 한 번이라도 연결됐던 기기들. 지금 없는 것은 흐리게 보여 준다. */
     known: List<KnownDevice>,
+    /** 지금 숫자가 나오는 경로의 절대 레벨 보정. */
+    calibration: ActiveCalibration,
+    /** 그 경로에 걸린 주파수 보정 곡선. 없으면 null. */
+    curve: ActiveCurve?,
     onPick: (String?) -> Unit,
     /** 기억에서 지운다. */
     onForget: (String) -> Unit,
@@ -434,6 +511,21 @@ private fun InputDevicePicker(
                 color = SelahColors.TextMuted,
                 fontSize = 10.sp,
                 modifier = Modifier.padding(top = 4.dp),
+            )
+            // **보정 상태를 기기 카드 안에서 말한다**(2026-09-25 담당자 지시).
+            //
+            // 보정은 **기기마다** 따로 있는데, 상태는 저 아래 「보정」 구역에
+            // 따로 떠 있었다. 어느 기기의 이야기인지 이어지지 않아, 기기를
+            // 바꾸고도 위쪽 숫자를 그 기기의 것으로 읽게 된다.
+            //
+            // **고른 기기가 아니라 열린 기기의 것이다.** 재는 도중에 다른
+            // 기기를 고르면 그것은 다음 시작에야 쓰이므로(바로 위 경고),
+            // 여기 적는 값은 지금 숫자가 나오고 있는 경로의 것이다. 그래서
+            // 제목에 기기 이름을 함께 적는다.
+            DeviceCalibration(
+                deviceLabel = openedLabel ?: lastLabel.orEmpty(),
+                calibration = calibration,
+                curve = curve,
             )
         }
         if (running) {
