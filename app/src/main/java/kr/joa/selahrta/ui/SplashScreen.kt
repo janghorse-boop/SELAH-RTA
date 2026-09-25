@@ -165,8 +165,11 @@ fun SplashScreen(onDone: () -> Unit) {
             )
             Spacer(Modifier.height(6.dp))
             Text(
-                "Jesus On Air (JOA)",
-                // 팀 이름이라 한 단계 밝힌다 — TextMuted 로는 거의 안 보였다.
+                // 회사 이름이다(2026-09-25 담당자 지시로 「Jesus On Air (JOA)」
+                // 에서 바꿨다). 한글과 영문을 함께 적는다 — 스토어·문서에서
+                // 둘 다 쓰이므로 한쪽만 적으면 같은 곳인지 알기 어렵다.
+                "조아웍스 | JOA Works",
+                // 회사 이름이라 한 단계 밝힌다 — TextMuted 로는 거의 안 보였다.
                 color = SelahColors.TextSecondary,
                 fontSize = 12.sp,
                 letterSpacing = 1.sp,

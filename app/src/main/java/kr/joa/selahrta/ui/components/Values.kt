@@ -93,13 +93,28 @@ fun ValueTile(
     val hasValue = value != NO_VALUE
     Column(
         modifier = modifier
+            // **강조 상자의 바탕은 판정을 따른다**(2026-09-25 담당자 지시:
+            // 「권장 범위일 경우에 배경색은 다른 박스와 다르게」).
+            //
+            // 값의 색만 바꾸면 글자 한 줄이고, 흘끗 볼 때는 **면이 먼저
+            // 눈에 든다.** 바탕을 같은 색으로 아주 옅게 깔면 멀리서도
+            // 「초록 상자 = 범위 안」으로 읽힌다.
+            //
+            // 아주 옅게(14%) 두는 까닭은, 진하면 그 위의 숫자가 묻히고
+            // 화면에 색이 두 번 크게 나와 어느 쪽을 읽을지 흩어지기
+            // 때문이다. 담당자 말대로 「살짝」이면 된다.
             .background(
-                if (highlight) SelahColors.Accent.copy(alpha = 0.10f) else SelahColors.Surface,
+                when {
+                    highlight && valueColor != null -> valueColor.copy(alpha = 0.14f)
+                    highlight -> SelahColors.Accent.copy(alpha = 0.10f)
+                    else -> SelahColors.Surface
+                },
                 RoundedCornerShape(12.dp),
             )
             .border(
                 if (highlight) 2.dp else 1.dp,
                 when {
+                    highlight && valueColor != null -> valueColor
                     highlight -> SelahColors.Accent
                     onClick != null -> SelahColors.TextMuted
                     else -> SelahColors.Outline
@@ -114,7 +129,11 @@ fun ValueTile(
         Text(
             label,
             fontSize = 11.sp,
-            color = if (highlight) SelahColors.Accent else SelahColors.TextSecondary,
+            color = when {
+                highlight && valueColor != null -> valueColor
+                highlight -> SelahColors.Accent
+                else -> SelahColors.TextSecondary
+            },
             fontWeight = if (highlight) FontWeight.SemiBold else FontWeight.Normal,
             textAlign = TextAlign.Center,
         )
