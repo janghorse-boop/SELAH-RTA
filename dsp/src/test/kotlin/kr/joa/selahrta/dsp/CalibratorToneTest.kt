@@ -108,3 +108,111 @@ class CalibratorToneTest {
         assertFalse("넓은 소리를 교정기로 받아들였다", r.ok)
     }
 }
+
+/**
+ * **순음이 아예 없을 때를 가려낸다**(2026-09-25 담당자 지적).
+ *
+ * 교정기를 안 끼운 상태에서는 그때그때 가장 큰 잡음 대역이 「가장 큰
+ * 소리」로 뽑혔고, 그 이름이 화면에서 한 프레임마다 바뀌었다 —
+ * 20Hz·25Hz·20kHz. 고장처럼 보인다.
+ *
+ * 「엉뚱한 자리에 순음이 있다」와 「순음이 아예 없다」는 다른 사실이고,
+ * 뒤쪽이면 적을 자리 이름이 없다.
+ */
+class CalibratorToneAbsenceTest {
+
+    private val n = ThirdOctave.BAND_COUNT
+
+    /** 방 소리 — 저역이 조금 높고 이웃끼리 몇 dB 안에서 오르내린다. */
+    private fun roomNoise(seed: Int): DoubleArray {
+        val rng = kotlin.random.Random(seed)
+        return DoubleArray(n) { i ->
+            // 저역이 높은 기울기 + 밴드마다 ±3dB 흔들림
+            60.0 - i * 0.8 + rng.nextDouble(-3.0, 3.0)
+        }
+    }
+
+    /** 방 소리에서 「가장 큰 밴드가 나머지보다 얼마나 솟는가」를 재 본다. */
+    @Test
+    fun `방 소리의 솟음 분포`() {
+        val v = (0 until 200).map { seed ->
+            val b = roomNoise(seed)
+            val loudest = b.indices.maxBy { b[it] }
+            b[loudest] - b.indices.filter { it != loudest }.maxOf { b[it] }
+        }.sorted()
+        println(
+            "[교정기] 방 소리 솟음 · 중앙 %.1f · 95%% %.1f · 최대 %.1f dB"
+                .format(v[v.size / 2], v[(v.size * 95) / 100], v.last()),
+        )
+    }
+
+    @Test
+    fun `방 소리에서는 순음이 없다고 본다`() {
+        repeat(20) { seed ->
+            val c = checkCalibratorTone(roomNoise(seed))
+            assertFalse("seed=$seed 에서 순음으로 봤다", c.hasTone)
+            assertFalse(c.ok)
+        }
+    }
+
+    /**
+     * **문구가 프레임마다 바뀌지 않는다.**
+     *
+     * 이것이 담당자가 본 증상이다. 같은 성질의 잡음을 여러 장 넣었을 때
+     * 나오는 문구가 하나뿐이어야 한다.
+     */
+    @Test
+    fun `방 소리에서 문구가 흔들리지 않는다`() {
+        val reasons = (0 until 50).map { checkCalibratorTone(roomNoise(it)).reasonKo }.toSet()
+        assertEquals("문구가 여러 가지면 화면이 흔들린다: $reasons", 1, reasons.size)
+        assertTrue(
+            "자리 이름을 적으면 안 된다: ${reasons.first()}",
+            reasons.first()?.contains("Hz 에 있습니다") != true,
+        )
+    }
+
+    /** 교정기를 제대로 끼우면 순음이 있다고 보고 통과한다. */
+    @Test
+    fun `1kHz 순음은 통과한다`() {
+        val target = ThirdOctave.nearestBand(1_000.0)
+        val bands = DoubleArray(n) { if (it == target) 94.0 else 40.0 }
+        val c = checkCalibratorTone(bands)
+        assertTrue(c.hasTone)
+        assertTrue("통과해야 한다: ${c.reasonKo}", c.ok)
+    }
+
+    /**
+     * **엉뚱한 자리의 순음은 그 자리를 적는다.**
+     *
+     * 이때는 자리 이름이 쓸모 있다 — 교정기가 다른 주파수이거나 다른
+     * 소리원이 크게 울리고 있다는 뜻이다.
+     */
+    @Test
+    fun `다른 자리의 순음은 자리를 적는다`() {
+        val wrong = ThirdOctave.nearestBand(500.0)
+        val bands = DoubleArray(n) { if (it == wrong) 94.0 else 40.0 }
+        val c = checkCalibratorTone(bands)
+        assertTrue("순음은 있다", c.hasTone)
+        assertFalse(c.ok)
+        assertTrue(
+            "500Hz 를 적어야 한다: ${c.reasonKo}",
+            c.reasonKo!!.contains("500Hz 에 있습니다"),
+        )
+    }
+
+    /**
+     * **1kHz 에 있지만 덜 솟았으면 그 사실을 적는다.**
+     *
+     * 헐겁게 끼운 교정기가 여기 걸린다. 「순음은 있다(8dB 위)」와 「제대로
+     * 솟지 않았다(12dB 아래)」 사이의 창이고, 그 창이 없으면 헐거운
+     * 교정기에 「소리가 들리지 않습니다」라는 엉뚱한 말을 하게 된다.
+     */
+    @Test
+    fun `1kHz 가 덜 솟으면 그렇게 적는다`() {
+        val target = ThirdOctave.nearestBand(1_000.0)
+        val bands = DoubleArray(n) { if (it == target) 94.0 else 84.0 }
+        val c = checkCalibratorTone(bands)
+        assertFalse(c.ok)
+        assertTrue("솟음이 모자라다고 적어야 한다: ${c.reasonKo}", c.reasonKo!!.contains("솟지 않았습니다"))
+    }
+}

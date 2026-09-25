@@ -175,6 +175,20 @@ fun CalibrationCard(
                 fontSize = 11.sp,
             )
 
+            // **순음이 없을 때는 경고로 띄우지 않는다**(2026-09-25 담당자
+            // 지적: 「가장 큰 소리가 … 텍스트가 계속 변경됩니다」).
+            //
+            // 교정기를 안 끼운 상태는 **잘못된 상태가 아니라 아직 시작하지
+            // 않은 상태**다. 그것을 주황 경고 상자로 띄우면 뭔가 고장 난
+            // 것처럼 보이고, 예전에는 그때그때 가장 큰 잡음 대역 이름까지
+            // 적어 화면이 쉴 새 없이 흔들렸다.
+            !tone.hasTone -> Text(
+                tone.reasonKo ?: "",
+                color = SelahColors.TextMuted,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+            )
+
             !tone.ok -> InfoBar(tone.reasonKo ?: "", tone = SelahColors.Warn)
 
             else -> Text(

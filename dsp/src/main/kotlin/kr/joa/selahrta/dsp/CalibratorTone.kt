@@ -29,8 +29,33 @@ data class CalibratorToneCheck(
     val prominenceDb: Double,
     /** 가장 큰 밴드의 번호. 1kHz 가 아니면 그 자리가 어디인지 알려 준다. */
     val loudestBand: Int,
+    /**
+     * **순음이라 할 만한 소리가 아예 들어오고 있는가.**
+     *
+     * 교정기를 안 끼운 상태에서는 그때그때 가장 큰 잡음 대역이 「가장 큰
+     * 소리」로 뽑힌다. 그 이름을 화면에 적으면 **한 프레임마다 20Hz·25Hz·
+     * 20kHz 로 바뀌어** 고장처럼 보인다(담당자 지적, 2026-09-25).
+     *
+     * 그래서 「엉뚱한 자리에 순음이 있다」와 「순음이 아예 없다」를 가른다.
+     * 뒤쪽이면 자리 이름을 적지 않는다 — 적을 자리가 없기 때문이다.
+     */
+    val hasTone: Boolean,
     val reasonKo: String?,
 )
+
+/**
+ * 어느 밴드든 나머지보다 이만큼 솟아야 「순음이 들어온다」고 본다(dB).
+ *
+ * **재서 고른 값이다.** 방 소리를 흉내 낸 스펙트럼 200장에서 「가장 큰
+ * 밴드가 나머지보다 솟은 정도」를 재니 **중앙 1.1 · 95% 3.7 · 최대
+ * 5.1dB** 이었다(`CalibratorToneAbsenceTest`). 그 위로 넉넉히 올리되,
+ * [checkCalibratorTone] 의 `minProminenceDb`(12dB)와는 벌려 둔다 —
+ * 둘이 붙으면 「순음은 있는데 덜 솟았다」고 말할 창이 없어져, 헐겁게
+ * 끼운 교정기에 「소리가 들리지 않습니다」라는 엉뚱한 말을 하게 된다.
+ *
+ * 8dB 이면 방 소리(최대 5.1)보다 위이고, 8~12dB 이 「약한 순음」 창이 된다.
+ */
+const val TONE_PRESENT_PROMINENCE_DB = 8.0
 
 /**
  * 밴드 레벨로 교정기 순음인지 본다.
@@ -56,7 +81,17 @@ fun checkCalibratorTone(
     val restMax = bandsDb.indices.filter { it != target }.maxOf { bandsDb[it] }
     val prominence = bandsDb[target] - restMax
 
+    // **가장 큰 밴드가 나머지보다 솟아 있는가.** 아니면 순음이 아니라
+    // 그냥 방 소리이고, 그때는 「가장 큰 자리」라는 말 자체가 뜻이 없다.
+    val loudestRest = bandsDb.indices.filter { it != loudest }.maxOf { bandsDb[it] }
+    val hasTone = bandsDb[loudest] - loudestRest >= TONE_PRESENT_PROMINENCE_DB
+
     val reason = when {
+        // **자리 이름을 적지 않는다.** 잡음 속에서 뽑은 「가장 큰 자리」는
+        // 프레임마다 바뀌어, 적어 두면 화면이 쉴 새 없이 흔들린다.
+        !hasTone ->
+            "교정기 소리가 들리지 않습니다. 마이크에 끼우고 켠 뒤 누르십시오."
+
         loudest != target ->
             "가장 큰 소리가 1kHz 가 아니라 ${ThirdOctave.label(loudest)}Hz 에 있습니다. " +
                 "교정기가 마이크에 제대로 끼워졌는지 보십시오."
@@ -71,6 +106,7 @@ fun checkCalibratorTone(
         ok = reason == null,
         prominenceDb = prominence,
         loudestBand = loudest,
+        hasTone = hasTone,
         reasonKo = reason,
     )
 }
