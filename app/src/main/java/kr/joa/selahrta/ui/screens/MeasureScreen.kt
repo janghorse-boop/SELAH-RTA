@@ -35,6 +35,10 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -240,7 +244,10 @@ fun MeasureScreen(
             range = range,
             isCustom = capture.meterSettings.isCustom(segment),
             leqLabelKo = capture.meterSettings.leqWindow.labelKo,
-            modifier = Modifier.padding(top = 4.dp, bottom = 4.dp),
+            // **아래를 넉넉히 띄운다**(2026-09-25 담당자 지시: 「간격이 너무
+            // 좁아서 답답해 보입니다」). 상자와 계기가 붙어 있으면 둘이 한
+            // 덩어리로 보여, 눈이 어디서 끊어 읽어야 할지 모른다.
+            modifier = Modifier.padding(top = 4.dp, bottom = 18.dp),
         )
 
         // **색이 말하는 것을 읽어 주는 쪽에도 남긴다.** 화면의
@@ -787,6 +794,8 @@ private fun GaugeArc(
         animationSpec = tween(durationMillis = GAUGE_GLIDE_MS, easing = LinearEasing),
         label = "gaugeColor",
     )
+    // 눈금 숫자를 그리는 데 쓴다. Canvas 안에서는 Text 를 쓸 수 없다.
+    val measurer = rememberTextMeasurer()
     Canvas(modifier) {
         val stroke = 14.dp.toPx()
         val w = size.width
@@ -804,6 +813,52 @@ private fun GaugeArc(
             size = arcSize,
             style = Stroke(width = stroke, cap = StrokeCap.Round),
         )
+
+        // **눈금을 새긴다**(2026-09-25 담당자 지시: 「기본 가이드라인에
+        // 눈금표시가 있는게 좋아보입니다」).
+        //
+        // 눈금이 없으면 호의 길이가 몇 dB 인지 알 수 없어, 바늘이 어디
+        // 있는지는 보여도 **얼마인지는 숫자를 읽어야만** 알 수 있었다.
+        //
+        // **호 안쪽에 그린다.** 획 위에 겹쳐 그리면 색이 찬 구간에서 눈금이
+        // 묻힌다. 안쪽이면 바늘이 지나가도 그대로 보인다.
+        val r = d / 2f
+        val cx = topLeft.x + r
+        val cy = topLeft.y + r
+        val tickOuter = r - stroke / 2f - 2.dp.toPx()
+        val tickInner = tickOuter - 6.dp.toPx()
+        var db = GAUGE_LOW_DB
+        while (db <= GAUGE_LOW_DB + GAUGE_SPAN_DB + 1e-9) {
+            val rad = Math.toRadians(180.0 + 180.0 * gaugeFraction(db))
+            val ca = kotlin.math.cos(rad).toFloat()
+            val sa = kotlin.math.sin(rad).toFloat()
+            drawLine(
+                color = SelahColors.Outline,
+                start = Offset(cx + tickInner * ca, cy + tickInner * sa),
+                end = Offset(cx + tickOuter * ca, cy + tickOuter * sa),
+                strokeWidth = 2.dp.toPx(),
+                cap = StrokeCap.Round,
+            )
+            // **숫자는 20dB 마다만 적는다.** 10dB 마다 적으면 작은 글자가
+            // 여덟 개나 붙어 정작 큰 숫자를 읽는 데 방해가 된다.
+            if ((db - GAUGE_LOW_DB) % 20.0 < 1e-9) {
+                val laid = measurer.measure(
+                    AnnotatedString("%.0f".format(db)),
+                    style = TextStyle(fontSize = 8.sp, color = SelahColors.TextMuted),
+                )
+                // 눈금 바로 안쪽에 붙인다. 더 안으로 넣으면 가운데 큰
+                // 숫자와 부딪힌다 — 60 이 「63.1」의 6 에 닿았다.
+                val lr = tickInner - 3.dp.toPx()
+                drawText(
+                    laid,
+                    topLeft = Offset(
+                        cx + lr * ca - laid.size.width / 2f,
+                        cy + lr * sa - laid.size.height / 2f,
+                    ),
+                )
+            }
+            db += GAUGE_TICK_DB
+        }
 
         // **권장 범위 띠는 바늘 밑에 깔린다.** 위에 그리면 지금 값을 가린다.
         // 끝을 Butt 로 자르는 것은 일부러다 — Round 로 두면 띠가 양쪽으로
@@ -840,9 +895,6 @@ private fun GaugeArc(
         // 호 위에 있으면 「지금이 그때보다 얼마나 작은가」가 한눈에 들어온다.
         maxMark?.let {
             val rad = Math.toRadians((180.0 + 180.0 * it.coerceIn(0f, 1f)))
-            val r = d / 2f
-            val cx = topLeft.x + r
-            val cy = topLeft.y + r
             val inner = r - stroke / 2f
             val outer = r + stroke / 2f
             drawLine(
@@ -870,6 +922,9 @@ private fun GaugeArc(
  * 하기 때문이다. 각자 셈하면 하나만 고쳐도 서로 어긋난다.
  */
 private fun gaugeFraction(db: Double): Float = ((db - GAUGE_LOW_DB) / GAUGE_SPAN_DB).toFloat()
+
+/** 눈금을 몇 dB 마다 새길 것인가. 40~110 이면 여덟 개가 된다. */
+private const val GAUGE_TICK_DB = 10.0
 
 private const val GAUGE_LOW_DB = 40.0
 private const val GAUGE_SPAN_DB = 70.0
