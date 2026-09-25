@@ -83,6 +83,25 @@ enum class ViewMode(val labelKo: String, val section: NavSection) {
     Spectrum("Spectrum", NavSection.Analyze),
 
     /**
+     * Spectrogram — 시간(가로) × 주파수(세로) × 레벨(색).
+     *
+     * ## RTA·Spectrum 이 못 하는 것
+     *
+     * 둘 다 **지금 이 순간**의 그림이다. 그런데 하울링을 다룰 때 정작 묻는
+     * 것은 「2.5kHz 가 **언제부터** 올라왔나」, 「끊겼나 이어졌나」다.
+     * 지금은 후보 목록의 지속 시간 숫자로만 알 수 있는데, 숫자 하나는
+     * 「언제」를 말하지 못한다.
+     *
+     * ## 세로축이 로그인 까닭
+     *
+     * 담당자가 보여 준 그림(PsySound3)은 선형 0~5kHz 였다. 그대로 하면
+     * 목소리의 기본 주파수와 배음이 아래쪽 5분의 1에 눌린다 — 예배당에서
+     * 볼 것이 대부분 거기다. RTA·Spectrum 도 로그라 셋의 주파수 축이 같아야
+     * 화면을 옮길 때 눈이 자리를 다시 잡지 않는다.
+     */
+    Spectrogram("Spectrogram", NavSection.Analyze),
+
+    /**
      * 소리를 내보내는 것들 — 시험 신호, 앞으로 주파수 발생기·L/R 테스트.
      *
      * 설정이 아니라 도구다. 값을 바꿔 두는 일이 아니라 **하는 일**이기

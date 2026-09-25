@@ -3,6 +3,7 @@ package kr.joa.selahrta.ui.components
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -59,8 +60,6 @@ fun SpectrumChart(
     /** null 이면 남는 높이를 받는다([BandMeter] 와 같은 규칙). */
     chartHeight: Dp? = null,
     feedback: List<FeedbackCandidate> = emptyList(),
-    /** 세로축 숫자가 dB SPL 인가. 아니면 dBFS 다. */
-    calibrated: Boolean,
     /** 차트 상자 안에 얹을 모드 고르개. */
     modes: (@Composable () -> Unit)? = null,
 ) {
@@ -80,8 +79,18 @@ fun SpectrumChart(
                 .border(1.dp, SelahColors.Outline, RoundedCornerShape(12.dp))
                 .padding(8.dp),
         ) {
-            val plotHeight = (maxHeight - LABEL_ROW_HEIGHT).coerceAtLeast(0.dp)
+            val headerHeight = if (modes != null) CONTROL_ROW_HEIGHT else 0.dp
+            val plotHeight = (maxHeight - LABEL_ROW_HEIGHT - headerHeight).coerceAtLeast(0.dp)
             val plotWidth = (maxWidth - Y_AXIS_WIDTH - 4.dp).coerceAtLeast(0.dp)
+
+            Column(Modifier.fillMaxWidth()) {
+            modes?.let {
+                Row(
+                    Modifier.fillMaxWidth().height(CONTROL_ROW_HEIGHT),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) { it() }
+            }
 
             Row(Modifier.fillMaxWidth()) {
                 YAxis(floorDb, ceilDb, plotHeight, Modifier.padding(end = 4.dp))
@@ -242,11 +251,15 @@ fun SpectrumChart(
                                 } else {
                                     (x - gap - laid.size.width).coerceAtLeast(0f)
                                 }
-                                // 봉우리가 천장에 닿으면 글자를 아래로 내린다.
-                                val ly = if (y - laid.size.height - gap >= 0f) {
-                                    y - laid.size.height - gap
-                                } else {
+                                // **되도록 점 아래에 적는다.** 위쪽 띠는
+                                // 하울링 후보의 주파수 글자가 쓰는 자리라,
+                                // 봉우리가 높을 때 둘이 겹쳤다(기기에서 확인).
+                                // 봉우리 아래는 곡선이 가파르게 떨어져 대개
+                                // 비어 있다.
+                                val ly = if (y + gap + laid.size.height <= size.height) {
                                     y + gap
+                                } else {
+                                    (y - laid.size.height - gap).coerceAtLeast(0f)
                                 }
                                 drawText(laid, topLeft = Offset(lx, ly))
                             }
@@ -277,7 +290,7 @@ fun SpectrumChart(
                 }
             }
 
-            modes?.let { Box(Modifier.align(Alignment.TopEnd)) { it() } }
+            }
 
             if (spectrum == null) {
                 Text(
@@ -289,28 +302,6 @@ fun SpectrumChart(
             }
         }
 
-        Text(
-            buildString {
-                append("가로 주파수(Hz, 로그) · 세로 SPL")
-                if (!calibrated) append("(미보정 · 참고용)")
-                append(" ")
-                append(floorDb.toInt())
-                append(" ~ ")
-                append(ceilDb.toInt())
-                append(" dB")
-                // **분해능을 적어 둔다.** 저역이 계단처럼 보이는 것이 고장이
-                // 아니라 이 숫자 때문임을 말해 준다 — 적지 않으면 「그래프가
-                // 깨졌다」로 읽힌다.
-                spectrum?.let {
-                    append(" · 분해능 ")
-                    append("%.1f".format(it.binHz))
-                    append("Hz")
-                }
-            },
-            color = SelahColors.TextSecondary,
-            fontSize = 9.sp,
-            modifier = Modifier.padding(top = 2.dp),
-        )
     }
 }
 

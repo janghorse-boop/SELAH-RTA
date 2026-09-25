@@ -69,6 +69,7 @@ import kr.joa.selahrta.ui.screens.FrScreen
 import kr.joa.selahrta.ui.screens.HistoryScreen
 import kr.joa.selahrta.ui.screens.MeasureScreen
 import kr.joa.selahrta.ui.screens.RtaScreen
+import kr.joa.selahrta.ui.screens.SpectrogramScreen
 import kr.joa.selahrta.ui.screens.SpectrumScreen
 import kr.joa.selahrta.ui.screens.SettingsScreen
 import kr.joa.selahrta.ui.screens.ToolsScreen
@@ -261,11 +262,28 @@ fun SelahApp() {
         )
     }
 
+    // **지금 떠 있는 화면**을 한 번만 셈한다(`null` = 설정).
+    //
+    // 화면은 칩이 정하고 설정만 예외인데, 머리글·아래 탭·화면 방향처럼
+    // 「어느 화면인가」에 달린 것들이 저마다 조건을 다시 적고 있었다. 그래서
+    // RTA 를 보다 설정으로 가면 — 칩은 RTA 에 머물러 있으므로 — **설정
+    // 화면에 머리글이 없었다.** 한 값을 함께 보면 어긋날 수 없다.
+    //
+    // 아래 탭(`bottomBar`)도 이 값을 보므로 Scaffold 보다 먼저 셈한다.
+    val screen: ViewMode? = if (section == NavSection.Settings) null else mode
+
     Scaffold(
         containerColor = SelahColors.Background,
         bottomBar = {
-            // RTA 는 차트가 화면을 꽉 채우는 화면이라 탭 바를 낮게 그린다.
-            BottomBar(section, compact = mode == ViewMode.Rta) { picked ->
+            // **분석 화면에서는 아래 탭을 줄인다**(2026-09-25
+            // 담당자 지시: 「RTA와 같이 수정해주세요. 그래프가 최대한 크게
+            // 보이게 하기 위해서입니다」).
+            //
+            // 줄이면 글자가 빠지고 46dp 가 된다. 눕힌 화면의 세로가 380dp
+            // 안팎이라 그 차이가 차트 높이의 한 자리를 좌우한다. RTA 만
+            // 줄여 두었는데, 분석은 넷 다 눕는 화면이라 나머지 셋만 글자가
+            // 붙어 있었다.
+            BottomBar(section, compact = screen?.section == NavSection.Analyze) { picked ->
                 section = picked
                 // **탭을 옮기면 마법사를 닫는다.** 마법사는 탭 내용 위에
                 // 덮여 있어서, 닫지 않으면 다른 탭으로 가도 그대로 얹혀
@@ -284,14 +302,6 @@ fun SelahApp() {
             }
         },
     ) { inner ->
-        // **지금 떠 있는 화면**을 한 번만 셈한다(`null` = 설정).
-        //
-        // 화면은 칩이 정하고 설정만 예외인데, 머리글·화면 방향처럼 「어느
-        // 화면인가」에 달린 것들이 저마다 조건을 다시 적고 있었다. 그래서
-        // RTA 를 보다 설정으로 가면 — 칩은 RTA 에 머물러 있으므로 —
-        // **설정 화면에 머리글이 없었다.** 한 값을 함께 보면 어긋날 수 없다.
-        val screen: ViewMode? = if (section == NavSection.Settings) null else mode
-
         // **분석은 구역째 눕힌다**(2026-09-25 담당자 지시: 「RTA와 FR은 모두
         // 가로형으로만 보이면 좋을 것 같습니다」).
         //
@@ -322,7 +332,9 @@ fun SelahApp() {
 
             if (section.hasModeChips) {
                 // RTA 는 차트가 화면을 꽉 채우는 화면이라 칩도 낮게 그린다.
-                ModeChips(section, mode, compact = mode == ViewMode.Rta) { picked ->
+                // 이 줄은 측정(SPL·기록)에만 나온다. 분석은 고르개를 차트
+                // 안에서 그린다([NavSection.hasOwnModeSwitch]).
+                ModeChips(section, mode) { picked ->
                     mode = picked
                     // 칩을 누르면 아래 탭도 따라온다. 두 줄이 서로 다른 곳을
                     // 가리키면 지금 어디 있는지 알 수 없다.
@@ -378,6 +390,11 @@ fun SelahApp() {
                         onDismissDeviceNotice = vm::dismissDeviceNotice,
                     )
                     ViewMode.Rta -> RtaScreen(capture, onMode = { mode = it })
+                    ViewMode.Spectrogram -> SpectrogramScreen(
+                        capture = capture,
+                        onSpectrumEnabled = vm::setSpectrumEnabled,
+                        onMode = { mode = it },
+                    )
                     ViewMode.Spectrum -> SpectrumScreen(
                         capture = capture,
                         onSpectrumEnabled = vm::setSpectrumEnabled,
@@ -637,14 +654,6 @@ private fun StatusPill(text: String, color: Color, dim: Boolean = false) {
 private fun ModeChips(
     section: NavSection,
     selected: ViewMode,
-    /**
-     * 낮게 그린다 — RTA 전용.
-     *
-     * RTA 는 차트가 화면을 꽉 채우는 화면이라(담당자 지시) 칩 줄도 자리를
-     * 덜 쓰게 한다. **없애지는 않는다** — 분석에 FR 이 생기면서 이 줄이
-     * 유일한 길이 되었고, 없애면 눕힌 채로는 FR 에 갈 방법이 사라진다.
-     */
-    compact: Boolean,
     onSelect: (ViewMode) -> Unit,
 ) {
     // **양쪽을 채운다.** 칩은 가는 길이라 가지런히 놀아 놓으면
@@ -657,7 +666,7 @@ private fun ModeChips(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = if (compact) 2.dp else 4.dp),
+            .padding(horizontal = 12.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         ViewMode.entries.filter { it.section == section }.forEach { m ->
@@ -670,13 +679,13 @@ private fun ModeChips(
                         RoundedCornerShape(10.dp),
                     )
                     .clickable { onSelect(m) }
-                    .padding(horizontal = 4.dp, vertical = if (compact) 5.dp else 9.dp),
+                    .padding(horizontal = 4.dp, vertical = 9.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     m.labelKo,
                     color = if (on) Color(0xFF00201C) else SelahColors.TextSecondary,
-                    fontSize = if (compact) 11.sp else 13.sp,
+                    fontSize = 13.sp,
                     fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
                     textAlign = TextAlign.Center,
                 )
@@ -737,4 +746,4 @@ private fun BottomBar(
  * 칩이 스스로 아는 성질이 아니라 **그 화면을 어떻게 그렸는가**라서,
  * 그리는 코드 곁에 두어야 화면을 고칠 때 함께 눈에 들어온다.
  */
-private val CHART_ONLY_MODES = setOf(ViewMode.Rta, ViewMode.Spectrum)
+private val CHART_ONLY_MODES = setOf(ViewMode.Rta, ViewMode.Spectrum, ViewMode.Spectrogram)

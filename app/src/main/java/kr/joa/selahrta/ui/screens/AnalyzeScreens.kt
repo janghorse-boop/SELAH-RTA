@@ -16,6 +16,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -34,6 +39,7 @@ import androidx.compose.ui.semantics.stateDescription
 import kr.joa.selahrta.ui.nav.NavSection
 import kr.joa.selahrta.ui.nav.ViewMode
 import kr.joa.selahrta.ui.CaptureUiState
+import kr.joa.selahrta.dsp.SpectrumAxis
 import androidx.compose.ui.platform.LocalConfiguration
 import kr.joa.selahrta.ui.components.BAND_SLOT_WIDE
 import kr.joa.selahrta.ui.components.formatHz
@@ -46,6 +52,8 @@ import kr.joa.selahrta.ui.components.ValueTile
 import kr.joa.selahrta.ui.components.formatDb
 import kr.joa.selahrta.ui.components.rtaRange
 import kr.joa.selahrta.ui.components.SpectrumChart
+import kr.joa.selahrta.ui.components.SpectrogramChart
+import kr.joa.selahrta.ui.components.SpectrogramState
 import kr.joa.selahrta.ui.components.spectrumRange
 import kr.joa.selahrta.ui.theme.SelahColors
 
@@ -65,8 +73,6 @@ fun RtaScreen(
 ) {
     val rta = capture.rta
     val (floor, ceil) = rtaRange(rta)
-    // 축을 SPL 이라 부를 수 있는가. 보정이 없으면 밴드 값은 dBFS 그대로다.
-    val calibrated = !capture.calibration.isReferenceOnly
     val unresolved = rta?.resolved?.indexOfFirst { it }?.takeIf { it > 0 }
 
     val running = capture.measure is MeasureState.Running
@@ -107,7 +113,6 @@ fun RtaScreen(
             // 남는다. 늘일 까닭이 없다.
             minSlotWidth = 0.dp,
             feedback = capture.feedback,
-            calibrated = calibrated,
         )
         return
     }
@@ -132,7 +137,6 @@ fun RtaScreen(
             modes = { AnalyzeModes(ViewMode.Rta, onMode) },
             minSlotWidth = BAND_SLOT_WIDE,
             feedback = capture.feedback,
-            calibrated = calibrated,
         )
 
         FeedbackStrip(
@@ -290,7 +294,6 @@ fun SpectrumScreen(
 
     val spectrum = capture.spectrum
     val (floor, ceil) = spectrumRange(spectrum)
-    val calibrated = !capture.calibration.isReferenceOnly
 
     val cfg = LocalConfiguration.current
     val landscape = cfg.screenWidthDp > cfg.screenHeightDp
@@ -305,7 +308,6 @@ fun SpectrumScreen(
             Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 6.dp),
             chartHeight = null,
             feedback = capture.feedback,
-            calibrated = calibrated,
             modes = { AnalyzeModes(ViewMode.Spectrum, onMode) },
         )
         return
@@ -327,7 +329,6 @@ fun SpectrumScreen(
             Modifier.fillMaxWidth(),
             chartHeight = 260.dp,
             feedback = capture.feedback,
-            calibrated = calibrated,
             modes = { AnalyzeModes(ViewMode.Spectrum, onMode) },
         )
 
@@ -339,6 +340,100 @@ fun SpectrumScreen(
         )
     }
 }
+
+/**
+ * Spectrogram — 시간 × 주파수 × 레벨(색).
+ *
+ * RTA·Spectrum 은 둘 다 **지금 이 순간**의 그림이다. 하울링을 다룰 때
+ * 정작 묻는 것은 「언제부터 올라왔나」라서, 시간이 가로로 흘러야 답이 된다.
+ *
+ * **Spectrum 과 같은 장을 쓴다.** 엔진이 이미 보정을 거쳐 칸으로 줄여
+ * 놓은 것을 쌓기만 하므로, 세 화면이 같은 숫자를 말한다.
+ */
+@Composable
+fun SpectrogramScreen(
+    capture: CaptureUiState,
+    onSpectrumEnabled: (Boolean) -> Unit,
+    onMode: (ViewMode) -> Unit = {},
+) {
+    DisposableEffect(Unit) {
+        onSpectrumEnabled(true)
+        onDispose { onSpectrumEnabled(false) }
+    }
+
+    // **화면이 들고 있는다.** 떠나면 사라지는 것이 맞다 — 다시 들어왔을 때
+    // 몇 분 전 그림이 남아 있으면 그것을 지금으로 읽는다.
+    val state = remember { SpectrogramState(SpectrumAxis.DEFAULT_COLUMNS, SPECTROGRAM_FRAMES) }
+    var frozen by remember { mutableStateOf(false) }
+
+    // 장이 새로 오면 한 줄 밀어 넣는다. `SpectrumView` 는 장마다 다른
+    // 객체라(동일성 비교) 이 키가 곧 「새 장이 왔는가」다.
+    val spectrum = capture.spectrum
+    LaunchedEffect(spectrum, frozen) {
+        if (!frozen && spectrum != null) {
+            state.push(spectrum.columnsSpl, System.currentTimeMillis())
+        }
+    }
+
+    val cfg = LocalConfiguration.current
+    val landscape = cfg.screenWidthDp > cfg.screenHeightDp
+
+    val controls: @Composable () -> Unit = {
+        Text(
+            if (frozen) "이어보기" else "멈춤",
+            color = if (frozen) Color(0xFF00201C) else SelahColors.TextSecondary,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            softWrap = false,
+            modifier = Modifier
+                .background(
+                    if (frozen) SelahColors.Warn else SelahColors.SurfaceVariant,
+                    RoundedCornerShape(999.dp),
+                )
+                .clickable { frozen = !frozen }
+                .padding(horizontal = 10.dp, vertical = 5.dp)
+                .semantics { stateDescription = if (frozen) "멈춤" else "흐르는 중" },
+        )
+    }
+
+    if (landscape) {
+        SpectrogramChart(
+            state,
+            Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 6.dp),
+            chartHeight = null,
+            modes = { AnalyzeModes(ViewMode.Spectrogram, onMode) },
+            controls = controls,
+        )
+        return
+    }
+
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+    ) {
+        InfoBar(
+            "시간이 가로로 흐릅니다. 오른쪽 끝이 지금이고, 색이 레벨입니다 — " +
+                "하울링이 언제부터 올라왔는지, 끊겼는지 이어졌는지를 봅니다.",
+            modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
+        )
+
+        SpectrogramChart(
+            state,
+            Modifier.fillMaxWidth(),
+            chartHeight = 260.dp,
+            modes = { AnalyzeModes(ViewMode.Spectrogram, onMode) },
+            controls = controls,
+        )
+    }
+}
+
+/**
+ * 화면에 담아 둘 장 수.
+ *
+ * 화면 갱신이 초당 열몇 번이라 30초에서 1분쯤 된다. 하울링이 「올라오기
+ * 시작한 자리」를 보려면 그 정도면 넉넉하고, 더 늘리면 한 장이 차지하는
+ * 가로 폭이 좁아져 짧은 소리가 실선처럼 얇아진다.
+ */
+private const val SPECTROGRAM_FRAMES = 720
 
 @Composable
 private fun FeedbackStrip(

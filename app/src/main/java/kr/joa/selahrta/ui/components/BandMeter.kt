@@ -162,21 +162,6 @@ fun BandMeter(
      * 차트가 그만큼 넓어진다. null 이면 안 그린다.
      */
     modes: (@Composable () -> Unit)? = null,
-    /**
-     * 세로축 숫자가 **dB SPL 인가**(2026-09-25).
-     *
-     * 값은 미보정일 때도 dB SPL 이다 — 오프셋이 0 이 아니라 **짐작한 만재
-     * 음압**(`ASSUMED_FULL_SCALE_SPL`, 120dB)이기 때문이다. 그러나 그
-     * 짐작은 ±10dB 넘게 틀릴 수 있다고 그 상수의 주석이 적어 두었다.
-     *
-     * RTA 는 머리글을 접는 화면이라 「미보정」 배지가 안 보인다. 그래서 축
-     * 설명이 그 말을 대신하게 바깥에서 상태를 받는다.
-     *
-     * **한 번 헛짚었다**: 값이 없을 때의 자리표시 범위가 `-60 ~ 0` 이라
-     * 그것을 dBFS 로 읽고 축을 「dBFS(미보정)」이라 적었다. 자리표시는
-     * 데이터가 아니다 — 재는 중인 화면에서 확인했어야 했다.
-     */
-    calibrated: Boolean,
 ) {
     // **눈금 글자는 막대와 함께 밀려야 한다.** 따로 두면 밀고 난 뒤 막대와
     // 글자가 어긋나, 솟은 자리의 주파수를 잘못 읽는다.
@@ -205,7 +190,8 @@ fun BandMeter(
             // `maxHeight` 는 안쪽 여백을 이미 뺀 값이다. 여기서 눈금 글자
             // 자리만 더 빼면 막대가 쓸 높이가 된다 — 바깥에서 준 높이가
             // 고정이든 weight 든 똑같이 맞는다.
-            val barsHeight = (maxHeight - LABEL_ROW_HEIGHT).coerceAtLeast(0.dp)
+            val headerHeight = if (modes != null) CONTROL_ROW_HEIGHT else 0.dp
+            val barsHeight = (maxHeight - LABEL_ROW_HEIGHT - headerHeight).coerceAtLeast(0.dp)
 
             // **세로축은 밀리지 않는다**(2026-09-25 담당자 지적: 「Y축에는
             // SPL(dB) 표시가 있어야 하는게 아닌지?」).
@@ -217,6 +203,15 @@ fun BandMeter(
             // **가로 스크롤 밖에 둔다.** 안에 넣으면 옆으로 민 순간 세로축이
             // 따라 밀려 화면에서 사라진다 — 세로축은 어디를 보든 그 자리에
             // 있어야 하는 것이다.
+            Column(Modifier.fillMaxWidth()) {
+            modes?.let {
+                Row(
+                    Modifier.fillMaxWidth().height(CONTROL_ROW_HEIGHT),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) { it() }
+            }
+
             Row(Modifier.fillMaxWidth()) {
                 YAxis(
                     floorDb = floorDb,
@@ -388,13 +383,6 @@ fun BandMeter(
                 }
             }
 
-            // 모드 고르개는 차트 **위에 얹는다**. 자리를 따로 내주면 그만큼
-            // 막대가 줄어드는데, 위쪽은 대개 비어 있다.
-            //
-            // **오른쪽에 둔다.** 왼쪽에 두었더니 세로축 맨 위 숫자를 가렸다
-            // (기기에서 확인) — 눈금 숫자는 가려지면 축이 반쪽이 된다.
-            modes?.let {
-                Box(Modifier.align(Alignment.TopEnd)) { it() }
             }
 
             // **안내는 밀리지 않는다.** 스크롤 안에 두면 옆으로 민 뒤 사라져,
@@ -408,31 +396,6 @@ fun BandMeter(
                 )
             }
         }
-        Text(
-            buildString {
-                // 세로축이 무엇인지 적는다 — 숫자만으로는 dBFS 인지
-                // dB SPL 인지 알 수 없다(담당자 지적, 2026-09-25).
-                //
-                // **미보정이면 그렇다고 적는다.** 값 자체는 미보정일 때도
-                // SPL 이다 — 오프셋이 0 이 아니라 짐작한 만재 음압
-                // (`ASSUMED_FULL_SCALE_SPL`, 120dB)이기 때문이다. 다만 그
-                // 짐작은 ±10dB 넘게 틀릴 수 있으므로 숫자만 내놓으면 안 된다.
-                //
-                // RTA 는 머리글을 접는 화면이라 「미보정」 배지가 없다. 이
-                // 줄이 그 자리를 대신한다.
-                append("가로 주파수(Hz) · 세로 SPL")
-                if (!calibrated) append("(미보정 · 참고용)")
-                append(" ${floorDb.toInt()} ~ ${ceilDb.toInt()} dB")
-                // **밀 수 있을 때만 밀라고 한다.** 태블릿처럼 넓은 화면에서는
-                // 31칸이 다 들어와 밀 것이 없다. maxValue 가 그 사실을 안다.
-                if (scroll.maxValue > 0) append(" · 옆으로 밀면 나머지 대역")
-            },
-            // 눈금 글자를 밝게 한 김에 이 줄도 한 호 올린다. 아주 흐리면
-            // 「무슨 단위로 보는 그림인가」가 화면에서 사라진다.
-            color = SelahColors.TextSecondary,
-            fontSize = 9.sp,
-            modifier = Modifier.padding(top = 2.dp),
-        )
     }
 }
 
@@ -473,6 +436,16 @@ fun rtaRange(rta: RtaView?, resolvedOnly: Boolean = true): Pair<Double, Double> 
  * 세로축이 서로 다른 자리에 있으면 눈이 매번 다시 자리를 잡아야 한다.
  */
 internal val Y_AXIS_WIDTH = 26.dp
+
+/**
+ * 모드 고르개·단추가 쓰는 줄의 높이.
+ *
+ * **얹지 않고 자리를 내준다.** 차트 위에 겹쳐 두었더니 세로축 맨 위 숫자를
+ * 가렸고(2026-09-25), 자리를 오른쪽으로 옮겼더니 이번에는 봉우리 옆 숫자와
+ * 겹쳤다. 겹치는 자리는 옮겨 봐야 다른 것을 가릴 뿐이다 — 30dp 를 내주고
+ * 아무것도 가리지 않는 편이 낫다.
+ */
+internal val CONTROL_ROW_HEIGHT = 30.dp
 
 /**
  * 세로축 — **막대가 얼마인지 눈으로 읽게 한다.**
