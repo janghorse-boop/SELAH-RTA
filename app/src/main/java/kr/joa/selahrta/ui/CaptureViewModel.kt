@@ -58,6 +58,7 @@ import kr.joa.selahrta.dsp.ROOM_MIN_FRAMES
 import kr.joa.selahrta.dsp.RoomResponse
 import kr.joa.selahrta.dsp.computeRoomResponse
 import kr.joa.selahrta.dsp.RtaEngine
+import kr.joa.selahrta.dsp.SpectrumFrame
 import kr.joa.selahrta.dsp.SpectrumSink
 import kr.joa.selahrta.dsp.RtaFrame
 import kr.joa.selahrta.dsp.LowEnergyHint
@@ -154,6 +155,8 @@ data class CaptureUiState(
     val calibration: ActiveCalibration = ActiveCalibration.assumed,
     /** 31밴드 RTA. 아직 첫 FFT 가 안 찼으면 null. */
     val rta: RtaView? = null,
+    /** 연속 스펙트럼. Spectrum 화면이 열려 있을 때만 채워진다. */
+    val spectrum: SpectrumView? = null,
     /** 하울링 후보(명세 9장). 센 것부터. 없으면 빈 목록이다. */
     val feedback: List<FeedbackCandidate> = emptyList(),
     /**
@@ -262,6 +265,8 @@ data class MeasurementSnapshot(
     /** A·C·Z 를 함께 담는다. 가중치 선택은 주 스레드의 설정이다. */
     val spl: MultiWeightFrame?,
     val rta: RtaFrame?,
+    /** 연속 스펙트럼. 화면이 꺼져 있으면 null 이다. */
+    val spectrum: SpectrumFrame?,
     val anyClipping: Boolean,
     /**
      * 하울링 후보(명세 9장). 센 것부터.
@@ -274,6 +279,29 @@ data class MeasurementSnapshot(
     /** 이번 측정에서 「지속」까지 간 것들의 기록. 새것부터. */
     val feedbackLog: List<FeedbackEvent>,
 )
+
+/**
+ * 화면에 그릴 연속 스펙트럼 한 장. 값은 [RtaView] 와 **같은 잣대**다.
+ *
+ * 같은 오프셋을 걸어야 두 화면이 같은 소리를 같은 숫자로 말한다. 엔진
+ * 안에서 이미 마이크 곡선을 맞춰 두었고([RtaEngine.updateSpectrum]),
+ * 여기서 절대 레벨만 옮긴다.
+ */
+class SpectrumView(
+    val columnsSpl: DoubleArray,
+    val holdSpl: DoubleArray,
+    /** 칸 가운데 주파수. 엔진의 배열을 그대로 가리킨다 — 읽기만 한다. */
+    val hz: DoubleArray,
+    /** FFT 칸 폭(Hz). 화면이 분해능으로 적는다. */
+    val binHz: Double,
+    /** 가장 큰 봉우리. 아무 소리도 없으면 null. */
+    val topHz: Double?,
+    val topSpl: Double?,
+) {
+    // [RtaView] 와 같은 까닭 — 프레임마다 새 배열이라 값 비교가 무의미하다.
+    override fun equals(other: Any?): Boolean = this === other
+    override fun hashCode(): Int = System.identityHashCode(this)
+}
 
 /**
  * 화면에 그릴 RTA 한 프레임. 값은 보정을 거친 dB SPL 이다.
@@ -1295,6 +1323,19 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         controller.update { st -> st.copy(calibrationNoticeKo = null) }
     }
 
+    /**
+     * Spectrum 화면이 열렸는가를 엔진에 알린다.
+     *
+     * 켜져 있을 때만 엔진이 칸 2049개를 곱하고 줄인다. RTA 만 보는 동안
+     * 그 일을 할 까닭이 없다.
+     */
+    fun setSpectrumEnabled(on: Boolean) {
+        controller.spectrumEnabled = on
+        // 끌 때는 화면 상태에서도 지운다. 남겨 두면 다시 열었을 때 몇 분 전
+        // 그림이 한 장 스쳐 보이고, 그것을 지금 소리로 읽는다.
+        if (!on) controller.update { st -> st.copy(spectrum = null) }
+    }
+
     /** RTA 의 Peak Hold 를 다시 센다. */
     fun resetRtaHold() {
         controller.postToCapture { session -> session.rta.resetHold() }
@@ -1370,6 +1411,7 @@ internal fun CaptureUiState.withMeasurement(m: MeasurementSnapshot?): CaptureUiS
         // 프레임이 **그 곡선으로 계산된 것일 때만** 보정 적용이라고 적는다.
         feedback = m.feedback,
         feedbackLog = m.feedbackLog,
+        spectrum = m.spectrum?.toView(offset.db) ?: spectrum,
         rta = m.rta?.toView(
             offsetDb = offset.db,
             // 꺼 둔 곱선은 그리지도 않는다 — 엔진이 안 걸고 있는데 그리면
@@ -1388,6 +1430,21 @@ internal fun CaptureUiState.withMeasurement(m: MeasurementSnapshot?): CaptureUiS
  * 보정하면 밴드 안에서 응답이 변하는 구간에서 틀린 값을 뺀다
  * (독립 검증 R05).
  */
+/**
+ * dBFS 칸을 dB SPL 로 옮긴다. [RtaFrame.toView] 와 **같은 오프셋**이다.
+ *
+ * 마이크 곡선은 여기서 걸지 않는다 — 엔진이 칸마다 이미 걸었다. 두 번
+ * 걸면 고역이 곡선만큼 더 깎인다.
+ */
+private fun SpectrumFrame.toView(offsetDb: Double) = SpectrumView(
+    columnsSpl = DoubleArray(columnsDbfs.size) { columnsDbfs[it] + offsetDb },
+    holdSpl = DoubleArray(holdDbfs.size) { holdDbfs[it] + offsetDb },
+    hz = hz,
+    binHz = binHz,
+    topHz = top?.hz,
+    topSpl = top?.dbfs?.plus(offsetDb),
+)
+
 private fun RtaFrame.toView(
     offsetDb: Double,
     curve: CalibrationCurve?,

@@ -85,6 +85,39 @@ class RtaEngine(
     private var latest: RtaFrame? = null
 
     /**
+     * 연속 스펙트럼 화면(검토안 3장)이 쓰는 것들.
+     *
+     * **켜져 있을 때만 돈다.** 칸 2049개를 곱하고 줄이고 dB 로 옮기는
+     * 일이라, RTA 만 보는 동안에는 할 까닭이 없다.
+     */
+    val spectrumAxis = SpectrumAxis(spectrum.binCount, sampleRateHz)
+    private val corrected = DoubleArray(spectrum.binCount)
+    private val columnPower = DoubleArray(spectrumAxis.columns)
+    private val columnDb = DoubleArray(spectrumAxis.columns)
+    private val spectrumSmoothing = BandSmoothing(spectrumAxis.columns, smoothingFactor)
+    private val spectrumHold = PeakHold(spectrumAxis.columns, peakHoldFallDb)
+
+    @Volatile
+    private var latestSpectrum: SpectrumFrame? = null
+
+    /**
+     * 화면 스펙트럼을 함께 낼 것인가. Spectrum 화면이 열려 있을 때만 켠다.
+     *
+     * 끄면 **들고 있던 장도 버린다** — 다시 켰을 때 몇 분 전 그림이 한 장
+     * 스쳐 보이면 그것이 지금 소리인 줄 안다.
+     */
+    @Volatile
+    var spectrumEnabled: Boolean = false
+        set(v) {
+            field = v
+            if (!v) {
+                latestSpectrum = null
+                spectrumSmoothing.reset()
+                spectrumHold.reset()
+            }
+        }
+
+    /**
      * FFT 한 장마다 받아 갈 곳들. 하울링 탐지기와 교정 측정이 여기 붙는다.
      *
      * ## 왜 하나가 아닌가
@@ -157,6 +190,11 @@ class RtaEngine(
         smoothing.reset()
         peakHold.reset()
         latest = null
+        // 화면 스펙트럼도 같은 까닭으로 비운다 — 옛 곡선으로 낸 장을 새
+        // 곡선의 이름표와 함께 내보내면 화면이 틀린 말을 한다.
+        spectrumSmoothing.reset()
+        spectrumHold.reset()
+        latestSpectrum = null
     }
 
     /**
@@ -196,6 +234,8 @@ class RtaEngine(
         val current = sinks
         for (i in current.indices) current[i].onSpectrum(power)
 
+        if (spectrumEnabled) updateSpectrum()
+
         // 보정은 **밴드로 묶기 전에** 칸마다 건다(독립 검증 R05).
         bands.toBandPower(power, bandPower, binCorrection)
         val smoothed = smoothing.update(bandPower)
@@ -210,8 +250,46 @@ class RtaEngine(
         )
     }
 
+    /**
+     * 화면에 그릴 연속 스펙트럼을 만든다.
+     *
+     * ## 싱크가 받은 것과 **다른 값**을 쓴다
+     *
+     * [SpectrumSink] 는 보정 전 스펙트럼을 받는다(위 주석). 하울링 탐지에는
+     * 그게 맞지만 **화면에는 아니다** — 보정 전 값을 그리면 바로 옆에 둔 RTA
+     * 막대와 고역이 어긋나, 같은 소리를 한 화면이 두 숫자로 말하게 된다.
+     *
+     * 그래서 여기서 곡선을 한 번 더 건다. [BandAnalyzer.toBandPower] 가
+     * 묶으면서 거는 것과 **같은 계수**이므로 두 그림이 같이 움직인다.
+     */
+    private fun updateSpectrum() {
+        val corr = binCorrection
+        if (corr == null) {
+            System.arraycopy(power, 0, corrected, 0, corrected.size)
+        } else {
+            for (i in corrected.indices) corrected[i] = power[i] * corr[i]
+        }
+        spectrumAxis.reduce(corrected, columnPower)
+        val smoothed = spectrumSmoothing.update(columnPower)
+        toDbfs(smoothed, columnDb)
+        val held = spectrumHold.update(columnDb)
+        latestSpectrum = SpectrumFrame(
+            columnsDbfs = columnDb.copyOf(),
+            holdDbfs = held.copyOf(),
+            hz = spectrumAxis.hz,
+            binHz = spectrumAxis.binHz,
+            // **줄이기 전 스펙트럼에서 찾는다.** 화면 칸으로 줄인 뒤에 찾으면
+            // 정밀도가 칸 폭까지 떨어져, 이 화면의 값어치가 없어진다.
+            top = topSpectrumPeak(corrected, sampleRateHz, fftSize),
+            curveGeneration = curveGeneration,
+        )
+    }
+
     /** 가장 최근 결과. 아직 FFT 를 한 번도 못 돌렸으면 null. */
     fun frame(): RtaFrame? = latest
+
+    /** 가장 최근 화면 스펙트럼. 꺼져 있거나 아직 못 돌렸으면 null. */
+    fun spectrumFrame(): SpectrumFrame? = latestSpectrum
 
     /** 지금 걸려 있는 곡선의 세대. 화면이 프레임의 것과 견준다. */
     val currentCurveGeneration: Long get() = curveGeneration
@@ -229,6 +307,9 @@ class RtaEngine(
         smoothing.reset()
         peakHold.reset()
         latest = null
+        spectrumSmoothing.reset()
+        spectrumHold.reset()
+        latestSpectrum = null
     }
 }
 

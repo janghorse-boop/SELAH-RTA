@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -44,6 +45,8 @@ import kr.joa.selahrta.ui.components.NotYet
 import kr.joa.selahrta.ui.components.ValueTile
 import kr.joa.selahrta.ui.components.formatDb
 import kr.joa.selahrta.ui.components.rtaRange
+import kr.joa.selahrta.ui.components.SpectrumChart
+import kr.joa.selahrta.ui.components.spectrumRange
 import kr.joa.selahrta.ui.theme.SelahColors
 
 /**
@@ -263,6 +266,80 @@ fun RtaScreen(
  * 짧게 스친 소리일 수 있는데 먼저 깎으라고 하면 예배 중에 멀쩡한 악기
  * 소리를 깎게 된다(독립 검증 P9 판단 2번).
  */
+/**
+ * Spectrum — FFT 한 장을 **칸 그대로** 본다(2026-09-25 검토안 3장).
+ *
+ * RTA 가 「어느 대역이 큰가」를 말하고 여기서 「그 안에서 정확히 몇 Hz 인가」
+ * 가 나온다. 그래서 이 화면의 값어치는 그림보다 **봉우리 옆에 적히는
+ * 숫자**에 있다.
+ *
+ * **떠날 때 끈다.** 켜져 있는 동안만 엔진이 칸 2049개를 곱하고 줄인다 —
+ * RTA 만 보는 동안 그 일을 할 까닭이 없고, 예배 내내 켜 두면 배터리로
+ * 돌아온다.
+ */
+@Composable
+fun SpectrumScreen(
+    capture: CaptureUiState,
+    onSpectrumEnabled: (Boolean) -> Unit,
+    onMode: (ViewMode) -> Unit = {},
+) {
+    DisposableEffect(Unit) {
+        onSpectrumEnabled(true)
+        onDispose { onSpectrumEnabled(false) }
+    }
+
+    val spectrum = capture.spectrum
+    val (floor, ceil) = spectrumRange(spectrum)
+    val calibrated = !capture.calibration.isReferenceOnly
+
+    val cfg = LocalConfiguration.current
+    val landscape = cfg.screenWidthDp > cfg.screenHeightDp
+
+    // 눕히면 차트만 남긴다 — RTA 와 같은 규칙이다. 세로 배치는 화면 분할처럼
+    // 방향 요청이 듣지 않는 자리를 위해 남겨 둔다.
+    if (landscape) {
+        SpectrumChart(
+            spectrum,
+            floor,
+            ceil,
+            Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 6.dp),
+            chartHeight = null,
+            feedback = capture.feedback,
+            calibrated = calibrated,
+            modes = { AnalyzeModes(ViewMode.Spectrum, onMode) },
+        )
+        return
+    }
+
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+    ) {
+        InfoBar(
+            "FFT 한 장을 밴드로 묶지 않고 그대로 봅니다. " +
+                "RTA 가 가리킨 대역 안에서 실제 봉우리가 몇 Hz 인지 찾는 화면입니다.",
+            modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
+        )
+
+        SpectrumChart(
+            spectrum,
+            floor,
+            ceil,
+            Modifier.fillMaxWidth(),
+            chartHeight = 260.dp,
+            feedback = capture.feedback,
+            calibrated = calibrated,
+            modes = { AnalyzeModes(ViewMode.Spectrum, onMode) },
+        )
+
+        FeedbackStrip(
+            capture.feedback.firstOrNull(),
+            running = capture.measure is MeasureState.Running,
+            compact = false,
+            modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+        )
+    }
+}
+
 @Composable
 private fun FeedbackStrip(
     top: FeedbackCandidate?,

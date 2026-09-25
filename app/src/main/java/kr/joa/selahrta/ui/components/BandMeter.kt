@@ -91,7 +91,7 @@ val BAND_SLOT_WIDE: Dp = 30.dp
  * 9sp 글자의 줄 높이(약 13dp)에 여유를 둔 값이다. 14dp 로 두었더니 숫자의
  * 아랫부분이 잘렸다(기기에서 확인) — 글자 크기만 보고 잡으면 모자란다.
  */
-private val LABEL_ROW_HEIGHT = 18.dp
+internal val LABEL_ROW_HEIGHT = 18.dp
 
 /**
  * 31밴드 막대(컨셉 화면 2번).
@@ -165,13 +165,16 @@ fun BandMeter(
     /**
      * 세로축 숫자가 **dB SPL 인가**(2026-09-25).
      *
-     * 값은 `bandsDbfs + offsetDb` 다. 보정이 없으면 오프셋이 0 이라 그대로
-     * **dBFS**(0 이 만재, 음수)가 나온다 — 담당자 지시대로 축에 「SPL」이라
-     * 적어 놓고 보니, 미보정 기기에서 `0 · -15 · -30` 위에 SPL 이라 적혀
-     * 있었다(기기에서 확인).
+     * 값은 미보정일 때도 dB SPL 이다 — 오프셋이 0 이 아니라 **짐작한 만재
+     * 음압**(`ASSUMED_FULL_SCALE_SPL`, 120dB)이기 때문이다. 그러나 그
+     * 짐작은 ±10dB 넘게 틀릴 수 있다고 그 상수의 주석이 적어 두었다.
      *
-     * 어느 쪽인지는 밴드 값만 봐서는 알 수 없고, RTA 는 머리글을 접는
-     * 화면이라 「미보정」 배지도 없다. 그래서 축 이름을 바깥에서 받는다.
+     * RTA 는 머리글을 접는 화면이라 「미보정」 배지가 안 보인다. 그래서 축
+     * 설명이 그 말을 대신하게 바깥에서 상태를 받는다.
+     *
+     * **한 번 헛짚었다**: 값이 없을 때의 자리표시 범위가 `-60 ~ 0` 이라
+     * 그것을 dBFS 로 읽고 축을 「dBFS(미보정)」이라 적었다. 자리표시는
+     * 데이터가 아니다 — 재는 중인 화면에서 확인했어야 했다.
      */
     calibrated: Boolean,
 ) {
@@ -410,11 +413,15 @@ fun BandMeter(
                 // 세로축이 무엇인지 적는다 — 숫자만으로는 dBFS 인지
                 // dB SPL 인지 알 수 없다(담당자 지적, 2026-09-25).
                 //
-                // **미보정이면 SPL 이라 부르지 않는다.** 그 숫자는 아직 이
-                // 기기의 dBFS 이고, SPL 이라 적는 순간 「85」가 음압으로
-                // 읽힌다 — 그렇게 읽으면 소음 판정이 통째로 틀린다.
-                append("가로 주파수(Hz) · 세로 ")
-                append(if (calibrated) "SPL" else "dBFS(미보정)")
+                // **미보정이면 그렇다고 적는다.** 값 자체는 미보정일 때도
+                // SPL 이다 — 오프셋이 0 이 아니라 짐작한 만재 음압
+                // (`ASSUMED_FULL_SCALE_SPL`, 120dB)이기 때문이다. 다만 그
+                // 짐작은 ±10dB 넘게 틀릴 수 있으므로 숫자만 내놓으면 안 된다.
+                //
+                // RTA 는 머리글을 접는 화면이라 「미보정」 배지가 없다. 이
+                // 줄이 그 자리를 대신한다.
+                append("가로 주파수(Hz) · 세로 SPL")
+                if (!calibrated) append("(미보정 · 참고용)")
                 append(" ${floorDb.toInt()} ~ ${ceilDb.toInt()} dB")
                 // **밀 수 있을 때만 밀라고 한다.** 태블릿처럼 넓은 화면에서는
                 // 31칸이 다 들어와 밀 것이 없다. maxValue 가 그 사실을 안다.
@@ -435,14 +442,23 @@ fun BandMeter(
  * 보정 상태에 따라 절대 눈금이 달라지므로 값에서 끌어온다. 고정 눈금을 쓰면
  * 보정하는 순간 막대가 전부 천장에 붙거나 바닥에 깔린다.
  */
+/**
+ * 아직 잰 것이 없을 때의 세로축.
+ *
+ * 예전에는 `-60 ~ 0` 이었는데 그 숫자는 **dBFS 의 눈금**이다. 값은 미보정
+ * 일 때도 SPL 이라(짐작한 만재 음압을 더한다) 음수 SPL 은 있을 수 없는
+ * 값이고, 실제로 그 자리표시를 데이터로 잘못 읽은 일이 있었다.
+ */
+private val EMPTY_SPL_RANGE = 20.0 to 90.0
+
 fun rtaRange(rta: RtaView?, resolvedOnly: Boolean = true): Pair<Double, Double> {
-    if (rta == null) return -60.0 to 0.0
+    if (rta == null) return EMPTY_SPL_RANGE
     var top = Double.NEGATIVE_INFINITY
     for (i in rta.bandsSpl.indices) {
         if (resolvedOnly && !rta.resolved[i]) continue
         if (rta.bandsSpl[i] > top) top = rta.bandsSpl[i]
     }
-    if (!top.isFinite()) return -60.0 to 0.0
+    if (!top.isFinite()) return EMPTY_SPL_RANGE
     // 위로 6dB 여유를 두고 아래로 50dB. 예배당에서 읽히는 폭이다.
     val ceil = kotlin.math.ceil((top + 6.0) / 5.0) * 5.0
     return (ceil - 50.0) to ceil
@@ -450,8 +466,13 @@ fun rtaRange(rta: RtaView?, resolvedOnly: Boolean = true): Pair<Double, Double> 
 
 
 
-/** 세로축이 가져가는 폭. 「110」까지 들어가면 넉넉하다. */
-private val Y_AXIS_WIDTH = 26.dp
+/**
+ * 세로축이 가져가는 폭. 「110」까지 들어가면 넉넉하다.
+ *
+ * **Spectrum 화면도 같은 것을 쓴다.** 두 차트를 번갈아 보는 화면이라
+ * 세로축이 서로 다른 자리에 있으면 눈이 매번 다시 자리를 잡아야 한다.
+ */
+internal val Y_AXIS_WIDTH = 26.dp
 
 /**
  * 세로축 — **막대가 얼마인지 눈으로 읽게 한다.**
@@ -463,7 +484,7 @@ private val Y_AXIS_WIDTH = 26.dp
  * 다른 셈으로 자리를 잡으면 반올림 때문에 어긋난다. 같은 다섯 등분을 쓴다.
  */
 @Composable
-private fun YAxis(floorDb: Double, ceilDb: Double, height: Dp, modifier: Modifier = Modifier) {
+internal fun YAxis(floorDb: Double, ceilDb: Double, height: Dp, modifier: Modifier = Modifier) {
     Column(
         modifier.width(Y_AXIS_WIDTH).height(height),
         horizontalAlignment = Alignment.End,

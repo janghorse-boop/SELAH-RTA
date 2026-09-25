@@ -109,7 +109,7 @@ class SpectralPeakFinder(
             found.add(
                 SpectralPeak(
                     bin = k,
-                    hz = refinedHz(power, k),
+                    hz = refineBinHz(power, k, binHz),
                     power = p,
                     prominenceDb = prominence,
                     widthBins = widthAtHalfPower(power, k),
@@ -141,31 +141,6 @@ class SpectralPeakFinder(
         return if (n % 2 == 1) scratch[n / 2] else (scratch[n / 2 - 1] + scratch[n / 2]) / 2.0
     }
 
-    /**
-     * 세 칸으로 칸 사이 위치를 되찾는다.
-     *
-     * 봉우리와 양옆 칸에 포물선을 맞춰 꼭짓점을 찾는다. **dB 로 바꾼 뒤에
-     * 맞춘다** — 전력 그대로 맞추면 한쪽으로 치우친다. Hann 창의 주엽은
-     * 로그 눈금에서 포물선에 가깝기 때문이다.
-     *
-     * 1kHz 순음(칸 85.33)에서 전력으로 맞추면 998.7Hz(2.3cent 어긋남),
-     * dB 로 맞추면 1000.0Hz 가 나온다. 이 정밀도가 판정에 바로 쓰인다 —
-     * 흔들림을 cent 로 재기 때문이다.
-     */
-    private fun refinedHz(power: DoubleArray, k: Int): Double {
-        val a = power[k - 1]
-        val b = power[k]
-        val c = power[k + 1]
-        if (a <= 0.0 || b <= 0.0 || c <= 0.0) return k * binHz
-        val la = log10(a)
-        val lb = log10(b)
-        val lc = log10(c)
-        val denom = la - 2 * lb + lc
-        // 세 점이 일직선이면 꼭짓점을 잡을 수 없다. 칸 한가운데로 둔다.
-        val delta = if (denom == 0.0) 0.0 else (0.5 * (la - lc) / denom).coerceIn(-0.5, 0.5)
-        return (k + delta) * binHz
-    }
-
     /** 봉우리에서 −3dB 아래로 내려갈 때까지의 폭(칸). */
     private fun widthAtHalfPower(power: DoubleArray, k: Int): Int {
         val half = power[k] / 2.0
@@ -175,4 +150,33 @@ class SpectralPeakFinder(
         while (hi < power.size - 1 && power[hi + 1] >= half) hi++
         return hi - lo + 1
     }
+}
+
+/**
+ * 세 칸으로 칸 사이 위치를 되찾는다.
+ *
+ * 봉우리와 양옆 칸에 포물선을 맞춰 꼭짓점을 찾는다. **dB 로 바꾼 뒤에
+ * 맞춘다** — 전력 그대로 맞추면 한쪽으로 치우친다. Hann 창의 주엽은
+ * 로그 눈금에서 포물선에 가깝기 때문이다.
+ *
+ * 1kHz 순음(칸 85.33)에서 전력으로 맞추면 998.7Hz(2.3cent 어긋남),
+ * dB 로 맞추면 1000.0Hz 가 나온다. 이 정밀도가 판정에 바로 쓰인다 —
+ * 하울링은 흔들림을 cent 로 재고, 화면은 그 숫자를 그대로 적는다.
+ *
+ * **[SpectralPeakFinder] 와 [topSpectrumPeak] 가 함께 쓴다.** 따로
+ * 두었다가 한쪽만 고치면 같은 봉우리를 두 화면이 다른 주파수로 말한다.
+ */
+internal fun refineBinHz(power: DoubleArray, k: Int, binHz: Double): Double {
+    if (k <= 0 || k >= power.size - 1) return k * binHz
+    val a = power[k - 1]
+    val b = power[k]
+    val c = power[k + 1]
+    if (a <= 0.0 || b <= 0.0 || c <= 0.0) return k * binHz
+    val la = log10(a)
+    val lb = log10(b)
+    val lc = log10(c)
+    val denom = la - 2 * lb + lc
+    // 세 점이 일직선이면 꼭짓점을 잡을 수 없다. 칸 한가운데로 둔다.
+    val delta = if (denom == 0.0) 0.0 else (0.5 * (la - lc) / denom).coerceIn(-0.5, 0.5)
+    return (k + delta) * binHz
 }

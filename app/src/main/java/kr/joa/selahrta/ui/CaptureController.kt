@@ -176,6 +176,20 @@ class CaptureController(
      */
     fun rtaSpec(): Pair<Int, Int>? = active?.let { it.rta.fftSize to it.rta.sampleRateHz }
 
+    /**
+     * Spectrum 화면이 열려 있는가.
+     *
+     * **세션 밖에 둔다.** 화면을 열어 둔 채 마이크를 다시 열면 새 엔진이
+     * 만들어지는데, 세션 안에만 적어 두면 그때 꺼진 채로 시작한다 —
+     * 화면은 열려 있는데 그림만 안 나오고, 까닭을 알 길이 없다.
+     */
+    @Volatile
+    var spectrumEnabled: Boolean = false
+        set(v) {
+            field = v
+            postToCapture { it.rta.spectrumEnabled = v }
+        }
+
     fun postToCapture(cmd: (CaptureSession) -> Unit) {
         val s = active ?: return
         s.commands.add { cmd(s) }
@@ -443,6 +457,8 @@ class CaptureController(
                     settings = _state.value.meterSettings,
                 )
                 session.startedNs = nowNs()
+                // 새 엔진에 지금 화면 상태를 그대로 물려준다.
+                session.rta.spectrumEnabled = spectrumEnabled
                 active = session
                 // **이전 기기의 보정을 여기서 끊는다.** 남겨 두면 새 기기의
                 // 첫 덩어리들이 지난 마이크의 보정값으로 나간다
@@ -544,6 +560,7 @@ class CaptureController(
             ),
             spl = splFrame,
             rta = session.rta.frame(),
+            spectrum = session.rta.spectrumFrame(),
             anyClipping = session.clippedBlocks > 0,
             feedback = session.feedback.candidates,
             feedbackLog = session.feedback.events,

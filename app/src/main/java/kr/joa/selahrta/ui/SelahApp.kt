@@ -69,6 +69,7 @@ import kr.joa.selahrta.ui.screens.FrScreen
 import kr.joa.selahrta.ui.screens.HistoryScreen
 import kr.joa.selahrta.ui.screens.MeasureScreen
 import kr.joa.selahrta.ui.screens.RtaScreen
+import kr.joa.selahrta.ui.screens.SpectrumScreen
 import kr.joa.selahrta.ui.screens.SettingsScreen
 import kr.joa.selahrta.ui.screens.ToolsScreen
 import kr.joa.selahrta.ui.screens.exampleJudgement
@@ -308,9 +309,16 @@ fun SelahApp() {
             // 가로축 주파수 눈금을 화면 밖으로 밀어냈다. RTA 는 「어느 대역이
             // 솟았나」를 보는 화면이라 기기·보정 배지 없이도 읽힌다.
             //
-            // **다른 화면에서는 접지 않는다.** 미보정 배지는 그 숫자가 아직
-            // 짐작임을 말하는 자리라, 절대 음압을 읽는 화면에서 숨기면 안 된다.
-            if (screen != ViewMode.Rta) TopBrandBar(capture)
+            // **Spectrum 도 같이 접는다**(2026-09-25). 지시를 받을 때는 없던
+            // 화면이지만 사정이 똑같다 — 눕혀서 차트만 띄우는 화면이고, 접어
+            // 사라지는 「미보정」 배지는 **차트 설명 줄이 대신 적는다**
+            // (`세로 SPL(미보정 · 참고용)`). 배지가 그냥 없어지는 것이
+            // 아니므로 접어도 된다.
+            //
+            // **FR 과 측정에서는 접지 않는다.** FR 은 단추가 있는 스크롤
+            // 화면이라 머리글이 차트를 밀지 않고, 측정은 절대 음압을 읽는
+            // 화면이라 배지를 숨기면 안 된다.
+            if (screen !in CHART_ONLY_MODES) TopBrandBar(capture)
 
             if (section.hasModeChips) {
                 // RTA 는 차트가 화면을 꽉 채우는 화면이라 칩도 낮게 그린다.
@@ -370,6 +378,11 @@ fun SelahApp() {
                         onDismissDeviceNotice = vm::dismissDeviceNotice,
                     )
                     ViewMode.Rta -> RtaScreen(capture, onMode = { mode = it })
+                    ViewMode.Spectrum -> SpectrumScreen(
+                        capture = capture,
+                        onSpectrumEnabled = vm::setSpectrumEnabled,
+                        onMode = { mode = it },
+                    )
                     ViewMode.Fr -> FrScreen(
                         capture = capture,
                         onMeasure = vm::measureResponse,
@@ -716,3 +729,12 @@ private fun BottomBar(
         }
     }
 }
+
+/**
+ * 머리글을 접는 화면들 — **눕혀서 차트로 꽉 채우는** 화면이다.
+ *
+ * [ViewMode] 안에 두지 않고 여기 나열하는 까닭: 「차트로 꽉 채우는가」는
+ * 칩이 스스로 아는 성질이 아니라 **그 화면을 어떻게 그렸는가**라서,
+ * 그리는 코드 곁에 두어야 화면을 고칠 때 함께 눈에 들어온다.
+ */
+private val CHART_ONLY_MODES = setOf(ViewMode.Rta, ViewMode.Spectrum)
