@@ -356,27 +356,27 @@ fun MeasureScreen(
                 } else {
                     null
                 },
+                emphasised = true,
                 dim = uncalibrated,
             )
-            // **가운데는 지금 값이다**(2026-09-25 담당자 지시: 「메인을
-            // Leq·현재 측정되는 값·MAX로」). 셋이 평균 → 지금 → 최대 로
-            // 이어져, 한 줄만 읽어도 소리가 어디에 있는지 알 수 있다.
+            // **「현재」 타일은 두지 않는다**(2026-09-25 담당자 지적:
+            // 「현재 값이 동일하게 표시되는데 … 하나만 나오면 됩니다」).
             //
-            // 계기의 큰 숫자와 같은 값이다. 겹쳐 보이지만 하는 일이 다르다 —
-            // 계기는 **범위의 어디쯤인지**를 색과 길이로 보이고, 이 타일은
-            // 옆의 둘과 **같은 자리에서 견줄 숫자**를 준다.
-            ValueTile(
-                "현재",
-                formatDb(m.currentSpl),
-                weighting.unitSuffix,
-                Modifier.weight(1f),
-                dim = uncalibrated,
-            )
+            // 지금 값은 **계기가 맡는다.** 어두운 예배당에서 흘끗 볼 때
+            // 52sp 와 22sp 는 전혀 다르게 읽히고, 계기가 있는 까닭이 바로
+            // 그 읽히는 거리다. 같은 값을 작은 타일로 옮기면 읽기가
+            // 나빠지기만 한다.
+            //
+            // 그래서 위계를 이렇게 둔다 — **지금 값은 계기가 크게**, 그
+            // 아래에 **이어지는 값(Leq)과 가장 컸던 값(MAX)**. 타일이 둘로
+            // 줄면서 폭이 넓어져 「Leq (1분)」 라벨도 덜 끼고 숫자를 한 호
+            // 키울 수 있다.
             ValueTile(
                 "MAX",
                 formatDb(m.maxSpl),
                 weighting.unitSuffix,
                 Modifier.weight(1f),
+                emphasised = true,
                 dim = uncalibrated,
             )
         }
