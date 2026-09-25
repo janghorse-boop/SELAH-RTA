@@ -201,8 +201,17 @@ fun SelahApp() {
             // **FR 작업도 함께 끊는다**(독립 검토 UA-03) — 그 작업은 배경을
             // 다 재면 **스스로** 핑크 잡음을 튼다.
             when (event) {
-                Lifecycle.Event.ON_STOP -> vm.onBackground()
-                Lifecycle.Event.ON_START -> vm.onForeground()
+                // **소리를 내는 주인이 둘이다**(독립 검토 CA-05). FR 만
+                // 끊었더니 교정 마법사에 같은 결함이 그대로 남아 있었다 —
+                // 배경을 재는 동안 나가면 마법사가 스스로 핑크 잡음을 틀었다.
+                Lifecycle.Event.ON_STOP -> {
+                    vm.onBackground()
+                    wizard.stopWork()
+                }
+                Lifecycle.Event.ON_START -> {
+                    vm.onForeground()
+                    wizard.onForeground()
+                }
                 else -> Unit
             }
         }
@@ -296,6 +305,7 @@ fun SelahApp() {
                 // 덮여 있어서, 닫지 않으면 다른 탭으로 가도 그대로 얹혀
                 // 있다(기기에서 확인).
                 wizardOpen = false
+                wizard.stopWork()
                 profilesOpen = false
                 // 측정·분석으로 오면 그 구역에서 마지막에 보던 칩으로 돌아간다.
                 //
@@ -434,7 +444,7 @@ fun SelahApp() {
                 // **탭 내용 위에 덮는다.** 탭으로 두면 측정 중에 잘못
                 // 눌러 들어간다. 뒤로가기로 닫힌다.
                 if (wizardOpen) {
-                    BackHandler { wizardOpen = false }
+                    BackHandler { wizardOpen = false; wizard.stopWork() }
                     val example = if (wizardExample) remember { exampleOutcome() } else null
                     // **잰 것이 있으면 잰 것을 보인다.** 예전에는 예시만
                     // 넘기고 있어서, 세 번을 다 재고 5단계에 가도 화면이
@@ -488,10 +498,16 @@ fun SelahApp() {
                             onRestartMeasurement = wizard::restartMeasurement,
                             savedLabelKo = wizardSaved?.labelKo,
                             canSave = capture.opened != null && wizardSaved == null,
+                            // **막힌 까닭은 마법사가 판단한다**(독립 검토 CA-01).
+                            // 화면이 스스로 셈하면 저장 쪽 판정과 어긋난다.
+                            transferBlockedKo = wizard.transferBlockedKo(
+                                capture.opened?.deviceKey,
+                            ),
                             onApplyLevelTransfer = { db ->
                                 vm.saveOffsetDirect(
                                     db,
                                     kr.joa.selahrta.calibration.CalibrationSource.FromReferenceMic,
+                                    expectedDeviceKey = wizard.transferTargetKey,
                                 )
                             },
                             onSave = {
@@ -527,6 +543,10 @@ fun SelahApp() {
                                         // 조금 짧게 둔다 — 길면 장을 건너뛰고,
                                         // 너무 짧으면 헛돈다.
                                         tick = { kotlinx.coroutines.delay(30) },
+                                        // **어느 기기의 증거인가**(독립 검토
+                                        // CA-03). 기준과 대상이 한 벌을
+                                        // 나눠 쓰면 묻힌 쪽이 통과한다.
+                                        deviceKey = capture.opened?.deviceKey,
                                     )
                                 }
                             },
@@ -535,7 +555,9 @@ fun SelahApp() {
                             onGoTo = wizard::goTo,
                             onToggleExample = { wizardExample = !wizardExample },
                             onDismissNotice = wizard::dismissNotice,
-                            onClose = { wizardOpen = false },
+                            // **닫으면 재기도 끊는다.** 예전에는 화면 값만
+                            // 바꿨고, 도는 작업은 그대로 남아 소리를 틀었다.
+                            onClose = { wizardOpen = false; wizard.stopWork() },
                         )
                     }
                 }

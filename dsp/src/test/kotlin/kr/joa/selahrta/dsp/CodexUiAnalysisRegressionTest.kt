@@ -2,6 +2,8 @@ package kr.joa.selahrta.dsp
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.PI
@@ -25,6 +27,9 @@ import kotlin.math.sin
 class CodexUiAnalysisRegressionTest {
 
     private val fs = 48_000
+
+    /** 줄바꿈. 파일 본문을 줄로 이어 붙일 때 쓴다. */
+    private val LF = "\n"
 
     /**
      * 검토자의 신호 생성기를 그대로 옮겼다.
@@ -179,6 +184,61 @@ class CodexUiAnalysisRegressionTest {
         )
         val peak = topSpectrumPeak(power, fs, 4096, 20.0, 20_000.0)
         assertTrue("범위 밖 봉우리: $peak", peak == null || peak.hz <= 20_000.0)
+    }
+
+    /**
+     * **CA-09** — 제외한 봉우리의 **경사면**을 다음 봉우리로 보고했다.
+     *
+     * 범위 밖 신호가 크면 그 치마가 범위 안까지 흘러 들어온다. 「범위
+     * 안에서 가장 큰 칸」을 집으면 그 경사면의 첫 칸이 뽑힌다 — 검토자가
+     * 19Hz + 약한 1kHz 에서 **29.3Hz** 를 쟀다. 있지도 않은 봉우리다.
+     *
+     * 봉우리는 양옆보다 높아야 한다.
+     */
+    @Test
+    fun `제외한 봉우리의 경사면을 봉우리라 하지 않는다`() {
+        for (fs2 in listOf(48_000, 44_100)) {
+            val power = DoubleArray(2049)
+            PowerSpectrum(4096).compute(
+                DoubleArray(4096) {
+                    sin(2 * PI * 19.0 * it / fs2) + 0.01 * sin(2 * PI * 1000.0 * it / fs2)
+                },
+                0,
+                power,
+            )
+            val top = topSpectrumPeak(power, fs2, 4096)
+            assertNotNull("${fs2}Hz 에서 봉우리를 못 찾았다", top)
+            assertEquals("${fs2}Hz — 19Hz 는 빠지고 진짜 봉우리는 1kHz 다", 1000.0, top!!.hz, 2.0)
+        }
+    }
+
+    /**
+     * **CA-10** — 잰 조건을 적은 한 줄로 기준 CAL 의 부호가 확정됐다.
+     *
+     * `# Measured at 94 dB SPL` 은 **잰 조건**이다. 둘째 열이 응답인지
+     * 보정값인지는 아무 말도 하지 않는데, 그것만으로 사람에게 묻지도 않고
+     * 정해졌다. 부호가 뒤집히면 고쳐야 할 만큼을 정확히 거꾸로 민다.
+     */
+    @Test
+    fun `잰 조건을 적은 줄은 부호를 정하지 못한다`() {
+        val loaded = CalibrationFile
+            .load("# Measured at 94 dB SPL" + LF + "20 -1" + LF + "1000 0" + LF + "20000 2" + LF)
+            .getOrThrow()
+        val decision = decideReading(loaded.signEvidence, ReadingStakes.ReferenceForCalibration)
+        assertFalse("잰 세기는 열의 뜻이 아니다: $decision", decision.settled)
+    }
+
+    /** 대조군 — **열 이름**은 그대로 단서가 돼야 한다. */
+    @Test
+    fun `열 이름은 그대로 단서가 된다`() {
+        assertEquals(
+            SignEvidence.LooksLikeResponse,
+            signEvidenceOf(listOf("Frequency,SPL,Phase")),
+        )
+        assertEquals(
+            SignEvidence.LooksLikeCorrection,
+            signEvidenceOf(listOf("Frequency(Hz)  Correction(dB)")),
+        )
     }
 
     /** 검토자가 「44.1kHz 도 포함하라」고 적었다. */

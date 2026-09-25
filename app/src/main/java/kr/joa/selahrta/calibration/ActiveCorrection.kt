@@ -72,11 +72,19 @@ sealed interface ActiveCorrection {
  * [CurveReading.Correction] 으로 넣어 뒤집는다. 그 뜻이 바로 「이미
  * 뒤집힌 값」이다(독립 검토 R04 에서 만든 것을 여기서 쓴다).
  *
- * ## 믿을 수 없는 자리는 빼고 옮긴다
+ * ## 믿을 수 없는 자리는 빼고, **뺀 자리를 기억한다**
  *
  * `valid=false` 인 점은 잰 적이 없거나 SNR 이 모자란 자리다. 그대로
- * 넣으면 0dB 보정으로 읽혀 「거기는 고칠 게 없다」가 된다. 빼면 곡선의
- * 범위가 줄어들고, 범위 밖은 끝점 값이 늘어난다 — 그쪽이 정직하다.
+ * 넣으면 0dB 보정으로 읽혀 「거기는 고칠 게 없다」가 된다.
+ *
+ * **빼는 것만으로는 모자랐다**(독립 검토 CA-02). 점을 빼면 남은 점 사이가
+ * 그냥 이어져 버려 **버렸던 구간이 다시 보정된다.** 범위 밖도 끝점 값이
+ * 늘어나 걸린다. 화면에서 「이 대역은 못 믿는다」고 적어 놓고 그 대역을
+ * 고치고 있었다 — 검토자가 2kHz 에 +3.008dB, 8kHz 와 46.9Hz 에 +6dB 가
+ * 걸리는 것을 쟀다.
+ *
+ * 그래서 남은 **구간**을 함께 넘긴다. 구간 밖은 계수 1.0 이 되어 원래
+ * 전력 그대로 남는다. 모르는 곳은 건드리지 않는 것이 유일하게 정직하다.
  */
 fun correctionAsCurve(correction: ResponseCurve): Result<CalibrationCurve> {
     val points = correction.hz.indices
@@ -88,7 +96,32 @@ fun correctionAsCurve(correction: ResponseCurve): Result<CalibrationCurve> {
         )
     }
     // **여기서 뒤집는다.** 위 KDoc 참고.
-    return CalibrationCurve.of(points, CurveReading.Correction)
+    return CalibrationCurve.of(points, CurveReading.Correction, validRuns(correction))
+}
+
+/**
+ * 믿을 수 있는 점이 **이어져 있는 구간**들.
+ *
+ * 이어져 있어야 그 사이를 보간할 근거가 된다. 무효 점이 하나라도 끼면
+ * 구간이 끊긴다 — 양옆이 멀쩡해도 그 사이를 잰 것은 아니기 때문이다.
+ *
+ * 혼자 남은 점은 **그 점 하나짜리 구간**이 된다(`[4000, 4000]`). 점 하나로는
+ * 보간할 수 없으므로 둘레는 보정하지 않는다. 인색해 보이지만, 한 점에서
+ * 양쪽으로 늘여 쓰는 것이 바로 이 결함이었다.
+ */
+private fun validRuns(c: ResponseCurve): List<ClosedFloatingPointRange<Double>> {
+    val runs = ArrayList<ClosedFloatingPointRange<Double>>()
+    var start = -1
+    for (i in c.hz.indices) {
+        if (c.valid[i]) {
+            if (start < 0) start = i
+            if (i == c.hz.lastIndex) runs += c.hz[start]..c.hz[i]
+        } else if (start >= 0) {
+            runs += c.hz[start]..c.hz[i - 1]
+            start = -1
+        }
+    }
+    return runs
 }
 
 /**

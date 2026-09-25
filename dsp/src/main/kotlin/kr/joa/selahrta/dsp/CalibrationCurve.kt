@@ -30,6 +30,27 @@ class CalibrationCurve private constructor(
     val rawPoints: List<CurvePoint>,
     /** 둘째 열을 무엇으로 읽었는가(독립 검토 R04). 프로파일에 남는다. */
     val reading: CurveReading,
+    /**
+     * **실제로 잰 구간들.** null 이면 점 전체가 근거가 있다는 뜻이다.
+     *
+     * ## 왜 필요한가 (독립 검토 CA-02)
+     *
+     * 잰 프로파일에는 **못 믿는 자리**가 섞인다(SNR 부족, 안 잰 대역).
+     * 예전에는 그런 점을 **빼고** 곡선을 만들었다. 그러면 남은 점 사이가
+     * 그냥 이어져 버려, 버렸던 구간이 **다시 보정된다** — 화면에서 「이
+     * 대역은 못 믿는다」고 적어 놓고 그 대역을 고치고 있었다.
+     *
+     * 검토자가 잰 값: 2kHz 를 무효로 버렸는데 실제로 +3.008dB 가 걸렸고,
+     * 측정 범위 밖(8kHz·46.9Hz)에는 끝점 값 +6dB 가 늘어나 걸렸다.
+     *
+     * 그래서 **뺀 자리를 기억한다.** 구간 밖의 칸은 계수 1.0 — 원래 전력
+     * 그대로 둔다. 「모르는 곳은 건드리지 않는다」가 유일하게 정직하다.
+     *
+     * 제조사 CAL 파일은 null 이다 — 그쪽은 파일 전체가 측정값이고, 범위
+     * 밖에서 끝점을 유지하는 것이 오래 쓰던 규약이다. 둘은 다른 계약이라
+     * 구별한다(검토자 권고).
+     */
+    val supportHz: List<ClosedFloatingPointRange<Double>>? = null,
 ) {
     init {
         require(points.size >= 2) { "보정 곡선에는 점이 둘 이상 있어야 한다" }
@@ -46,6 +67,7 @@ class CalibrationCurve private constructor(
             points = rawPoints.map { CurvePoint(it.hz, it.gainDb * other.toResponseSign) },
             rawPoints = rawPoints,
             reading = other,
+            supportHz = supportHz,
         )
 
     val lowestHz: Double get() = points.first().hz
@@ -61,8 +83,29 @@ class CalibrationCurve private constructor(
      */
     val rangeHz: ClosedFloatingPointRange<Double> get() = lowestHz..highestHz
 
-    /** [hz] 를 이 파일이 실제로 쟀는가. 밖이면 보정 근거가 없다. */
-    fun covers(hz: Double): Boolean = hz >= lowestHz && hz <= highestHz
+    /**
+     * [hz] 를 이 파일이 실제로 쟀는가. 밖이면 보정 근거가 없다.
+     *
+     * [supportHz] 가 있으면 **구멍까지 본다** — 점 사이가 이어져 있다고
+     * 해서 그 사이를 잰 것은 아니다(독립 검토 CA-02).
+     */
+    fun covers(hz: Double): Boolean {
+        val support = supportHz ?: return hz in lowestHz..highestHz
+        return support.any { hz in it }
+    }
+
+    /**
+     * 이 주파수에 **보정을 걸어도 되는가.** [covers] 와 다르다.
+     *
+     * [covers] 는 「이 파일이 쟀는가」이고, 이것은 「걸 것인가」다.
+     * 제조사 CAL 파일([supportHz] 가 null)은 범위 밖에서도 끝점 값을
+     * 늘여 걸어 왔다 — 오래된 규약이고, 바꾸면 이미 잰 보정이 달라진다.
+     * 잰 프로파일만 구간 밖을 비운다(독립 검토 CA-02 의 권고).
+     */
+    private fun supported(hz: Double): Boolean {
+        val support = supportHz ?: return true
+        return support.any { hz in it }
+    }
 
     /**
      * [hz] 에서 마이크의 응답(dB).
@@ -142,7 +185,13 @@ class CalibrationCurve private constructor(
         val binWidth = sampleRate.toDouble() / fftSize
         return DoubleArray(fftSize / 2 + 1) { k ->
             val hz = if (k == 0) lowestHz else k * binWidth
-            10.0.pow(-(gainDbAt(hz) - ref) / 10.0)
+            // **잰 적 없는 자리는 건드리지 않는다**(독립 검토 CA-02).
+            // 1.0 은 「곱해도 그대로」다 — 보정하지 않는다는 뜻이다.
+            //
+            // [covers] 가 아니라 [supported] 를 쓴다. 둘은 다른 계약이다 —
+            // 제조사 파일은 범위 밖에서 끝점을 늘여 쓰는 옛 규약을 그대로
+            // 따르고([gainDbAt]), 잰 프로파일만 구간 밖을 비운다.
+            if (!supported(hz)) 1.0 else 10.0.pow(-(gainDbAt(hz) - ref) / 10.0)
         }
     }
 
@@ -175,7 +224,7 @@ class CalibrationCurve private constructor(
 
     /** 곡선이 실제로 덮는 밴드인가. 밖이면 끝점 값을 늘여 쓴 것이라 근거가 약하다. */
     fun bandCovered(): BooleanArray = BooleanArray(ThirdOctave.BAND_COUNT) { b ->
-        ThirdOctave.exactCenter(b) in lowestHz..highestHz
+        covers(ThirdOctave.exactCenter(b))
     }
 
     /** 가장 큰 보정량. 너무 크면 파일이 이상한 것이다. */
@@ -198,6 +247,11 @@ class CalibrationCurve private constructor(
              * 법을 곳곳에서 다시 따지면 한 군데는 반드시 빠진다.
              */
             reading: CurveReading = CurveReading.Response,
+            /**
+             * 실제로 잰 구간들. 잰 프로파일에서 **무효 자리를 뺀 뒤**
+             * 남은 구간을 넘긴다. 제조사 파일은 null 이다(독립 검토 CA-02).
+             */
+            supportHz: List<ClosedFloatingPointRange<Double>>? = null,
         ): Result<CalibrationCurve> {
             val clean = raw
                 .filter { it.hz > 0.0 && it.hz.isFinite() && it.gainDb.isFinite() }
@@ -212,6 +266,7 @@ class CalibrationCurve private constructor(
                         points = clean.map { CurvePoint(it.hz, it.gainDb * reading.toResponseSign) },
                         rawPoints = clean,
                         reading = reading,
+                        supportHz = supportHz,
                     ),
                 )
             }

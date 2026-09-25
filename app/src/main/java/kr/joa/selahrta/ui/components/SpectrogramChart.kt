@@ -336,9 +336,16 @@ class SpectrogramState(
      * 장이 고르게 들어오지 않아도 시각을 되찾으므로 어긋나지 않는다.
      */
     fun agoMsAt(fraction: Double): Long? {
-        // **`frames` 를 먼저 읽는다.** 상태 읽기가 있어야 새 장이 들어올 때
-        // 이 그리기가 다시 불린다([SpectrogramTimeline] 은 상태가 아니다).
-        if (frames < 1) return null
+        // **상태를 먼저 읽는다.** 그래야 새 장이 들어올 때 이 그리기가 다시
+        // 불린다([SpectrogramTimeline] 은 상태가 아니다).
+        //
+        // `frames` 만 읽으면 **가득 찬 뒤에 멈춘다**(독립 검토 CA-08) —
+        // 720 에서 고정되므로 바뀌는 것이 없고, 눈금은 그림만 움직이는
+        // 동안 옛 숫자를 붙들고 있었다. `head` 는 장마다 돈다.
+        val n = frames
+        @Suppress("UNUSED_EXPRESSION")
+        head
+        if (n < 1) return null
         return timeline.agoMsAt(fraction)
     }
 

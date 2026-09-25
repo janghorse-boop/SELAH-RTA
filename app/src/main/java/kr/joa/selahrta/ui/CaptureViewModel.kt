@@ -561,21 +561,24 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun usableQuiet(): QuietBackground? {
         val q = responseQuiet ?: return null
-        val st = controller.baseState.value
-        val opened = st.opened
-        val spec = rtaSpec()
-        val same = opened != null && spec != null &&
-            q.session == st.session &&
-            q.deviceKey == opened.deviceKey &&
-            q.channelIndex == opened.channelIndex &&
-            q.sampleRate == spec.second &&
-            q.fftSize == spec.first
-        if (!same) {
+        if (!sameAsNow(q)) {
             responseQuiet = null
             controller.update { it.copy(responseQuietReady = false) }
             return null
         }
         return q
+    }
+
+    /** [q] 의 이름표가 **지금 열린 입력**과 같은가. */
+    private fun sameAsNow(q: QuietBackground): Boolean {
+        val st = controller.baseState.value
+        val opened = st.opened ?: return false
+        val spec = rtaSpec() ?: return false
+        return q.session == st.session &&
+            q.deviceKey == opened.deviceKey &&
+            q.channelIndex == opened.channelIndex &&
+            q.sampleRate == spec.second &&
+            q.fftSize == spec.first
     }
 
     /**
@@ -739,6 +742,29 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
 
+        // **시작할 때의 신원을 붙들어 둔다**(독립 검토 CA-06).
+        //
+        // 예전에는 배경 장이 다 찬 **뒤에** 그때 열려 있는 경로를 읽어 표를
+        // 붙였다. 장이 충분히 쌓인 뒤 완료 처리가 늦어지면 — 그 사이에
+        // 멈추고 다른 입력을 열 수 있다 — **A 의 장에 B 의 이름표**가
+        // 붙었다. 그러면 나중 검사도 그대로 통과한다.
+        //
+        // 잰 것과 이름표는 같은 순간에 정해져야 한다.
+        val startedAt = controller.baseState.value
+        val startedOpened = startedAt.opened
+        if (startedOpened == null) {
+            controller.update { st -> st.copy(responseNoticeKo = "입력이 열려 있지 않습니다.") }
+            return
+        }
+        val startedStamp = QuietBackground(
+            meanDb = DoubleArray(0),
+            session = startedAt.session,
+            deviceKey = startedOpened.deviceKey,
+            channelIndex = startedOpened.channelIndex,
+            sampleRate = spec.second,
+            fftSize = spec.first,
+        )
+
         responseJob = viewModelScope.launch {
             val tap = kr.joa.selahrta.dsp.MeasurementTap(spec.first, spec.second)
             installMeasurementTap(tap)
@@ -765,20 +791,20 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     val acc = BandAccumulator(frames.first().size)
                     frames.forEach { acc.add(it) }
-                    val openedNow = controller.baseState.value.opened
                     val meanDb = acc.meanDb()
-                    if (openedNow == null || meanDb == null) {
-                        failResponse("입력이 닫혔습니다. 마이크를 다시 열고 재 보십시오.")
+                    if (meanDb == null) {
+                        failResponse("배경을 재지 못했습니다. 마이크가 열려 있는지 확인하십시오.")
                         return@launch
                     }
-                    responseQuiet = QuietBackground(
-                        meanDb = meanDb,
-                        session = controller.baseState.value.session,
-                        deviceKey = openedNow.deviceKey,
-                        channelIndex = openedNow.channelIndex,
-                        sampleRate = spec.second,
-                        fftSize = spec.first,
-                    )
+                    // **시작할 때의 이름표를 그대로 붙인다.** 지금 열린 경로를
+                    // 읽으면 그 사이에 바뀐 입력의 이름이 붙는다(CA-06).
+                    responseQuiet = startedStamp.copy(meanDb = meanDb)
+                    // 그리고 그 이름표가 **지금도 맞는지** 곧바로 본다. 다르면
+                    // 잰 것은 옛 입력의 것이라 쓸 수 없다.
+                    if (usableQuiet() == null) {
+                        failResponse("재는 동안 입력이 바뀌어 배경을 버렸습니다. 다시 재십시오.")
+                        return@launch
+                    }
                     controller.update { st -> st.copy(responseQuietReady = true) }
                 }
 
@@ -797,6 +823,11 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 // 없는 채로 예배당에서 소리가 난다.
                 if (!inForeground) {
                     failResponse("화면을 나가서 멈췄습니다. 다시 「응답 재기」를 누르십시오.")
+                    return@launch
+                }
+                // 소리를 내기 전에도 **시작할 때의 입력 그대로인지** 본다(CA-06).
+                if (!sameAsNow(startedStamp)) {
+                    failResponse("재는 동안 입력이 바뀌었습니다. 다시 재십시오.")
                     return@launch
                 }
                 val playHere = controller.baseState.value.responsePlayHere
@@ -1408,8 +1439,26 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     fun saveOffsetDirect(
         offsetDb: Double,
         source: kr.joa.selahrta.calibration.CalibrationSource,
+        /**
+         * 이 값이 **어느 마이크의 것인가.** null 이면 검사하지 않는다.
+         *
+         * 옮겨 온 보정값은 대상 마이크의 것인데, 저장은 「지금 열린 경로」로
+         * 기록된다. 교정 마법사는 마지막에 **기준** 마이크가 열려 있어,
+         * 검사가 없으면 대상의 오프셋이 기준의 것을 덮어쓴다
+         * (독립 검토 CA-01). 부르는 쪽이 대상 열쇠를 함께 넘긴다.
+         */
+        expectedDeviceKey: String? = null,
     ) {
         val format = controller.confirmedFormat()
+        if (expectedDeviceKey != null && format != null && format.deviceKey != expectedDeviceKey) {
+            controller.update { st ->
+                st.copy(
+                    calibrationNoticeKo = "지금 열린 입력이 이 보정값의 대상이 아닙니다. " +
+                        "저장하지 않았습니다 — 대상 마이크로 되돌린 뒤 다시 하십시오.",
+                )
+            }
+            return
+        }
         if (format == null) {
             controller.update { st ->
                 st.copy(

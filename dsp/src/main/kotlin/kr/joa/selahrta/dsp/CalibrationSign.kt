@@ -36,8 +36,23 @@ enum class SignEvidence {
     Unknown,
 }
 
-/** 우리 가정(응답)과 같은 쪽을 가리키는 말. */
-private val RESPONSE_WORDS = listOf("spl", "response", "magnitude", "measured", "응답")
+/**
+ * 우리 가정(응답)과 같은 쪽을 가리키는 말 — **열 이름이 될 수 있는 것만.**
+ *
+ * `measured` 를 뺐다(독립 검토 CA-10). 그 말은 **잰 조건**을 적을 때도
+ * 쓰이고, 그때는 둘째 열이 응답인지 보정값인지 아무 말도 하지 않는다.
+ * 검토자가 `# Measured at 94 dB SPL` 한 줄로 기준 CAL 의 부호가 사람에게
+ * 묻지도 않고 확정되는 것을 보였다.
+ */
+private val RESPONSE_WORDS = listOf("spl", "response", "magnitude", "응답")
+
+/**
+ * 「94 dB SPL」처럼 **잰 조건**을 적은 토막.
+ *
+ * 그 안의 `SPL` 은 열 이름이 아니라 소리 크기의 단위다. 세어 버리면 잰
+ * 조건을 적어 둔 파일이 전부 「응답」으로 확정된다 — 실제로 그랬다.
+ */
+private val LEVEL_PHRASE = Regex("""\d+(?:\.\d+)?\s*db(?:\s*spl)?""")
 
 /** 우리 가정과 **반대**를 가리키는 말. */
 private val CORRECTION_WORDS = listOf("correction", "compensation", "보정값", "보정 값")
@@ -49,7 +64,9 @@ private val CORRECTION_WORDS = listOf("correction", "compensation", "보정값",
  * 문장이 실제로 있고, 그런 파일은 사람이 봐야 한다.
  */
 fun signEvidenceOf(headerLines: List<String>): SignEvidence {
-    val text = headerLines.joinToString(" ").lowercase()
+    // **잰 조건 토막을 먼저 걷어낸다**(독립 검토 CA-10). 「94 dB SPL」의
+    // SPL 은 둘째 열이 무엇인지 말하지 않는다.
+    val text = LEVEL_PHRASE.replace(headerLines.joinToString(" ").lowercase(), " ")
     val response = RESPONSE_WORDS.any { text.contains(it) }
     val correction = CORRECTION_WORDS.any { text.contains(it) }
     return when {
