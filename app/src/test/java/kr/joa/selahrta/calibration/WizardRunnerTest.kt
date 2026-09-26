@@ -37,7 +37,31 @@ class WizardRunnerTest {
         override var openedDeviceKey: String? = "Usb|UMC404HD|",
         var clipping: Boolean = false,
     ) : WizardCapture {
-        override val openedCalKey: kr.joa.selahrta.calibration.CalibrationKey? = null
+        override val openedCalKey: kr.joa.selahrta.calibration.CalibrationKey?
+            get() = openedDeviceKey?.let {
+                kr.joa.selahrta.calibration.CalibrationKey(
+                    deviceKey = it,
+                    source = kr.joa.selahrta.audio.CaptureSource.Unprocessed,
+                )
+            }
+
+        /**
+         * **실제 모양의 수집 신원**(독립 재검토 CAR-01·CAR-05).
+         *
+         * 가짜가 신원을 못 내놓으면, 신원을 대조하는 새 관문이 시험에서
+         * 늘 「경로 미확인」으로 막혀 아무것도 확인하지 못한다.
+         */
+        override val identity: kr.joa.selahrta.calibration.CaptureIdentity?
+            get() = openedCalKey?.let {
+                kr.joa.selahrta.calibration.CaptureIdentity(
+                    calKey = it,
+                    routedAddress = "card=1;device=0",
+                    sampleRate = 48_000,
+                    routeConfirmed = true,
+                    generation = 1L,
+                )
+            }
+
         override val openedOffsetDb: Double? = null
 
         val log = mutableListOf<String>()

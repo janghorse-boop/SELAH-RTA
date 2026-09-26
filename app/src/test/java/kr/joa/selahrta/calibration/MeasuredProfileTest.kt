@@ -66,7 +66,10 @@ class MeasuredProfileTest {
     }
 
     private fun env(
-        deviceKey: String = "BuiltIn|SM-S918N|bottom",
+        // **실제 열쇠를 쓴다**(독립 재검토 CAR-05). 내장 마이크의 열쇠에는
+        // 주소가 없다 — 손으로 적은 `|bottom` 짜리 열쇠는 운영 코드가
+        // 만들지 않으며, 그 fixture 가 틀린 계약을 지키고 있었다.
+        deviceKey: String = realStableKey(),
         address: String = "bottom",
         kind: MicKind = MicKind.BuiltIn,
         source: CaptureSource = CaptureSource.Unprocessed,
@@ -149,19 +152,51 @@ class MeasuredProfileTest {
      * **가장 중요한 시험.** 하단에서 잰 보정을 후면에 거는 것이 이 기능
      * 전체에서 가장 나쁜 실패다 — 두 마이크는 이름이 같아서 주소로만
      * 갈린다(실기기 확인).
+     *
+     * ## 계약을 고쳐 적었다 (독립 재검토 CAR-05)
+     *
+     * 예전에는 **가짜 열쇠 둘**(`…|bottom`·`…|back`)을 넣고 `Block` 을
+     * 기대했다. 실제 `stableKey` 는 내장 마이크에서 주소를 빼므로
+     * **두 열쇠가 같다** — 그 fixture 는 있지도 않은 방어를 시험하고
+     * 있었다.
+     *
+     * 실제 모양에서 이 자리를 지키는 것은 **주소 대조**다. 판정은
+     * `Block` 이 아니라 `ApplyWithWarning` 이고, **저절로 걸리지 않는
+     * 것**(`mayAutoApply == false`)이 실제 보호다.
      */
     @Test
-    fun `다른 내장 마이크에는 걸지 않는다`() {
-        val bottom = profile(env(deviceKey = "BuiltIn|SM-S918N|bottom", address = "bottom"))
-        val nowBack = env(deviceKey = "BuiltIn|SM-S918N|back", address = "back")
+    fun `다른 내장 마이크에는 저절로 걸지 않는다`() {
+        val bottom = profile(env(address = "bottom"))
+        val nowBack = env(address = "back")
+
+        // 실제 모양에서는 열쇠가 같다. 그것이 이 시험의 전제다.
+        assertEquals(
+            "실제 열쇠에는 주소가 없다",
+            bottom.environment.deviceKey,
+            nowBack.deviceKey,
+        )
 
         val m = judgeProfileApply(bottom, nowBack)
-        assertEquals(ProfileApply.Block, m.apply)
-        assertFalse(m.mayAutoApply)
+        assertFalse("주소가 다른데 저절로 걸렸다", m.mayAutoApply)
         assertTrue(
             "어느 마이크인지 말해 줘야 한다: ${m.reasonsKo}",
             m.reasonsKo.any { it.contains("하단") && it.contains("후면") },
         )
+    }
+
+    /**
+     * 옛 판으로 저장된 열쇠(`…|bottom`)는 **다른 기기로 본다.**
+     *
+     * 지금 열쇠 규칙이 만들지 않는 모양이므로 견줄 수 없다. 막는 쪽으로
+     * 틀리는 것이 맞다 — 이 fixture 는 **옛 자료 전용**이고, 정상 흐름의
+     * 계약을 대신하지 않는다.
+     */
+    @Test
+    fun `옛 판 열쇠로 저장된 프로파일은 막는다`() {
+        val legacy = profile(env(deviceKey = "BuiltIn|SM-S918N|bottom", address = "bottom"))
+        val m = judgeProfileApply(legacy, env(address = "bottom"))
+        assertEquals(ProfileApply.Block, m.apply)
+        assertFalse(m.mayAutoApply)
     }
 
     @Test

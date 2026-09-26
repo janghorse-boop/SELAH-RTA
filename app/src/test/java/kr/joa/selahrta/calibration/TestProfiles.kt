@@ -1,6 +1,7 @@
 package kr.joa.selahrta.calibration
 
 import kr.joa.selahrta.audio.CaptureSource
+import kr.joa.selahrta.audio.InputDeviceInfo
 import kr.joa.selahrta.audio.MicSeparation
 import kr.joa.selahrta.domain.MicKind
 import kr.joa.selahrta.dsp.BandAnalyzer
@@ -114,13 +115,37 @@ internal fun fakeProof(fileName: String = "17860.txt", sha: String = "abc123") =
         calSha256 = sha,
     ).proof
 
+/**
+ * **실제 열쇠를 쓴다**(독립 재검토 CAR-05).
+ *
+ * 예전에는 `"BuiltIn|SM-S918N|$address"` 를 손으로 적었다. 그런 열쇠는
+ * `stableKey` 가 만들지 않는다 — 내장 마이크는 2026-09-23 부터 주소를
+ * **빼고** 묶는다. 실제와 다른 fixture 는 **틀린 계약을 시험으로
+ * 지켜 준다**: 「다른 내장 마이크는 막는다」가 통과하고 있었지만,
+ * 진짜 열쇠를 넣으면 두 자리의 열쇠가 같아 막히지 않았다.
+ *
+ * 그래서 시험이 운영 코드의 함수로 열쇠를 만든다. 규칙이 바뀌면 시험도
+ * 함께 바뀌고, 손으로 적은 옛 모양이 남지 않는다.
+ */
+internal fun realStableKey(
+    kind: MicKind = MicKind.BuiltIn,
+    productName: String = "SM-S918N",
+    address: String = "",
+): String = InputDeviceInfo(
+    id = 1,
+    productName = productName,
+    kind = kind,
+    typeKo = "내장",
+    address = address,
+).stableKey
+
 internal fun testEnvironment(
     address: String = "back",
     sampleRate: Int = 48_000,
     channelCount: Int = 1,
     channelIndex: Int = 0,
 ) = ProfileEnvironment(
-    deviceKey = "BuiltIn|SM-S918N|$address",
+    deviceKey = realStableKey(address = address),
     deviceAddress = address,
     micKind = MicKind.BuiltIn,
     audioSource = CaptureSource.Unprocessed,

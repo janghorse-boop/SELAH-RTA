@@ -4,6 +4,7 @@ import kr.joa.selahrta.audio.MicSeparation
 import kr.joa.selahrta.audio.MicSeparationResult
 import kr.joa.selahrta.dsp.LevelTransfer
 import kr.joa.selahrta.dsp.CalibrationOutcome
+import kr.joa.selahrta.dsp.ColumnDeclaration
 import kr.joa.selahrta.dsp.CurveReading
 import kr.joa.selahrta.dsp.ReadingDecision
 import kr.joa.selahrta.dsp.ReadingStakes
@@ -130,12 +131,14 @@ data class CalInfo(
     /** 머리글에서 찾은 단서. 정해진 값이 아니라 단서다. */
     val evidence: SignEvidence = SignEvidence.Unknown,
     /**
-     * 머리글이 **열 이름을 선언했는가**(독립 재검토 CA-R05).
+     * 머리글의 **열 선언**(독립 재검토 CA-R05 · CAR-04).
      *
-     * 설명문에서 낱말을 찾은 것만으로는 둘째 열이 무엇인지 알 수 없다.
-     * 기준 CAL 은 선언이 있을 때만 저절로 정해진다.
+     * 설명문에서 낱말을 찾은 것만으로는 둘째 열이 무엇인지 알 수 없고,
+     * 「선언이 있는가」만으로도 모자랐다 — `Frequency,Phase,SPL` 은
+     * 선언이 맞지만 **둘째 열은 위상**이다. 그래서 둘째 열의 이름
+     * 자체를 들고 다닌다.
      */
-    val columnDeclared: Boolean = false,
+    val columns: ColumnDeclaration = ColumnDeclaration.None,
     val reading: CurveReading = CurveReading.Response,
     /**
      * **사람이 화면에서 골랐는가.**
@@ -146,7 +149,7 @@ data class CalInfo(
     val readingChosenByPerson: Boolean = false,
 ) {
     private val decision: ReadingDecision
-        get() = decideReading(evidence, ReadingStakes.ReferenceForCalibration, columnDeclared)
+        get() = decideReading(evidence, ReadingStakes.ReferenceForCalibration, columns)
 
     /** 읽는 법이 정해졌는가. 사람이 골랐거나, 머리글이 분명하거나. */
     val readingSettled: Boolean get() = readingChosenByPerson || decision.settled
@@ -262,6 +265,17 @@ data class WizardState(
      * 기준 쪽([referenceCalKey])은 이미 전체 열쇠였다. 대상만 빠져 있었다.
      */
     val targetCalKey: CalibrationKey? = null,
+    /**
+     * 대상을 **잰 그 순간의 수집 신원**(독립 재검토 CAR-01).
+     *
+     * [targetCalKey] 는 「어디에 저장할 것인가」이고 이것은 「어디서
+     * 재었는가」다. 둘을 같은 값으로 두었더니, 내장 마이크의 `bottom`
+     * 에서 재고 `back` 으로 다시 열어 저장해도 아무 검사도 걸리지
+     * 않았다 — **열쇠에는 자리가 없다.**
+     */
+    val targetIdentity: CaptureIdentity? = null,
+    /** 기준을 잰 그 순간의 수집 신원. 마지막 기준이 이 **경로**와 같아야 한다. */
+    val referenceIdentity: CaptureIdentity? = null,
     /**
      * 대상을 **잴 때** 쓰던 증거의 이름(독립 재검토 CA-R02).
      *

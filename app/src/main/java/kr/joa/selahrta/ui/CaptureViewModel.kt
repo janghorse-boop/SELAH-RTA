@@ -32,6 +32,7 @@ import kr.joa.selahrta.audio.OpenedFormat
 import kr.joa.selahrta.audio.RequestedFormat
 import kr.joa.selahrta.calibration.ActiveCalibration
 import kr.joa.selahrta.calibration.CalibrationKey
+import kr.joa.selahrta.calibration.ROUTE_UNCONFIRMED_KO
 import kr.joa.selahrta.calibration.ActiveCurve
 import kr.joa.selahrta.calibration.CalibrationStore
 import kr.joa.selahrta.calibration.chooseCorrection
@@ -1205,7 +1206,21 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         val key = CalibrationKey.of(format)
         calibrationJob = viewModelScope.launch {
             store.watch(key).collect { saved ->
-                controller.update { st -> st.copy(calibration = ActiveCalibration.from(saved)) }
+                // **자리를 견주고 건다**(독립 재검토 CAR-03). 예전에는
+                // 그대로 걸었다 — 저장 열쇠에 자리가 없어서 `bottom` 에서
+                // 잰 감도를 `back` 에서도 「보정 완료」로 썼다.
+                //
+                // 지금 열린 경로의 자리를 쓴다. `format` 은 이 구독을 연
+                // 그 경로이므로, 늦게 온 값이 다른 경로에 걸릴 길이 없다.
+                controller.update { st ->
+                    st.copy(
+                        calibration = ActiveCalibration.from(
+                            saved,
+                            nowRoute = format.routedAddress,
+                            routeConfirmed = format.routeConfirmed,
+                        ),
+                    )
+                }
             }
         }
         curveJob?.cancel()
@@ -1415,6 +1430,9 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             referenceDb = referenceDb,
             measuredDbfs = measured,
             source = source,
+            // **어느 자리에서 쟀는지 적는다**(독립 재검토 CAR-03). 열쇠에는
+            // 자리가 없어서, 안 적으면 다른 자리에서도 그대로 걸린다.
+            routeAddress = format.routedAddress.ifEmpty { null },
         )
         viewModelScope.launch {
             val notice = when (val r = store.save(CalibrationKey.of(format), cal)) {
@@ -1484,6 +1502,8 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             referenceDb = measured?.let { it + offsetDb } ?: Double.NaN,
             measuredDbfs = measured ?: Double.NaN,
             source = source,
+            // 옮겨 온 값도 **이 자리에서** 잰 대상의 것이다(CAR-03).
+            routeAddress = format.routedAddress.ifEmpty { null },
         )
         viewModelScope.launch {
             val notice = when (val r = store.save(CalibrationKey.of(format), cal)) {
@@ -1492,6 +1512,32 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 is SaveResult.Rejected -> r.reasonKo
             }
             controller.postToCapture { session -> session.engine.resetPeaks() }
+            controller.update { st -> st.copy(calibrationNoticeKo = notice) }
+        }
+    }
+
+    /**
+     * 「이 자리에서 잰 것이 맞다」고 **사람이** 확인해 준다(CAR-03).
+     *
+     * 옛 기록에는 잰 자리가 없다. 앱이 지금 자리로 채우면 확인하지 않은
+     * 것을 확인했다고 적는 꼴이므로, 이 단추가 있어야 채워진다.
+     */
+    fun confirmCalibrationRoute() {
+        val format = controller.confirmedFormat()
+        if (format == null || format.routedAddress.isEmpty()) {
+            controller.update { st ->
+                st.copy(calibrationNoticeKo = ROUTE_UNCONFIRMED_KO)
+            }
+            return
+        }
+        viewModelScope.launch {
+            val notice = when (
+                val r = store.confirmRoute(CalibrationKey.of(format), format.routedAddress)
+            ) {
+                is SaveResult.Saved ->
+                    "이 자리(${format.routedAddress})에서 잰 것으로 확인했습니다. 보정을 다시 겁니다."
+                is SaveResult.Rejected -> r.reasonKo
+            }
             controller.update { st -> st.copy(calibrationNoticeKo = notice) }
         }
     }
