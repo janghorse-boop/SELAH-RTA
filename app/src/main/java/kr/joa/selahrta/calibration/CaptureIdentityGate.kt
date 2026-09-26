@@ -105,9 +105,97 @@ fun routeMismatchKo(
     return null
 }
 
+/**
+ * **파일에 적힐 환경이 잰 경로와 같은가**(독립 재검토 CARF-03).
+ *
+ * 저장은 인자를 둘 받는다 — 검사에 쓰는 지금 신원(`now`)과 파일에 적히는
+ * 환경(`environment`). 그런데 **검사는 앞엣것으로, 기록은 뒤엣것으로**
+ * 하고 있어 둘이 같다는 보장이 없었다.
+ *
+ * 부르는 쪽도 같은 순간에서 오지 않는다: 환경은 Compose 가 그릴 때 모아
+ * 둔 `capture.opened` 에서, 신원은 다리가 누를 때 다시 읽는 `vm.state`
+ * 에서 온다. 입력을 바꾸고 다시 그리기 전이면 둘이 다르다.
+ *
+ * 검토자가 실제 저장까지 성공시켰다 — `measured=대상 · checked=대상 ·
+ * saved=기준`. **올바른 신원을 검사했는데 산출물이 틀렸다.**
+ *
+ * 그래서 **저장 경계가 스스로 본다.** 화면의 사전 판정에 기대지 않는다.
+ */
+fun environmentMismatchKo(
+    measured: CaptureIdentity?,
+    environment: ProfileEnvironment,
+): String? {
+    if (measured == null) return "대상 마이크를 아직 재지 않았습니다. 4단계로 돌아가십시오."
+    val what = when {
+        environment.key() != measured.calKey -> "입력 경로"
+        environment.deviceAddress != measured.routedAddress -> "마이크 자리"
+        environment.sampleRate != measured.sampleRate -> "샘플레이트"
+        else -> return null
+    }
+    return "파일에 적힐 환경이 잰 경로와 다릅니다($what). 저장하지 않았습니다 — " +
+        "${measured.labelKo()} 로 되돌린 뒤 다시 하십시오. 그대로 저장하면 이 교정이 " +
+        "잰 적 없는 경로의 것으로 기록됩니다."
+}
+
 // ----------------------------------------------------------------------
 // 증거의 일생 (CAR-02)
 // ----------------------------------------------------------------------
+
+/**
+ * **다시 재기 시작했다 — 이전에 내놓은 판정을 함께 버린다**
+ * (독립 재검토 CARF-04).
+ *
+ * `CalibrationSession.discard()` 는 **집계기 안의 장**만 버린다. 그런데
+ * 한 번 세 단계를 마치면 `session`·`quality`·`outcome`·`levelTransfer`
+ * 가 이미 화면으로 나가 있고, 그것들이 저장 관문이 보는 값이다.
+ *
+ * 검토자가 잰 것 — 대상을 다시 재다가 마지막 장에서 채널을 바꿔 폐기한 뒤:
+ *
+ * ```
+ * DISCARD_OLD_RESULT liveFrames=0 publishedFrames=120
+ * sameOutcome=true transferAllowed=true
+ * ```
+ *
+ * 집계기는 0장인데 화면과 저장 관문은 **옛 120장의 Pass** 를 본다. 옛
+ * 측정이 틀렸다는 말이 아니다 — **폐기한 지금 시도와 남겨 둔 지난 결과를
+ * 구분하지 않는 것**이 문제다. 그 상태에서 사람은 새 결과인 줄 알고
+ * 옛 교정을 저장한다.
+ *
+ * 장과 판정을 **같은 상태 전이로** 다룬다.
+ */
+fun WizardState.discardingStep(step: MeasureStep): WizardState {
+    // 세 단계가 다 있어야 나오는 값들이다. 한 단계를 버렸으니 더는 없다.
+    val cleared = copy(
+        session = null,
+        quality = null,
+        outcome = null,
+        levelTransfer = null,
+        levelTransferBlockKo = null,
+    )
+    // **버린 단계의 이름표만** 지운다. 장이 없는데 신원만 남으면 다음
+    // 관문이 「이미 쟀다」로 읽는다. 남은 단계까지 지우면 멀쩡히 잰 것을
+    // 다시 재게 한다.
+    return when (step) {
+        MeasureStep.Target -> cleared.copy(
+            targetIdentity = null,
+            targetDeviceKey = null,
+            targetCalKey = null,
+            targetEvidenceKey = null,
+        )
+
+        MeasureStep.ReferenceBefore -> cleared.copy(
+            referenceIdentity = null,
+            referenceDeviceKey = null,
+            referenceCalKey = null,
+            referenceEvidenceKey = null,
+            referenceOffsetDb = null,
+        )
+
+        // 마지막 기준에는 제 이름표가 없다 — 첫 기준의 것을 쓴다.
+        // 그 장만 사라지고 나머지는 그대로다.
+        MeasureStep.ReferenceAfter -> cleared
+    }
+}
 
 /**
  * **입력 점검을 시작한다 — 이 경로의 옛 증거를 먼저 버린다.**

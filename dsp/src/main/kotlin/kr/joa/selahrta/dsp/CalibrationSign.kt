@@ -118,28 +118,68 @@ private fun declarationIn(line: String): ColumnDeclaration? {
         .map { it.trim().trim('"').trim() }
         .filter { it.isNotEmpty() }
     if (fields.size < 2) return null
-    // **첫 칸이 주파수 열 이름이어야 한다.** 파서가 Hz 를 읽는 자리가 거기다.
-    if (normalizeColumn(fields[0]) !in FREQ_COLUMNS) return null
-    return when (normalizeColumn(fields[1])) {
-        in RESPONSE_COLUMNS -> ColumnDeclaration.Second(CurveReading.Response)
-        in CORRECTION_COLUMNS -> ColumnDeclaration.Second(CurveReading.Correction)
-        else -> ColumnDeclaration.Unsupported(fields[1])
+
+    // **첫 칸이 주파수 열이어야 하고, 그 단위가 Hz 여야 한다.**
+    //
+    // 파서는 단위를 바꾸지 않고 첫 숫자를 그대로 Hz 로 쓴다. 그래서
+    // `Frequency (kHz)` 는 **읽을 수 있는 형식이 아니다** — 1000 배
+    // 어긋난 축을 만든다(독립 재검토 CARF-05).
+    val first = splitColumn(fields[0])
+    if (first.name !in FREQ_COLUMNS) return null
+    if (first.unit.isNotEmpty() && first.unit !in FREQ_UNITS) {
+        return ColumnDeclaration.Unsupported("${fields[0]} — 지원하지 않는 단위")
     }
+
+    val second = splitColumn(fields[1])
+    // **단위도 dB 여야 한다.** `Amplitude (Pa)`·`Magnitude (linear)` 는
+    // 같은 수량이 아니다. 선형 크기 2 를 2dB 로 읽는 것은 잰 값이 아니다.
+    if (second.unit.isNotEmpty() && second.unit !in LEVEL_UNITS) {
+        return ColumnDeclaration.Unsupported("${fields[1]} — 지원하지 않는 단위")
+    }
+
+    val byName = when (second.name) {
+        in RESPONSE_COLUMNS -> CurveReading.Response
+        in CORRECTION_COLUMNS -> CurveReading.Correction
+        else -> return ColumnDeclaration.Unsupported(fields[1])
+    }
+    // **괄호 안이 이름과 어긋나면 모르는 것이다.** `Response (correction)`
+    // 처럼 한 칸 안에서 서로 다른 말을 하는 파일이 있다 — 괄호를 통째로
+    // 지우던 때에는 그 모순이 소리 없이 사라졌다.
+    val byNote = readingOfWord(second.unit)
+    if (byNote != null && byNote != byName) {
+        return ColumnDeclaration.Unsupported("${fields[1]} — 이름과 설명이 어긋남")
+    }
+    return ColumnDeclaration.Second(byName)
 }
 
-/**
- * 열 이름을 견줄 수 있는 꼴로 만든다.
- *
- * 괄호 안(단위)을 떼고 소문자로 바꿔 공백을 하나로 줄인다 —
- * `Frequency (Hz)` · `Frequency(Hz)` · `FREQUENCY` 가 모두 `frequency` 다.
- * **낱말을 찾지 않고 통째로 견준다**: 「Frequency range: 20 Hz」 같은
- * 문장은 어느 이름과도 같지 않다.
- */
-private fun normalizeColumn(raw: String): String = raw
-    .replace(Regex("""[(\[][^)\]]*[)\]]"""), " ")
-    .lowercase()
-    .replace(Regex("""\s+"""), " ")
-    .trim()
+/** 열 하나를 **이름과 괄호 안**으로 가른다. */
+private data class ColumnParts(val name: String, val unit: String)
+
+private fun splitColumn(raw: String): ColumnParts {
+    val note = Regex("""[(\[]([^)\]]*)[)\]]""").find(raw)?.groupValues?.get(1).orEmpty()
+    val name = raw
+        .replace(Regex("""[(\[][^)\]]*[)\]]"""), " ")
+        .lowercase()
+        .replace(Regex("""\s+"""), " ")
+        .trim()
+    return ColumnParts(name, note.lowercase().replace(Regex("""\s+"""), " ").trim())
+}
+
+/** 그 말이 어느 쪽을 가리키는가. 아무것도 안 가리키면 null. */
+private fun readingOfWord(word: String): CurveReading? = when {
+    word.isEmpty() -> null
+    CORRECTION_COLUMNS.any { word.contains(it) } -> CurveReading.Correction
+    // 단위(dB)는 어느 쪽도 가리키지 않는다. 이름 쪽 낱말만 본다.
+    word in LEVEL_UNITS -> null
+    RESPONSE_COLUMNS.any { word.contains(it) } -> CurveReading.Response
+    else -> null
+}
+
+/** 첫 열이 받아들이는 단위. **파서가 그대로 Hz 로 읽는다.** */
+private val FREQ_UNITS = setOf("hz", "hertz", "주파수")
+
+/** 둘째 열이 받아들이는 단위. dB 가 아니면 같은 수량이 아니다. */
+private val LEVEL_UNITS = setOf("db", "db spl", "dbspl", "dbr", "db re 1", "데시벨")
 
 /** 파서가 첫 열로 받아들이는 이름. */
 private val FREQ_COLUMNS = setOf("frequency", "freq", "hz", "f", "주파수", "frequency hz")

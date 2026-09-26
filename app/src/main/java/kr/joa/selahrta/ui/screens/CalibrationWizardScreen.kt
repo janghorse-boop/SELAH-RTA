@@ -845,7 +845,7 @@ private fun MeasureRow(
     ) {
         Column(Modifier.weight(1f)) {
             Text(
-                kr.joa.selahrta.ui.stepNameKo(step),
+                kr.joa.selahrta.calibration.stepNameKo(step),
                 color = if (frames > 0) SelahColors.InRange else SelahColors.TextSecondary,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold,
