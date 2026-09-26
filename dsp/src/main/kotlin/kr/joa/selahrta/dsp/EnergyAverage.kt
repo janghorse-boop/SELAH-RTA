@@ -41,8 +41,43 @@ class EnergyAverage {
     /** 지금까지 모은 프레임 수. */
     fun frameCount(): Long = frames
 
+    /**
+     * 지금까지 모은 것을 그대로 떠 둔다.
+     *
+     * **구간 하나의 Leq 를 빼내려는 쪽이 쓴다.** 측정 도중에 기록을
+     * 시작하면 기록의 Leq 는 「측정 전체의 Leq」가 아니라 **그 구간만의
+     * Leq** 여야 한다. 에너지 합은 빼기가 되므로, 두 번 떠서 차를 내면
+     * 정확히 나온다 — 엔진을 하나 더 돌리거나 시간가중 값을 평균하는
+     * 것과 달리 **근사가 아니다.**
+     */
+    fun snapshot(): EnergySpan = EnergySpan(sumSquares, frames)
+
     fun reset() {
         sumSquares = 0.0
         frames = 0L
+    }
+}
+
+/**
+ * [EnergyAverage] 의 한 순간. 두 개의 차가 **그 사이 구간의 평균**이다.
+ *
+ * 값을 직접 읽지 못하게 둔다 — 밖에서 필요한 것은 차뿐이고, 합을 꺼내
+ * 쓰기 시작하면 dB 로 평균 내는 실수로 돌아간다.
+ */
+data class EnergySpan internal constructor(
+    internal val sumSquares: Double,
+    val frames: Long,
+) {
+    /**
+     * [start] 이후에 모인 것만의 dBFS. 그 사이에 아무것도 없으면 null.
+     *
+     * 뺄셈이라 마지막 비트가 음수로 갈 수 있다(부동소수). 그때는 0 으로
+     * 본다 — 잰 에너지가 음수일 수는 없다.
+     */
+    fun since(start: EnergySpan): Dbfs? {
+        val n = frames - start.frames
+        if (n <= 0L) return null
+        val s = (sumSquares - start.sumSquares).coerceAtLeast(0.0)
+        return amplitudeToDbfs(kotlin.math.sqrt(s / n))
     }
 }

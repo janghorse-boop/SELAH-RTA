@@ -72,6 +72,18 @@ class MultiWeightEngine(
 
     val hasInput: Boolean get() = a.hasInput
 
+    /**
+     * 그 가중치의 세션 Leq 누적. **구간 Leq 를 빼낼 때** 쓴다.
+     *
+     * 기록은 측정 도중에 시작할 수 있으므로, 기록의 Leq 는 측정 전체의
+     * 것이 아니라 그 구간만의 것이어야 한다([EnergySpan.since]).
+     */
+    fun energySpan(w: Weighting): EnergySpan = when (w) {
+        Weighting.A -> a.energySpan()
+        Weighting.C -> c.energySpan()
+        Weighting.Z -> z.energySpan()
+    }
+
     fun resetPeaks() {
         a.resetPeaks(); c.resetPeaks(); z.resetPeaks()
     }
