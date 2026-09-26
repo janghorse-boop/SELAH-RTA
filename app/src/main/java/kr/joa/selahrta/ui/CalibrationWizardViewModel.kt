@@ -9,10 +9,11 @@ import kr.joa.selahrta.calibration.CalibrationKey
 import kr.joa.selahrta.calibration.CaptureIdentity
 import kr.joa.selahrta.calibration.ROUTE_UNCONFIRMED_KO
 import kr.joa.selahrta.calibration.forgetEvidence
+import kr.joa.selahrta.calibration.discardingStep
+import kr.joa.selahrta.calibration.environmentMismatchKo
 import kr.joa.selahrta.calibration.measureGateKo
 import kr.joa.selahrta.calibration.routeMismatchKo
 import kr.joa.selahrta.calibration.stampGateKo
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -29,6 +30,7 @@ import kr.joa.selahrta.calibration.blockedNoticeKo
 import kr.joa.selahrta.calibration.buildProfileForSave
 import kr.joa.selahrta.calibration.RunOutcome
 import kr.joa.selahrta.calibration.WizardRunner
+import kr.joa.selahrta.calibration.WizardWork
 import kr.joa.selahrta.calibration.WizardState
 import kr.joa.selahrta.calibration.WizardStep
 import kr.joa.selahrta.calibration.nextStep
@@ -78,42 +80,22 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
     val noticeKo: StateFlow<String?> = _noticeKo.asStateFlow()
 
     /**
-     * 지금 도는 재기 작업. **소리를 내는 작업은 주인이 있어야 한다.**
+     * 도는 일과 전경 상태의 주인 — **VM 밖에 있다**(독립 재검토 CARF-06).
      *
-     * ## 왜 붙잡아 두는가 (독립 검토 CA-05)
-     *
-     * FR 에서 고친 것과 **같은 결함이 여기 남아 있었다**(UA-03). 입력
-     * 점검을 시작하고 배경 40장을 모으는 동안 홈으로 나가면, `ON_STOP` 은
-     * `CaptureViewModel` 의 FR 작업만 끊었다. 이 클래스의 작업은 살아남아
-     * 40장이 차면 **스스로 핑크 잡음을 틀었다.** 마법사의 「닫기」도 화면
-     * 값만 바꿀 뿐 작업을 끊지 않았다.
-     *
-     * 한 곳에서 고친 결함이 다른 곳에 그대로 있으면 고친 것이 아니다.
+     * 여기 있을 때는 JVM 시험이 닿지 못했고, 검토자가 `stopWork` 에
+     * 결함을 되살려도 시험 48건이 전부 통과하는 것을 보였다.
+     * 「상태와 coroutine 소유권까지 포함한 coordinator 를 분리해 그것을
+     * 시험하라」는 권고를 따른다.
      */
-    private var runJob: Job? = null
-
-    /** 화면이 앞에 있는가. 소리를 내기 직전에 본다. */
-    @Volatile
-    private var inForeground: Boolean = true
+    private val work = WizardWork(viewModelScope)
 
     /**
      * 화면이 뒤로 갔거나 마법사를 닫았다. **도는 작업을 끊는다.**
      *
-     * 끊으면 `finally` 가 tap 을 떼고 소리를 멈춘다. 돌아와도 저절로
-     * 이어지지 않는다 — 소리를 내는 일은 사람이 다시 눌러야 한다.
+     * 전경 상태는 건드리지 않는다 — 까닭은 [WizardWork] 머리말 참고.
      */
     fun stopWork() {
-        // **전경 상태를 건드리지 않는다**(독립 재검토 CA-R04).
-        //
-        // 예전에는 여기서 `inForeground = false` 로 내렸다. 그런데 이
-        // 함수는 탭을 옮기거나 마법사를 닫을 때도 불린다 — 액티비티는
-        // 그대로 앞에 있으므로 `ON_START` 가 다시 오지 않고, 그 뒤로는
-        // **마법사를 다시 열어도 소리를 낼 수 없었다.** 「다시 시작」을
-        // 눌러도 풀리지 않는다.
-        //
-        // 취소와 전경 상태는 다른 것이다. 여기서는 **끊기만** 한다.
-        runJob?.cancel()
-        runJob = null
+        work.stop()
         _busyKo.value = null
     }
 
@@ -123,17 +105,15 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
      * 이것만 소리를 막는다. 탭 이동·닫기는 [stopWork] 로 끊기만 한다.
      */
     fun onBackground() {
-        inForeground = false
-        stopWork()
+        work.onBackground()
+        _busyKo.value = null
     }
 
     /** 화면이 앞으로 돌아왔다. 멈춘 것을 되살리지는 않는다. */
-    fun onForeground() {
-        inForeground = true
-    }
+    fun onForeground() = work.onForeground()
 
     /** 소리를 내도 되는가. [WizardRunner] 가 내보내기 직전에 묻는다. */
-    private fun mayPlay(): Boolean = inForeground
+    private fun mayPlay(): Boolean = work.mayPlay()
 
     /**
      * 증거를 적어 둘 이름 — **경로 전체 + 분석 격자**(독립 재검토 CA-R02).
@@ -270,7 +250,7 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
         // 끝까지 마친 검사만 되살린다.
         forgetEvidence(evidence)
 
-        runJob = viewModelScope.launch {
+        work.start {
             val tap = MeasurementTap(fftSize, sampleRate)
             val runner = WizardRunner(capture, tick, mayPlay = ::mayPlay)
             capture.installTap(tap)
@@ -281,7 +261,7 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
                         _noticeKo.value = r.reasonKo
                         // 증거는 시작할 때 이미 버렸다. 화면 값만 지운다.
                         _state.update { it.copy(noiseFloorDb = null, dsp = null) }
-                        return@launch
+                        return@start
                     }
 
                     is RunOutcome.Done -> r.value
@@ -291,7 +271,7 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
                 // 이름으로 적힌다 — 검토자가 그 순서를 재현했다.
                 if (!stillHere(capture, startId)) {
                     _noticeKo.value = stampGateKo(startId, capture.identity)
-                    return@launch
+                    return@start
                 }
                 _state.update {
                     it.copy(
@@ -316,7 +296,7 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
                             // 그 짝은 짝이 아니다. **배경도 함께 버린다.**
                             forgetEvidence(evidence)
                             _noticeKo.value = stampGateKo(startId, capture.identity)
-                            return@launch
+                            return@start
                         }
                         _state.update {
                             it.copy(
@@ -338,6 +318,17 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
     /** 이 경로의 증거를 통째로 버린다. 셈은 `CaptureIdentityGate.kt` 에 있다. */
     private fun forgetEvidence(evidence: String) {
         _state.update { it.forgetEvidence(evidence) }
+    }
+
+    /**
+     * 한 단계를 버린다 — **장과 판정을 함께**(독립 재검토 CARF-04).
+     *
+     * 집계기만 비우면 이미 화면으로 나간 `quality`·`outcome` 이 남아,
+     * 장은 0인데 저장 관문은 옛 Pass 를 본다.
+     */
+    private fun discardStep(step: MeasureStep) {
+        session.discard(step)
+        _state.update { it.discardingStep(step) }
     }
 
     /** 시작할 때의 그 입력에 아직 있는가. */
@@ -437,13 +428,21 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
 
+        // **다시 재기 시작하면 옛 판정을 먼저 버린다**(독립 재검토 CARF-04).
+        //
+        // 화면의 「다시」는 이미 장이 있는 단계에도 눌린다. 그때 옛
+        // `quality`·`outcome` 이 그대로 남아 있으면, 새 시도가 끝나기도
+        // 전에 저장 관문이 **지난 Pass** 를 보고 통과시킨다. 다시 재겠다고
+        // 누른 순간 그 결과는 더 이상 지금을 설명하지 않는다.
+        if (session.frameCount(step) > 0) discardStep(step)
+
         // **이 단계의 증거를 쓴다**(독립 재검토 CA-R02). 예전에는 「마지막에
         // 점검한 것」(`st.noiseFloorDb`)을 넘겼는데, 그것이 다른 기기·다른
         // 채널의 배경이면 가청 판정이 잘못 허용되거나 잘못 거절된다.
         val stepEvidence = startId.evidenceKey(fftSize)
         val stepNoise = st.noiseFloorByKey[stepEvidence]
 
-        runJob = viewModelScope.launch {
+        work.start {
             val tap = MeasurementTap(fftSize, sampleRate)
             val runner = WizardRunner(capture, tick, mayPlay = ::mayPlay)
             capture.installTap(tap)
@@ -467,9 +466,9 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
                         // 붙는다. 이름표를 고치는 대신 **장을 버린다.**
                         val endId = capture.identity
                         if (endId == null || !endId.sameAs(startId)) {
-                            session.discard(step)
+                            discardStep(step)
                             _noticeKo.value = stampGateKo(startId, endId)
-                            return@launch
+                            return@start
                         }
                         _state.update {
                             when (step) {
@@ -665,6 +664,18 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
         // 열쇠에는 자리가 없고, 그러면 **잰 적 없는 자리에 이 응답이
         // 귀속된다.** 그 뒤의 주소 검사는 이미 잘못 적힌 이름표를 본다.
         routeMismatchKo(st.targetIdentity, now, "이 교정")?.let {
+            _noticeKo.value = it
+            return
+        }
+
+        // **파일에 적힐 환경도 본다**(독립 재검토 CARF-03).
+        //
+        // 위 검사는 `now` 를 보는데 파일에는 `environment` 가 적힌다.
+        // 둘은 서로 다른 순간에서 오므로 같다는 보장이 없었고, 검토자가
+        // 「올바른 신원을 검사했는데 산출물은 기준 마이크의 것」인 저장을
+        // 실제로 성공시켰다. 화면의 사전 판정에 기대지 않고 **저장 경계가
+        // 스스로 본다.**
+        environmentMismatchKo(st.targetIdentity, environment)?.let {
             _noticeKo.value = it
             return
         }

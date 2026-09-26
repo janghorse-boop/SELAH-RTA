@@ -45,9 +45,30 @@ data class CaptureIdentity(
     /** 캡처 세대. 기기를 열 때마다 올라간다. */
     val generation: Long,
 ) {
-    /** 이 경로에서 그 격자로 모은 증거의 이름. */
-    fun evidenceKey(fftSize: Int): String =
-        "${calKey.storageKey()}|fs$sampleRate|n$fftSize"
+    /**
+     * 이 경로에서 그 격자로 모은 증거의 이름.
+     *
+     * ## 자리가 들어간다 (독립 재검토 CARF-01)
+     *
+     * 처음에는 `저장열쇠|fs|n` 이었다. 내장 마이크의 저장 열쇠에는 자리가
+     * 없으므로 **`bottom` 에서 얻은 잡음·DSP 증거를 `back` 에서도 꺼내
+     * 썼다.** 검토자가 재현했다 — bottom 의 조용한 배경으로 31/31 밴드가
+     * 「쓸 수 있음」이 됐는데, 실제 back 의 배경으로 세면 0/31 이다.
+     *
+     * [sameAs] 의 완료 검사는 **수집이 도는 동안**의 변경만 막는다. 검사를
+     * 끝내고 다른 자리에서 측정을 시작하는 길은 그것으로 막히지 않는다.
+     *
+     * ## 자리를 모르면 다시 쓰지 않는다
+     *
+     * 주소가 비면 세대를 대신 넣는다. 그러면 그 증거는 **그 캡처
+     * 안에서만** 조회되고, 다시 열면 이름이 달라져 저절로 버려진다.
+     * 모르는 자리의 증거를 다른 캡처가 물려받는 것보다 낫다 — 그때
+     * 사람은 다시 재기만 하면 되지만, 물려받으면 틀린 채로 통과한다.
+     */
+    fun evidenceKey(fftSize: Int): String {
+        val where = if (routedAddress.isNotEmpty()) "@$routedAddress" else "@gen$generation"
+        return "${calKey.storageKey()}|$where|fs$sampleRate|n$fftSize"
+    }
 
     /** 자리를 실제로 아는가. 저장처럼 되돌릴 수 없는 일에서 묻는다. */
     val routeKnown: Boolean get() = routeConfirmed && routedAddress.isNotEmpty()

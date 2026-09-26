@@ -171,6 +171,25 @@ data class ActiveCalibration(
     /** 저장된 값이 있는데 자리를 확인하지 못해 멈춰 둔 상태인가. */
     val heldForRoute: Boolean get() = holdNoticeKo != null
 
+    /**
+     * **지금 이 경로에 실제로 걸려 있는** 보정값. 걸려 있지 않으면 null.
+     *
+     * ## 왜 [saved] 와 따로 두는가 (독립 재검토 CARF-02)
+     *
+     * [saved] 는 **저장소에 무엇이 있는가**이고 이것은 **지금 무엇이
+     * 걸려 있는가**다. 자리를 확인하지 못해 적용을 보류한 상태에서는
+     * 저장값이 남아 있어야 하므로 [saved] 가 null 이 아니다 — 그런데
+     * 그 값을 「이 경로의 감도」로 읽어 가는 길이 있었다.
+     *
+     * 검토자가 잰 것: 화면은 「미보정 · 적용 보류」인데 마법사가 그
+     * 110dB 을 기준 마이크의 값으로 받아 **다른 마이크의 절대 보정으로
+     * 복제**했다. CAR-03 의 보호가 그 경로에서만 무효였다.
+     *
+     * 값을 묻는 자리를 하나로 모은다. 둘을 따로 읽으면 한쪽만 고치게 된다.
+     */
+    val appliedOffsetDb: Double?
+        get() = if (isReferenceOnly) null else saved?.offsetDb
+
     companion object {
         /** 저장된 보정이 없을 때. 짐작한 눈금에 「미보정」을 붙인다. */
         val assumed = ActiveCalibration(
