@@ -83,6 +83,14 @@ class CaptureController(
     /** 측정이 끝났다. 보정 구독을 끊는다. */
     private val onStoppedHook: () -> Unit,
     /**
+     * 기록을 남기고 있었다면 그 결과. **바깥이 파일로 쓴다.**
+     *
+     * 이 클래스는 안드로이드에 기대지 않는다 — 파일 쓰기는 ViewModel 이
+     * 맡고, 여기서는 손에 쥐어 건네기만 한다. 오디오 스레드에서 파일을
+     * 쓰면 읽기가 밀려 측정이 끊기는 것과 같은 까닭이다(녹음 설계 §2).
+     */
+    private val onRecordingFinished: (kr.joa.selahrta.recording.RecordedSession) -> Unit = {},
+    /**
      * 측정 세션의 **최종** 상태가 바뀜다. 포그라운드 서비스가
      * 이것만 따라간다([CaptureLifecycle]).
      */
@@ -189,6 +197,29 @@ class CaptureController(
             field = v
             postToCapture { it.rta.spectrumEnabled = v }
         }
+
+    /**
+     * 기록을 시작한다. **오디오 스레드에서 붙인다.**
+     *
+     * 세션이 없으면 아무 일도 하지 않는다 — 측정 중에만 기록한다.
+     * 마이크가 다시 열리면 세션이 바뀌고 기록도 거기서 끊긴다.
+     */
+    fun startRecording(make: (CaptureSession) -> kr.joa.selahrta.recording.SessionRecorder) {
+        postToCapture { s -> if (s.recorder == null) s.recorder = make(s) }
+    }
+
+    /** 측정을 멈추지 않고 기록만 끝낸다. */
+    fun stopRecording() {
+        postToCapture { s ->
+            val r = s.recorder ?: return@postToCapture
+            s.recorder = null
+            // **여기서 파일을 쓰지 않는다.** 오디오 스레드다.
+            post { onRecordingFinished(r.finish()) }
+        }
+    }
+
+    /** 기록 중인가. 화면이 단추 모양을 정한다. */
+    val recordingId: String? get() = active?.recorder?.id
 
     fun postToCapture(cmd: (CaptureSession) -> Unit) {
         val s = active ?: return
@@ -527,9 +558,27 @@ class CaptureController(
             // 그림이 되어 주파수 균형을 잘못 읽는다. 하울링 탐지기도 이
             // 안에서 같은 스펙트럼을 받는다.
             session.spectrumMs = (block.monotonicNs - session.startedNs) / 1_000_000
-            session.rta.process(block.samples, block.frames)
-            session.engine.process(block.samples, block.frames)
+
+            // **기록 중이면 기록기가 엔진을 돌린다**(Phase 10).
+            //
+            // 기록기는 덩어리를 **행 경계에서 쪼개** 넣는다. 그래야 500ms
+            // 행의 값이 그 행의 소리만 담는다 — 안 쪼개면 경계를 걸친
+            // 덩어리(여덟에 하나)의 최대 60ms 가 옆 행 값에 섞인다.
+            //
+            // 쪼개어 넣어도 결과가 같다는 것은 `SliceOffsetTest` 가 오차 0
+            // 으로 확인했다. **기록하지 않을 때는 예전 그대로**라, 쓰지 않는
+            // 사람에게는 아무 일도 일어나지 않는다.
+            val rec = session.recorder
+            if (rec != null) {
+                rec.onBlock(block.samples, block.frames, stats.clipped, session.engine, session.rta)
+            } else {
+                session.rta.process(block.samples, block.frames)
+                session.engine.process(block.samples, block.frames)
+            }
         } else {
+            // 버린 덩어리도 기록기는 알아야 한다 — 그 자리를 `missing` 으로
+            // 남기고 놓친 수를 센다.
+            session.recorder?.onBlock(block.samples, 0, false, session.engine, session.rta)
             null
         }
 
@@ -615,12 +664,21 @@ class CaptureController(
         // 직렬화하기 때문이다.
         val log = ending?.feedback?.finish() ?: _state.value.feedbackLog
 
+        // **기록도 여기서 손에 쥔다.** 같은 까닭이고 같은 방식이다 —
+        // `SessionRecorder` 도 제 자물쇠로 직렬화하므로, 늦게 들어와 있는
+        // 콜백과 부딪히지 않는다.
+        val recorded = ending?.recorder?.finish()
+        ending?.recorder = null
+
         ending?.source?.close()
         ending?.commands?.clear()
         openingKey = null
         // 보정 구독을 끊는 일은 바깥(ViewModel)이 한다 — DataStore 는
         // 안드로이드 것이고, 이 클래스는 거기 기대지 않는다.
         onStoppedHook()
+        // 파일 쓰기는 바깥에서 한다. 여기서 하면 멈추는 순간이 길어지고,
+        // 이 클래스가 안드로이드를 알게 된다.
+        recorded?.let { onRecordingFinished(it) }
 
         _measurement.value = null
         _state.value = _state.value.copy(

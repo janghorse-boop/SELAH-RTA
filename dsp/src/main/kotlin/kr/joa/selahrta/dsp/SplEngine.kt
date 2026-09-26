@@ -36,6 +36,24 @@ data class SplFrame(
      * 그 값을 측정값이라 부르면 안 된다.
      */
     val settled: Boolean,
+    /**
+     * **이 덩어리 안의** 최대 시간가중 레벨. [maxDbfs] 와 달리 누적이 아니다.
+     *
+     * 시간축에 값을 남기는 쪽이 쓴다. 누적값을 행에 적으면 **올라가기만
+     * 하는 계단**이 되어 「언제 컸는지」가 사라진다 — 실제로 그렇게
+     * 기록했다가 기기에서 뽑아 보고 알았다(2026-09-26).
+     */
+    val blockMaxDbfs: Dbfs,
+    /**
+     * **이 덩어리 안의** 최소 시간가중 레벨. 아직 자리를 안 잡았으면 null.
+     *
+     * [minDbfs] 와 같은 이유로 자리를 잡은 뒤부터만 값이 있다.
+     */
+    val blockMinDbfs: Dbfs?,
+    /** **이 덩어리 안의** 최대 파형값. [peakDbfs] 와 달리 누적이 아니다. */
+    val blockPeakDbfs: Dbfs,
+    /** **이 덩어리에서** 풀스케일에 닿았는가. 누적이 아니다. */
+    val blockClipped: Boolean,
 )
 
 /**
@@ -84,12 +102,20 @@ class SplEngine(
      * [samples] 는 **가중 전** 원본이며 이 함수가 바꾸지 않는다 —
      * 녹음 쪽이 같은 버퍼를 쓰기 때문이다(명세 추가분 10장).
      */
-    fun process(samples: FloatArray, frames: Int): SplFrame {
-        require(frames in 0..samples.size) { "frames=$frames 이 범위를 벗어난다" }
+    fun process(samples: FloatArray, frames: Int, offset: Int = 0): SplFrame {
+        require(offset >= 0) { "offset=$offset 이 음수다" }
+        require(frames >= 0 && offset + frames <= samples.size) {
+            "offset=$offset 에서 ${frames} 개를 읽을 수 없다 (크기 ${samples.size})"
+        }
 
         // Peak 는 가중 전에 잰다. 클리핑은 입력단의 사건이다.
+        //
+        // **이 덩어리만의 값도 따로 든다.** 시간축에 남기는 쪽은 누적이
+        // 아니라 이쪽이 필요하다([SplFrame.blockPeakDbfs]).
+        var blockPeakAbs = 0.0
         for (i in 0 until frames) {
-            val a = kotlin.math.abs(samples[i].toDouble())
+            val a = kotlin.math.abs(samples[offset + i].toDouble())
+            if (a > blockPeakAbs) blockPeakAbs = a
             if (a > peakAbs) {
                 peakAbs = a
                 peakClipped = a >= CLIP_THRESHOLD
@@ -97,7 +123,7 @@ class SplEngine(
         }
 
         if (work.size < frames) work = DoubleArray(frames)
-        for (i in 0 until frames) work[i] = samples[i].toDouble()
+        for (i in 0 until frames) work[i] = samples[offset + i].toDouble()
 
         filter.processInPlace(work, frames)
 
@@ -129,11 +155,34 @@ class SplEngine(
             peakClipped = peakClipped,
             leqLongFull = leqLong.isFull,
             settled = timeWeighting.settled,
+            // 덩어리가 비면 잰 것이 없다. **조용한 값이 아니라** 바닥으로
+            // 둔다 — 시간축은 그 자리를 `missing` 으로 따로 적는다.
+            blockMaxDbfs = if (frames > 0) {
+                amplitudeToDbfs(kotlin.math.sqrt(bw.max))
+            } else {
+                Dbfs(SILENCE_DBFS)
+            },
+            blockMinDbfs = if (frames > 0 && bw.min.isFinite()) {
+                amplitudeToDbfs(kotlin.math.sqrt(bw.min))
+            } else {
+                null
+            },
+            blockPeakDbfs = amplitudeToDbfs(blockPeakAbs),
+            blockClipped = blockPeakAbs >= CLIP_THRESHOLD,
         )
     }
 
     /** 아직 한 덩어리도 안 들어왔는가. 화면이 「값 없음」을 그리는 근거다. */
     val hasInput: Boolean get() = anyInput
+
+    /**
+     * 세션 Leq 누적의 지금 상태.
+     *
+     * **구간 Leq 를 빼내려는 쪽이 쓴다**([EnergySpan.since]). 엔진을
+     * 되돌리지 않으므로 화면의 세션 Leq 는 그대로 이어진다 — 측정 도중에
+     * 기록을 시작해도 둘이 서로를 망치지 않는다.
+     */
+    fun energySpan(): EnergySpan = leqSession.snapshot()
 
     /** MAX·PEAK 만 다시 센다. 새 구간을 재기 시작할 때 쓴다. */
     fun resetPeaks() {

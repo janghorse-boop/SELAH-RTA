@@ -407,6 +407,8 @@ fun SelahApp() {
                         },
                         onStart = beginMeasure,
                         onStop = vm::stop,
+                        onStartRecording = vm::startRecording,
+                        onStopRecording = vm::stopRecording,
                         onDismissDeviceNotice = vm::dismissDeviceNotice,
                     )
                     ViewMode.Rta -> RtaScreen(capture, onMode = { mode = it })
