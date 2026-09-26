@@ -293,7 +293,10 @@ class MicSource(
             routeConfirmed = true,
         )
         opened = fmt
-        Log.i(TAG, "경로 확인: ${fmt.deviceKey}")
+        // **주소도 함께 적는다.** 내장 마이크의 열쇠에는 주소가 없어
+        // (2026-09-23 결정) 로그만 보고는 어느 자리로 열렸는지 알 수 없다.
+        // 보정이 그 자리에 매이므로 진단에 꼭 필요하다(독립 재검토 CA-R03).
+        Log.i(TAG, "경로 확인: ${fmt.deviceKey} addr=${fmt.routedAddress.ifEmpty { "(없음)" }}")
         return fmt
     }
 
