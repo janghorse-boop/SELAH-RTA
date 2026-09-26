@@ -3,6 +3,7 @@ package kr.joa.selahrta.ui
 import kr.joa.selahrta.audio.MEASURE_AMPLITUDE
 import kr.joa.selahrta.audio.TestSignal
 import kr.joa.selahrta.calibration.CalibrationKey
+import kr.joa.selahrta.calibration.CaptureIdentity
 import kr.joa.selahrta.calibration.WizardCapture
 import kr.joa.selahrta.dsp.MeasurementTap
 
@@ -26,6 +27,19 @@ class WizardCaptureBridge(private val vm: CaptureViewModel) : WizardCapture {
 
     override val openedCalKey: CalibrationKey?
         get() = vm.state.value.opened?.let { CalibrationKey.of(it) }
+
+    /**
+     * 수집 신원 — **열쇠에 없는 자리와 세대까지** 싣는다.
+     *
+     * 예전에는 마법사가 열쇠만 받았다. 그래서 내장 마이크의 `bottom` 에서
+     * 재고 `back` 으로 다시 열어 저장해도 아무 검사도 걸리지 않았다 —
+     * 마법사가 그 차이를 **받을 수도 없었다**(독립 재검토 CAR-01).
+     */
+    override val identity: CaptureIdentity?
+        get() {
+            val st = vm.state.value
+            return st.opened?.let { CaptureIdentity.of(it, st.session) }
+        }
 
     /**
      * 그 경로에 **저장된** 보정값. 짐작값(ASSUMED_FULL_SCALE_SPL)이 아니다.

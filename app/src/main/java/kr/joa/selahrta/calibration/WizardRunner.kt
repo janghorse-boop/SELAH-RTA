@@ -31,6 +31,16 @@ interface WizardCapture {
      */
     val openedCalKey: CalibrationKey?
 
+    /**
+     * 지금 열려 있는 입력의 **수집 신원**. 경로를 확인하기 전에는 null.
+     *
+     * 자료를 만든 순간에 한 번 떠서 끝까지 들고 다니고, 쓸 때마다
+     * 대조한다. 그러지 않으면 「지금 열린 것」을 다시 읽어 이름표를
+     * 붙이게 되어, **마지막 장과 이름표가 서로 다른 입력을 가리킬 수
+     * 있다**(독립 재검토 CAR-01).
+     */
+    val identity: CaptureIdentity?
+
     /** 그 경로에 저장된 보정값(dBFS → dB SPL). 없으면 null. */
     val openedOffsetDb: Double?
 
