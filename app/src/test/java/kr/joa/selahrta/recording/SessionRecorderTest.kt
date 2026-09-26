@@ -145,19 +145,121 @@ class SessionRecorderTest {
         assertEquals(ThirdOctave.BAND_COUNT, s.rows[0].bands.size)
     }
 
+    /**
+     * **끝낸 뒤의 부름은 조용히 지나간다.**
+     *
+     * 늦은 콜백은 멈추는 과정의 정상이다 — `close()` 의 join 은 시간
+     * 제한이 있어(500ms) 옛 캡처 스레드가 살아남을 수 있다(F02). 거기서
+     * 예외를 던지면 오디오 스레드가 죽는다.
+     */
     @Test
-    fun `끝낸 뒤에는 더 넣을 수 없다`() {
+    fun `끝낸 뒤의 늦은 덩어리는 조용히 지나간다`() {
         val r = recorder()
         feed(r, 5)
-        r.finish()
+        val first = r.finish()
         val (spl, rta) = engines()
-        var blocked = false
-        try {
-            r.onBlock(block(0.2, 0), blockFrames, false, spl, rta)
-        } catch (e: IllegalStateException) {
-            blocked = true
-        }
-        assertTrue("끝낸 뒤에도 받았다", blocked)
+
+        // 예외를 던지지 않는다.
+        assertNull(r.onBlock(block(0.2, 0), blockFrames, false, spl, rta))
+        r.note(SessionEventKind.Dropout, "늦은 사건")
+        r.noteEpoch(50.0, referenceOnly = false, leqWindowMs = 10_000)
+
+        // 그리고 **결과를 바꾸지 않는다.**
+        val again = r.finish()
+        assertEquals("행이 늘었다", first.rows.size, again.rows.size)
+        assertEquals("사건이 늘었다", first.events.size, again.events.size)
+        assertEquals("구간이 늘었다", first.epochs.size, again.epochs.size)
+    }
+
+    /** 멈추는 길이 둘이라 두 번 불릴 수 있다. 두 번째에 죽으면 안 된다. */
+    @Test
+    fun `두 번 끝내도 같은 것을 돌려준다`() {
+        val r = recorder()
+        feed(r, 9)
+        val a = r.finish()
+        val b = r.finish()
+        assertEquals(a.rows.size, b.rows.size)
+        assertEquals(a.durationMs, b.durationMs)
+    }
+
+    /**
+     * **행의 최대는 그 행의 것이다 — 올라가기만 하는 계단이 아니다.**
+     *
+     * 처음에는 엔진의 누적 최대(`maxDbfs`)를 행에 적었다. 그러면 행마다
+     * 값이 같거나 커지기만 해서 **「언제 컸는지」가 사라진다.** 코드를
+     * 읽어서는 안 보였고, 기기에서 파일을 뽑아 디코드하고서야 드러났다
+     * (79.0 → 79.0 → 79.0 → … → 83.9).
+     */
+    @Test
+    fun `행의 최대는 그 행의 것이다`() {
+        val r = recorder()
+        val (spl, rta) = engines()
+        // 첫 1초는 크게, 그 뒤 2초는 아주 작게.
+        repeat(17) { i -> r.onBlock(block(0.5, i), blockFrames, false, spl, rta) }
+        repeat(34) { i -> r.onBlock(block(0.005, 17 + i), blockFrames, false, spl, rta) }
+        val rows = r.finish().rows
+
+        assertTrue("행이 모자란다", rows.size >= 5)
+        val loud = rows[0].maxRaw
+        val quiet = rows.last().maxRaw
+        assertTrue(
+            "조용해졌는데 행의 최대가 안 내려간다(누적값을 적고 있다): $loud → $quiet",
+            quiet < loud - 20.0,
+        )
+    }
+
+    /**
+     * **요약은 기록 구간만의 것이다.**
+     *
+     * 기록은 측정 도중에 시작할 수 있다. 겉장의 MAX 를 화면 계기에서
+     * 가져왔더니 **기록하지 않은 구간의 소리**가 「이 기록의 최대」로
+     * 적혔다.
+     */
+    @Test
+    fun `기록 전의 소리는 요약에 섞이지 않는다`() {
+        val (spl, rta) = engines()
+        // 기록하기 **전에** 큰 소리로 측정이 돌고 있었다. 그리고 조용해진
+        // 뒤에야 기록을 시작한다 — 시간가중이 내려앉을 틈을 준다. 그래야
+        // 「감쇠 꼬리」가 아니라 **누적을 적었는가**만 걸린다.
+        repeat(34) { i -> spl.process(block(0.5, i), blockFrames) }
+        val loudMax = spl.process(block(0.005, 34), blockFrames).a.maxDbfs.value
+        repeat(17) { i -> spl.process(block(0.005, 35 + i), blockFrames) }
+
+        val r = recorder()
+        repeat(34) { i -> r.onBlock(block(0.005, 52 + i), blockFrames, false, spl, rta) }
+        val s = r.finish().summary
+
+        val max = requireNotNull(s.maxDb) { "요약에 최대가 없다" }
+        assertTrue(
+            "기록 전의 큰 소리가 요약에 섞였다: 요약 $max · 엔진 누적 ${loudMax + 120.0}",
+            max < loudMax + 120.0 - 20.0,
+        )
+        val leq = requireNotNull(s.leqDb) { "요약에 Leq 가 없다" }
+        assertTrue("Leq 에도 섞였다: $leq", leq < loudMax + 120.0 - 20.0)
+    }
+
+    /** 구간이 둘 이상이면 Leq 를 음압으로 바꾸지 않는다. */
+    @Test
+    fun `보정이 바뀌면 Leq 를 음압으로 적지 않는다`() {
+        val r = recorder(offsetDb = 120.0)
+        feed(r, 9)
+        r.noteEpoch(100.0, referenceOnly = false, leqWindowMs = 60_000)
+        feed(r, 9)
+        assertNull("구간이 둘인데 Leq 를 하나로 적었다", r.finish().summary.leqDb)
+    }
+
+    /**
+     * **결과가 제 신원을 지니고 다닌다.**
+     *
+     * 쓰는 쪽이 화면 상태에서 신원을 읽게 했더니 파일이 한 줄도 쓰이지
+     * 않았다(기기에서 확인). 기록을 멈추면 화면은 곧바로 「기록 아님」이
+     * 되는데 쓰기 콜백은 캡처 스레드를 거쳐 **그 뒤에** 오기 때문이다.
+     */
+    @Test
+    fun `결과가 제 신원을 지니고 다닌다`() {
+        val r = recorder()
+        feed(r, 9)
+        assertEquals("s1", r.finish().id)
     }
 
     /** 잰 길이는 **프레임으로 센다.** 벽시계가 뒤로 가도 흔들리지 않는다. */

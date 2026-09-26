@@ -157,6 +157,8 @@ data class CaptureUiState(
     val rta: RtaView? = null,
     /** 연속 스펙트럼. Spectrum 화면이 열려 있을 때만 채워진다. */
     val spectrum: SpectrumView? = null,
+    /** 기록 중이면 그 이름. 아니면 null(Phase 10). */
+    val recordingId: String? = null,
     /** 하울링 후보(명세 9장). 센 것부터. 없으면 빈 목록이다. */
     val feedback: List<FeedbackCandidate> = emptyList(),
     /**
@@ -376,6 +378,18 @@ class CaptureSession(
     /** 주 스레드가 이 세션의 오디오 스레드에 시킬 일. */
     val commands = java.util.concurrent.ConcurrentLinkedQueue<() -> Unit>()
 
+    /**
+     * 기록을 남기는 중이면 그 기록기(Phase 10). 아니면 null.
+     *
+     * **세션이 소유한다.** 마이크가 다시 열리면 세션이 바뀌고, 그때
+     * 기록도 거기서 끊긴다 — 다른 마이크의 값을 한 파일에 이어 붙이지
+     * 않는다(녹음 설계 §6). 측정값을 이어 붙이지 않는 것과 같은 까닭이다.
+     *
+     * **오디오 스레드만 만진다.** 켜고 끄는 일도 명령 큐를 지나 그
+     * 스레드에서 한다.
+     */
+    var recorder: kr.joa.selahrta.recording.SessionRecorder? = null
+
     init {
         // FFT 한 장이 나올 때마다 탐지기에 넘긴다. 시각은 덩어리를 받은
         // 시각으로 쓴다 — 오디오 스레드에서만 건드리므로 안전하다.
@@ -411,6 +425,25 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     private val store = CalibrationStore(app)
     private val curveStore = CurveStore(app)
     private val settingsStore = MeterSettingsStore(app)
+
+    /**
+     * 측정 기록이 사는 곳(Phase 10).
+     *
+     * `filesDir` 안이라 **앱을 지우면 함께 사라진다.** 공용 저장소에 두면
+     * 권한이 필요하고, 사람이 파일 탐색기에서 지워 목록에 유령이 뜬다.
+     * 내보내기는 그때 SAF 로 따로 한다(명세 13장).
+     */
+    private val sessionStore = kr.joa.selahrta.recording.SessionStore(
+        java.io.File(app.filesDir, "sessions"),
+    )
+
+    init {
+        // **끝나지 않은 폴더를 치운다.** 재다가 앱이 죽으면 겉장 없는
+        // 폴더가 남는다. 목록에는 안 뜨지만 자리를 차지한다.
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching { sessionStore.sweepUnfinished() }
+        }
+    }
     private val scanner = InputDeviceScanner(app)
 
     /**
@@ -438,6 +471,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             curveJob?.cancel()
             curveJob = null
         },
+        onRecordingFinished = { rec -> writeRecording(rec) },
         // **서비스는 여기서만 내린다.** `onStoppedHook` 에 넣으면 기기를
         // 갈아타는 중의 `stop` 에도 내려가고, 백그라운드에서는 다시 띄울 수
         // 없어 거기서 마이크가 끊긴다(독립 검증 FS01).
@@ -1130,6 +1164,9 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setSegment(s: ChurchSegment) {
         viewModelScope.launch { settingsStore.setSegment(s) }
+        // **기록에도 남긴다**(Phase 10). 구간은 행에 넣지 않고 사건으로
+        // 적으므로, 바뀌는 순간을 여기서 잡아야 한다.
+        noteSegmentToRecording(s)
     }
 
     /** 구간 범위를 고친다. 말이 안 되는 값은 저장하지 않고 그 사실을 알린다. */
@@ -1520,6 +1557,148 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         // 끌 때는 화면 상태에서도 지운다. 남겨 두면 다시 열었을 때 몇 분 전
         // 그림이 한 장 스쳐 보이고, 그것을 지금 소리로 읽는다.
         if (!on) controller.update { st -> st.copy(spectrum = null) }
+    }
+
+    // ------------------------------------------------------------------
+    // 측정 기록 (Phase 10)
+    // ------------------------------------------------------------------
+
+    /** 기록을 시작한다. 측정 중에만 된다. */
+    fun startRecording() {
+        val st = controller.baseState.value
+        if (st.measure !is MeasureState.Running) {
+            controller.update { it.copy(errorKo = "먼저 측정을 시작하십시오.") }
+            return
+        }
+        val opened = st.opened ?: return
+        val startedAt = System.currentTimeMillis()
+        val id = kr.joa.selahrta.recording.SessionStore.newId(
+            startedAt,
+            // 같은 초에 두 번 시작해도 겹치지 않게. 없다고 **가정**해
+            // 덮어쓰는 것보다 낫다.
+            java.util.UUID.randomUUID().toString().take(4),
+        )
+        val cal = st.calibration
+        val window = st.meterSettings.leqWindow.millis
+        val weighting = st.meterSettings.weighting
+
+        // 자리를 먼저 만든다. 겉장은 끝낼 때 쓴다 — 그것이 「온전하다」는
+        // 표시다.
+        viewModelScope.launch(Dispatchers.IO) {
+            val made = sessionStore.create(id)
+            onMainThread {
+                if (made.isFailure) {
+                    controller.update { it.copy(errorKo = "기록할 자리를 만들지 못했습니다.") }
+                    return@onMainThread
+                }
+                controller.startRecording { session ->
+                    kr.joa.selahrta.recording.SessionRecorder(
+                        id = id,
+                        nominalSampleRate = session.sampleRate,
+                        startOffsetDb = cal.offset.db,
+                        startReferenceOnly = cal.isReferenceOnly,
+                        startLeqWindowMs = window,
+                        weighting = weighting,
+                    )
+                }
+                recordingStartedAt = startedAt
+                recordingOpened = opened
+                controller.update { it.copy(recordingId = id) }
+            }
+        }
+    }
+
+    /** 기록만 끝낸다. 측정은 이어 간다. */
+    fun stopRecording() {
+        controller.stopRecording()
+        controller.update { it.copy(recordingId = null) }
+    }
+
+    /** 구간(설교/찬양)이 바뀌었다고 기록에 적는다. */
+    private fun noteSegmentToRecording(segment: ChurchSegment) {
+        controller.postToCapture { s ->
+            s.recorder?.note(
+                kr.joa.selahrta.recording.SessionEventKind.SegmentChange,
+                segment.shortKo,
+                segment,
+            )
+        }
+    }
+
+    /** 기록을 시작할 때의 벽시계·입력. 겉장에 적는다. */
+    private var recordingStartedAt: Long = 0L
+    private var recordingOpened: OpenedFormat? = null
+
+    /**
+     * 기록을 파일로 쓴다. **주 스레드가 아니다.**
+     *
+     * 겉장을 **마지막에** 쓴다 — 그것이 「이 기록은 온전하다」는 표시이고,
+     * 목록은 겉장 없는 폴더를 건너뛴다.
+     *
+     * **신원은 결과가 지니고 온다**([RecordedSession.id]). 화면 상태에서
+     * 읽었더니 늘 비어 있었다 — [stopRecording] 이 곧바로 지우는데 이
+     * 콜백은 캡처 스레드를 거쳐 그 뒤에 온다.
+     */
+    private fun writeRecording(rec: kr.joa.selahrta.recording.RecordedSession) {
+        val opened = recordingOpened
+        val startedAt = recordingStartedAt
+        val st = controller.baseState.value
+        val id = rec.id
+        recordingOpened = null
+
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val spec = rtaSpec()
+                sessionStore.timelineFile(id).outputStream().buffered().use { out ->
+                    // 머리는 생성자가 쓴다.
+                    val w = kr.joa.selahrta.recording.TimelineWriter(
+                        out,
+                        kr.joa.selahrta.recording.TimelineHeader(
+                            nominalSampleRate = spec?.second ?: opened?.sampleRate ?: 48_000,
+                            rowMillis = kr.joa.selahrta.recording.TimelineFormat.ROW_MILLIS,
+                        ),
+                    )
+                    rec.rows.forEach { w.write(it) }
+                }
+                sessionStore.writeMeta(
+                    kr.joa.selahrta.recording.SessionMeta(
+                        id = id,
+                        startedAtEpochMs = startedAt,
+                        endedAtEpochMs = startedAt + rec.durationMs,
+                        durationMs = rec.durationMs,
+                        deviceKey = opened?.deviceKey.orEmpty(),
+                        deviceLabel = opened?.deviceLabel.orEmpty(),
+                        micKind = opened?.micKind ?: MicKind.BuiltIn,
+                        sampleRate = opened?.sampleRate ?: 0,
+                        encoding = opened?.encoding?.name.orEmpty(),
+                        channelCount = opened?.channelCount ?: 0,
+                        channelIndex = opened?.channelIndex ?: 0,
+                        calibrationOffsetDb = st.calibration.offset.db,
+                        referenceOnly = st.calibration.isReferenceOnly,
+                        curveApplied = st.curve?.enabled == true,
+                        curveLabel = st.curve?.fileName.orEmpty(),
+                        // **요약은 기록기가 센 것을 쓴다.** 화면의 계기는
+                        // 측정 전체를 재고 있어, 기록 시작 전의 소리까지
+                        // 겉장에 섞여 들어갔다(2026-09-26 기기에서 확인).
+                        weighting = rec.summary.weighting,
+                        timeWeight = st.meterSettings.timeWeight,
+                        leqWindowMs = st.meterSettings.leqWindow.millis,
+                        leqDb = rec.summary.leqDb ?: Double.NaN,
+                        minDb = rec.summary.minDb ?: Double.NaN,
+                        maxDb = rec.summary.maxDb ?: Double.NaN,
+                        peakDb = rec.summary.peakDb ?: Double.NaN,
+                        events = rec.events,
+                        droppedPackets = rec.droppedPackets,
+                    ),
+                ).getOrThrow()
+            }.onFailure { e ->
+                onMainThread {
+                    controller.update { it.copy(errorKo = "기록을 저장하지 못했습니다: ${e.message}") }
+                }
+                runCatching { sessionStore.delete(id) }
+            }
+            onMainThread { controller.update { it.copy(recordingId = null) } }
+        }
     }
 
     /** RTA 의 Peak Hold 를 다시 센다. */

@@ -96,6 +96,10 @@ fun MeasureScreen(
     onRequestPermission: () -> Unit,
     onStart: () -> Unit,
     onStop: () -> Unit,
+    /** 이 측정을 기록으로 남기기 시작한다(Phase 10). */
+    onStartRecording: () -> Unit = {},
+    /** 기록만 끝낸다. 측정은 이어 간다. */
+    onStopRecording: () -> Unit = {},
     onDismissDeviceNotice: () -> Unit = {},
 ) {
     val segment = capture.meterSettings.segment
@@ -485,6 +489,26 @@ fun MeasureScreen(
                 },
                 fontWeight = FontWeight.Bold,
             )
+        }
+
+        // **기록은 측정 중에만 여닫는다**(Phase 10 · 명세 12장).
+        //
+        // 측정 단추와 따로 두는 까닭: 재는 것과 남기는 것은 다른 일이다.
+        // 잠깐 봐 두려고 재는 일이 대부분이고, 예배 한 판을 남기는 것은
+        // 그중 일부다. 늘 남기면 저장소가 금세 찬다.
+        if (running) {
+            val recording = capture.recordingId != null
+            TextButton(
+                onClick = { if (recording) onStopRecording() else onStartRecording() },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    if (recording) "기록 중지" else "이 측정을 기록하기",
+                    color = if (recording) SelahColors.Warn else SelahColors.Accent,
+                    fontSize = 13.sp,
+                    fontWeight = if (recording) FontWeight.Bold else FontWeight.Normal,
+                )
+            }
         }
 
         // 저역 비중(C−A) 카드는 **뺐다**(2026-09-25 담당자 지시).
