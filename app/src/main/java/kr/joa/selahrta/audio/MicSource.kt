@@ -285,6 +285,10 @@ class MicSource(
             micKind = info.kind,
             deviceLabel = info.displayName,
             deviceKey = info.stableKey,
+            // **접히기 전의 진짜 주소**를 싣는다(독립 재검토 CA-R03).
+            // 목록은 내장을 한 줄로 접으며 주소를 지우므로, 거기서
+            // 찾으면 언제나 비어 있다.
+            routedAddress = info.address,
             routedAsRequested = asRequested,
             routeConfirmed = true,
         )
@@ -318,6 +322,19 @@ class MicSource(
                 // 이름이 아니라 열쇠로 견준다(위 confirmRoute 주석 참고).
                 known != null && now.stableKey != known.deviceKey -> {
                     Log.w(TAG, "라우팅이 바뀌었다: ${known.deviceKey} → ${now.stableKey}")
+                    onRoutingChanged?.invoke(now)
+                }
+
+                // **주소가 바뀌어도 알린다**(독립 재검토 CA-R03).
+                //
+                // 내장 마이크의 열쇠에는 주소가 없어, 하단에서 후면으로
+                // 넘어가도 열쇠는 그대로다. 그러면 이 통지 자체가 나가지
+                // 않아 저장된 보정이 다른 마이크에 계속 걸렸다.
+                //
+                // 주소를 **몰랐다가 알게 된 경우**도 알린다. 「모른다」는
+                // 「같다」가 아니다.
+                known != null && now.address != known.routedAddress -> {
+                    Log.w(TAG, "마이크 자리가 바뀌었다: ${known.routedAddress} → ${now.address}")
                     onRoutingChanged?.invoke(now)
                 }
             }

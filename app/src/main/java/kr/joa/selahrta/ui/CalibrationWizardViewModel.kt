@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kr.joa.selahrta.calibration.CalibrationKey
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -129,6 +130,16 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
     private fun mayPlay(): Boolean = inForeground
 
     /**
+     * 증거를 적어 둘 이름 — **경로 전체 + 분석 격자**(독립 재검토 CA-R02).
+     *
+     * 기기 열쇠만으로 갈랐더니 같은 인터페이스의 채널을 바꿔도 ch0 의
+     * 배경과 DSP 판정이 그대로 쓰였다. 샘플레이트·FFT 길이까지 넣는
+     * 까닭은, 격자가 달라지면 밴드 값의 잣대가 달라지기 때문이다.
+     */
+    private fun evidenceKey(key: CalibrationKey, fftSize: Int, sampleRate: Int): String =
+        "${key.storageKey()}|fs$sampleRate|n$fftSize"
+
+    /**
      * 기준 CAL 을 불러온다.
      *
      * **읽는 법은 여기서 정하지 않는다.** 머리글이 분명하면 그대로 가고,
@@ -223,12 +234,13 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
         sampleRate: Int,
         tick: suspend () -> Unit,
         /**
-         * 지금 열린 입력의 열쇠. **증거를 이 이름으로 적어 둔다**
-         * (독립 검토 CA-03). null 이면 적지 않는다 — 어느 기기의 것인지
-         * 모르는 증거는 나중에 엉뚱한 쪽에 쓰인다.
+         * 지금 열린 **경로**의 열쇠. 증거를 이 이름으로 적어 둔다
+         * (독립 검토 CA-03 · 재검토 CA-R02). null 이면 적지 않는다 —
+         * 어느 경로의 것인지 모르는 증거는 나중에 엉뚱한 쪽에 쓰인다.
          */
-        deviceKey: String? = null,
+        calKey: CalibrationKey? = null,
     ) {
+        val evidence = calKey?.let { evidenceKey(it, fftSize, sampleRate) }
         if (_busyKo.value != null) return
         // **지난 알림을 지운다.** 남겨 두면 새 결과 옆에 옛 실패 문구가
         // 그대로 붙어 있어, 방금 실패한 것처럼 읽힌다(기기에서 확인).
@@ -242,6 +254,25 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
                 val noise = when (val r = runner.measureNoiseFloor(tap)) {
                     is RunOutcome.Failed -> {
                         _noticeKo.value = r.reasonKo
+                        // **실패하면 이 경로의 옛 증거를 지운다**(CA-R02).
+                        // 남겨 두면 「방금 실패했는데 옛 성공으로 통과」가
+                        // 된다 — 검토자가 그 순서를 재현했다.
+                        _state.update {
+                            it.copy(
+                                noiseFloorDb = null,
+                                dsp = null,
+                                noiseFloorByKey = if (evidence == null) {
+                                    it.noiseFloorByKey
+                                } else {
+                                    it.noiseFloorByKey - evidence
+                                },
+                                dspByKey = if (evidence == null) {
+                                    it.dspByKey
+                                } else {
+                                    it.dspByKey - evidence
+                                },
+                            )
+                        }
                         return@launch
                     }
 
@@ -250,10 +281,10 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
                 _state.update {
                     it.copy(
                         noiseFloorDb = noise,
-                        noiseFloorByKey = if (deviceKey == null) {
+                        noiseFloorByKey = if (evidence == null) {
                             it.noiseFloorByKey
                         } else {
-                            it.noiseFloorByKey + (deviceKey to noise)
+                            it.noiseFloorByKey + (evidence to noise)
                         },
                     )
                 }
@@ -270,10 +301,10 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
                                 dsp = null,
                                 // 실패한 점검은 **지운다.** 옛 성공이 남아
                                 // 있으면 그것으로 판정이 통과한다.
-                                dspByKey = if (deviceKey == null) {
+                                dspByKey = if (evidence == null) {
                                     it.dspByKey
                                 } else {
-                                    it.dspByKey - deviceKey
+                                    it.dspByKey - evidence
                                 },
                             )
                         }
@@ -283,10 +314,10 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
                         it.copy(
                             dsp = r.value,
                             clipped = capture.clippedSinceMark,
-                            dspByKey = if (deviceKey == null) {
+                            dspByKey = if (evidence == null) {
                                 it.dspByKey
                             } else {
-                                it.dspByKey + (deviceKey to r.value)
+                                it.dspByKey + (evidence to r.value)
                             },
                         )
                     }
@@ -380,6 +411,12 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
 
+        // **이 단계의 증거를 쓴다**(독립 재검토 CA-R02). 예전에는 「마지막에
+        // 점검한 것」(`st.noiseFloorDb`)을 넘겼는데, 그것이 다른 기기·다른
+        // 채널의 배경이면 가청 판정이 잘못 허용되거나 잘못 거절된다.
+        val stepEvidence = capture.openedCalKey?.let { evidenceKey(it, fftSize, sampleRate) }
+        val stepNoise = stepEvidence?.let { st.noiseFloorByKey[it] }
+
         runJob = viewModelScope.launch {
             val tap = MeasurementTap(fftSize, sampleRate)
             val runner = WizardRunner(capture, tick, mayPlay = ::mayPlay)
@@ -387,11 +424,11 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 _busyKo.value = "${stepNameKo(step)} 재는 중입니다."
                 val outcome = if (step == MeasureStep.Target) {
-                    runner.measureTarget(tap, session, nowKey, st.noiseFloorDb)
+                    runner.measureTarget(tap, session, nowKey, stepNoise)
                 } else {
                     runner.measureReference(
                         tap, session, step, curve, cal.fileName, cal.sha256,
-                        nowKey, st.noiseFloorDb,
+                        nowKey, stepNoise,
                     )
                 }
                 when (outcome) {
@@ -406,8 +443,16 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
                                     // 않아 모자라다.
                                     referenceCalKey = capture.openedCalKey,
                                     referenceOffsetDb = capture.openedOffsetDb,
+                                    referenceEvidenceKey = stepEvidence,
                                 )
-                                MeasureStep.Target -> it.copy(targetDeviceKey = nowKey)
+                                MeasureStep.Target -> it.copy(
+                                    targetDeviceKey = nowKey,
+                                    // **경로 전체를 붙든다**(CA-R01). 기기만
+                                    // 들고 있으면 같은 인터페이스의 다른
+                                    // 채널에 덮어쓸 수 있다.
+                                    targetCalKey = capture.openedCalKey,
+                                    targetEvidenceKey = stepEvidence,
+                                )
                                 else -> it
                             }
                         }
@@ -446,8 +491,10 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
         // **기준과 대상의 증거를 따로 꺼낸다**(독립 검토 CA-03). 없으면
         // 없는 채로 넘긴다 — 다른 입력의 값으로 채우면 묻힌 대상이
         // 「검증된 교정」으로 저장된다.
-        val targetNoise = st.targetDeviceKey?.let { st.noiseFloorByKey[it] }?.toDoubleArray()
-        val referenceNoise = st.referenceDeviceKey?.let { st.noiseFloorByKey[it] }?.toDoubleArray()
+        val targetEvidence = st.targetEvidenceKey
+        val referenceEvidence = st.referenceEvidenceKey
+        val targetNoise = targetEvidence?.let { st.noiseFloorByKey[it] }?.toDoubleArray()
+        val referenceNoise = referenceEvidence?.let { st.noiseFloorByKey[it] }?.toDoubleArray()
         val quality = qualityFromSession(
             session = result,
             noiseDb = targetNoise,
@@ -458,7 +505,7 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
             clipped = st.clipped,
             // **대상의 DSP 점검**이어야 한다. 기준이 깨끗한 것은 대상이
             // 가공되지 않았다는 근거가 아니다.
-            dspVerifiedBySignal = st.targetDeviceKey
+            dspVerifiedBySignal = targetEvidence
                 ?.let { st.dspByKey[it]?.verifiedBySignal } == true,
         )
         calibrateFromSession(result, quality).fold(
@@ -541,7 +588,7 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
      *
      * 그래서 **판단을 한곳에 모은다.** 화면은 이 함수가 주는 답만 따른다.
      */
-    fun transferBlockedKo(openedDeviceKey: String?): String? {
+    fun transferBlockedKo(openedCalKey: CalibrationKey?): String? {
         val st = _state.value
         val quality = st.quality
         val outcome = st.outcome
@@ -554,17 +601,23 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
             return "이 측정은 저장할 수 없는 판정입니다 — " + judged.reasonsKo.joinToString(" ")
         }
 
-        val target = st.targetDeviceKey
-        if (target != null && openedDeviceKey != target) {
-            return "지금 열린 입력이 대상 마이크가 아닙니다. 이 보정값은 대상의 것이므로 " +
-                "그 마이크로 되돌린 뒤 옮겨야 합니다 — 지금 저장하면 기준 마이크의 " +
-                "보정이 덮어써집니다."
+        // **경로 전체를 견준다**(독립 재검토 CA-R01). 기기만 보면 같은
+        // 인터페이스의 다른 채널·다른 입력 경로가 그대로 통과한다 —
+        // 저장소는 그 셋을 가르는데 관문만 하나를 봤다.
+        val target = st.targetCalKey
+        if (target == null) {
+            return "대상 마이크를 아직 재지 않았습니다. 4단계로 돌아가십시오."
+        }
+        if (openedCalKey != target) {
+            return "지금 열린 입력이 대상 경로가 아닙니다(${openedCalKey?.storageKey() ?: "열린 입력 없음"}). " +
+                "이 보정값은 ${target.storageKey()} 의 것이므로 그 경로로 되돌린 뒤 옮겨야 합니다 — " +
+                "지금 저장하면 다른 경로의 보정이 덮어써집니다."
         }
         return null
     }
 
-    /** 보정값을 옮길 대상. 저장하는 쪽이 지금 열린 경로와 맞춰 본다. */
-    val transferTargetKey: String? get() = _state.value.targetDeviceKey
+    /** 보정값을 옮길 대상 **경로**. 저장하는 쪽이 지금 열린 것과 맞춰 본다. */
+    val transferTargetKey: CalibrationKey? get() = _state.value.targetCalKey
 
     fun save(environment: kr.joa.selahrta.calibration.ProfileEnvironment) {
         if (_busyKo.value != null) return
@@ -585,10 +638,16 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
         // 마지막에 열려 있는 것은 **언제나 기준 마이크**다. 그대로 두면
         // 폰 마이크의 보정이 USB 인터페이스의 것으로 기록되어, 정작 폰에는
         // 걸리지 않고 엉뚱한 경로에 걸릴 수 있다(실기기 확인 2026-09-24).
-        val target = st.targetDeviceKey
-        if (target != null && environment.deviceKey != target) {
-            _noticeKo.value = "지금 열린 입력이 대상 마이크가 아닙니다. " +
-                "이 교정은 대상 마이크의 응답이므로 그 마이크로 되돌린 뒤 저장해야 합니다 — " +
+        // **경로 전체를 견준다**(독립 재검토 CA-R01). 기기만 보면 같은
+        // 인터페이스의 다른 채널에 프로파일이 귀속될 수 있다.
+        val target = st.targetCalKey
+        if (target == null) {
+            _noticeKo.value = "대상 마이크를 아직 재지 않았습니다. 4단계로 돌아가십시오."
+            return
+        }
+        if (environment.key() != target) {
+            _noticeKo.value = "지금 열린 입력이 대상 경로가 아닙니다(${environment.key().storageKey()}). " +
+                "이 교정은 ${target.storageKey()} 의 응답이므로 그 경로로 되돌린 뒤 저장해야 합니다 — " +
                 "「측정」 화면에서 입력을 대상으로 바꾸고 다시 시작한 뒤 돌아오십시오."
             return
         }

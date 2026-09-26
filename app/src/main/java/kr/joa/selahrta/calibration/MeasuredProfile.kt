@@ -272,12 +272,23 @@ fun judgeProfileApply(
     // 떨어져 나가고, 2026-09-23 결정이 실측을 근거로 피한 것이 바로 그
     // 일이다. 대신 **자동 적용만 멈추고 사람에게 알린다** — 열쇠를 지우는
     // 것으로 불확실성을 해결하지 않되, 모르고 지나가지도 않게.
-    if (was.deviceAddress.isNotEmpty() && now.deviceAddress.isNotEmpty() &&
-        was.deviceAddress != now.deviceAddress
-    ) {
+    // **빈 주소는 「모른다」이지 「같다」가 아니다**(독립 재검토 CA-R03).
+    //
+    // 처음에는 양쪽이 다 채워졌을 때만 봤는데, 실제로는 목록이 주소를
+    // 지워 **언제나 비어 있었다** — 검사가 통째로 돌지 않았다. 이제
+    // 열린 경로가 진짜 주소를 싣지만, 옛 프로파일에는 없다.
+    //
+    // 모르면 자동으로 걸지 않는다. 사람이 보고 정하면 된다.
+    val wasAddr = was.deviceAddress
+    val nowAddr = now.deviceAddress
+    if (was.micKind == MicKind.BuiltIn && (wasAddr.isEmpty() || nowAddr.isEmpty())) {
+        warn += "어느 마이크 자리에서 잰 것인지 확인할 수 없습니다. " +
+            "내장 마이크는 하단·후면이 따로 있어 응답이 다릅니다 — " +
+            "저절로 걸지 않습니다. 다시 교정하면 이 표시가 사라집니다."
+    } else if (wasAddr.isNotEmpty() && nowAddr.isNotEmpty() && wasAddr != nowAddr) {
         warn += "잴 때와 다른 마이크 자리로 열렸습니다 — 저장할 때는 " +
-            "「${micPositionKo(was.deviceAddress) ?: was.deviceAddress}」, 지금은 " +
-            "「${micPositionKo(now.deviceAddress) ?: now.deviceAddress}」입니다. " +
+            "「${micPositionKo(wasAddr) ?: wasAddr}」, 지금은 " +
+            "「${micPositionKo(nowAddr) ?: nowAddr}」입니다. " +
             "응답이 다를 수 있어 저절로 걸지 않습니다."
     }
 

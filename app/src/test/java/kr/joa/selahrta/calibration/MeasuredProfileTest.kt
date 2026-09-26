@@ -17,6 +17,54 @@ import org.junit.Test
  */
 class MeasuredProfileTest {
 
+    /**
+     * **자리가 다르면 저절로 걸지 않는다**(독립 재검토 CA-R03).
+     *
+     * 내장 마이크의 열쇠에는 주소가 없어 하단·후면이 **같은 열쇠**다.
+     * 그래서 이 판정이 유일한 방어다 — 여기서 막지 않으면 후면으로
+     * 열린 채 하단의 보정이 그대로 걸린다.
+     */
+    @Test
+    fun `마이크 자리가 다르면 저절로 걸지 않는다`() {
+        val m = judgeProfileApply(
+            profile(env(deviceKey = "BuiltIn|SM-S918N", address = "bottom")),
+            env(deviceKey = "BuiltIn|SM-S918N", address = "back"),
+        )
+        assertFalse("자리가 다른데 저절로 걸린다", m.mayAutoApply)
+        assertFalse("막지는 않는다 — 사람이 정할 수 있어야 한다", m.blocked)
+    }
+
+    /**
+     * **모르면 「같다」가 아니다**(독립 재검토 CA-R03).
+     *
+     * 옛 프로파일에는 주소가 없다. 그것을 「같은 자리」로 읽으면 지금까지
+     * 있던 결함이 그대로 남는다.
+     */
+    @Test
+    fun `자리를 모르면 저절로 걸지 않는다`() {
+        val m = judgeProfileApply(
+            profile(env(deviceKey = "BuiltIn|SM-S918N", address = "")),
+            env(deviceKey = "BuiltIn|SM-S918N", address = "back"),
+        )
+        assertFalse("모르는데 저절로 걸린다", m.mayAutoApply)
+    }
+
+    /**
+     * **자리 경고는 내장에만 붙는다.** USB 는 열쇠에 주소가 들어 있어
+     * 열쇠 비교가 이미 가른다.
+     */
+    @Test
+    fun `USB 에는 자리 경고가 붙지 않는다`() {
+        val m = judgeProfileApply(
+            profile(env(deviceKey = "Usb|UMC|a", address = "", kind = MicKind.Usb)),
+            env(deviceKey = "Usb|UMC|a", address = "", kind = MicKind.Usb),
+        )
+        assertFalse(
+            "USB 에 자리 경고가 붙었다: ${m.reasonsKo}",
+            m.reasonsKo.any { it.contains("마이크 자리") },
+        )
+    }
+
     private fun env(
         deviceKey: String = "BuiltIn|SM-S918N|bottom",
         address: String = "bottom",
