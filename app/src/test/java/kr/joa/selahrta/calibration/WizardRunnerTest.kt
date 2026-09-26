@@ -141,6 +141,50 @@ class WizardRunnerTest {
     }
 
     /**
+     * **화면을 나간 뒤에는 소리를 내지 않는다**(독립 검토 CA-05).
+     *
+     * 원래 결함은 배경을 재는 동안 홈으로 나가도 작업이 살아남아, 나간
+     * 뒤에 핑크 잡음이 시작되는 것이었다. 예배당에서 멈출 방법이 없다.
+     */
+    @Test
+    fun `앞에 없으면 소리를 내지 않는다`() = runBlocking {
+        val cap = FakeCapture()
+        val t = tap()
+        val runner = WizardRunner(cap, FakeClock(t, bins).wait, mayPlay = { false })
+
+        val r = runner.checkDsp(t, noiseFloorDb = null, frames = 30)
+
+        assertTrue("$r", r is RunOutcome.Failed)
+        assertEquals(LEFT_SCREEN_KO, (r as RunOutcome.Failed).reasonKo)
+        assertFalse("소리가 났다", cap.log.any { it.startsWith("play") })
+    }
+
+    /**
+     * **다시 들어오면 정상으로 돌아온다**(독립 재검토 CA-R04).
+     *
+     * 위 결함을 고치면서 이쪽을 막았다 — 탭을 옮기면 `stopWork()` 가
+     * 불리는데 그것이 전경 상태까지 내려, 마법사를 다시 열어도 영영
+     * 소리를 못 냈다. 「다시 시작」을 눌러도 풀리지 않았다.
+     *
+     * 막는 것과 되돌아오는 것은 **함께** 지켜져야 한다.
+     */
+    @Test
+    fun `다시 앞으로 오면 소리를 낼 수 있다`() = runBlocking {
+        val cap = FakeCapture()
+        var foreground = false
+        val t = tap()
+        val runner = WizardRunner(cap, FakeClock(t, bins).wait, mayPlay = { foreground })
+
+        runner.checkDsp(t, noiseFloorDb = null, frames = 30)
+        assertFalse("나가 있는데 소리가 났다", cap.log.any { it.startsWith("play") })
+
+        foreground = true
+        val again = runner.checkDsp(t, noiseFloorDb = null, frames = 30)
+        assertTrue("다시 열었는데 못 냈다: $again", again is RunOutcome.Done)
+        assertTrue("소리를 내야 한다", cap.log.any { it == "play:Pink" })
+    }
+
+    /**
      * **스피커가 데워지는 동안의 무음이 판정에 들어가면 안 된다.**
      *
      * 이 시험은 처음에 무음을 **한 장만** 밀어 넣었고, 그래서 아무것도

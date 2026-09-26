@@ -54,6 +54,43 @@ private val RESPONSE_WORDS = listOf("spl", "response", "magnitude", "응답")
  */
 private val LEVEL_PHRASE = Regex("""\d+(?:\.\d+)?\s*db(?:\s*spl)?""")
 
+/** 주파수 열임을 알리는 말. 열 선언이라면 반드시 하나는 있다. */
+private val FREQ_WORDS = listOf("freq", "hz", "주파수")
+
+/**
+ * 머리글이 **열 이름을 선언했는가**(독립 재검토 CA-R05).
+ *
+ * 설명문과 열 선언을 가른다. 열 선언은 이렇게 생겼다:
+ *
+ * ```
+ * "Frequency","SPL","Phase"
+ * Frequency(Hz)  Correction(dB)
+ * ```
+ *
+ * 가르는 기준은 셋이다 — **여러 칸으로 나뉘고**(쉼표·탭·두 칸 이상),
+ * **칸마다 짧고**(이름이지 문장이 아니다), **주파수 열이 있다**.
+ * 「94 dB SPL」이나 「for frequency response measurements」는 문장이라
+ * 칸으로 나뉘지 않거나 칸이 길다.
+ *
+ * **정규식에 예외를 더하는 길로 가지 않는다**(검토자 권고). 조건 문구를
+ * 하나씩 지워 나가는 방식은 새 문구가 나올 때마다 뚫린다.
+ */
+fun declaresColumns(headerLines: List<String>): Boolean = headerLines.any { line ->
+    val fields = line
+        .removePrefix("#").removePrefix("*").removePrefix(";")
+        .split(',', '	')
+        .flatMap { it.split(Regex(" {2,}")) }
+        .map { it.trim().trim('"').trim() }
+        .filter { it.isNotEmpty() }
+    if (fields.size < 2) return@any false
+    // 칸이 길면 이름이 아니라 문장이다.
+    if (fields.any { it.length > MAX_COLUMN_NAME }) return@any false
+    fields.any { f -> FREQ_WORDS.any { f.lowercase().contains(it) } }
+}
+
+/** 열 이름으로 볼 최대 길이. 이보다 길면 문장이다. */
+private const val MAX_COLUMN_NAME = 24
+
 /** 우리 가정과 **반대**를 가리키는 말. */
 private val CORRECTION_WORDS = listOf("correction", "compensation", "보정값", "보정 값")
 
@@ -182,11 +219,38 @@ sealed interface ReadingDecision {
  * 머리글이 **우리 가정과 반대**를 가리키면 용도와 상관없이 묻는다 —
  * 그때는 「모르는」 것이 아니라 「어긋나는」 것이다.
  */
-fun decideReading(evidence: SignEvidence, stakes: ReadingStakes): ReadingDecision = when (evidence) {
-    SignEvidence.LooksLikeResponse -> ReadingDecision.Settled(
-        CurveReading.Response,
-        "파일 머리글이 「응답」으로 읽힙니다.",
-    )
+fun decideReading(
+    evidence: SignEvidence,
+    stakes: ReadingStakes,
+    /**
+     * 머리글이 **열 이름을 선언**했는가(독립 재검토 CA-R05).
+     *
+     * 설명문에서 낱말을 찾는 것만으로는 둘째 열이 무엇인지 알 수 없다 —
+     * `# Reference SPL: 94 dB` 도, `# For frequency response measurements`
+     * 도 「응답」으로 확정됐다. 앞의 것은 잰 세기이고 뒤의 것은 쓰임새다.
+     *
+     * 그래서 **기준 CAL 은 열 선언이 있을 때만** 자동으로 확정한다.
+     * 설명문은 사람에게 보일 단서로만 쓴다([signEvidenceOf]).
+     *
+     * 표시용 곡선은 예전대로다 — 틀려도 화면에서 드러나고 되돌리기 쉽다.
+     */
+    columnDeclared: Boolean = true,
+): ReadingDecision = when (evidence) {
+    SignEvidence.LooksLikeResponse -> if (
+        stakes == ReadingStakes.ReferenceForCalibration && !columnDeclared
+    ) {
+        ReadingDecision.NeedsPerson(
+            CurveReading.Response,
+            "머리글이 「응답」 쪽으로 읽히지만, 둘째 열이 무엇인지 **선언하지는 않았습니다**. " +
+                "이 파일은 교정의 기준이 되므로 확인이 필요합니다 — 잘못 읽으면 이 기준으로 " +
+                "만든 프로파일이 전부 같은 방향으로 틀어집니다.",
+        )
+    } else {
+        ReadingDecision.Settled(
+            CurveReading.Response,
+            "파일 머리글이 「응답」으로 읽힙니다.",
+        )
+    }
 
     SignEvidence.LooksLikeCorrection -> ReadingDecision.NeedsPerson(
         CurveReading.Correction,

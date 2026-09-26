@@ -63,7 +63,7 @@ private fun unesc(s: String): String {
 }
 
 /** 줄들을 열쇠-값으로. 주석(`#`)과 빈 줄은 건너뛴다. */
-private fun parseLines(text: String): Map<String, String> {
+internal fun parseLines(text: String): Map<String, String> {
     val map = LinkedHashMap<String, String>()
     text.lineSequence().forEach { raw ->
         val line = raw.removeSuffix("\r")
@@ -75,7 +75,7 @@ private fun parseLines(text: String): Map<String, String> {
     return map
 }
 
-private class Reader(private val map: Map<String, String>) {
+internal class Reader(private val map: Map<String, String>) {
     val missing = mutableListOf<String>()
     val malformed = mutableListOf<String>()
 
@@ -170,7 +170,7 @@ private class Reader(private val map: Map<String, String>) {
  */
 private fun String.toFiniteOrNull(): Double? = toDoubleOrNull()?.takeIf { it.isFinite() }
 
-private fun StringBuilder.put(key: String, value: Any?) {
+internal fun StringBuilder.put(key: String, value: Any?) {
     if (value == null) return // 없는 것은 **적지 않는다**. 빈 값과 다르다.
     append(key).append('=').append(esc(value.toString())).append('\n')
 }

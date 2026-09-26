@@ -206,7 +206,10 @@ fun SelahApp() {
                 // 배경을 재는 동안 나가면 마법사가 스스로 핑크 잡음을 틀었다.
                 Lifecycle.Event.ON_STOP -> {
                     vm.onBackground()
-                    wizard.stopWork()
+                    // **여기서만 전경 상태를 내린다**(독립 재검토 CA-R04).
+                    // 탭 이동·닫기는 `stopWork()` 로 끊기만 한다 — 그때
+                    // 전경까지 내리면 다시 열어도 소리를 못 낸다.
+                    wizard.onBackground()
                 }
                 Lifecycle.Event.ON_START -> {
                     vm.onForeground()
@@ -500,14 +503,19 @@ fun SelahApp() {
                             canSave = capture.opened != null && wizardSaved == null,
                             // **막힌 까닭은 마법사가 판단한다**(독립 검토 CA-01).
                             // 화면이 스스로 셈하면 저장 쪽 판정과 어긋난다.
+                            // **경로 전체로 견준다**(독립 재검토 CA-R01).
+                            // 기기만 보면 같은 인터페이스의 다른 채널이
+                            // 그대로 통과한다.
                             transferBlockedKo = wizard.transferBlockedKo(
-                                capture.opened?.deviceKey,
+                                capture.opened
+                                    ?.takeIf { it.routeConfirmed }
+                                    ?.let { kr.joa.selahrta.calibration.CalibrationKey.of(it) },
                             ),
                             onApplyLevelTransfer = { db ->
                                 vm.saveOffsetDirect(
                                     db,
                                     kr.joa.selahrta.calibration.CalibrationSource.FromReferenceMic,
-                                    expectedDeviceKey = wizard.transferTargetKey,
+                                    expectedKey = wizard.transferTargetKey,
                                 )
                             },
                             onSave = {
@@ -543,10 +551,15 @@ fun SelahApp() {
                                         // 조금 짧게 둔다 — 길면 장을 건너뛰고,
                                         // 너무 짧으면 헛돈다.
                                         tick = { kotlinx.coroutines.delay(30) },
-                                        // **어느 기기의 증거인가**(독립 검토
-                                        // CA-03). 기준과 대상이 한 벌을
-                                        // 나눠 쓰면 묻힌 쪽이 통과한다.
-                                        deviceKey = capture.opened?.deviceKey,
+                                        // **어느 경로의 증거인가**(독립 검토
+                                        // CA-03 · 재검토 CA-R02). 기기만으로
+                                        // 갈랐더니 채널을 바꿔도 옛 증거가
+                                        // 그대로 쓰였다.
+                                        calKey = capture.opened
+                                            ?.takeIf { it.routeConfirmed }
+                                            ?.let {
+                                                kr.joa.selahrta.calibration.CalibrationKey.of(it)
+                                            },
                                     )
                                 }
                             },

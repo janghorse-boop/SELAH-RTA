@@ -228,6 +228,63 @@ class CodexUiAnalysisRegressionTest {
         assertFalse("잰 세기는 열의 뜻이 아니다: $decision", decision.settled)
     }
 
+    /**
+     * **CA-R05** — 잰 조건·쓰임새를 적은 설명문도 부호를 정하지 못한다.
+     *
+     * 지난번에는 `# Measured at 94 dB SPL` 한 줄만 막았다. 검토자가 같은
+     * 부류 셋을 더 보였다 — 낱말을 지워 나가는 방식은 새 문구마다 뚫린다.
+     *
+     * 이제 **열 이름을 선언한 머리글만** 저절로 정한다.
+     */
+    @Test
+    fun `설명문은 기준 CAL 의 부호를 정하지 못한다`() {
+        val prose = listOf(
+            "# Measured at 94 dB SPL",
+            "# Reference SPL: 94 dB",
+            "# Measured at 94 dB(SPL)",
+            "# For frequency response measurements",
+        )
+        for (line in prose) {
+            val declared = declaresColumns(listOf(line))
+            val d = decideReading(
+                signEvidenceOf(listOf(line)),
+                ReadingStakes.ReferenceForCalibration,
+                declared,
+            )
+            assertFalse("「$line」 만으로 정해졌다: $d", d.settled)
+        }
+    }
+
+    /** 대조군 — **열 선언**은 그대로 정해져야 한다. */
+    @Test
+    fun `열 선언은 기준 CAL 의 부호를 정한다`() {
+        val declarations = listOf(
+            "Frequency,SPL,Phase",
+            "Frequency(Hz)  Response(dB)",
+            "주파수,응답",
+        )
+        for (line in declarations) {
+            assertTrue("「$line」 을 열 선언으로 못 읽었다", declaresColumns(listOf(line)))
+        }
+        val d = decideReading(
+            SignEvidence.LooksLikeResponse,
+            ReadingStakes.ReferenceForCalibration,
+            columnDeclared = true,
+        )
+        assertTrue("열 선언인데 묻는다", d.settled)
+    }
+
+    /** 표시용 곡선은 예전대로 — 틀려도 화면에서 드러나고 되돌리기 쉽다. */
+    @Test
+    fun `표시용 곡선은 설명문으로도 지나간다`() {
+        val d = decideReading(
+            SignEvidence.LooksLikeResponse,
+            ReadingStakes.DisplayCurve,
+            columnDeclared = false,
+        )
+        assertTrue(d.settled)
+    }
+
     /** 대조군 — **열 이름**은 그대로 단서가 돼야 한다. */
     @Test
     fun `열 이름은 그대로 단서가 된다`() {

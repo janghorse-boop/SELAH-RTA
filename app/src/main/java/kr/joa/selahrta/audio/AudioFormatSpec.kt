@@ -72,6 +72,21 @@ data class OpenedFormat(
      * 서로 다른 마이크에 같은 보정값이 적용된다(실측으로 확인).
      */
     val deviceKey: String,
+    /**
+     * **실제로 열린 마이크의 주소**(`bottom`·`back` 같은 것).
+     *
+     * ## 왜 따로 싣는가 (독립 재검토 CA-R03)
+     *
+     * [deviceKey] 는 내장 마이크에서 주소를 **뺀다**(2026-09-23 결정).
+     * 그리고 화면 목록도 내장을 한 줄로 접으며 주소를 지운다. 그래서
+     * 보정 환경이 목록에서 주소를 찾으면 **언제나 빈 문자열**이었고,
+     * 「자리가 바뀌었는가」를 보는 검사가 통째로 작동하지 않았다.
+     *
+     * 여기 실린 값은 `AudioRecord.getRoutedDevice()` 가 알려 준 것 —
+     * **접히기 전의 진짜 주소**다. 비어 있으면 「모른다」이지 「같다」가
+     * 아니다.
+     */
+    val routedAddress: String = "",
     /** 기기가 UNPROCESSED 를 공식 지원한다고 알리는가. */
     val unprocessedSupported: Boolean,
     /** 신호 가공(AGC/NS/AEC)을 끈 결과. 하나라도 남으면 절대값을 믿기 어렵다. */

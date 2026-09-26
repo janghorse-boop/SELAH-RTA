@@ -47,10 +47,19 @@ fun currentProfileEnvironment(
     inputs: List<InputDeviceInfo>,
     build: DeviceBuildInfo,
 ): ProfileEnvironment {
+    // **열린 경로가 들고 있는 주소를 먼저 쓴다**(독립 재검토 CA-R03).
+    //
+    // 예전에는 목록에서 찾았는데, 목록은 내장 마이크를 한 줄로 접으며
+    // 주소를 지운다. 그래서 언제나 빈 문자열이 들어갔고, 「자리가
+    // 바뀌었는가」를 보는 검사가 통째로 작동하지 않았다.
+    //
+    // 열린 경로에도 없으면 목록을, 그것도 없으면 빈 문자열을 쓴다 —
+    // **열쇠를 갈라 주소로 읽지 않는다.** 내장 열쇠의 마지막 토막은
+    // 주소가 아니라 제품명이라, 그러면 제품명이 주소가 된다.
     val matched = inputs.firstOrNull { it.stableKey == opened.deviceKey }
     return ProfileEnvironment(
         deviceKey = opened.deviceKey,
-        deviceAddress = matched?.address ?: opened.deviceKey.substringAfterLast('|', ""),
+        deviceAddress = opened.routedAddress.ifEmpty { matched?.address.orEmpty() },
         micKind = opened.micKind,
         audioSource = opened.audioSource,
         sampleRate = opened.sampleRate,

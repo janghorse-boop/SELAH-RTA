@@ -1440,24 +1440,30 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         offsetDb: Double,
         source: kr.joa.selahrta.calibration.CalibrationSource,
         /**
-         * 이 값이 **어느 마이크의 것인가.** null 이면 검사하지 않는다.
+         * 이 값이 **어느 경로의 것인가.** null 이면 검사하지 않는다.
          *
-         * 옮겨 온 보정값은 대상 마이크의 것인데, 저장은 「지금 열린 경로」로
+         * 옮겨 온 보정값은 대상의 것인데, 저장은 「지금 열린 경로」로
          * 기록된다. 교정 마법사는 마지막에 **기준** 마이크가 열려 있어,
-         * 검사가 없으면 대상의 오프셋이 기준의 것을 덮어쓴다
-         * (독립 검토 CA-01). 부르는 쪽이 대상 열쇠를 함께 넘긴다.
+         * 검사가 없으면 대상의 오프셋이 기준의 것을 덮어쓴다(CA-01).
+         *
+         * **기기 열쇠가 아니라 경로 전체다**(독립 재검토 CA-R01). 저장소는
+         * 기기·source·채널을 모두 가르는데 검사만 기기를 봤더니, 같은
+         * 인터페이스의 다른 채널에 그대로 덮어쓸 수 있었다.
          */
-        expectedDeviceKey: String? = null,
+        expectedKey: kr.joa.selahrta.calibration.CalibrationKey? = null,
     ) {
         val format = controller.confirmedFormat()
-        if (expectedDeviceKey != null && format != null && format.deviceKey != expectedDeviceKey) {
-            controller.update { st ->
-                st.copy(
-                    calibrationNoticeKo = "지금 열린 입력이 이 보정값의 대상이 아닙니다. " +
-                        "저장하지 않았습니다 — 대상 마이크로 되돌린 뒤 다시 하십시오.",
-                )
+        if (expectedKey != null) {
+            val now = format?.let { kr.joa.selahrta.calibration.CalibrationKey.of(it) }
+            if (now != expectedKey) {
+                controller.update { st ->
+                    st.copy(
+                        calibrationNoticeKo = "지금 열린 입력이 이 보정값의 대상 경로가 아닙니다. " +
+                            "저장하지 않았습니다 — ${expectedKey.storageKey()} 로 되돌린 뒤 다시 하십시오.",
+                    )
+                }
+                return
             }
-            return
         }
         if (format == null) {
             controller.update { st ->

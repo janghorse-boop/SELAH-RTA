@@ -129,6 +129,13 @@ data class CalInfo(
     val pointCount: Int,
     /** 머리글에서 찾은 단서. 정해진 값이 아니라 단서다. */
     val evidence: SignEvidence = SignEvidence.Unknown,
+    /**
+     * 머리글이 **열 이름을 선언했는가**(독립 재검토 CA-R05).
+     *
+     * 설명문에서 낱말을 찾은 것만으로는 둘째 열이 무엇인지 알 수 없다.
+     * 기준 CAL 은 선언이 있을 때만 저절로 정해진다.
+     */
+    val columnDeclared: Boolean = false,
     val reading: CurveReading = CurveReading.Response,
     /**
      * **사람이 화면에서 골랐는가.**
@@ -139,7 +146,7 @@ data class CalInfo(
     val readingChosenByPerson: Boolean = false,
 ) {
     private val decision: ReadingDecision
-        get() = decideReading(evidence, ReadingStakes.ReferenceForCalibration)
+        get() = decideReading(evidence, ReadingStakes.ReferenceForCalibration, columnDeclared)
 
     /** 읽는 법이 정해졌는가. 사람이 골랐거나, 머리글이 분명하거나. */
     val readingSettled: Boolean get() = readingChosenByPerson || decision.settled
@@ -216,6 +223,16 @@ data class WizardState(
      * DSP 함수는 가려낼 줄 아는데 연결이 그것을 없앤 것이다.
      *
      * 없으면 **없는 채로 둔다.** 다른 입력의 값으로 채우지 않는다.
+     *
+     * ## 열쇠는 **경로 전체 + 분석 격자**다 (독립 재검토 CA-R02)
+     *
+     * 처음에는 기기 열쇠로만 갈랐다. 그랬더니 같은 USB 인터페이스의
+     * **채널을 바꿔도** ch0 의 배경과 `verifiedBySignal=true` 가 그대로
+     * 쓰였다 — 검토자가 ch0 의 배경(SNR 40dB)으로 31/31 Pass, 실제
+     * ch1 의 배경(SNR 2dB)으로 0/31 이 나오는 것을 쟀다.
+     *
+     * [evidenceKey] 가 기기·source·채널·샘플레이트·FFT 길이를 모두 넣는다.
+     * 하나라도 다르면 **다른 증거**다.
      */
     val noiseFloorByKey: Map<String, List<Double>> = emptyMap(),
     val dspByKey: Map<String, DspProbeResult> = emptyMap(),
@@ -234,6 +251,26 @@ data class WizardState(
     val referenceDeviceKey: String? = null,
     /** 대상을 잰 입력의 열쇠. 기준과 **달라야** 한다. */
     val targetDeviceKey: String? = null,
+    /**
+     * 대상을 잰 **경로 전체**의 열쇠(독립 재검토 CA-R01).
+     *
+     * 기기 열쇠만 들고 있었더니, 같은 USB 인터페이스의 **다른 채널**로
+     * 옮겨도 관문이 통과했다 — Input 1 의 감도로 Input 2 의 교정을
+     * 덮어쓸 수 있었다. 저장소 열쇠는 기기·source·채널을 모두 가른다
+     * ([CalibrationKey])면서 관문만 기기를 봤다.
+     *
+     * 기준 쪽([referenceCalKey])은 이미 전체 열쇠였다. 대상만 빠져 있었다.
+     */
+    val targetCalKey: CalibrationKey? = null,
+    /**
+     * 대상을 **잴 때** 쓰던 증거의 이름(독립 재검토 CA-R02).
+     *
+     * 판정이 이 이름으로 배경·DSP 를 꺼낸다. 기기 열쇠로 꺼내면 그사이
+     * 채널이 바뀌어도 옛 증거가 딸려 온다.
+     */
+    val targetEvidenceKey: String? = null,
+    /** 기준을 잴 때 쓰던 증거의 이름. */
+    val referenceEvidenceKey: String? = null,
     /**
      * 기준을 잰 **경로 전체**의 열쇠. 절대 레벨을 옮길 때 그 경로의
      * 보정값을 찾는 데 쓴다.
