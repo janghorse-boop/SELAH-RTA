@@ -62,6 +62,8 @@ fun SpectrumChart(
     feedback: List<FeedbackCandidate> = emptyList(),
     /** 차트 상자 안에 얹을 모드 고르개. */
     modes: (@Composable () -> Unit)? = null,
+    /** 고르개 **왼쪽**에 놓을 단추(멈춤 등). null 이면 안 그린다. */
+    controls: (@Composable () -> Unit)? = null,
 ) {
     val measurer = rememberTextMeasurer()
     Column(modifier) {
@@ -79,17 +81,21 @@ fun SpectrumChart(
                 .border(1.dp, SelahColors.Outline, RoundedCornerShape(12.dp))
                 .padding(8.dp),
         ) {
-            val headerHeight = if (modes != null) CONTROL_ROW_HEIGHT else 0.dp
+            val headerHeight =
+                if (modes != null || controls != null) CONTROL_ROW_HEIGHT else 0.dp
             val plotHeight = (maxHeight - LABEL_ROW_HEIGHT - headerHeight).coerceAtLeast(0.dp)
             val plotWidth = (maxWidth - Y_AXIS_WIDTH - 4.dp).coerceAtLeast(0.dp)
 
             Column(Modifier.fillMaxWidth()) {
-            modes?.let {
+            if (headerHeight > 0.dp) {
                 Row(
-                    Modifier.fillMaxWidth().height(CONTROL_ROW_HEIGHT),
-                    horizontalArrangement = Arrangement.End,
+                    Modifier.fillMaxWidth().height(headerHeight),
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
-                ) { it() }
+                ) {
+                    Box { controls?.invoke() }
+                    Box { modes?.invoke() }
+                }
             }
 
             Row(Modifier.fillMaxWidth()) {
@@ -98,14 +104,16 @@ fun SpectrumChart(
                     Canvas(Modifier.width(plotWidth).height(plotHeight)) {
                         val span = (ceilDb - floorDb).coerceAtLeast(1.0)
 
-                        // 가로 눈금 다섯 줄 — RTA 와 같은 수, 같은 자리.
-                        repeat(5) { i ->
-                            val y = size.height * i / 4f
+                        // 가로 눈금 — RTA 와 **같은 dB 자리**에 긋는다.
+                        // 70·80·90 은 굵게(예배당에서 읽는 자리).
+                        for (db in gridLinesDb(floorDb, ceilDb)) {
+                            val y = (((ceilDb - db) / span) * size.height).toFloat()
+                            val strong = db in EMPHASIS_DB
                             drawLine(
-                                SelahColors.Outline,
+                                if (strong) SelahColors.TextMuted else SelahColors.Outline,
                                 Offset(0f, y),
                                 Offset(size.width, y),
-                                strokeWidth = 1f,
+                                strokeWidth = if (strong) 2f else 1f,
                             )
                         }
 
@@ -339,28 +347,20 @@ private val LOG_LOW = ln(20.0)
 private val LOG_HIGH = ln(20_000.0)
 
 /**
- * 세로축 범위. [rtaRange] 와 같은 뜻이되 **폭이 넓다**.
+ * **Spectrum 도 RTA 와 같은 고정 축을 쓴다**(2026-09-26 담당자 지시).
  *
- * RTA 막대는 밴드 안의 에너지를 다 더해 바닥이 높지만, 여기서는 칸마다
- * 최대 하나만 집어 바닥이 훨씬 낮게 깔린다. 50dB 로 자르면 곡선의 아래쪽
- * 절반이 바닥선에 눌려 붙어, 모양이 통째로 사라진다.
+ * 두 차트를 번갈아 보는 화면이라 축이 다르면 눈이 매번 자리를 다시 잡아야
+ * 한다. 고정하는 까닭은 [RTA_RANGE] 의 머리말 참고.
+ *
+ * Spectrum 은 칸마다 최대 하나만 집어 바닥이 RTA 보다 낮게 깔리므로 아래쪽이
+ * 더 비어 보인다. 그래도 **이 화면의 값어치는 봉우리 옆에 적히는 숫자**에
+ * 있지 바닥 모양에 있지 않다.
  */
-fun spectrumRange(s: SpectrumView?): Pair<Double, Double> {
-    if (s == null) return 10.0 to 90.0
+
+/** 지금 가장 큰 칸. 잰 것이 없으면 null. */
+fun spectrumTopSpl(s: SpectrumView?): Double? {
+    if (s == null) return null
     var top = Double.NEGATIVE_INFINITY
     for (v in s.columnsSpl) if (v > top) top = v
-    if (!top.isFinite()) return 10.0 to 90.0
-    val ceil = kotlin.math.ceil((top + 6.0) / 5.0) * 5.0
-    // **0 아래로는 내려가지 않는다.** 폭만 보고 빼다가 축에 `-5 dB` 가
-    // 찍혔다(기기에서 확인). 음수 SPL 은 없는 값이라, 눈금에 있으면 그
-    // 화면이 SPL 을 그리는 것이 맞는지부터 의심하게 된다.
-    return (ceil - SPECTRUM_SPAN_DB).coerceAtLeast(0.0) to ceil
+    return top.takeIf { it.isFinite() }
 }
-
-/**
- * 세로축이 보여 주는 폭.
- *
- * RTA(50dB)보다 넓다. 막대는 밴드 안의 에너지를 다 더해 바닥이 높지만,
- * 여기서는 칸마다 최대 하나만 집어 바닥이 훨씬 낮게 깔리기 때문이다.
- */
-private const val SPECTRUM_SPAN_DB = 70.0

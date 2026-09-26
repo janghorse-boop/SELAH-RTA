@@ -428,7 +428,10 @@ fun MeasureScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                if (m.peakClipped) "PEAK 순간최고 — 클리핑 · 눌러서 보기" else "PEAK 순간최고 보기",
+                // 「PEAK 순간최고」를 「최대값」으로 바꿨다(2026-09-26 담당자
+                // 지시). 영문 약어와 한글 뜻풀이를 나란히 적어 한 자리에
+                // 이름이 둘이었다.
+                if (m.peakClipped) "최대값 — 클리핑 · 눌러서 보기" else "최대값 보기",
                 color = if (m.peakClipped) SelahColors.High else SelahColors.TextMuted,
                 fontSize = 11.sp,
                 fontWeight = if (m.peakClipped) FontWeight.SemiBold else FontWeight.Normal,
@@ -1018,7 +1021,11 @@ private fun RangeCard(
                         Text(
                             "${range.avgLowDb.toInt()} ~ ${range.avgHighDb.toInt()} dBA",
                             color = SelahColors.TextPrimary,
-                            fontSize = 22.sp,
+                            // 제목(「SELAH RTA」)과 같은 크기로 낮췄다
+                            // (2026-09-26 담당자 지시). 22sp 일 때는 화면에서
+                            // 가장 큰 글자가 **권장 범위**여서, 정작 큰 숫자여야
+                            // 할 지금 값보다 먼저 눈에 들어왔다.
+                            fontSize = 17.sp,
                             fontWeight = FontWeight.Bold,
                             softWrap = false,
                         )

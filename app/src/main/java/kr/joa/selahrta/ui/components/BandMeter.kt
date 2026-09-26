@@ -18,7 +18,15 @@ import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -162,6 +170,13 @@ fun BandMeter(
      * 차트가 그만큼 넓어진다. null 이면 안 그린다.
      */
     modes: (@Composable () -> Unit)? = null,
+    /**
+     * 고르개 **왼쪽**에 놓을 단추(멈춤 등). null 이면 안 그린다.
+     *
+     * 차트 위에 겹쳐 얹지 않고 한 줄을 함께 쓴다 — 겹쳤더니 세로축 위쪽
+     * 숫자를 가렸다(Spectrogram 에서 실제로 겪었다).
+     */
+    controls: (@Composable () -> Unit)? = null,
 ) {
     // **눈금 글자는 막대와 함께 밀려야 한다.** 따로 두면 밀고 난 뒤 막대와
     // 글자가 어긋나, 솟은 자리의 주파수를 잘못 읽는다.
@@ -190,7 +205,8 @@ fun BandMeter(
             // `maxHeight` 는 안쪽 여백을 이미 뺀 값이다. 여기서 눈금 글자
             // 자리만 더 빼면 막대가 쓸 높이가 된다 — 바깥에서 준 높이가
             // 고정이든 weight 든 똑같이 맞는다.
-            val headerHeight = if (modes != null) CONTROL_ROW_HEIGHT else 0.dp
+            val headerHeight =
+                if (modes != null || controls != null) CONTROL_ROW_HEIGHT else 0.dp
             val barsHeight = (maxHeight - LABEL_ROW_HEIGHT - headerHeight).coerceAtLeast(0.dp)
 
             // **세로축은 밀리지 않는다**(2026-09-25 담당자 지적: 「Y축에는
@@ -204,12 +220,15 @@ fun BandMeter(
             // 따라 밀려 화면에서 사라진다 — 세로축은 어디를 보든 그 자리에
             // 있어야 하는 것이다.
             Column(Modifier.fillMaxWidth()) {
-            modes?.let {
+            if (headerHeight > 0.dp) {
                 Row(
-                    Modifier.fillMaxWidth().height(CONTROL_ROW_HEIGHT),
-                    horizontalArrangement = Arrangement.End,
+                    Modifier.fillMaxWidth().height(headerHeight),
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
-                ) { it() }
+                ) {
+                    Box { controls?.invoke() }
+                    Box { modes?.invoke() }
+                }
             }
 
             Row(Modifier.fillMaxWidth()) {
@@ -223,14 +242,20 @@ fun BandMeter(
                 Canvas(Modifier.width(chartWidth).height(barsHeight)) {
                 val span = (ceilDb - floorDb).coerceAtLeast(1.0)
 
-                // 가로 눈금 다섯 줄
-                repeat(5) { i ->
-                    val y = size.height * i / 4f
+                // 가로 눈금 — **dB 에 매인다.**
+                //
+                // 예전에는 높이를 다섯 등분해 그렸다. 축이 움직이던 때에는
+                // 같은 선이 매번 다른 dB 를 가리켰고, 그래서 선이 있어도
+                // 「저 막대가 몇 dB 인가」에 답하지 못했다. 축을 고정했으니
+                // 선도 dB 자리에 박는다.
+                for (db in gridLinesDb(floorDb, ceilDb)) {
+                    val y = (((ceilDb - db) / span) * size.height).toFloat()
+                    val strong = db in EMPHASIS_DB
                     drawLine(
-                        SelahColors.Outline,
+                        if (strong) SelahColors.TextMuted else SelahColors.Outline,
                         Offset(0f, y),
                         Offset(size.width, y),
-                        strokeWidth = 1f,
+                        strokeWidth = if (strong) 2f else 1f,
                     )
                 }
 
@@ -270,11 +295,10 @@ fun BandMeter(
                                 // 후보가 앉은 밴드. 흐린 밴드라도 물들인다 —
                                 // 「못 믿는 값」과 「하울링 후보」는 다른 말이고,
                                 // 둘 다 알려야 한다(알파로 흐림은 그대로 둔다).
-                                tone != null && rta.resolved[i] -> feedbackTone(tone)
-                                tone != null -> feedbackTone(tone).copy(alpha = 0.35f)
-                                rta.resolved[i] -> SelahColors.Accent
-                                // 분해 못 하는 밴드는 흐리게. 값이 아니라 새어 온 것이다.
-                                else -> SelahColors.Accent.copy(alpha = 0.25f)
+                                // **밴드를 색으로 가르지 않는다**(2026-09-26
+                                // 담당자 지시). 까닭은 [UNRESOLVED_ALPHA] 참고.
+                                tone != null -> feedbackTone(tone)
+                                else -> SelahColors.Accent
                             },
                             topLeft = Offset(x, size.height - h),
                             size = Size(barW, h),
@@ -405,27 +429,63 @@ fun BandMeter(
  * 보정 상태에 따라 절대 눈금이 달라지므로 값에서 끌어온다. 고정 눈금을 쓰면
  * 보정하는 순간 막대가 전부 천장에 붙거나 바닥에 깔린다.
  */
-/**
- * 아직 잰 것이 없을 때의 세로축.
- *
- * 예전에는 `-60 ~ 0` 이었는데 그 숫자는 **dBFS 의 눈금**이다. 값은 미보정
- * 일 때도 SPL 이라(짐작한 만재 음압을 더한다) 음수 SPL 은 있을 수 없는
- * 값이고, 실제로 그 자리표시를 데이터로 잘못 읽은 일이 있었다.
- */
-private val EMPTY_SPL_RANGE = 20.0 to 90.0
-
-fun rtaRange(rta: RtaView?, resolvedOnly: Boolean = true): Pair<Double, Double> {
-    if (rta == null) return EMPTY_SPL_RANGE
+/** 지금 가장 큰 밴드. 잰 것이 없으면 null. */
+fun rtaTopSpl(rta: RtaView?, resolvedOnly: Boolean = true): Double? {
+    if (rta == null) return null
     var top = Double.NEGATIVE_INFINITY
     for (i in rta.bandsSpl.indices) {
         if (resolvedOnly && !rta.resolved[i]) continue
         if (rta.bandsSpl[i] > top) top = rta.bandsSpl[i]
     }
-    if (!top.isFinite()) return EMPTY_SPL_RANGE
-    // 위로 6dB 여유를 두고 아래로 50dB. 예배당에서 읽히는 폭이다.
-    val ceil = kotlin.math.ceil((top + 6.0) / 5.0) * 5.0
-    return (ceil - 50.0) to ceil
+    return top.takeIf { it.isFinite() }
 }
+
+/**
+ * **세로축은 움직이지 않는다 — 0 ~ 120 dB 고정**(2026-09-26 담당자 지시:
+ * 「처음부터 0부터 120까지를 범위로 두면 안되는지」).
+ *
+ * ## 따라다니게 두면 안 되는 까닭
+ *
+ * 처음에는 장마다 최고 밴드에서 천장을 다시 셈했다. 최고 밴드는 쉬지 않고
+ * 흔들리므로 축이 **초당 여러 번 5dB 씩 튀었다.** 그것은 RTA 로 보려던
+ * 것을 정확히 가린다:
+ *
+ * - **전체가 커져도 그림이 그대로다.** 소리가 6dB 커지면 축도 따라 올라가
+ *   막대 높이가 제자리다 — 「커졌다」가 화면에서 사라진다.
+ * - **시간을 건너 견줄 수 없다.** 같은 높이가 아까와 다른 dB 를 뜻한다.
+ *
+ * 가운데 길(이력을 두고 가끔만 옮기기)도 만들어 봤는데, 기기에서 재 보니
+ * 여전히 옮겨지는 순간이 있었다 — 그때마다 그림 전체가 한 번에 뛴다.
+ * **가끔 튀는 것도 튀는 것이다.**
+ *
+ * ## 왜 0 ~ 120 인가
+ *
+ * 그것이 **이 기기가 낼 수 있는 값의 전부**다. 미보정 눈금은 0 dBFS 를
+ * 120 dB SPL 로 놓으므로([ASSUMED_FULL_SCALE_SPL]) 120 위의 값은 나올 수
+ * 없고, 음압에 음수도 없다. 축이 곧 기기의 범위라 **잘려 나가는 값이 없다.**
+ *
+ * ## 무엇을 내주는가
+ *
+ * 높이를 다 쓰지 못한다. 예배당에서 실제로 읽히는 폭은 30~100 dB 안팎이라,
+ * 아래 4분의 1(0~30)은 어느 방에서도 비어 있고 위쪽도 큰 찬양에서만 닿는다.
+ * 폭을 좁히면 그만큼 자세히 보이지만, **좁히는 순간 「그 밖의 값」이
+ * 생긴다** — 그리고 그 값은 화면에서 사라진다. 지금은 사라지는 값이 없다.
+ *
+ * 좁히고 싶으면 [RTA_FLOOR_DB]·[RTA_CEIL_DB] 두 줄만 고치면 된다.
+ */
+val RTA_RANGE: Pair<Double, Double> = RTA_FLOOR_DB to RTA_CEIL_DB
+
+/**
+ * 바닥 — **음압에 음수는 없다.**
+ *
+ * 예전 자리표시는 `-60 ~ 0` 이었는데 그 숫자는 **dBFS 의 눈금**이다. 값은
+ * 미보정일 때도 SPL 이라(짐작한 만재 음압을 더한다) 음수가 나올 수 없고,
+ * 실제로 그 자리표시를 데이터로 잘못 읽은 일이 있었다.
+ */
+const val RTA_FLOOR_DB: Double = 0.0
+
+/** 천장 — 미보정 눈금의 만재 음압([ASSUMED_FULL_SCALE_SPL])과 같다. */
+const val RTA_CEIL_DB: Double = 120.0
 
 
 
@@ -448,30 +508,92 @@ internal val Y_AXIS_WIDTH = 26.dp
 internal val CONTROL_ROW_HEIGHT = 30.dp
 
 /**
+ * 가로선을 그을 dB 자리.
+ *
+ * [GRID_STEP_DB] 마다 한 줄, 그리고 [EMPHASIS_DB] 를 더한다. 굵게 그리는
+ * 셋은 **예배당에서 실제로 읽는 자리**다 — 설교 권장이 68~75 dBA 이고
+ * 찬양은 그 위라, 70·80·90 에 선이 있으면 막대 끝을 숫자로 옮기지 않고도
+ * 「권장 범위 안인가」가 바로 보인다(2026-09-26 담당자 지시).
+ */
+internal fun gridLinesDb(floorDb: Double, ceilDb: Double): List<Double> {
+    val out = sortedSetOf<Double>()
+    var db = kotlin.math.ceil(floorDb / GRID_STEP_DB) * GRID_STEP_DB
+    while (db <= ceilDb) {
+        out.add(db)
+        db += GRID_STEP_DB
+    }
+    EMPHASIS_DB.filterTo(out) { it in floorDb..ceilDb }
+    return out.toList()
+}
+
+/** 굵게 긋는 자리. 예배당에서 읽는 대역이다. */
+internal val EMPHASIS_DB = listOf(70.0, 80.0, 90.0)
+
+/*
+ * **막대는 밴드를 색으로 가르지 않는다**(2026-09-26 담당자 지시:
+ * 「100Hz 이하도 다른 주파수와 같이 색상을 같게 표현해 달라」).
+ *
+ * ## 무엇을 색으로 말하고 있었나
+ *
+ * 4096점·48kHz 의 칸 폭은 11.7Hz 인데 25Hz 밴드는 5.8Hz 다 — **한 칸보다
+ * 좁다.** 그래서 저역 몇 밴드는 제 대역의 에너지가 아니라 이웃에서 새어
+ * 온 값을 담는다(63Hz −2.19dB, 80Hz −1.12dB · 독립 검증 R08). 그 사실을
+ * 알파 0.25 로 알리고 있었다.
+ *
+ * ## 왜 뗐나
+ *
+ * **알리는 값보다 헷갈리게 하는 값이 컸다.** 0.25 는 「못 믿는 값」이
+ * 아니라 **다른 종류의 것**으로 읽혔고(0.5 로 올려도 마찬가지였다),
+ * 정작 그 사실이 무엇인지는 색이 말해 주지 못한다. 예배당에서 킥·베이스를
+ * 볼 때 저역이 늘 흐리게 깔려 있는 것도 읽기를 방해한다.
+ *
+ * ## 사실은 어디에 남아 있나
+ *
+ * 없애지 않았다. `RtaFrame.resolved`·`lossDb` 는 그대로 있고, 세로
+ * 화면의 차트 아래가 **몇 밴드가 얼마나 새는지 글로 적는다.** 색은 늘
+ * 보이지만 뜻을 못 말하고, 글은 볼 때만 보이지만 정확히 말한다.
+ *
+ * FFT 를 늘리면 실제로 해결된다(8192 면 80Hz 가 살아난다). 그런데 같은
+ * 스펙트럼을 하울링 탐지가 쓰므로 창이 길어지면 **후보를 늦게 잡는다** —
+ * 8192 는 171ms, 16384 는 341ms 다. 저역 두 밴드를 얻자고 하울링을 늦게
+ * 잡을 일은 아니다.
+ */
+
+/** 보통 선의 간격. */
+private const val GRID_STEP_DB = 20.0
+
+/** 눈금 글자의 높이 어림. 선과 글자 가운데를 맞추는 데 쓴다. */
+private val LABEL_HALF = 5.dp
+
+/**
  * 세로축 — **막대가 얼마인지 눈으로 읽게 한다.**
  *
- * 가로눈금과 **같은 자리에** 숫자를 놓는다. 눈금은 다섯 줄이고, 위가
- * 천장(`ceilDb`) 아래가 바닥(`floorDb`)이다.
+ * 가로눈금과 **같은 자리에** 숫자를 놓는다([gridLinesDb] 를 함께 쓴다) —
+ * 둘이 서로 다른 셈으로 자리를 잡으면 선과 숫자가 어긋나고, 그러면 숫자가
+ * 가리키는 선이 어느 것인지 알 수 없다.
  *
- * 눈금 자체는 캔버스가 그리므로 여기서는 숫자만 맞춰 놓는다 — 둘이 서로
- * 다른 셈으로 자리를 잡으면 반올림 때문에 어긋난다. 같은 다섯 등분을 쓴다.
+ * 예전에는 높이를 다섯 등분해 놓았다. 축이 움직이던 때에는 그 수밖에
+ * 없었지만, 축을 고정한 지금은 **숫자가 dB 자리에 박힌다.**
  */
 @Composable
 internal fun YAxis(floorDb: Double, ceilDb: Double, height: Dp, modifier: Modifier = Modifier) {
-    Column(
-        modifier.width(Y_AXIS_WIDTH).height(height),
-        horizontalAlignment = Alignment.End,
-        verticalArrangement = Arrangement.SpaceBetween,
-    ) {
-        // 위에서 아래로 — 천장부터 바닥까지 다섯 칸.
-        repeat(5) { i ->
-            val db = ceilDb - (ceilDb - floorDb) * i / 4.0
+    val span = (ceilDb - floorDb).coerceAtLeast(1.0)
+    Box(modifier.width(Y_AXIS_WIDTH).height(height)) {
+        for (db in gridLinesDb(floorDb, ceilDb)) {
+            // 맨 위·맨 아래 글자가 상자 밖으로 나가지 않게 잡아 둔다.
+            val y = (height * (((ceilDb - db) / span).toFloat()) - LABEL_HALF)
+                .coerceIn(0.dp, (height - LABEL_HALF * 2).coerceAtLeast(0.dp))
             Text(
                 "%.0f".format(db),
-                color = SelahColors.TextSecondary,
+                color = if (db in EMPHASIS_DB) {
+                    SelahColors.TextSecondary
+                } else {
+                    SelahColors.TextMuted
+                },
                 fontSize = 8.sp,
                 maxLines = 1,
                 softWrap = false,
+                modifier = Modifier.align(Alignment.TopEnd).offset(y = y),
             )
         }
     }

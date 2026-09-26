@@ -21,13 +21,18 @@ enum class ViewMode(val labelKo: String, val section: NavSection) {
     /**
      * 예배 기록(컨셉 화면 7번).
      *
-     * **아래 탭에서 위 칩으로 옮겼다**(2026-09-24 담당자 지시). 아래 탭
-     * 자리를 「도구」에 내주면서, 재고 나서 그 기록을 보는 흐름이 한자리에
-     * 있는 편이 낫다고 보았다 — 측정과 기록은 같은 일의 앞뒤다.
+     * ## 아래 탭으로 되돌렸다 (2026-09-26 담당자 지시)
+     *
+     * 2026-09-24 에 아래 탭에서 위 칩으로 옮겼다 — 그때는 기록이 빈
+     * 화면이라 탭 한 자리가 아까웠다. 지금은 기록이 **실제로 쌓인다**
+     * (Phase 10 연결). 그리고 측정 구역에 칩이 둘뿐이라, 「SPL」 칩은
+     * 늘 켜져 있는 채로 자리만 차지했다.
+     *
+     * 아래로 내리면 칩 줄이 통째로 사라지고 측정 화면이 그만큼 넓어진다.
      *
      * **마이크 없이도 열린다.** 지난 기록을 보는 데 마이크가 필요 없다.
      */
-    History("기록", NavSection.Measure),
+    History("기록", NavSection.History),
 
     /**
      * 31밴드 RTA — **피드백 후보도 여기서 함께 본다**(2026-09-24 담당자 지시).
@@ -43,21 +48,6 @@ enum class ViewMode(val labelKo: String, val section: NavSection) {
      * RTA↔FR 을 오갈 때 폰이 한 번 섰다가 다시 눕는다.
      */
     Rta("RTA", NavSection.Analyze),
-
-    /**
-     * FR — 방·PA 의 **크기 응답**을 핑크 잡음으로 본다.
-     *
-     * RTA 옆에 두는 까닭은 둘이 같은 그림을 다르게 보기 때문이다. RTA 는
-     * **지금 얼마나 큰가**(순간, 절대), FR 은 **모아 보면 어느 대역이
-     * 묻히는가**(평균, 0dB 기준 편차)다.
-     *
-     * **전달함수가 아니다.** 화면이 그 말을 맨 앞에 적는다 — 위상은 알 수
-     * 없고, 잰 것은 소리원·방·마이크를 합친 결과다.
-     *
-     * RTA 와 함께 **가로로만 본다**(2026-09-25 담당자 지시). 31밴드 곡선은
-     * 여기서도 가로로 늘어선 그림이다.
-     */
-    Fr("FR", NavSection.Analyze),
 
     /**
      * Spectrum — FFT 한 장을 **칸 그대로** 본다(2026-09-25 검토안 3장).
@@ -102,6 +92,30 @@ enum class ViewMode(val labelKo: String, val section: NavSection) {
     Spectrogram("Spectrogram", NavSection.Analyze),
 
     /**
+     * FR — 방·PA 의 **크기 응답**을 핑크 잡음으로 본다.
+     *
+     * RTA 와 같은 그림을 다르게 본다. RTA 는 **지금 얼마나 큰가**(순간,
+     * 절대), FR 은 **모아 보면 어느 대역이 묻히는가**(평균, 0dB 기준 편차)다.
+     *
+     * ## 맨 오른쪽에 둔다 (2026-09-26 담당자 지시)
+     *
+     * 예전에는 RTA 바로 옆이었다. 그런데 앞의 셋(RTA·Spectrum·Spectrogram)은
+     * **들어오는 소리를 그대로 흘려 보는** 화면이고, FR 만 **핑크 잡음을
+     * 틀어 한 번 재고 끝나는** 화면이다. 성격이 다른 것이 사이에 끼어
+     * 있으면, 흐르는 셋을 오가다 실수로 들어와 소리를 내게 된다.
+     *
+     * 셋을 붙여 놓고 FR 을 끝에 두면 **줄의 왼쪽이 흐르는 것, 오른쪽이
+     * 재는 것**으로 읽힌다.
+     *
+     * **전달함수가 아니다.** 화면이 그 말을 맨 앞에 적는다 — 위상은 알 수
+     * 없고, 잰 것은 소리원·방·마이크를 합친 결과다.
+     *
+     * 앞의 셋과 함께 **가로로만 본다**(2026-09-25 담당자 지시). 31밴드
+     * 곡선은 여기서도 가로로 늘어선 그림이다.
+     */
+    Fr("FR", NavSection.Analyze),
+
+    /**
      * 소리를 내보내는 것들 — 시험 신호, 앞으로 주파수 발생기·L/R 테스트.
      *
      * 설정이 아니라 도구다. 값을 바꿔 두는 일이 아니라 **하는 일**이기
@@ -135,16 +149,23 @@ val ViewMode.needsCapture: Boolean
     get() = this != ViewMode.History && this != ViewMode.InstrumentEq
 
 /**
- * 아래쪽 탭 넷.
+ * 아래쪽 탭 다섯.
  *
- * ## 「기록」을 빼고 「도구」를 넣었다 (2026-09-24 담당자 지시)
+ * ## 「기록」이 도구와 설정 사이로 돌아왔다 (2026-09-26 담당자 지시)
  *
- * 설정에 너무 많은 것이 들어 있었다. 그중 **소리를 내보내는 것**(시험
- * 신호, 앞으로 주파수 발생기·L/R 테스트)은 설정이 아니라 도구다 —
- * 값을 바꿔 두는 일이 아니라 **하는 일**이기 때문이다.
+ * 2026-09-24 에는 기록이 빈 화면이라 아래 탭 한 자리를 「도구」에
+ * 내주고 위 칩으로 내려보냈다. 지금은 기록이 실제로 쌓이고(Phase 10),
+ * 측정 구역에 칩이 둘뿐이라 「SPL」 칩이 늘 켜진 채 자리만 차지했다.
  *
- * 기록은 아직 Phase 10 이라 빈 화면인데 아래 탭 한 자리를 쓰고 있었다.
- * 측정 구역의 칩으로 옮겼다([ViewMode.History]).
+ * 되돌리니 **측정 구역의 칩 줄이 통째로 사라진다**([hasModeChips] 가
+ * 세어서 정하므로 저절로 그렇게 된다).
+ *
+ * ## 글자를 뗐다 (같은 지시)
+ *
+ * 「현재 아이콘 이미지면 충분할 것 같습니다」. 다섯 자리를 나눠 쓰면서
+ * 글자까지 넣으면 좁은 폰에서 줄바꿈이 나고, 아이콘만으로도 어디로
+ * 가는지 알 수 있다. **읽어 주는 쪽에는 `contentDescription` 으로 같은
+ * 말이 간다** — 좁히는 것과 안 알리는 것은 다른 일이다.
  *
  * 측정·분석·도구는 위 칩과 짝을 이룬다 — 아래에서 「분석」을 누르면 위
  * 칩이 RTA 로 가고, 위에서 RTA 를 고르면 아래가 「분석」으로 켜진다.
@@ -154,6 +175,7 @@ enum class NavSection(val labelKo: String, val iconRes: Int) {
     Measure("측정", R.drawable.ic_nav_measure),
     Analyze("분석", R.drawable.ic_nav_analyze),
     Tools("도구", R.drawable.ic_nav_tools),
+    History("기록", R.drawable.ic_nav_history),
     Settings("설정", R.drawable.ic_nav_settings),
 }
 
@@ -168,6 +190,7 @@ fun NavSection.defaultMode(last: ViewMode): ViewMode = when (this) {
     NavSection.Measure -> if (last.section == NavSection.Measure) last else ViewMode.Spl
     NavSection.Analyze -> if (last.section == NavSection.Analyze) last else ViewMode.Rta
     NavSection.Tools -> if (last.section == NavSection.Tools) last else ViewMode.Signal
+    NavSection.History -> ViewMode.History
     NavSection.Settings -> last
 }
 

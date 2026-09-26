@@ -39,6 +39,8 @@ import androidx.compose.ui.semantics.stateDescription
 import kr.joa.selahrta.ui.nav.NavSection
 import kr.joa.selahrta.ui.nav.ViewMode
 import kr.joa.selahrta.ui.CaptureUiState
+import kr.joa.selahrta.ui.RtaView
+import kr.joa.selahrta.ui.SpectrumView
 import kr.joa.selahrta.dsp.SpectrumAxis
 import androidx.compose.ui.platform.LocalConfiguration
 import kr.joa.selahrta.ui.components.BAND_SLOT_WIDE
@@ -50,11 +52,10 @@ import kr.joa.selahrta.ui.components.NO_VALUE
 import kr.joa.selahrta.ui.components.NotYet
 import kr.joa.selahrta.ui.components.ValueTile
 import kr.joa.selahrta.ui.components.formatDb
-import kr.joa.selahrta.ui.components.rtaRange
+import kr.joa.selahrta.ui.components.RTA_RANGE
 import kr.joa.selahrta.ui.components.SpectrumChart
 import kr.joa.selahrta.ui.components.SpectrogramChart
 import kr.joa.selahrta.ui.components.SpectrogramState
-import kr.joa.selahrta.ui.components.spectrumRange
 import kr.joa.selahrta.ui.theme.SelahColors
 
 /**
@@ -68,11 +69,31 @@ import kr.joa.selahrta.ui.theme.SelahColors
 @Composable
 fun RtaScreen(
     capture: CaptureUiState,
-    /** 분석 모드를 바꾼다. 고르개는 차트 상자 안에 있다. */
-    onMode: (ViewMode) -> Unit = {},
+    /**
+     * 분석 모드를 바꾼다. 고르개는 차트 상자 안에 있다.
+     *
+     * **기본값을 두지 않는다**(2026-09-26). 기본값 `{}` 이 있었더니 FR 에
+     * 이 배선을 빠뜨린 것이 조용히 컴파일됐고, FR 에서 RTA 로 돌아가는
+     * 길이 **아예 없어졌다** — 눌러도 아무 일이 없으니 고장으로 보인다.
+     */
+    onMode: (ViewMode) -> Unit,
 ) {
-    val rta = capture.rta
-    val (floor, ceil) = rtaRange(rta)
+    // **멈추는 것은 화면뿐이다**(2026-09-26 담당자 지시). 마지막 장을
+    // 붙들어 두고 그린다 — 캡처·기록은 그대로 흐른다.
+    var frozen by remember { mutableStateOf(false) }
+    var held by remember { mutableStateOf<RtaView?>(null) }
+    var heldFeedback by remember { mutableStateOf<List<FeedbackCandidate>>(emptyList()) }
+    LaunchedEffect(capture.rta, capture.feedback, frozen) {
+        if (frozen) return@LaunchedEffect
+        held = capture.rta
+        heldFeedback = capture.feedback
+    }
+    val rta = if (frozen) held else capture.rta
+    val feedback = if (frozen) heldFeedback else capture.feedback
+    val controls: @Composable () -> Unit = { HoldPill(frozen) { frozen = !frozen } }
+
+    // **축은 움직이지 않는다** — 0~120dB 고정(2026-09-26 담당자 지시).
+    val (floor, ceil) = RTA_RANGE
     val unresolved = rta?.resolved?.indexOfFirst { it }?.takeIf { it > 0 }
 
     val running = capture.measure is MeasureState.Running
@@ -102,6 +123,7 @@ fun RtaScreen(
             Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 6.dp),
             chartHeight = null,
             modes = { AnalyzeModes(ViewMode.Rta, onMode) },
+            controls = controls,
             // **눕히면 31칸이 다 들어온다 — 늘이지 않는다.**
             //
             // 늘여 두었더니(칸당 30dp = 930dp) 화면보다 넓어져 6.3k 위가
@@ -112,7 +134,7 @@ fun RtaScreen(
             // 눕힌 화면의 폭이면 칸당 25dp 안팎이라 31칸에 글자를 다 넣고도
             // 남는다. 늘일 까닭이 없다.
             minSlotWidth = 0.dp,
-            feedback = capture.feedback,
+            feedback = feedback,
         )
         return
     }
@@ -135,12 +157,13 @@ fun RtaScreen(
             Modifier.fillMaxWidth(),
             chartHeight = 260.dp,
             modes = { AnalyzeModes(ViewMode.Rta, onMode) },
+            controls = controls,
             minSlotWidth = BAND_SLOT_WIDE,
-            feedback = capture.feedback,
+            feedback = feedback,
         )
 
         FeedbackStrip(
-            capture.feedback.firstOrNull(),
+            feedback.firstOrNull(),
             running = running,
             compact = false,
             modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
@@ -285,15 +308,29 @@ fun RtaScreen(
 fun SpectrumScreen(
     capture: CaptureUiState,
     onSpectrumEnabled: (Boolean) -> Unit,
-    onMode: (ViewMode) -> Unit = {},
+    /** 기본값을 두지 않는다 — 까닭은 [RtaScreen] 의 같은 자리 참고. */
+    onMode: (ViewMode) -> Unit,
 ) {
     DisposableEffect(Unit) {
         onSpectrumEnabled(true)
         onDispose { onSpectrumEnabled(false) }
     }
 
-    val spectrum = capture.spectrum
-    val (floor, ceil) = spectrumRange(spectrum)
+    // **멈추는 것은 화면뿐이다.** 봉우리가 몇 Hz 인지 읽을 틈을 준다 —
+    // 이 화면의 값어치가 거기 있다.
+    var frozen by remember { mutableStateOf(false) }
+    var held by remember { mutableStateOf<SpectrumView?>(null) }
+    var heldFeedback by remember { mutableStateOf<List<FeedbackCandidate>>(emptyList()) }
+    LaunchedEffect(capture.spectrum, capture.feedback, frozen) {
+        if (frozen) return@LaunchedEffect
+        held = capture.spectrum
+        heldFeedback = capture.feedback
+    }
+    val spectrum = if (frozen) held else capture.spectrum
+    val feedback = if (frozen) heldFeedback else capture.feedback
+    val controls: @Composable () -> Unit = { HoldPill(frozen) { frozen = !frozen } }
+
+    val (floor, ceil) = RTA_RANGE
 
     val cfg = LocalConfiguration.current
     val landscape = cfg.screenWidthDp > cfg.screenHeightDp
@@ -307,8 +344,9 @@ fun SpectrumScreen(
             ceil,
             Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 6.dp),
             chartHeight = null,
-            feedback = capture.feedback,
+            feedback = feedback,
             modes = { AnalyzeModes(ViewMode.Spectrum, onMode) },
+            controls = controls,
         )
         return
     }
@@ -328,12 +366,13 @@ fun SpectrumScreen(
             ceil,
             Modifier.fillMaxWidth(),
             chartHeight = 260.dp,
-            feedback = capture.feedback,
+            feedback = feedback,
             modes = { AnalyzeModes(ViewMode.Spectrum, onMode) },
+            controls = controls,
         )
 
         FeedbackStrip(
-            capture.feedback.firstOrNull(),
+            feedback.firstOrNull(),
             running = capture.measure is MeasureState.Running,
             compact = false,
             modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
@@ -354,7 +393,8 @@ fun SpectrumScreen(
 fun SpectrogramScreen(
     capture: CaptureUiState,
     onSpectrumEnabled: (Boolean) -> Unit,
-    onMode: (ViewMode) -> Unit = {},
+    /** 기본값을 두지 않는다 — 까닭은 [RtaScreen] 의 같은 자리 참고. */
+    onMode: (ViewMode) -> Unit,
 ) {
     DisposableEffect(Unit) {
         onSpectrumEnabled(true)
@@ -398,23 +438,7 @@ fun SpectrogramScreen(
     val cfg = LocalConfiguration.current
     val landscape = cfg.screenWidthDp > cfg.screenHeightDp
 
-    val controls: @Composable () -> Unit = {
-        Text(
-            if (frozen) "이어보기" else "멈춤",
-            color = if (frozen) Color(0xFF00201C) else SelahColors.TextSecondary,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold,
-            softWrap = false,
-            modifier = Modifier
-                .background(
-                    if (frozen) SelahColors.Warn else SelahColors.SurfaceVariant,
-                    RoundedCornerShape(999.dp),
-                )
-                .clickable { frozen = !frozen }
-                .padding(horizontal = 10.dp, vertical = 5.dp)
-                .semantics { stateDescription = if (frozen) "멈춤" else "흐르는 중" },
-        )
-    }
+    val controls: @Composable () -> Unit = { HoldPill(frozen) { frozen = !frozen } }
 
     if (landscape) {
         SpectrogramChart(
@@ -630,6 +654,35 @@ private fun CandidateRow(c: FeedbackCandidate) {
  * 「RTA | FFT」로 나란히 두면 밴드 묶음과 계산법을 같은 층으로 놓는 셈이라,
  * 나중에 Spectrogram 이 붙을 때 어디에 둘지가 없어진다.
  */
+/**
+ * 차트를 **잠시 멈추는** 단추(2026-09-26 담당자 지시).
+ *
+ * 흐르는 그림에서는 「방금 그 봉우리가 몇 Hz 였나」를 읽을 틈이 없다.
+ * 멈추면 마지막 장이 그대로 남아 눈으로 따라갈 수 있다.
+ *
+ * **캡처를 멈추지 않는다.** 멈추는 것은 화면뿐이고 측정·기록은 그대로
+ * 흐른다 — 그림이 멈췄다고 재기를 멈추면 그 사이의 소리가 통째로
+ * 사라지는데, 화면만 보아서는 그 사실을 알 수 없다.
+ */
+@Composable
+internal fun HoldPill(frozen: Boolean, onToggle: () -> Unit) {
+    Text(
+        if (frozen) "이어보기" else "멈춤",
+        color = if (frozen) Color(0xFF00201C) else SelahColors.TextSecondary,
+        fontSize = 10.sp,
+        fontWeight = FontWeight.Bold,
+        softWrap = false,
+        modifier = Modifier
+            .background(
+                if (frozen) SelahColors.Warn else SelahColors.SurfaceVariant,
+                RoundedCornerShape(999.dp),
+            )
+            .clickable { onToggle() }
+            .padding(horizontal = 10.dp, vertical = 5.dp)
+            .semantics { stateDescription = if (frozen) "멈춤" else "흐르는 중" },
+    )
+}
+
 @Composable
 internal fun AnalyzeModes(
     current: ViewMode,

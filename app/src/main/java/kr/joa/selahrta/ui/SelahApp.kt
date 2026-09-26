@@ -431,6 +431,11 @@ fun SelahApp() {
                         onCancel = vm::cancelResponse,
                         onPlayHere = vm::setResponsePlayHere,
                         onDismissNotice = vm::dismissResponseNotice,
+                        // **이것이 빠져 있었다**(2026-09-26 담당자 보고).
+                        // 기본값 `{}` 이 그 사실을 감췄고, FR 에 들어오면
+                        // 나갈 길이 없었다. 기본값을 없애 두었으니 이제
+                        // 빠뜨리면 컴파일이 막는다.
+                        onMode = { mode = it },
                     )
                     // 지난 기록을 보는 화면이라 마이크가 필요 없다.
                     ViewMode.History -> HistoryScreen()
@@ -629,30 +634,21 @@ private fun TopBrandBar(capture: CaptureUiState) {
             )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            // **실제로 열린 기기의 종류를 그린다.** 예전에는 USB 로 열어도
-            // PHONE MIC 가 나왔다(독립 검증 R12).
+            // **마이크 종류 배지를 뺐다**(2026-09-26 담당자 지시: 「우측 상단
+            // PHONE MIC 텍스트를 삭제해 달라. 지금은 입력 기기 정보가 아래에
+            // 뜨기 때문에 없어도 된다」).
             //
-            // 상태가 셋이다: 안 열림(흐린 PHONE MIC — 그럴듯한 배지를 미리
-            // 띄우면 열렸는지 구별할 수 없다), 열렸지만 어느 마이크인지
-            // 아직 확인 못 함(「확인 중」 — 그때의 종류는 요청한 값일 뿐이다),
-            // 확인됨(그 기기의 배지).
+            // 맞는 정리다 — 측정 화면 아래와 설정 화면이 **기기 이름을
+            // 그대로** 적는다. 종류(PHONE/USB)는 그 이름에서 읽히므로
+            // 위에서 한 번 더 말할 까닭이 없다.
+            //
+            // **「입력 확인 중」만 남긴다.** 그것은 종류가 아니라 **아직
+            // 모른다**는 사실이고, 그 동안의 숫자에는 다른 마이크의 감도가
+            // 걸려 있을 수 있다. 아래 어디에도 그 말이 없다.
             val opened = capture.opened
-            val shown = capture.inputForDisplay
-            StatusPill(
-                when {
-                    shown == null -> MicKind.BuiltIn.badgeKo
-                    opened != null && !opened.routeConfirmed -> "입력 확인 중"
-                    else -> shown.micKind.badgeKo
-                },
-                when {
-                    opened == null -> SelahColors.TextMuted
-                    !opened.routeConfirmed -> SelahColors.Warn
-                    else -> SelahColors.Accent
-                },
-                // 멈췄으면 흐리게. 마지막에 쓴 기기를 적되 「지금 열려 있다」로
-                // 보이면 안 된다.
-                dim = opened == null,
-            )
+            if (opened != null && !opened.routeConfirmed) {
+                StatusPill("입력 확인 중", SelahColors.Warn)
+            }
             StatusPill(
                 capture.calibration.state.shortKo,
                 if (capture.calibration.isReferenceOnly) SelahColors.Warn else SelahColors.InRange,
@@ -755,11 +751,17 @@ private fun BottomBar(
                 icon = {
                     Icon(
                         painterResource(s.iconRes),
-                        contentDescription = if (compact) s.labelKo else null,
+                        // **글자를 뗐으므로 여기서 이름을 말한다.**
+                        // 읽어 주는 쪽에는 그대로 들려야 한다.
+                        contentDescription = s.labelKo,
                         modifier = if (compact) Modifier.size(18.dp) else Modifier,
                     )
                 },
-                label = if (compact) null else ({ Text(s.labelKo, fontSize = 11.sp) }),
+                // **아이콘만 쓴다**(2026-09-26 담당자 지시: 「메인메뉴는
+                // 측정·분석·도구·설정 텍스트를 삭제해 달라. 현재 아이콘
+                // 이미지면 충분할 것 같다」). 자리가 다섯으로 늘어 글자를
+                // 넣으면 좁은 폰에서 줄바꿈이 난다.
+                label = null,
                 colors = NavigationBarItemDefaults.colors(
                     selectedIconColor = SelahColors.Accent,
                     selectedTextColor = SelahColors.Accent,
