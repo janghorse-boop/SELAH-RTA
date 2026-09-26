@@ -203,6 +203,22 @@ data class WizardState(
     /** 신호를 끄고 잰 대역별 잡음. 잰 적 없으면 null. */
     val noiseFloorDb: List<Double>? = null,
     val dsp: DspProbeResult? = null,
+    /**
+     * **기기마다 따로 둔 증거**(독립 검토 CA-03).
+     *
+     * 위 둘은 「방금 점검한 것」이라 화면이 보여 주는 값이다. 그런데 판정에
+     * 쓸 때는 **기준의 것과 대상의 것이 달라야 한다** — 기준과 대상은
+     * 일부러 다른 입력이고, ADC 마다 dBFS 잡음 바닥이 다르다.
+     *
+     * 예전에는 한 벌을 양쪽에 그대로 넘겼다. 검토자가 기준 SNR 40dB ·
+     * 대상 SNR 2dB 인 자료로 재 보니 **31/31 밴드가 「쓸 수 있음」에 Pass**
+     * 였다. 대상 배경을 제대로 넘기면 0/31 이고 곡선 생성이 거절된다 —
+     * DSP 함수는 가려낼 줄 아는데 연결이 그것을 없앤 것이다.
+     *
+     * 없으면 **없는 채로 둔다.** 다른 입력의 값으로 채우지 않는다.
+     */
+    val noiseFloorByKey: Map<String, List<Double>> = emptyMap(),
+    val dspByKey: Map<String, DspProbeResult> = emptyMap(),
     /** AGC/NS/AEC 를 **API 로** 껐는가. 설정값일 뿐이라 이것만으로는 모자라다. */
     val effectsAllClear: Boolean? = null,
     val clipped: Boolean = false,

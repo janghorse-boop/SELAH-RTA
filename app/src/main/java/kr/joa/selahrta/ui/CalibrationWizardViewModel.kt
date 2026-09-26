@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -68,6 +69,48 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _noticeKo = MutableStateFlow<String?>(null)
     val noticeKo: StateFlow<String?> = _noticeKo.asStateFlow()
+
+    /**
+     * 지금 도는 재기 작업. **소리를 내는 작업은 주인이 있어야 한다.**
+     *
+     * ## 왜 붙잡아 두는가 (독립 검토 CA-05)
+     *
+     * FR 에서 고친 것과 **같은 결함이 여기 남아 있었다**(UA-03). 입력
+     * 점검을 시작하고 배경 40장을 모으는 동안 홈으로 나가면, `ON_STOP` 은
+     * `CaptureViewModel` 의 FR 작업만 끊었다. 이 클래스의 작업은 살아남아
+     * 40장이 차면 **스스로 핑크 잡음을 틀었다.** 마법사의 「닫기」도 화면
+     * 값만 바꿀 뿐 작업을 끊지 않았다.
+     *
+     * 한 곳에서 고친 결함이 다른 곳에 그대로 있으면 고친 것이 아니다.
+     */
+    private var runJob: Job? = null
+
+    /** 화면이 앞에 있는가. 소리를 내기 직전에 본다. */
+    @Volatile
+    private var inForeground: Boolean = true
+
+    /**
+     * 화면이 뒤로 갔거나 마법사를 닫았다. **도는 작업을 끊는다.**
+     *
+     * 끊으면 `finally` 가 tap 을 떼고 소리를 멈춘다. 돌아와도 저절로
+     * 이어지지 않는다 — 소리를 내는 일은 사람이 다시 눌러야 한다.
+     */
+    fun stopWork() {
+        inForeground = false
+        // 끊으면 작업의 `finally` 가 tap 을 떼고 소리를 멈춘다. 둘 다
+        // 정지 함수가 아니라 취소 뒤에도 실제로 돈다.
+        runJob?.cancel()
+        runJob = null
+        _busyKo.value = null
+    }
+
+    /** 화면이 앞으로 돌아왔다. 멈춘 것을 되살리지는 않는다. */
+    fun onForeground() {
+        inForeground = true
+    }
+
+    /** 소리를 내도 되는가. [WizardRunner] 가 내보내기 직전에 묻는다. */
+    private fun mayPlay(): Boolean = inForeground
 
     /**
      * 기준 CAL 을 불러온다.
@@ -163,14 +206,20 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
         fftSize: Int,
         sampleRate: Int,
         tick: suspend () -> Unit,
+        /**
+         * 지금 열린 입력의 열쇠. **증거를 이 이름으로 적어 둔다**
+         * (독립 검토 CA-03). null 이면 적지 않는다 — 어느 기기의 것인지
+         * 모르는 증거는 나중에 엉뚱한 쪽에 쓰인다.
+         */
+        deviceKey: String? = null,
     ) {
         if (_busyKo.value != null) return
         // **지난 알림을 지운다.** 남겨 두면 새 결과 옆에 옛 실패 문구가
         // 그대로 붙어 있어, 방금 실패한 것처럼 읽힌다(기기에서 확인).
         _noticeKo.value = null
-        viewModelScope.launch {
+        runJob = viewModelScope.launch {
             val tap = MeasurementTap(fftSize, sampleRate)
-            val runner = WizardRunner(capture, tick)
+            val runner = WizardRunner(capture, tick, mayPlay = ::mayPlay)
             capture.installTap(tap)
             try {
                 _busyKo.value = "주변 소리를 재는 중입니다. 잠시 조용히 해 주십시오."
@@ -182,7 +231,16 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
 
                     is RunOutcome.Done -> r.value
                 }
-                _state.update { it.copy(noiseFloorDb = noise) }
+                _state.update {
+                    it.copy(
+                        noiseFloorDb = noise,
+                        noiseFloorByKey = if (deviceKey == null) {
+                            it.noiseFloorByKey
+                        } else {
+                            it.noiseFloorByKey + (deviceKey to noise)
+                        },
+                    )
+                }
 
                 _busyKo.value = "소리를 틀고 점검하는 중입니다."
                 when (val r = runner.checkDsp(tap, noiseFloorDb = noise)) {
@@ -191,11 +249,30 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
                     // 그 상태로 관문도 통과한다(기기에서 확인했다).
                     is RunOutcome.Failed -> {
                         _noticeKo.value = r.reasonKo
-                        _state.update { it.copy(dsp = null) }
+                        _state.update {
+                            it.copy(
+                                dsp = null,
+                                // 실패한 점검은 **지운다.** 옛 성공이 남아
+                                // 있으면 그것으로 판정이 통과한다.
+                                dspByKey = if (deviceKey == null) {
+                                    it.dspByKey
+                                } else {
+                                    it.dspByKey - deviceKey
+                                },
+                            )
+                        }
                     }
 
                     is RunOutcome.Done -> _state.update {
-                        it.copy(dsp = r.value, clipped = capture.clippedSinceMark)
+                        it.copy(
+                            dsp = r.value,
+                            clipped = capture.clippedSinceMark,
+                            dspByKey = if (deviceKey == null) {
+                                it.dspByKey
+                            } else {
+                                it.dspByKey + (deviceKey to r.value)
+                            },
+                        )
                     }
                 }
             } finally {
@@ -287,9 +364,9 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
 
-        viewModelScope.launch {
+        runJob = viewModelScope.launch {
             val tap = MeasurementTap(fftSize, sampleRate)
-            val runner = WizardRunner(capture, tick)
+            val runner = WizardRunner(capture, tick, mayPlay = ::mayPlay)
             capture.installTap(tap)
             try {
                 _busyKo.value = "${stepNameKo(step)} 재는 중입니다."
@@ -350,16 +427,23 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
     private fun finishMeasurement() {
         val result = session.result() ?: return
         val st = _state.value
-        val noise = st.noiseFloorDb?.toDoubleArray()
+        // **기준과 대상의 증거를 따로 꺼낸다**(독립 검토 CA-03). 없으면
+        // 없는 채로 넘긴다 — 다른 입력의 값으로 채우면 묻힌 대상이
+        // 「검증된 교정」으로 저장된다.
+        val targetNoise = st.targetDeviceKey?.let { st.noiseFloorByKey[it] }?.toDoubleArray()
+        val referenceNoise = st.referenceDeviceKey?.let { st.noiseFloorByKey[it] }?.toDoubleArray()
         val quality = qualityFromSession(
             session = result,
-            noiseDb = noise,
-            referenceNoiseDb = noise,
+            noiseDb = targetNoise,
+            referenceNoiseDb = referenceNoise,
             // **실제로 건 범위를 그대로 넘긴다.** 안 적으면 승인이 CAL
             // 제한을 보지 못한다(독립 검증 RCP-F01).
             referenceCalRangeHz = result.referenceProof?.rangeHz,
             clipped = st.clipped,
-            dspVerifiedBySignal = st.dspVerifiedBySignal,
+            // **대상의 DSP 점검**이어야 한다. 기준이 깨끗한 것은 대상이
+            // 가공되지 않았다는 근거가 아니다.
+            dspVerifiedBySignal = st.targetDeviceKey
+                ?.let { st.dspByKey[it]?.verifiedBySignal } == true,
         )
         calibrateFromSession(result, quality).fold(
             onSuccess = { o ->
@@ -425,6 +509,47 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
      *
      * @param environment 지금 열린 경로. [currentProfileEnvironment] 가 만든다.
      */
+    /**
+     * 보정값 옮기기를 **지금 눌러도 되는가.** 되면 옮길 값, 아니면 막힌 까닭.
+     *
+     * ## 왜 화면 밖에 두는가 (독립 검토 CA-01)
+     *
+     * 「이 값으로 보정하기」는 `Double` 하나만 넘겼고, 받는 쪽은 **지금 열린
+     * 경로**에 저장했다. 마법사 순서가 기준 → 대상 → 기준 이라 마지막에
+     * 열려 있는 것은 **언제나 기준 마이크**다 — 대상의 오프셋(110dB)이
+     * 기준의 것(120dB)을 덮어쓰는 호출 연결이었다.
+     *
+     * 곡선 저장([save])에는 이 검사가 있었는데 이 단추는 그 길을 지나지
+     * 않았다. 품질 관문도 없어, 찌그러져 **Fail** 로 판정된 측정에서도
+     * transfer 계산만 성공하면 눌렸다.
+     *
+     * 그래서 **판단을 한곳에 모은다.** 화면은 이 함수가 주는 답만 따른다.
+     */
+    fun transferBlockedKo(openedDeviceKey: String?): String? {
+        val st = _state.value
+        val quality = st.quality
+        val outcome = st.outcome
+        if (quality == null || outcome == null) return "잰 것이 없습니다. 4단계로 돌아가십시오."
+
+        // **저장과 같은 함수로 판정한다.** 둘이 어긋나면 어느 쪽이 참인지
+        // 알 수 없다.
+        val judged = kr.joa.selahrta.dsp.judgeCalibration(quality, outcome)
+        if (!judged.maySave) {
+            return "이 측정은 저장할 수 없는 판정입니다 — " + judged.reasonsKo.joinToString(" ")
+        }
+
+        val target = st.targetDeviceKey
+        if (target != null && openedDeviceKey != target) {
+            return "지금 열린 입력이 대상 마이크가 아닙니다. 이 보정값은 대상의 것이므로 " +
+                "그 마이크로 되돌린 뒤 옮겨야 합니다 — 지금 저장하면 기준 마이크의 " +
+                "보정이 덮어써집니다."
+        }
+        return null
+    }
+
+    /** 보정값을 옮길 대상. 저장하는 쪽이 지금 열린 경로와 맞춰 본다. */
+    val transferTargetKey: String? get() = _state.value.targetDeviceKey
+
     fun save(environment: kr.joa.selahrta.calibration.ProfileEnvironment) {
         if (_busyKo.value != null) return
         val st = _state.value

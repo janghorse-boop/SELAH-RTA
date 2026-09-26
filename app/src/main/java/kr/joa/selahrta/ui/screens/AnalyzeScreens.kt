@@ -375,10 +375,21 @@ fun SpectrogramScreen(
     //
     // 시각도 **덩어리를 받은 단조 시각**을 쓴다. 그릴 때의 벽시계를 쓰면
     // UI 가 밀린 만큼 어긋나고, 시계를 바꾸면 뛴다.
+    // **번호는 세션 안에서만 뜻이 있다**(독립 검토 CA-07). 엔진이 다시
+    // 열리면 `seq` 가 0 부터 다시 시작하므로, 번호만 견주면 새 장이 옛
+    // 최대값을 넘을 때까지 **화면이 통째로 멈춘다** — 오래 재고 있었을수록
+    // 오래 멈춘다. 세션이 바뀌면 들고 있던 그림도 버린다.
     val spectrum = capture.spectrum
+    var lastSession by remember { mutableStateOf(Long.MIN_VALUE) }
     var lastSeq by remember { mutableStateOf(-1L) }
-    LaunchedEffect(spectrum?.seq, frozen) {
-        if (!frozen && spectrum != null && spectrum.seq > lastSeq) {
+    LaunchedEffect(spectrum?.seq, capture.session, frozen) {
+        if (frozen || spectrum == null) return@LaunchedEffect
+        if (capture.session != lastSession) {
+            state.clear()
+            lastSession = capture.session
+            lastSeq = -1L
+        }
+        if (spectrum.seq > lastSeq) {
             lastSeq = spectrum.seq
             state.push(spectrum.columnsSpl, spectrum.atMs)
         }

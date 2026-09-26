@@ -261,6 +261,26 @@ fun judgeProfileApply(
             "지금은 ${now.sampleRate}Hz입니다."
     }
 
+    // **실제로 열린 마이크가 바뀌었는가**(독립 검토 CA-04).
+    //
+    // 내장 마이크의 열쇠에는 주소가 없다(2026-09-23 결정). 하단에서 후면으로
+    // 라우팅이 넘어가도 **같은 기기**로 보이므로, 저장된 보정이 다른 마이크에
+    // 계속 걸렸다. 검토자가 `sameStableKey=true · mayAutoApply=true` 를
+    // 재현했다.
+    //
+    // **열쇠를 도로 가르지는 않는다.** 그러면 이미 저장된 보정이 통째로
+    // 떨어져 나가고, 2026-09-23 결정이 실측을 근거로 피한 것이 바로 그
+    // 일이다. 대신 **자동 적용만 멈추고 사람에게 알린다** — 열쇠를 지우는
+    // 것으로 불확실성을 해결하지 않되, 모르고 지나가지도 않게.
+    if (was.deviceAddress.isNotEmpty() && now.deviceAddress.isNotEmpty() &&
+        was.deviceAddress != now.deviceAddress
+    ) {
+        warn += "잴 때와 다른 마이크 자리로 열렸습니다 — 저장할 때는 " +
+            "「${micPositionKo(was.deviceAddress) ?: was.deviceAddress}」, 지금은 " +
+            "「${micPositionKo(now.deviceAddress) ?: now.deviceAddress}」입니다. " +
+            "응답이 다를 수 있어 저절로 걸지 않습니다."
+    }
+
     if (!profile.enabled) {
         block += "이 프로파일을 꺼 두었습니다."
     }

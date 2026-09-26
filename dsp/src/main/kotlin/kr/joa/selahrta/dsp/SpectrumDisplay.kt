@@ -207,12 +207,23 @@ fun topSpectrumPeak(
     // 그래도 허용오차를 두지 않는다 — 4096점 FFT 는 20Hz 를 애초에
     // 분해하지 못하고(칸 폭 11.7Hz), 그 자리의 숫자는 EQ 에 쓸 수 없다.
     // 빠지면 화면이 다음 봉우리를 말하고, 그것이 더 정직하다.
+    // **봉우리만 본다**(독립 검토 CA-09).
+    //
+    // 처음 고칠 때는 「범위 안에서 가장 큰 칸」을 집었다. 그런데 범위 밖
+    // 신호가 크면 그 **치마**가 범위 안까지 흘러 들어오고, 그 경사면의
+    // 첫 칸이 범위 안에서 가장 크다. 검토자가 19Hz + 약한 1kHz 를 넣어
+    // **29.3Hz** 가 나오는 것을 쟀다 — 있지도 않은 봉우리다.
+    //
+    // 지역 최대인 칸만 후보로 본다. 양옆보다 높아야 봉우리다.
     var best = -1
     var bestPower = 0.0
     var bestHz = 0.0
     for (b in from..to) {
         val p = power[b]
         if (p <= bestPower) continue
+        // 같은 값이 이어질 때 두 번 잡지 않도록 한쪽만 등호를 쓴다
+        // ([SpectralPeakFinder] 와 같은 규칙).
+        if (p <= power[b - 1] || p < power[b + 1]) continue
         val hz = refineBinHz(power, b, binHz)
         if (hz < lowHz || hz > highHz) continue
         best = b

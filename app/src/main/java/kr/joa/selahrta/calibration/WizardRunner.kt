@@ -85,7 +85,25 @@ class WizardRunner(
     private val capture: WizardCapture,
     private val tick: suspend () -> Unit,
     private val maxTicks: Int = 400,
+    /**
+     * 지금 소리를 내도 되는가. **내보내기 직전에 묻는다**(독립 검토 CA-05).
+     *
+     * 이 runner 는 「조용히 배경을 재고 → 소리를 튼다」를 스스로 이어
+     * 달린다. 그 사이에 화면이 뒤로 가면, 작업을 끊는 것과 실제로 소리가
+     * 나가는 것 사이에 틈이 생길 수 있다. 끊기와 별개로 한 번 더 본다.
+     *
+     * 기본값이 「내도 된다」인 까닭: 시험이 이 매개변수를 모르고 만들어도
+     * 하던 대로 돌아야 한다. 진짜 정책은 부르는 쪽이 넣는다.
+     */
+    private val mayPlay: () -> Boolean = { true },
 ) {
+
+    /** 소리를 내도 되면 낸다. 안 되면 그 자리에서 실패로 돌린다. */
+    private fun playOrRefuse(): RunOutcome.Failed? {
+        if (!mayPlay()) return RunOutcome.Failed(LEFT_SCREEN_KO)
+        capture.playSignal(TestSignal.Pink, MEASURE_LEVEL)
+        return null
+    }
 
     /**
      * 신호를 **끄고** 잡음 바닥을 잰다.
@@ -135,7 +153,7 @@ class WizardRunner(
         frames: Int = 60,
         previousBroadbandDb: List<Double> = emptyList(),
     ): RunOutcome<DspProbeResult> {
-        capture.playSignal(TestSignal.Pink, MEASURE_LEVEL)
+        playOrRefuse()?.let { return it }
         if (!awaitAudible(tap, noiseFloorDb)) {
             capture.stopSignal()
             return RunOutcome.Failed(NOT_AUDIBLE_KO)
@@ -182,7 +200,7 @@ class WizardRunner(
         require(step != MeasureStep.Target) { "대상은 measureTarget 으로 잰다: $step" }
         wrongDevice(expectDeviceKey)?.let { return it }
 
-        capture.playSignal(TestSignal.Pink, MEASURE_LEVEL)
+        playOrRefuse()?.let { return it }
         if (!awaitAudible(tap, noiseFloorDb)) {
             capture.stopSignal()
             return RunOutcome.Failed(NOT_AUDIBLE_KO)
@@ -210,7 +228,7 @@ class WizardRunner(
     ): RunOutcome<Int> {
         wrongDevice(expectDeviceKey)?.let { return it }
 
-        capture.playSignal(TestSignal.Pink, MEASURE_LEVEL)
+        playOrRefuse()?.let { return it }
         if (!awaitAudible(tap, noiseFloorDb)) {
             capture.stopSignal()
             return RunOutcome.Failed(NOT_AUDIBLE_KO)
@@ -299,6 +317,15 @@ class WizardRunner(
         "장이 모자랍니다($got/$want). 소리가 나오는지, 마이크가 열려 있는지 확인하십시오.",
     )
 }
+
+/**
+ * 소리를 내려는 순간 화면이 앞에 없었다(독립 검토 CA-05).
+ *
+ * 「멈췄다」가 아니라 **「내지 않았다」**로 적는다 — 사람이 나간 뒤에
+ * 예배당에서 소리가 나지 않았다는 사실을 말해 주는 문구여야 한다.
+ */
+const val LEFT_SCREEN_KO: String =
+    "화면을 나가서 소리를 내지 않았습니다. 다시 시작하십시오."
 
 const val CLIPPED_KO: String =
     "재는 동안 신호가 찌그러졌습니다(클리핑). 입력 이득을 낮추고 다시 재십시오. " +

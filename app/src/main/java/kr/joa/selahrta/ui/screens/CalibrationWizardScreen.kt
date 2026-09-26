@@ -104,6 +104,13 @@ fun CalibrationWizardScreen(
     onSave: () -> Unit,
     /** 기준에서 옮긴 절대 레벨을 이 경로에 저장한다. */
     onApplyLevelTransfer: (Double) -> Unit,
+    /**
+     * 옮기기가 막힌 까닭. null 이면 눌러도 된다(독립 검토 CA-01).
+     *
+     * **화면이 셈하지 않는다.** 대상이 맞는지·판정이 통과인지는 저장과
+     * 같은 함수로 마법사가 정한다.
+     */
+    transferBlockedKo: String? = null,
     onNext: () -> Unit,
     onBack: () -> Unit,
     onGoTo: (WizardStep) -> Unit,
@@ -200,6 +207,7 @@ fun CalibrationWizardScreen(
                 transfer = state.levelTransfer,
                 transferBlockKo = state.levelTransferBlockKo,
                 onApplyTransfer = onApplyLevelTransfer,
+                transferBlockedKo = transferBlockedKo,
             )
 
             else -> NotBuiltNotice(state.step)
@@ -876,6 +884,8 @@ private fun SaveStepPanel(
     /** 못 옮기는 까닭. 옮길 수 있으면 null. */
     transferBlockKo: String?,
     onApplyTransfer: (Double) -> Unit,
+    /** 옮기기가 막힌 까닭(독립 검토 CA-01). */
+    transferBlockedKo: String? = null,
 ) {
     Column(
         Modifier
@@ -916,7 +926,7 @@ private fun SaveStepPanel(
             }
         }
 
-        LevelTransferBlock(transfer, transferBlockKo, onApplyTransfer)
+        LevelTransferBlock(transfer, transferBlockKo, onApplyTransfer, transferBlockedKo)
     }
 }
 
@@ -934,6 +944,8 @@ private fun LevelTransferBlock(
     transfer: LevelTransfer?,
     blockKo: String?,
     onApply: (Double) -> Unit,
+    /** 셈은 됐지만 지금 옮기면 안 되는 까닭(독립 검토 CA-01). */
+    applyBlockedKo: String? = null,
 ) {
     if (transfer == null && blockKo == null) return
 
@@ -997,8 +1009,19 @@ private fun LevelTransferBlock(
             fontSize = 10.sp,
             lineHeight = 15.sp,
         )
-        TextButton(onClick = { onApply(transfer.targetOffsetDb) }) {
-            Text("이 값으로 보정하기")
+        // **막혔으면 단추를 내주지 않는다.** 누를 수 있는데 아무 일도
+        // 안 나는 것보다, 까닭을 적고 못 누르게 하는 편이 낫다.
+        if (applyBlockedKo != null) {
+            Text(
+                applyBlockedKo,
+                color = SelahColors.Warn,
+                fontSize = 11.sp,
+                lineHeight = 15.sp,
+            )
+        } else {
+            TextButton(onClick = { onApply(transfer.targetOffsetDb) }) {
+                Text("이 값으로 보정하기")
+            }
         }
     }
 }
