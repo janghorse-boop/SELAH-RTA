@@ -327,7 +327,13 @@ class CaptureControllerTest {
                         savedAtEpochMs = 0,
                         referenceDb = 80.0,
                         measuredDbfs = -15.0,
+                        // **잰 자리를 함께 적는다**(독립 재검토 CAR-03).
+                        // 없으면 이제 걸리지 않는다 — 자리를 모르는 보정을
+                        // 「보정 완료」라 부르지 않기로 했다.
+                        routeAddress = "bottom",
                     ),
+                    nowRoute = "bottom",
+                    routeConfirmed = true,
                 ),
             )
         }
@@ -351,7 +357,9 @@ class CaptureControllerTest {
         controller.update {
             it.copy(
                 calibration = ActiveCalibration.from(
-                    GlobalCalibration(95.0, 0, 80.0, -15.0),
+                    GlobalCalibration(95.0, 0, 80.0, -15.0, routeAddress = "bottom"),
+                    nowRoute = "bottom",
+                    routeConfirmed = true,
                 ),
             )
         }

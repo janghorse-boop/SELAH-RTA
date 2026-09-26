@@ -37,6 +37,14 @@ class CalibrationStore(private val context: Context) {
     private fun sourceKey(k: CalibrationKey) = stringPreferencesKey("${k.storageKey()}|calSource")
 
     /**
+     * **어느 자리에서 잰 것인가.** 옛 기록에는 없다(독립 재검토 CAR-03).
+     *
+     * 저장 열쇠에 자리가 없어서, 이 값이 없으면 `bottom` 에서 잰 감도를
+     * `back` 에 그대로 걸면서 「보정 완료」로 적는다.
+     */
+    private fun routeKey(k: CalibrationKey) = stringPreferencesKey("${k.storageKey()}|route")
+
+    /**
      * 이 조합의 보정값을 지켜본다. 없으면 null 이 흐른다.
      *
      * 읽기가 실패해도 앱이 멈추면 안 된다 — 보정이 없는 것과 같게 다루고
@@ -60,6 +68,9 @@ class CalibrationStore(private val context: Context) {
                     source = prefs[sourceKey(key)]
                         ?.let { runCatching { CalibrationSource.valueOf(it) }.getOrNull() }
                         ?: CalibrationSource.Unknown,
+                    // **빈 값은 없는 것과 같다.** 옛 기록에는 자리가 없고,
+                    // 빈 문자열을 자리로 읽으면 「모른다」가 「같다」가 된다.
+                    routeAddress = prefs[routeKey(key)]?.takeIf { it.isNotEmpty() },
                 )
             }
 
@@ -96,12 +107,52 @@ class CalibrationStore(private val context: Context) {
                 val noise = cal.noiseFloorDbfs
                 if (noise != null && noise.isFinite()) p[noiseKey(key)] = noise else p.remove(noiseKey(key))
                 p[sourceKey(key)] = cal.source.name
+                // **모르면 적지 않는다.** 빈 문자열을 적으면 다음에 읽을 때
+                // 「그 자리에서 쟀다」가 되어 검사가 통째로 무력해진다.
+                val route = cal.routeAddress
+                if (!route.isNullOrEmpty()) p[routeKey(key)] = route else p.remove(routeKey(key))
             }
             SaveResult.Saved
         } catch (e: IOException) {
             // 저장에 실패했는데 성공했다고 말하면 안 된다. 다음에 앱을 열면
             // 보정이 사라져 있는데 담당자는 이유를 알 수 없다.
             SaveResult.Rejected("보정값을 저장하지 못했습니다: ${e.message}")
+        }
+    }
+
+    /**
+     * **사람이** 「이 자리에서 잰 것이 맞다」고 확인해 준다(CAR-03).
+     *
+     * 값은 건드리지 않고 **빠져 있던 자리만** 채운다. 앱이 저절로 채우지
+     * 않는 까닭은 그러면 확인하지 않은 것을 확인했다고 적는 꼴이기
+     * 때문이다 — 「현재 주소를 과거 측정 주소로 채우는 마이그레이션은
+     * 피한다」(검토자 3번 답).
+     *
+     * **이미 다른 자리가 적혀 있으면 덮어쓰지 않는다.** 그때는 진짜로
+     * 옮겨 온 것이므로 다시 재야 한다.
+     */
+    suspend fun confirmRoute(key: CalibrationKey, address: String): SaveResult {
+        if (address.isEmpty()) {
+            return SaveResult.Rejected("지금 마이크가 어느 자리에 붙었는지 확인하지 못했습니다.")
+        }
+        return try {
+            var rejected: String? = null
+            context.calibrationDataStore.edit { p ->
+                if (p[offsetKey(key)] == null) {
+                    rejected = "이 경로에는 저장된 보정이 없습니다."
+                    return@edit
+                }
+                val known = p[routeKey(key)]
+                if (!known.isNullOrEmpty() && known != address) {
+                    rejected = "저장된 보정은 $known 자리에서 잰 것입니다. " +
+                        "이 자리에서 쓰려면 간편 보정을 다시 하십시오."
+                    return@edit
+                }
+                p[routeKey(key)] = address
+            }
+            rejected?.let { SaveResult.Rejected(it) } ?: SaveResult.Saved
+        } catch (e: IOException) {
+            SaveResult.Rejected("확인을 저장하지 못했습니다: ${e.message}")
         }
     }
 
@@ -113,6 +164,9 @@ class CalibrationStore(private val context: Context) {
                 p.remove(refKey(key))
                 p.remove(measuredKey(key))
                 p.remove(savedAtKey(key))
+                // 자리도 함께 지운다 — 남겨 두면 다음 보정이 옛 자리를
+                // 물려받아, 다른 자리에서 재고도 「같다」가 된다.
+                p.remove(routeKey(key))
             }
         }
     }

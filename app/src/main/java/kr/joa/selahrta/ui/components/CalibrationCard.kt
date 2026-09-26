@@ -56,6 +56,8 @@ fun CalibrationCard(
     onSave: (Double, CalibrationSource) -> Unit,
     onClear: () -> Unit,
     onDismissNotice: () -> Unit,
+    /** 「이 자리에서 잰 것이 맞다」고 사람이 확인해 준다(독립 재검토 CAR-03). */
+    onConfirmRoute: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var input by remember { mutableStateOf("") }
@@ -102,6 +104,20 @@ fun CalibrationCard(
                 fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold,
             )
+        }
+
+        // **저장된 값이 있는데 걸지 않은 자리**(독립 재검토 CAR-03).
+        //
+        // 값은 그대로 있다 — 자리를 확인하지 못했을 뿐이다. 지우게 하지
+        // 않고, 사람이 「이 자리에서 잰 것이 맞다」고 말할 수 있게 한다.
+        // 앱이 저절로 채우면 확인하지 않은 것을 확인했다고 적는 꼴이다.
+        capture.calibration.holdNoticeKo?.let { hold ->
+            InfoBar(hold, tone = SelahColors.Warn)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = onConfirmRoute) {
+                    Text("이 자리에서 계속 쓰기", fontSize = 12.sp, color = SelahColors.Accent)
+                }
+            }
         }
 
         if (measured == null) {
