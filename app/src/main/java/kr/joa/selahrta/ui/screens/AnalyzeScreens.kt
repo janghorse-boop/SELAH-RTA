@@ -38,6 +38,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import kr.joa.selahrta.ui.nav.NavSection
 import kr.joa.selahrta.ui.nav.ViewMode
+import kr.joa.selahrta.calibration.ActiveCalibration
 import kr.joa.selahrta.ui.CaptureUiState
 import kr.joa.selahrta.ui.RtaView
 import kr.joa.selahrta.ui.SpectrumView
@@ -52,7 +53,10 @@ import kr.joa.selahrta.ui.components.NO_VALUE
 import kr.joa.selahrta.ui.components.NotYet
 import kr.joa.selahrta.ui.components.ValueTile
 import kr.joa.selahrta.ui.components.formatDb
-import kr.joa.selahrta.ui.components.RTA_RANGE
+import kr.joa.selahrta.ui.components.AxisMode
+import kr.joa.selahrta.ui.components.rememberAxisRange
+import kr.joa.selahrta.ui.components.rtaTopSpl
+import kr.joa.selahrta.ui.components.spectrumTopSpl
 import kr.joa.selahrta.ui.components.SpectrumChart
 import kr.joa.selahrta.ui.components.SpectrogramChart
 import kr.joa.selahrta.ui.components.SpectrogramState
@@ -90,10 +94,21 @@ fun RtaScreen(
     }
     val rta = if (frozen) held else capture.rta
     val feedback = if (frozen) heldFeedback else capture.feedback
-    val controls: @Composable () -> Unit = { HoldPill(frozen) { frozen = !frozen } }
 
-    // **축은 움직이지 않는다** — 0~120dB 고정(2026-09-26 담당자 지시).
-    val (floor, ceil) = RTA_RANGE
+    // **축은 기본이 고정(0~120dB)이고, 눌러서 자동으로 바꾼다**
+    // (2026-09-26 담당자 지시). 까닭은 [rememberAxisRange] 머리말 참고.
+    var axisMode by remember { mutableStateOf(AxisMode.Fixed) }
+    val (floor, ceil) = rememberAxisRange(axisMode, rtaTopSpl(rta))
+    val onAxisTap = { axisMode = axisMode.next() }
+    val controls: @Composable () -> Unit = {
+        ChartControls(
+            frozen = frozen,
+            calibration = capture.calibration,
+            onToggle = { frozen = !frozen },
+            axisMode = axisMode,
+            onAxisMode = onAxisTap,
+        )
+    }
     val unresolved = rta?.resolved?.indexOfFirst { it }?.takeIf { it > 0 }
 
     val running = capture.measure is MeasureState.Running
@@ -124,6 +139,7 @@ fun RtaScreen(
             chartHeight = null,
             modes = { AnalyzeModes(ViewMode.Rta, onMode) },
             controls = controls,
+            onAxisTap = onAxisTap,
             // **눕히면 31칸이 다 들어온다 — 늘이지 않는다.**
             //
             // 늘여 두었더니(칸당 30dp = 930dp) 화면보다 넓어져 6.3k 위가
@@ -158,6 +174,7 @@ fun RtaScreen(
             chartHeight = 260.dp,
             modes = { AnalyzeModes(ViewMode.Rta, onMode) },
             controls = controls,
+            onAxisTap = onAxisTap,
             minSlotWidth = BAND_SLOT_WIDE,
             feedback = feedback,
         )
@@ -328,9 +345,19 @@ fun SpectrumScreen(
     }
     val spectrum = if (frozen) held else capture.spectrum
     val feedback = if (frozen) heldFeedback else capture.feedback
-    val controls: @Composable () -> Unit = { HoldPill(frozen) { frozen = !frozen } }
 
-    val (floor, ceil) = RTA_RANGE
+    var axisMode by remember { mutableStateOf(AxisMode.Fixed) }
+    val (floor, ceil) = rememberAxisRange(axisMode, spectrumTopSpl(spectrum))
+    val onAxisTap = { axisMode = axisMode.next() }
+    val controls: @Composable () -> Unit = {
+        ChartControls(
+            frozen = frozen,
+            calibration = capture.calibration,
+            onToggle = { frozen = !frozen },
+            axisMode = axisMode,
+            onAxisMode = onAxisTap,
+        )
+    }
 
     val cfg = LocalConfiguration.current
     val landscape = cfg.screenWidthDp > cfg.screenHeightDp
@@ -347,6 +374,7 @@ fun SpectrumScreen(
             feedback = feedback,
             modes = { AnalyzeModes(ViewMode.Spectrum, onMode) },
             controls = controls,
+            onAxisTap = onAxisTap,
         )
         return
     }
@@ -369,6 +397,7 @@ fun SpectrumScreen(
             feedback = feedback,
             modes = { AnalyzeModes(ViewMode.Spectrum, onMode) },
             controls = controls,
+            onAxisTap = onAxisTap,
         )
 
         FeedbackStrip(
@@ -438,7 +467,14 @@ fun SpectrogramScreen(
     val cfg = LocalConfiguration.current
     val landscape = cfg.screenWidthDp > cfg.screenHeightDp
 
-    val controls: @Composable () -> Unit = { HoldPill(frozen) { frozen = !frozen } }
+    // 세로축이 주파수라 「고정/자동」이 없다 — 그 표시는 안 그린다.
+    val controls: @Composable () -> Unit = {
+        ChartControls(
+            frozen = frozen,
+            calibration = capture.calibration,
+            onToggle = { frozen = !frozen },
+        )
+    }
 
     if (landscape) {
         SpectrogramChart(
@@ -664,22 +700,106 @@ private fun CandidateRow(c: FeedbackCandidate) {
  * 흐른다 — 그림이 멈췄다고 재기를 멈추면 그 사이의 소리가 통째로
  * 사라지는데, 화면만 보아서는 그 사실을 알 수 없다.
  */
+/**
+ * 차트 안의 **보정 상태 표시**(2026-09-26 담당자 지시: 「RTA, Spectrum,
+ * Spectrogram 그래프에는 미보정 표시가 있어야 합니다」).
+ *
+ * ## 왜 차트 안인가
+ *
+ * 분석 구역은 눕히면 **차트만 남는다** — 위쪽 제목줄과 배지가 통째로
+ * 사라진다. 그런데 세로축은 이제 0~120 dB SPL 로 고정돼 있어, 표시가
+ * 없으면 화면에 90 이라 적힌 것을 **잰 음압**으로 읽게 된다.
+ *
+ * 미보정 값은 0dBFS 를 120dB SPL 로 **짐작한** 눈금이고 실제와 10dB 넘게
+ * 차이 날 수 있다(명세 1장). 숫자를 크게 보여 주는 화면일수록 그 말이
+ * 곁에 있어야 한다.
+ *
+ * 보정된 뒤에도 적는다 — 「무엇으로 잰 값인가」는 늘 보여야 하는 것이고,
+ * 없다가 생기면 그 자리에 무엇이 있었는지 알 수 없다.
+ */
+@Composable
+internal fun CalibrationPill(calibration: ActiveCalibration) {
+    val uncalibrated = calibration.isReferenceOnly
+    val tone = if (uncalibrated) SelahColors.Warn else SelahColors.InRange
+    Text(
+        calibration.state.shortKo,
+        color = tone,
+        fontSize = 10.sp,
+        fontWeight = FontWeight.SemiBold,
+        softWrap = false,
+        modifier = Modifier
+            .background(tone.copy(alpha = 0.14f), RoundedCornerShape(999.dp))
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+    )
+}
+
+/** 멈춤 단추와 보정 표시를 한 줄에. 세 화면이 같은 것을 쓴다. */
+@Composable
+internal fun ChartControls(
+    frozen: Boolean,
+    calibration: ActiveCalibration,
+    onToggle: () -> Unit,
+    /** 세로축 방식. null 이면 안 그린다(Spectrogram 은 세로가 주파수다). */
+    axisMode: AxisMode? = null,
+    onAxisMode: () -> Unit = {},
+) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        HoldPill(frozen, onToggle)
+        CalibrationPill(calibration)
+        axisMode?.let { AxisModePill(it, onAxisMode) }
+    }
+}
+
 @Composable
 internal fun HoldPill(frozen: Boolean, onToggle: () -> Unit) {
+    // **멈춰 있지 않을 때도 보여야 한다**(2026-09-26 담당자 지시:
+    // 「멈춤 버튼은 눈에 띄지 않아서 수정해 달라. 누르면 이어보기가
+    // 나와서 눈에 띈다」).
+    //
+    // 켜진 상태만 색을 주었더니, 정작 **누를 수 있다는 것**을 알려야 할
+    // 평소에 배경과 섞여 있었다. 누를 것은 평소에 보여야 하고, 켜진
+    // 것은 그것대로 달라야 한다 — 둘 다 색을 준다.
+    val tone = if (frozen) SelahColors.Warn else SelahColors.Accent
     Text(
         if (frozen) "이어보기" else "멈춤",
-        color = if (frozen) Color(0xFF00201C) else SelahColors.TextSecondary,
-        fontSize = 10.sp,
+        color = if (frozen) Color(0xFF00201C) else tone,
+        fontSize = 11.sp,
         fontWeight = FontWeight.Bold,
         softWrap = false,
         modifier = Modifier
             .background(
-                if (frozen) SelahColors.Warn else SelahColors.SurfaceVariant,
+                if (frozen) tone else tone.copy(alpha = 0.16f),
                 RoundedCornerShape(999.dp),
             )
+            .border(1.dp, tone.copy(alpha = if (frozen) 1f else 0.55f), RoundedCornerShape(999.dp))
             .clickable { onToggle() }
-            .padding(horizontal = 10.dp, vertical = 5.dp)
+            .padding(horizontal = 12.dp, vertical = 5.dp)
             .semantics { stateDescription = if (frozen) "멈춤" else "흐르는 중" },
+    )
+}
+
+/**
+ * 세로축 방식 표시 — **누르는 곳은 축이다**(2026-09-26 담당자 지시).
+ *
+ * 단추를 따로 두지 않고 축 자체를 누르게 했다. 바꾸려는 대상이 바로
+ * 거기 있고, 눕힌 화면에서 단추 한 자리를 더 쓰지 않는다. 지금 어느
+ * 방식인지는 이 작은 글자가 말한다.
+ */
+@Composable
+internal fun AxisModePill(mode: AxisMode, onToggle: () -> Unit) {
+    Text(
+        "세로축 ${mode.labelKo}",
+        color = SelahColors.TextSecondary,
+        fontSize = 10.sp,
+        softWrap = false,
+        modifier = Modifier
+            .background(SelahColors.SurfaceVariant, RoundedCornerShape(999.dp))
+            .clickable { onToggle() }
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .semantics { stateDescription = mode.labelKo },
     )
 }
 

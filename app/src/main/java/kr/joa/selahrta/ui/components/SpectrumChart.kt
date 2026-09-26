@@ -64,6 +64,8 @@ fun SpectrumChart(
     modes: (@Composable () -> Unit)? = null,
     /** 고르개 **왼쪽**에 놓을 단추(멈춤 등). null 이면 안 그린다. */
     controls: (@Composable () -> Unit)? = null,
+    /** 세로축을 누르면 부른다(고정↔자동). */
+    onAxisTap: (() -> Unit)? = null,
 ) {
     val measurer = rememberTextMeasurer()
     Column(modifier) {
@@ -99,21 +101,19 @@ fun SpectrumChart(
             }
 
             Row(Modifier.fillMaxWidth()) {
-                YAxis(floorDb, ceilDb, plotHeight, Modifier.padding(end = 4.dp))
+                YAxis(floorDb, ceilDb, plotHeight, Modifier.padding(end = 4.dp), onAxisTap)
                 Column {
                     Canvas(Modifier.width(plotWidth).height(plotHeight)) {
                         val span = (ceilDb - floorDb).coerceAtLeast(1.0)
 
                         // 가로 눈금 — RTA 와 **같은 dB 자리**에 긋는다.
-                        // 70·80·90 은 굵게(예배당에서 읽는 자리).
                         for (db in gridLinesDb(floorDb, ceilDb)) {
                             val y = (((ceilDb - db) / span) * size.height).toFloat()
-                            val strong = db in EMPHASIS_DB
                             drawLine(
-                                if (strong) SelahColors.TextMuted else SelahColors.Outline,
+                                SelahColors.Outline,
                                 Offset(0f, y),
                                 Offset(size.width, y),
-                                strokeWidth = if (strong) 2f else 1f,
+                                strokeWidth = 1f,
                             )
                         }
 
