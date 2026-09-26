@@ -245,17 +245,16 @@ class CodexUiAnalysisRegressionTest {
             "# For frequency response measurements",
         )
         for (line in prose) {
-            val declared = declaresColumns(listOf(line))
             val d = decideReading(
                 signEvidenceOf(listOf(line)),
                 ReadingStakes.ReferenceForCalibration,
-                declared,
+                columnDeclarationOf(listOf(line)),
             )
             assertFalse("「$line」 만으로 정해졌다: $d", d.settled)
         }
     }
 
-    /** 대조군 — **열 선언**은 그대로 정해져야 한다. */
+    /** 대조군 — **둘째 열이 응답인 선언**은 그대로 정해져야 한다. */
     @Test
     fun `열 선언은 기준 CAL 의 부호를 정한다`() {
         val declarations = listOf(
@@ -264,14 +263,18 @@ class CodexUiAnalysisRegressionTest {
             "주파수,응답",
         )
         for (line in declarations) {
-            assertTrue("「$line」 을 열 선언으로 못 읽었다", declaresColumns(listOf(line)))
+            assertEquals(
+                "「$line」 의 둘째 열을 응답으로 못 읽었다",
+                ColumnDeclaration.Second(CurveReading.Response),
+                columnDeclarationOf(listOf(line)),
+            )
+            val d = decideReading(
+                signEvidenceOf(listOf(line)),
+                ReadingStakes.ReferenceForCalibration,
+                columnDeclarationOf(listOf(line)),
+            )
+            assertTrue("「$line」 은 열 선언인데 묻는다", d.settled)
         }
-        val d = decideReading(
-            SignEvidence.LooksLikeResponse,
-            ReadingStakes.ReferenceForCalibration,
-            columnDeclared = true,
-        )
-        assertTrue("열 선언인데 묻는다", d.settled)
     }
 
     /** 표시용 곡선은 예전대로 — 틀려도 화면에서 드러나고 되돌리기 쉽다. */
@@ -280,9 +283,63 @@ class CodexUiAnalysisRegressionTest {
         val d = decideReading(
             SignEvidence.LooksLikeResponse,
             ReadingStakes.DisplayCurve,
-            columnDeclared = false,
+            ColumnDeclaration.None,
         )
         assertTrue(d.settled)
+    }
+
+    /**
+     * **CAR-04** — 선언이 있다는 사실만으로 **다른 줄의 낱말**이 둘째 열의
+     * 뜻이 되면 안 된다. 검토자가 셋을 보였다.
+     *
+     * 셋째가 가장 나쁘다: 파서는 **언제나 둘째 값**을 읽으므로
+     * `1000,0,6` 에서 SPL 6 이 아니라 **위상 0** 을 보정에 쓴다.
+     */
+    @Test
+    fun `둘째 열을 모르면 기준 CAL 을 정하지 않는다`() {
+        val cases = listOf(
+            listOf("# Frequency range: 20 Hz, reference SPL: 94 dB"),
+            listOf("# Reference SPL: 94 dB", "Frequency,Value"),
+            listOf("Frequency,Phase,SPL"),
+        )
+        for (lines in cases) {
+            val d = decideReading(
+                signEvidenceOf(lines),
+                ReadingStakes.ReferenceForCalibration,
+                columnDeclarationOf(lines),
+            )
+            assertFalse("「$lines」 로 정해졌다: $d", d.settled)
+        }
+    }
+
+    /** 둘째 열이 보정값이면 **응답으로 읽지 않는다.** 그리고 사람에게 묻는다. */
+    @Test
+    fun `둘째 열이 보정값이면 그렇게 읽는다`() {
+        val lines = listOf("Frequency(Hz),Correction(dB)")
+        assertEquals(
+            ColumnDeclaration.Second(CurveReading.Correction),
+            columnDeclarationOf(lines),
+        )
+        val d = decideReading(
+            signEvidenceOf(lines),
+            ReadingStakes.ReferenceForCalibration,
+            columnDeclarationOf(lines),
+        )
+        assertFalse("보정값 선언인데 저절로 정해졌다", d.settled)
+        assertEquals(CurveReading.Correction, d.reading)
+    }
+
+    /** 선언이 여럿이고 서로 어긋나면 **어느 쪽도 믿지 않는다.** */
+    @Test
+    fun `어긋나는 선언이 여럿이면 묻는다`() {
+        val lines = listOf("Frequency,SPL", "Frequency,Correction")
+        assertTrue(columnDeclarationOf(lines) is ColumnDeclaration.Unsupported)
+        val d = decideReading(
+            SignEvidence.Unknown,
+            ReadingStakes.ReferenceForCalibration,
+            columnDeclarationOf(lines),
+        )
+        assertFalse(d.settled)
     }
 
     /** 대조군 — **열 이름**은 그대로 단서가 돼야 한다. */
