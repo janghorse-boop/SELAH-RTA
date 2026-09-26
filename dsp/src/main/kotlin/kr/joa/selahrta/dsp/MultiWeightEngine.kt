@@ -59,11 +59,15 @@ class MultiWeightEngine(
     private val c = SplEngine(sampleRate, Weighting.C, timeWeight, leqShortMs, leqLongMs)
     private val z = SplEngine(sampleRate, Weighting.Z, timeWeight, leqShortMs, leqLongMs)
 
-    fun process(samples: FloatArray, frames: Int): MultiWeightFrame =
+    /**
+     * [offset] 은 **덩어리를 쪼개 넣을 때** 쓴다(기록 저장). 쪼개어 넣어도
+     * 결과가 같다는 것은 `SplitProcessingTest` 가 확인했다.
+     */
+    fun process(samples: FloatArray, frames: Int, offset: Int = 0): MultiWeightFrame =
         MultiWeightFrame(
-            a = a.process(samples, frames),
-            c = c.process(samples, frames),
-            z = z.process(samples, frames),
+            a = a.process(samples, frames, offset),
+            c = c.process(samples, frames, offset),
+            z = z.process(samples, frames, offset),
         )
 
     val hasInput: Boolean get() = a.hasInput

@@ -206,11 +206,18 @@ class RtaEngine(
      * [samples] 는 **가중 전 원본**이다. RTA 는 주파수 균형을 보는 것이라
      * A 가중을 걸면 저역이 깎인 그림이 되어 「어느 대역이 큰지」를 잘못 읽게
      * 된다. 음압(dBA)과 RTA 는 다른 질문에 답한다.
+     *
+     * [offset] 은 **덩어리를 쪼개 넣을 때** 쓴다(기록 저장). 잘라서 넣어도
+     * 결과가 같다는 것은 `SplitProcessingTest` 가 오차 0 으로 확인했다 —
+     * 그래서 복사하지 않고 자리만 가리킨다.
      */
-    fun process(samples: FloatArray, frames: Int) {
-        require(frames in 0..samples.size) { "frames=$frames 이 범위를 벗어난다" }
+    fun process(samples: FloatArray, frames: Int, offset: Int = 0) {
+        require(offset >= 0) { "offset=$offset 이 음수다" }
+        require(frames >= 0 && offset + frames <= samples.size) {
+            "offset=$offset 에서 ${frames} 개를 읽을 수 없다 (크기 ${samples.size})"
+        }
         for (i in 0 until frames) {
-            ring[writePos] = samples[i].toDouble()
+            ring[writePos] = samples[offset + i].toDouble()
             writePos = (writePos + 1) % fftSize
             if (filled < fftSize) filled++
             sinceLastFft++

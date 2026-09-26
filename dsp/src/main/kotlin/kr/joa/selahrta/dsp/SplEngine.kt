@@ -84,12 +84,15 @@ class SplEngine(
      * [samples] 는 **가중 전** 원본이며 이 함수가 바꾸지 않는다 —
      * 녹음 쪽이 같은 버퍼를 쓰기 때문이다(명세 추가분 10장).
      */
-    fun process(samples: FloatArray, frames: Int): SplFrame {
-        require(frames in 0..samples.size) { "frames=$frames 이 범위를 벗어난다" }
+    fun process(samples: FloatArray, frames: Int, offset: Int = 0): SplFrame {
+        require(offset >= 0) { "offset=$offset 이 음수다" }
+        require(frames >= 0 && offset + frames <= samples.size) {
+            "offset=$offset 에서 ${frames} 개를 읽을 수 없다 (크기 ${samples.size})"
+        }
 
         // Peak 는 가중 전에 잰다. 클리핑은 입력단의 사건이다.
         for (i in 0 until frames) {
-            val a = kotlin.math.abs(samples[i].toDouble())
+            val a = kotlin.math.abs(samples[offset + i].toDouble())
             if (a > peakAbs) {
                 peakAbs = a
                 peakClipped = a >= CLIP_THRESHOLD
@@ -97,7 +100,7 @@ class SplEngine(
         }
 
         if (work.size < frames) work = DoubleArray(frames)
-        for (i in 0 until frames) work[i] = samples[i].toDouble()
+        for (i in 0 until frames) work[i] = samples[offset + i].toDouble()
 
         filter.processInPlace(work, frames)
 
