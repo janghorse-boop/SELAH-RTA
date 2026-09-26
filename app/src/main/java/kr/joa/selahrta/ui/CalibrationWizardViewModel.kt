@@ -96,12 +96,28 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
      * 이어지지 않는다 — 소리를 내는 일은 사람이 다시 눌러야 한다.
      */
     fun stopWork() {
-        inForeground = false
-        // 끊으면 작업의 `finally` 가 tap 을 떼고 소리를 멈춘다. 둘 다
-        // 정지 함수가 아니라 취소 뒤에도 실제로 돈다.
+        // **전경 상태를 건드리지 않는다**(독립 재검토 CA-R04).
+        //
+        // 예전에는 여기서 `inForeground = false` 로 내렸다. 그런데 이
+        // 함수는 탭을 옮기거나 마법사를 닫을 때도 불린다 — 액티비티는
+        // 그대로 앞에 있으므로 `ON_START` 가 다시 오지 않고, 그 뒤로는
+        // **마법사를 다시 열어도 소리를 낼 수 없었다.** 「다시 시작」을
+        // 눌러도 풀리지 않는다.
+        //
+        // 취소와 전경 상태는 다른 것이다. 여기서는 **끊기만** 한다.
         runJob?.cancel()
         runJob = null
         _busyKo.value = null
+    }
+
+    /**
+     * 화면이 뒤로 갔다. 전경 상태를 내리고 **도는 작업도 끊는다.**
+     *
+     * 이것만 소리를 막는다. 탭 이동·닫기는 [stopWork] 로 끊기만 한다.
+     */
+    fun onBackground() {
+        inForeground = false
+        stopWork()
     }
 
     /** 화면이 앞으로 돌아왔다. 멈춘 것을 되살리지는 않는다. */

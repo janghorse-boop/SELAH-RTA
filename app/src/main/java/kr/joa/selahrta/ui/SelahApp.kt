@@ -206,7 +206,10 @@ fun SelahApp() {
                 // 배경을 재는 동안 나가면 마법사가 스스로 핑크 잡음을 틀었다.
                 Lifecycle.Event.ON_STOP -> {
                     vm.onBackground()
-                    wizard.stopWork()
+                    // **여기서만 전경 상태를 내린다**(독립 재검토 CA-R04).
+                    // 탭 이동·닫기는 `stopWork()` 로 끊기만 한다 — 그때
+                    // 전경까지 내리면 다시 열어도 소리를 못 낸다.
+                    wizard.onBackground()
                 }
                 Lifecycle.Event.ON_START -> {
                     vm.onForeground()
