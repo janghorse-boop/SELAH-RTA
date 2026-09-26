@@ -129,6 +129,13 @@ data class CalInfo(
     val pointCount: Int,
     /** 머리글에서 찾은 단서. 정해진 값이 아니라 단서다. */
     val evidence: SignEvidence = SignEvidence.Unknown,
+    /**
+     * 머리글이 **열 이름을 선언했는가**(독립 재검토 CA-R05).
+     *
+     * 설명문에서 낱말을 찾은 것만으로는 둘째 열이 무엇인지 알 수 없다.
+     * 기준 CAL 은 선언이 있을 때만 저절로 정해진다.
+     */
+    val columnDeclared: Boolean = false,
     val reading: CurveReading = CurveReading.Response,
     /**
      * **사람이 화면에서 골랐는가.**
@@ -139,7 +146,7 @@ data class CalInfo(
     val readingChosenByPerson: Boolean = false,
 ) {
     private val decision: ReadingDecision
-        get() = decideReading(evidence, ReadingStakes.ReferenceForCalibration)
+        get() = decideReading(evidence, ReadingStakes.ReferenceForCalibration, columnDeclared)
 
     /** 읽는 법이 정해졌는가. 사람이 골랐거나, 머리글이 분명하거나. */
     val readingSettled: Boolean get() = readingChosenByPerson || decision.settled

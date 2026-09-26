@@ -30,10 +30,29 @@ class WizardFlowTest {
      * 머리글이 「응답」으로 분명한 파일. 그래야 읽는 법을 묻지 않는다
      * (독립 검토 R04) — 다른 시험들이 그 물음에 걸리지 않게 한다.
      */
+    /**
+     * 머리글이 **열 이름을 선언한** 파일. 그래야 기준 CAL 의 부호가
+     * 저절로 정해진다(독립 재검토 CA-R05) — 설명문만으로는 묻는다.
+     */
     private val cal = CalInfo(
         "17860.txt", "abc123", 10.0, 25_000.0, 300,
         evidence = SignEvidence.LooksLikeResponse,
+        columnDeclared = true,
     )
+
+    /**
+     * **설명문만 있는 파일은 저절로 정해지지 않는다**(독립 재검토 CA-R05).
+     *
+     * `# Reference SPL: 94 dB` 나 `# For frequency response measurements`
+     * 같은 줄은 둘째 열이 무엇인지 말하지 않는다. 기준 CAL 이 뒤집히면
+     * 그것으로 만든 프로파일이 전부 같은 방향으로 틀어진다.
+     */
+    @Test
+    fun `열 선언이 없으면 사람에게 묻는다`() {
+        val prose = cal.copy(columnDeclared = false)
+        assertFalse("설명문만으로 정해졌다", prose.readingSettled)
+        assertTrue("사람이 고르면 정해진다", prose.copy(readingChosenByPerson = true).readingSettled)
+    }
 
     private fun dsp(
         verdict: DspVerdict,

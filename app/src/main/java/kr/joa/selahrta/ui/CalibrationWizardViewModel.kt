@@ -159,7 +159,10 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
                 return@launch
             }
             val evidence = loaded.signEvidence
-            val decision = decideReading(evidence, ReadingStakes.ReferenceForCalibration)
+            // **열 선언이 있어야 저절로 정한다**(독립 재검토 CA-R05).
+            val declared = kr.joa.selahrta.dsp.declaresColumns(loaded.headerLines)
+            val decision =
+                decideReading(evidence, ReadingStakes.ReferenceForCalibration, declared)
             curve = loaded.curve.withReading(decision.reading)
 
             _state.update {
@@ -171,6 +174,7 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
                         highestHz = loaded.curve.highestHz,
                         pointCount = loaded.pointCount,
                         evidence = evidence,
+                        columnDeclared = declared,
                         reading = decision.reading,
                         // **불러온 것만으로는 고른 것이 아니다.**
                         readingChosenByPerson = false,
