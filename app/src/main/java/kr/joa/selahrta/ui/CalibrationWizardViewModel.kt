@@ -6,6 +6,12 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kr.joa.selahrta.calibration.CalibrationKey
+import kr.joa.selahrta.calibration.CaptureIdentity
+import kr.joa.selahrta.calibration.ROUTE_UNCONFIRMED_KO
+import kr.joa.selahrta.calibration.forgetEvidence
+import kr.joa.selahrta.calibration.measureGateKo
+import kr.joa.selahrta.calibration.routeMismatchKo
+import kr.joa.selahrta.calibration.stampGateKo
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -159,8 +165,10 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
                 return@launch
             }
             val evidence = loaded.signEvidence
-            // **열 선언이 있어야 저절로 정한다**(독립 재검토 CA-R05).
-            val declared = kr.joa.selahrta.dsp.declaresColumns(loaded.headerLines)
+            // **둘째 열의 이름이 무엇인가**(독립 재검토 CA-R05 · CAR-04).
+            // 「선언이 있는가」로는 모자랐다 — `Frequency,Phase,SPL` 은
+            // 선언이 맞지만 파서가 읽는 둘째 값은 위상이다.
+            val declared = kr.joa.selahrta.dsp.columnDeclarationOf(loaded.headerLines)
             val decision =
                 decideReading(evidence, ReadingStakes.ReferenceForCalibration, declared)
             curve = loaded.curve.withReading(decision.reading)
@@ -174,7 +182,7 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
                         highestHz = loaded.curve.highestHz,
                         pointCount = loaded.pointCount,
                         evidence = evidence,
-                        columnDeclared = declared,
+                        columns = declared,
                         reading = decision.reading,
                         // **불러온 것만으로는 고른 것이 아니다.**
                         readingChosenByPerson = false,
@@ -237,18 +245,31 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
         fftSize: Int,
         sampleRate: Int,
         tick: suspend () -> Unit,
-        /**
-         * 지금 열린 **경로**의 열쇠. 증거를 이 이름으로 적어 둔다
-         * (독립 검토 CA-03 · 재검토 CA-R02). null 이면 적지 않는다 —
-         * 어느 경로의 것인지 모르는 증거는 나중에 엉뚱한 쪽에 쓰인다.
-         */
-        calKey: CalibrationKey? = null,
     ) {
-        val evidence = calKey?.let { evidenceKey(it, fftSize, sampleRate) }
         if (_busyKo.value != null) return
+        // **수집 신원을 여기서 한 번 뜬다.** 증거를 이 이름으로 적고,
+        // 적기 직전에 이것과 대조한다(독립 재검토 CAR-01·CAR-02).
+        val startId = capture.identity
+        if (startId == null) {
+            _noticeKo.value = ROUTE_UNCONFIRMED_KO
+            return
+        }
+        val evidence = startId.evidenceKey(fftSize)
         // **지난 알림을 지운다.** 남겨 두면 새 결과 옆에 옛 실패 문구가
         // 그대로 붙어 있어, 방금 실패한 것처럼 읽힌다(기기에서 확인).
         _noticeKo.value = null
+
+        // **시작하는 순간 이 경로의 옛 증거를 버린다**(독립 재검토 CAR-02).
+        //
+        // 예전에는 실패했을 때만 지웠다. 그런데 **취소**는 그 분기로
+        // 들어가지 않아서, 「성공 → 배경이 나빠짐 → 재검사 → 취소」 뒤에
+        // 취소 전의 성공이 그대로 승인 근거가 되었다. 검토자가 그 순서로
+        // SNR 2dB 자료를 Pass 시켰다.
+        //
+        // 다시 재겠다고 누른 순간 **옛 증거는 이 경로를 설명하지 않는다.**
+        // 끝까지 마친 검사만 되살린다.
+        forgetEvidence(evidence)
+
         runJob = viewModelScope.launch {
             val tap = MeasurementTap(fftSize, sampleRate)
             val runner = WizardRunner(capture, tick, mayPlay = ::mayPlay)
@@ -258,38 +279,24 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
                 val noise = when (val r = runner.measureNoiseFloor(tap)) {
                     is RunOutcome.Failed -> {
                         _noticeKo.value = r.reasonKo
-                        // **실패하면 이 경로의 옛 증거를 지운다**(CA-R02).
-                        // 남겨 두면 「방금 실패했는데 옛 성공으로 통과」가
-                        // 된다 — 검토자가 그 순서를 재현했다.
-                        _state.update {
-                            it.copy(
-                                noiseFloorDb = null,
-                                dsp = null,
-                                noiseFloorByKey = if (evidence == null) {
-                                    it.noiseFloorByKey
-                                } else {
-                                    it.noiseFloorByKey - evidence
-                                },
-                                dspByKey = if (evidence == null) {
-                                    it.dspByKey
-                                } else {
-                                    it.dspByKey - evidence
-                                },
-                            )
-                        }
+                        // 증거는 시작할 때 이미 버렸다. 화면 값만 지운다.
+                        _state.update { it.copy(noiseFloorDb = null, dsp = null) }
                         return@launch
                     }
 
                     is RunOutcome.Done -> r.value
                 }
+                // **적기 직전에 신원을 대조한다**(독립 재검토 CAR-02 추가분).
+                // 40장을 모으는 사이에 채널이 바뀌면, ch1 의 배경이 ch0 의
+                // 이름으로 적힌다 — 검토자가 그 순서를 재현했다.
+                if (!stillHere(capture, startId)) {
+                    _noticeKo.value = stampGateKo(startId, capture.identity)
+                    return@launch
+                }
                 _state.update {
                     it.copy(
                         noiseFloorDb = noise,
-                        noiseFloorByKey = if (evidence == null) {
-                            it.noiseFloorByKey
-                        } else {
-                            it.noiseFloorByKey + (evidence to noise)
-                        },
+                        noiseFloorByKey = it.noiseFloorByKey + (evidence to noise),
                     )
                 }
 
@@ -300,30 +307,24 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
                     // 그 상태로 관문도 통과한다(기기에서 확인했다).
                     is RunOutcome.Failed -> {
                         _noticeKo.value = r.reasonKo
-                        _state.update {
-                            it.copy(
-                                dsp = null,
-                                // 실패한 점검은 **지운다.** 옛 성공이 남아
-                                // 있으면 그것으로 판정이 통과한다.
-                                dspByKey = if (evidence == null) {
-                                    it.dspByKey
-                                } else {
-                                    it.dspByKey - evidence
-                                },
-                            )
-                        }
+                        _state.update { it.copy(dsp = null, dspByKey = it.dspByKey - evidence) }
                     }
 
-                    is RunOutcome.Done -> _state.update {
-                        it.copy(
-                            dsp = r.value,
-                            clipped = capture.clippedSinceMark,
-                            dspByKey = if (evidence == null) {
-                                it.dspByKey
-                            } else {
-                                it.dspByKey + (evidence to r.value)
-                            },
-                        )
+                    is RunOutcome.Done -> {
+                        if (!stillHere(capture, startId)) {
+                            // 배경만 적히고 DSP 는 다른 입력의 것이 된다 —
+                            // 그 짝은 짝이 아니다. **배경도 함께 버린다.**
+                            forgetEvidence(evidence)
+                            _noticeKo.value = stampGateKo(startId, capture.identity)
+                            return@launch
+                        }
+                        _state.update {
+                            it.copy(
+                                dsp = r.value,
+                                clipped = capture.clippedSinceMark,
+                                dspByKey = it.dspByKey + (evidence to r.value),
+                            )
+                        }
                     }
                 }
             } finally {
@@ -333,6 +334,17 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
     }
+
+    /** 이 경로의 증거를 통째로 버린다. 셈은 `CaptureIdentityGate.kt` 에 있다. */
+    private fun forgetEvidence(evidence: String) {
+        _state.update { it.forgetEvidence(evidence) }
+    }
+
+    /** 시작할 때의 그 입력에 아직 있는가. */
+    private fun stillHere(
+        capture: kr.joa.selahrta.calibration.WizardCapture,
+        started: CaptureIdentity,
+    ): Boolean = capture.identity?.sameAs(started) == true
 
     /** API 가 알려 준 AGC/NS/AEC 상태. **설정값일 뿐이라** 신호 검사와 따로 둔다. */
     fun noteEffects(allClear: Boolean) {
@@ -410,7 +422,17 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
             _noticeKo.value = "열린 입력이 없습니다. 측정을 시작한 뒤 다시 하십시오."
             return
         }
-        expectationFor(step, st, nowKey)?.let {
+        // **수집 신원을 여기서 한 번 뜬다**(독립 재검토 CAR-01).
+        //
+        // 이 값이 이 시도의 이름이다. 끝날 때 다시 읽지 않고 **이것과
+        // 대조만** 한다 — 다시 읽으면 마지막 장과 이름표가 서로 다른
+        // 입력을 가리킬 수 있다.
+        val startId = capture.identity
+        if (startId == null) {
+            _noticeKo.value = ROUTE_UNCONFIRMED_KO
+            return
+        }
+        measureGateKo(step, st.referenceIdentity, startId)?.let {
             _noticeKo.value = it
             return
         }
@@ -418,8 +440,8 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
         // **이 단계의 증거를 쓴다**(독립 재검토 CA-R02). 예전에는 「마지막에
         // 점검한 것」(`st.noiseFloorDb`)을 넘겼는데, 그것이 다른 기기·다른
         // 채널의 배경이면 가청 판정이 잘못 허용되거나 잘못 거절된다.
-        val stepEvidence = capture.openedCalKey?.let { evidenceKey(it, fftSize, sampleRate) }
-        val stepNoise = stepEvidence?.let { st.noiseFloorByKey[it] }
+        val stepEvidence = startId.evidenceKey(fftSize)
+        val stepNoise = st.noiseFloorByKey[stepEvidence]
 
         runJob = viewModelScope.launch {
             val tap = MeasurementTap(fftSize, sampleRate)
@@ -438,23 +460,36 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
                 when (outcome) {
                     is RunOutcome.Failed -> _noticeKo.value = outcome.reasonKo
                     is RunOutcome.Done -> {
+                        // **다 재고 나서 신원을 대조한다**(독립 재검토
+                        // CAR-01 재현 B). 마지막 장이 들어간 뒤 이름표를
+                        // 붙이기 전에 입력이 바뀔 수 있다 — 그때 「지금
+                        // 열린 것」을 읽으면 **ch0 의 장에 ch1 의 이름표**가
+                        // 붙는다. 이름표를 고치는 대신 **장을 버린다.**
+                        val endId = capture.identity
+                        if (endId == null || !endId.sameAs(startId)) {
+                            session.discard(step)
+                            _noticeKo.value = stampGateKo(startId, endId)
+                            return@launch
+                        }
                         _state.update {
                             when (step) {
                                 MeasureStep.ReferenceBefore -> it.copy(
-                                    referenceDeviceKey = nowKey,
+                                    referenceDeviceKey = startId.calKey.deviceKey,
                                     // 절대 레벨을 옮길 때 이 경로의 보정값을
                                     // 찾는다. 기기 열쇠만으로는 채널이 갈리지
                                     // 않아 모자라다.
-                                    referenceCalKey = capture.openedCalKey,
+                                    referenceCalKey = startId.calKey,
+                                    referenceIdentity = startId,
                                     referenceOffsetDb = capture.openedOffsetDb,
                                     referenceEvidenceKey = stepEvidence,
                                 )
                                 MeasureStep.Target -> it.copy(
-                                    targetDeviceKey = nowKey,
+                                    targetDeviceKey = startId.calKey.deviceKey,
                                     // **경로 전체를 붙든다**(CA-R01). 기기만
                                     // 들고 있으면 같은 인터페이스의 다른
                                     // 채널에 덮어쓸 수 있다.
-                                    targetCalKey = capture.openedCalKey,
+                                    targetCalKey = startId.calKey,
+                                    targetIdentity = startId,
                                     targetEvidenceKey = stepEvidence,
                                 )
                                 else -> it
@@ -471,22 +506,8 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** 이 단계를 지금 기기로 재도 되는가. 되면 null, 안 되면 까닭. */
-    private fun expectationFor(step: MeasureStep, st: WizardState, nowKey: String): String? =
-        when (step) {
-            MeasureStep.ReferenceBefore -> null
-            MeasureStep.Target -> when (st.referenceDeviceKey) {
-                null -> "기준을 먼저 재십시오."
-                nowKey -> SAME_DEVICE_KO
-                else -> null
-            }
-
-            MeasureStep.ReferenceAfter -> when (st.referenceDeviceKey) {
-                null -> "기준을 먼저 재십시오."
-                nowKey -> null
-                else -> "앞의 기준과 다른 입력입니다. 기준 마이크로 되돌린 뒤 하십시오."
-            }
-        }
+    // 관문은 `CaptureIdentityGate.kt` 에 있다 — 기기 없이 돌려 볼 수 있어야
+    // 「실제로 막는가」를 확인할 수 있기 때문이다(CAR-01·CAR-05).
 
     /** 세 번이 다 찼다. 셈해서 5단계에 올린다. */
     private fun finishMeasurement() {
@@ -592,7 +613,7 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
      *
      * 그래서 **판단을 한곳에 모은다.** 화면은 이 함수가 주는 답만 따른다.
      */
-    fun transferBlockedKo(openedCalKey: CalibrationKey?): String? {
+    fun transferBlockedKo(now: CaptureIdentity?): String? {
         val st = _state.value
         val quality = st.quality
         val outcome = st.outcome
@@ -605,25 +626,22 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
             return "이 측정은 저장할 수 없는 판정입니다 — " + judged.reasonsKo.joinToString(" ")
         }
 
-        // **경로 전체를 견준다**(독립 재검토 CA-R01). 기기만 보면 같은
-        // 인터페이스의 다른 채널·다른 입력 경로가 그대로 통과한다 —
-        // 저장소는 그 셋을 가르는데 관문만 하나를 봤다.
-        val target = st.targetCalKey
-        if (target == null) {
-            return "대상 마이크를 아직 재지 않았습니다. 4단계로 돌아가십시오."
-        }
-        if (openedCalKey != target) {
-            return "지금 열린 입력이 대상 경로가 아닙니다(${openedCalKey?.storageKey() ?: "열린 입력 없음"}). " +
-                "이 보정값은 ${target.storageKey()} 의 것이므로 그 경로로 되돌린 뒤 옮겨야 합니다 — " +
-                "지금 저장하면 다른 경로의 보정이 덮어써집니다."
-        }
-        return null
+        // **잰 그 자리로 되돌아왔는가**(독립 재검토 CAR-01 재현 C).
+        //
+        // 예전에는 저장 열쇠만 견줬다. 그런데 내장 마이크의 열쇠에는
+        // 자리가 없어서, `bottom` 에서 재고 `back` 으로 다시 열어도
+        // 열쇠가 같았다 — **잰 적 없는 자리에 그 감도가 귀속된다.**
+        return routeMismatchKo(st.targetIdentity, now, "이 보정값")
     }
 
     /** 보정값을 옮길 대상 **경로**. 저장하는 쪽이 지금 열린 것과 맞춰 본다. */
     val transferTargetKey: CalibrationKey? get() = _state.value.targetCalKey
 
-    fun save(environment: kr.joa.selahrta.calibration.ProfileEnvironment) {
+    fun save(
+        environment: kr.joa.selahrta.calibration.ProfileEnvironment,
+        /** 지금 열린 입력의 수집 신원. 잰 자리와 대조한다(CAR-01). */
+        now: CaptureIdentity?,
+    ) {
         if (_busyKo.value != null) return
         val st = _state.value
         val session = st.session
@@ -642,17 +660,12 @@ class CalibrationWizardViewModel(app: Application) : AndroidViewModel(app) {
         // 마지막에 열려 있는 것은 **언제나 기준 마이크**다. 그대로 두면
         // 폰 마이크의 보정이 USB 인터페이스의 것으로 기록되어, 정작 폰에는
         // 걸리지 않고 엉뚱한 경로에 걸릴 수 있다(실기기 확인 2026-09-24).
-        // **경로 전체를 견준다**(독립 재검토 CA-R01). 기기만 보면 같은
-        // 인터페이스의 다른 채널에 프로파일이 귀속될 수 있다.
-        val target = st.targetCalKey
-        if (target == null) {
-            _noticeKo.value = "대상 마이크를 아직 재지 않았습니다. 4단계로 돌아가십시오."
-            return
-        }
-        if (environment.key() != target) {
-            _noticeKo.value = "지금 열린 입력이 대상 경로가 아닙니다(${environment.key().storageKey()}). " +
-                "이 교정은 ${target.storageKey()} 의 응답이므로 그 경로로 되돌린 뒤 저장해야 합니다 — " +
-                "「측정」 화면에서 입력을 대상으로 바꾸고 다시 시작한 뒤 돌아오십시오."
+        // **잰 그 자리로 되돌아왔는가**(독립 재검토 CAR-01 재현 C).
+        // 열쇠만 보면 자리가 바뀐 내장 마이크가 그대로 통과한다 —
+        // 열쇠에는 자리가 없고, 그러면 **잰 적 없는 자리에 이 응답이
+        // 귀속된다.** 그 뒤의 주소 검사는 이미 잘못 적힌 이름표를 본다.
+        routeMismatchKo(st.targetIdentity, now, "이 교정")?.let {
+            _noticeKo.value = it
             return
         }
 
@@ -742,14 +755,3 @@ fun stepNameKo(step: MeasureStep): String = when (step) {
     MeasureStep.Target -> "대상"
     MeasureStep.ReferenceAfter -> "기준(마지막)"
 }
-
-/**
- * 기준과 대상이 같은 입력일 때의 말.
- *
- * **막아야 하는 까닭**: 같은 마이크를 두 번 재면 두 곡선이 거의 같아
- * 보정이 평탄하게 나온다. 그 결과는 「아주 잘 맞았다」로 보이고, 품질
- * 판정도 통과한다 — 아무것도 재지 않은 것과 같은데 그렇게 보이지 않는다.
- */
-const val SAME_DEVICE_KO: String =
-    "기준과 같은 입력입니다. 대상 마이크(내장)로 바꾼 뒤 하십시오. " +
-        "같은 마이크를 두 번 재면 보정이 평탄하게 나와 잘 맞은 것처럼 보입니다."

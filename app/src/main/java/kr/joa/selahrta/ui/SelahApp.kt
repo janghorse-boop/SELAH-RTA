@@ -375,6 +375,7 @@ fun SelahApp() {
                         onSaveCalibration = vm::saveSimpleCalibration,
                         onClearCalibration = vm::clearCalibration,
                         onDismissCalibrationNotice = vm::dismissCalibrationNotice,
+                        onConfirmCalibrationRoute = vm::confirmCalibrationRoute,
                         onWeighting = vm::setWeighting,
                         onTimeWeight = vm::setTimeWeight,
                         onLeqWindow = vm::setLeqWindow,
@@ -505,14 +506,10 @@ fun SelahApp() {
                             canSave = capture.opened != null && wizardSaved == null,
                             // **막힌 까닭은 마법사가 판단한다**(독립 검토 CA-01).
                             // 화면이 스스로 셈하면 저장 쪽 판정과 어긋난다.
-                            // **경로 전체로 견준다**(독립 재검토 CA-R01).
-                            // 기기만 보면 같은 인터페이스의 다른 채널이
-                            // 그대로 통과한다.
-                            transferBlockedKo = wizard.transferBlockedKo(
-                                capture.opened
-                                    ?.takeIf { it.routeConfirmed }
-                                    ?.let { kr.joa.selahrta.calibration.CalibrationKey.of(it) },
-                            ),
+                            // **수집 신원으로 견준다**(독립 재검토 CAR-01).
+                            // 열쇠만 보면 자리가 바뀐 내장 마이크가 그대로
+                            // 통과한다 — 열쇠에는 자리가 없다.
+                            transferBlockedKo = wizard.transferBlockedKo(wizardCapture.identity),
                             onApplyLevelTransfer = { db ->
                                 vm.saveOffsetDirect(
                                     db,
@@ -527,6 +524,7 @@ fun SelahApp() {
                                         currentProfileEnvironment(
                                             opened, capture.inputs, deviceBuild,
                                         ),
+                                        wizardCapture.identity,
                                     )
                                 }
                             },
@@ -553,15 +551,6 @@ fun SelahApp() {
                                         // 조금 짧게 둔다 — 길면 장을 건너뛰고,
                                         // 너무 짧으면 헛돈다.
                                         tick = { kotlinx.coroutines.delay(30) },
-                                        // **어느 경로의 증거인가**(독립 검토
-                                        // CA-03 · 재검토 CA-R02). 기기만으로
-                                        // 갈랐더니 채널을 바꿔도 옛 증거가
-                                        // 그대로 쓰였다.
-                                        calKey = capture.opened
-                                            ?.takeIf { it.routeConfirmed }
-                                            ?.let {
-                                                kr.joa.selahrta.calibration.CalibrationKey.of(it)
-                                            },
                                     )
                                 }
                             },

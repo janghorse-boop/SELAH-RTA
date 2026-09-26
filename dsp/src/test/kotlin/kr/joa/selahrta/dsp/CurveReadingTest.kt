@@ -106,10 +106,38 @@ class CurveReadingTest {
     // 언제 사람에게 묻는가
     // ------------------------------------------------------------------
 
+    /**
+     * **설명문만으로는 표시용 곡선만 정해진다**(독립 재검토 CA-R05 · CAR-04).
+     *
+     * 예전에는 이 시험이 두 용도 모두 「묻지 않는다」를 지켰다. 그때는
+     * `columnDeclared` 의 **기본값이 true** 여서, 선언을 확인하지 않은
+     * 호출이 선언이 있는 것처럼 다뤄졌기 때문이다 — 검토자가 「그 기본값에
+     * 기대지 말라」고 짚은 자리다.
+     *
+     * 교정의 기준은 틀리면 그 기준으로 만든 프로파일이 전부 같은 방향으로
+     * 틀어진다. 그래서 **둘째 열이 무엇인지 선언돼 있을 때만** 정해진다.
+     */
     @Test
-    fun `머리글이 응답이면 묻지 않는다`() {
+    fun `설명문만으로는 표시용만 정해진다`() {
+        val display = decideReading(SignEvidence.LooksLikeResponse, ReadingStakes.DisplayCurve)
+        assertTrue("$display", display.settled)
+        assertEquals(CurveReading.Response, display.reading)
+
+        val reference =
+            decideReading(SignEvidence.LooksLikeResponse, ReadingStakes.ReferenceForCalibration)
+        assertFalse("설명문만으로 기준 CAL 이 정해졌다: $reference", reference.settled)
+        assertEquals("제안은 응답 쪽", CurveReading.Response, reference.reading)
+    }
+
+    /** 둘째 열이 응답이라고 **선언**돼 있으면 두 용도 모두 정해진다. */
+    @Test
+    fun `둘째 열 선언이 있으면 묻지 않는다`() {
         for (s in ReadingStakes.entries) {
-            val d = decideReading(SignEvidence.LooksLikeResponse, s)
+            val d = decideReading(
+                SignEvidence.LooksLikeResponse,
+                s,
+                ColumnDeclaration.Second(CurveReading.Response),
+            )
             assertTrue("$s: $d", d.settled)
             assertEquals(CurveReading.Response, d.reading)
         }

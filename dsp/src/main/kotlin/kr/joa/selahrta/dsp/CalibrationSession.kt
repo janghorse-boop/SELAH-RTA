@@ -222,6 +222,24 @@ class CalibrationSession(
     val complete: Boolean
         get() = MeasureStep.entries.all { frameCount(it) > 0 }
 
+    /**
+     * **한 단계의 장을 버린다.**
+     *
+     * 재는 도중에 입력이 바뀌면 그 단계의 장은 「어느 마이크의 것」이라고
+     * 말할 수 없다. 이름표만 고쳐 붙이면 **잰 적 없는 경로에 남의 자료가
+     * 귀속된다**(독립 재검토 CAR-01). 고쳐 붙이는 대신 버린다.
+     *
+     * 기준 장이 하나도 안 남으면 [referenceProof] 도 함께 버린다 —
+     * 남겨 두면 다음 시도가 **버린 시도의 CAL** 에 묶인다.
+     */
+    fun discard(step: MeasureStep) {
+        frames.remove(step)
+        rawReferenceFrames.remove(step)
+        val anyReference = MeasureStep.entries
+            .any { it != MeasureStep.Target && frameCount(it) > 0 }
+        if (!anyReference) referenceProof = null
+    }
+
     /** 처음으로. **증거도 함께 지운다** — 남겨 두면 다음 세션이 물려받는다. */
     fun reset() {
         frames.clear()

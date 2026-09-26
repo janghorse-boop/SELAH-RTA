@@ -123,6 +123,18 @@ data class GlobalCalibration(
     val noiseFloorDbfs: Double? = null,
     /** 무엇에 맞춘 보정인가. 옛 기록은 [CalibrationSource.Unknown]. */
     val source: CalibrationSource = CalibrationSource.Unknown,
+    /**
+     * **어느 자리에서 잰 것인가**(`bottom`·`back` 같은 것). 옛 기록은 null.
+     *
+     * 저장 열쇠에는 자리가 없다 — 내장 마이크의 열쇠에서 주소를 빼기로
+     * 했기 때문이다(2026-09-23). 그래서 자리가 바뀌어도 열쇠가 같았고,
+     * `bottom` 에서 잰 감도를 `back` 에 그대로 걸면서 **「보정 완료」로
+     * 적었다**(독립 재검토 CAR-03).
+     *
+     * **null 은 「모른다」이지 「같다」가 아니다.** 앱이 지금 주소로 채워
+     * 넣지 않는다 — 사람이 확인해야 채워진다([judgeCalibrationRoute]).
+     */
+    val routeAddress: String? = null,
 ) {
     fun toOffset() = CalibrationOffset(offsetDb)
 }
@@ -145,9 +157,19 @@ data class ActiveCalibration(
     val offset: CalibrationOffset,
     val state: CalibrationState,
     val saved: GlobalCalibration?,
+    /**
+     * 저장된 값이 있는데도 걸지 **않은** 까닭. 걸었으면 null.
+     *
+     * 값은 [saved] 에 그대로 있다 — **지우지 않는다.** 사람이 확인하거나
+     * 다시 보정하면 곧바로 걸린다(독립 재검토 CAR-03).
+     */
+    val holdNoticeKo: String? = null,
 ) {
     /** 이 값으로 나온 음압을 측정값이라 불러도 되는가. */
     val isReferenceOnly: Boolean get() = state == CalibrationState.Uncalibrated
+
+    /** 저장된 값이 있는데 자리를 확인하지 못해 멈춰 둔 상태인가. */
+    val heldForRoute: Boolean get() = holdNoticeKo != null
 
     companion object {
         /** 저장된 보정이 없을 때. 짐작한 눈금에 「미보정」을 붙인다. */
@@ -157,9 +179,38 @@ data class ActiveCalibration(
             saved = null,
         )
 
-        fun from(saved: GlobalCalibration?) = saved?.let {
-            ActiveCalibration(it.toOffset(), CalibrationState.GlobalCalibrated, it)
-        } ?: assumed
+        /**
+         * 저장된 값을 **걸어도 되는지 판정한 뒤** 건다(독립 재검토 CAR-03).
+         *
+         * 예전에는 판정 없이 그대로 걸었다. 그래서 `bottom` 에서 잰
+         * +110dB 을 `back` 에서도 「보정 완료」로 썼다. 자리가 다르거나
+         * 모르면 **걸지 않고 값만 들고 있는다** — 지우면 사람이 다시
+         * 재야 하고, 그대로 걸면 근거 없이 승인하는 것이 된다.
+         *
+         * @param nowRoute 지금 열린 경로의 자리. 모르면 빈 문자열.
+         * @param routeConfirmed 지금 경로를 실제로 확인했는가.
+         */
+        fun from(
+            saved: GlobalCalibration?,
+            nowRoute: String = "",
+            routeConfirmed: Boolean = false,
+        ): ActiveCalibration {
+            if (saved == null) return assumed
+            val verdict = judgeCalibrationRoute(saved.routeAddress, nowRoute, routeConfirmed)
+            if (verdict.mayAutoApply) {
+                return ActiveCalibration(
+                    saved.toOffset(),
+                    CalibrationState.GlobalCalibrated,
+                    saved,
+                )
+            }
+            return ActiveCalibration(
+                offset = CalibrationOffset(ASSUMED_FULL_SCALE_SPL),
+                state = CalibrationState.Uncalibrated,
+                saved = saved,
+                holdNoticeKo = routeNoticeKo(verdict, saved.routeAddress, nowRoute),
+            )
+        }
     }
 }
 

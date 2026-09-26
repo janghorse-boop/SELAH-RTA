@@ -3,6 +3,7 @@ package kr.joa.selahrta.calibration
 import kr.joa.selahrta.audio.MicSeparation
 import kr.joa.selahrta.audio.MicSeparationResult
 import kr.joa.selahrta.dsp.BandNoise
+import kr.joa.selahrta.dsp.ColumnDeclaration
 import kr.joa.selahrta.dsp.CurvePoint
 import kr.joa.selahrta.dsp.CurveReading
 import kr.joa.selahrta.dsp.SignEvidence
@@ -31,13 +32,14 @@ class WizardFlowTest {
      * (독립 검토 R04) — 다른 시험들이 그 물음에 걸리지 않게 한다.
      */
     /**
-     * 머리글이 **열 이름을 선언한** 파일. 그래야 기준 CAL 의 부호가
-     * 저절로 정해진다(독립 재검토 CA-R05) — 설명문만으로는 묻는다.
+     * 머리글이 **둘째 열을 응답이라 선언한** 파일. 그래야 기준 CAL 의
+     * 부호가 저절로 정해진다(독립 재검토 CA-R05 · CAR-04) — 설명문이나
+     * 뜻 모를 열 이름으로는 묻는다.
      */
     private val cal = CalInfo(
         "17860.txt", "abc123", 10.0, 25_000.0, 300,
         evidence = SignEvidence.LooksLikeResponse,
-        columnDeclared = true,
+        columns = ColumnDeclaration.Second(CurveReading.Response),
     )
 
     /**
@@ -49,9 +51,21 @@ class WizardFlowTest {
      */
     @Test
     fun `열 선언이 없으면 사람에게 묻는다`() {
-        val prose = cal.copy(columnDeclared = false)
+        val prose = cal.copy(columns = ColumnDeclaration.None)
         assertFalse("설명문만으로 정해졌다", prose.readingSettled)
         assertTrue("사람이 고르면 정해진다", prose.copy(readingChosenByPerson = true).readingSettled)
+    }
+
+    /**
+     * **둘째 열이 뜻 모를 이름이면 묻는다**(독립 재검토 CAR-04).
+     *
+     * `Frequency,Phase,SPL` 은 선언이 맞지만, 파서는 언제나 둘째 값을
+     * 읽으므로 SPL 이 아니라 **위상**을 보정에 쓴다.
+     */
+    @Test
+    fun `둘째 열을 모르면 사람에게 묻는다`() {
+        val phase = cal.copy(columns = ColumnDeclaration.Unsupported("Phase"))
+        assertFalse("둘째 열을 모르는데 정해졌다", phase.readingSettled)
     }
 
     private fun dsp(
@@ -153,7 +167,12 @@ class WizardFlowTest {
      */
     @Test
     fun `CAL 읽는 법이 안 정해지면 막힌다`() {
-        val unclear = cal.copy(evidence = SignEvidence.Unknown)
+        // **선언도 설명문도 없어야 「단서 없음」이다**(독립 재검토 CAR-04).
+        // 열 선언이 있으면 그것이 가장 센 증거라 설명문이 없어도 정해진다.
+        val unclear = cal.copy(
+            evidence = SignEvidence.Unknown,
+            columns = ColumnDeclaration.None,
+        )
         val g = gateFor(
             WizardState(cal = unclear, referenceHookup = ReferenceHookup.XlrInterface, phantomAcknowledged = true),
             WizardStep.Equipment,

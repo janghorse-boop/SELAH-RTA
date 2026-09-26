@@ -89,6 +89,8 @@ fun SettingsScreen(
     onSaveCalibration: (Double, CalibrationSource) -> Unit,
     onClearCalibration: () -> Unit,
     onDismissCalibrationNotice: () -> Unit,
+    /** 「이 자리에서 잰 것이 맞다」고 사람이 확인해 준다(독립 재검토 CAR-03). */
+    onConfirmCalibrationRoute: () -> Unit,
     onWeighting: (Weighting) -> Unit,
     onTimeWeight: (TimeWeight) -> Unit,
     onLeqWindow: (LeqWindow) -> Unit,
@@ -198,6 +200,7 @@ fun SettingsScreen(
             onSave = onSaveCalibration,
             onClear = onClearCalibration,
             onDismissNotice = onDismissCalibrationNotice,
+            onConfirmRoute = onConfirmCalibrationRoute,
             modifier = Modifier.padding(top = 8.dp),
         )
 

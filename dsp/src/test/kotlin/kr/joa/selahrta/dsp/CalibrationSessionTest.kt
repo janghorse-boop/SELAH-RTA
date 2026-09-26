@@ -104,6 +104,47 @@ class CalibrationSessionTest {
         assertNotNull("이제는 나와야 한다", s.result())
     }
 
+    /**
+     * **한 단계를 버린다**(독립 재검토 CAR-01).
+     *
+     * 재는 도중에 입력이 바뀌면 그 단계의 장은 「어느 마이크의 것」이라고
+     * 말할 수 없다. 이름표만 고쳐 붙이면 잰 적 없는 경로에 남의 자료가
+     * 귀속되므로, 고쳐 붙이는 대신 버린다.
+     */
+    @Test
+    fun `한 단계를 버리면 그 장만 사라진다`() {
+        val s = CalibrationSession()
+        repeat(3) { s.recordReference(MeasureStep.ReferenceBefore, refSpectrum(flat(70.0))) }
+        repeat(3) { s.record(MeasureStep.Target, flat(60.0)) }
+
+        s.discard(MeasureStep.Target)
+
+        assertEquals("버린 단계만 비어야 한다", 0, s.frameCount(MeasureStep.Target))
+        assertEquals("남의 장까지 지웠다", 3, s.frameCount(MeasureStep.ReferenceBefore))
+        assertNotNull("기준 증거는 남아야 한다", s.referenceProof)
+        assertFalse(s.complete)
+    }
+
+    /**
+     * 기준 장이 하나도 안 남으면 **증거도 함께 버린다.**
+     *
+     * 남겨 두면 다음 시도가 **버린 시도의 CAL** 에 묶여, 다른 CAL 로
+     * 다시 재려 할 때 「장들의 설정이 다르다」로 막힌다.
+     */
+    @Test
+    fun `기준을 다 버리면 증거도 버린다`() {
+        val s = CalibrationSession()
+        s.recordReference(MeasureStep.ReferenceBefore, refSpectrum(flat(70.0)))
+        assertNotNull(s.referenceProof)
+
+        s.discard(MeasureStep.ReferenceBefore)
+
+        assertNull("버린 시도의 CAL 이 남았다", s.referenceProof)
+        // 그래서 다른 CAL 로 다시 잴 수 있다.
+        s.recordReference(MeasureStep.ReferenceBefore, refSpectrum(flat(65.0)))
+        assertEquals(1, s.frameCount(MeasureStep.ReferenceBefore))
+    }
+
     @Test
     fun `단계마다 장 수를 센다`() {
         val s = CalibrationSession()

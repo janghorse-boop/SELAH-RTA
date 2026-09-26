@@ -58,38 +58,102 @@ private val LEVEL_PHRASE = Regex("""\d+(?:\.\d+)?\s*db(?:\s*spl)?""")
 private val FREQ_WORDS = listOf("freq", "hz", "주파수")
 
 /**
- * 머리글이 **열 이름을 선언했는가**(독립 재검토 CA-R05).
+ * 머리글의 **열 선언**이 둘째 열을 무엇이라 부르는가(독립 재검토 CAR-04).
  *
- * 설명문과 열 선언을 가른다. 열 선언은 이렇게 생겼다:
+ * ## 왜 Boolean 이면 안 되는가
  *
- * ```
- * "Frequency","SPL","Phase"
- * Frequency(Hz)  Correction(dB)
- * ```
+ * 「선언이 있는가」로 뭉개 두었더니, 선언이 있다는 사실만으로 **다른
+ * 줄의 낱말**이 둘째 열의 뜻으로 확정됐다. 검토자가 셋을 보였다:
  *
- * 가르는 기준은 셋이다 — **여러 칸으로 나뉘고**(쉼표·탭·두 칸 이상),
- * **칸마다 짧고**(이름이지 문장이 아니다), **주파수 열이 있다**.
- * 「94 dB SPL」이나 「for frequency response measurements」는 문장이라
- * 칸으로 나뉘지 않거나 칸이 길다.
+ * | 머리글 | 예전 결과 | 무엇이 틀렸나 |
+ * |---|---|---|
+ * | `# Frequency range: 20 Hz, reference SPL: 94 dB` | 확정 | 조건 문장을 열 선언으로 읽었다 |
+ * | `# Reference SPL: 94 dB` + `Frequency,Value` | 확정 | 다른 줄의 SPL 과 뜻 모를 `Value` 를 붙였다 |
+ * | `Frequency,Phase,SPL` | 확정 | 둘째 열은 Phase 인데 셋째 열의 SPL 로 정했다 |
  *
- * **정규식에 예외를 더하는 길로 가지 않는다**(검토자 권고). 조건 문구를
- * 하나씩 지워 나가는 방식은 새 문구가 나올 때마다 뚫린다.
+ * 마지막 것이 가장 나쁘다. 파서는 **언제나 둘째 값**을 응답으로 읽으므로,
+ * `1000,0,6` 에서 SPL 6 이 아니라 **위상 0** 을 보정에 쓴다.
+ *
+ * ## 그래서 자리를 본다
+ *
+ * 파서가 지원하는 것은 **첫 열 = Hz, 둘째 열 = dB** 하나뿐이다. 그
+ * 순서의 **알려진 이름**일 때만 확정하고 나머지는 사람에게 묻는다.
+ * 길이 제한 같은 어림으로 가르지 않는다 — 검토자의 반례는 모두 짧았다.
  */
-fun declaresColumns(headerLines: List<String>): Boolean = headerLines.any { line ->
+sealed interface ColumnDeclaration {
+    /** 열 선언이 없다. 설명문뿐이다. */
+    data object None : ColumnDeclaration
+
+    /** 선언은 있는데 **둘째 열을 모른다**(Phase 등). 사람에게 묻는다. */
+    data class Unsupported(val secondKo: String) : ColumnDeclaration
+
+    /** 둘째 열이 무엇인지 선언이 **직접** 말한다. */
+    data class Second(val reading: CurveReading) : ColumnDeclaration
+}
+
+/**
+ * 머리글 줄들에서 열 선언을 읽는다.
+ *
+ * 선언으로 보는 줄은 **첫 칸이 주파수 열 이름**인 줄뿐이다. 선언이
+ * 여럿이고 서로 어긋나면 [ColumnDeclaration.Unsupported] — 그때는 어느
+ * 쪽도 믿을 수 없다.
+ */
+fun columnDeclarationOf(headerLines: List<String>): ColumnDeclaration {
+    val found = headerLines.mapNotNull { declarationIn(it) }.distinct()
+    if (found.isEmpty()) return ColumnDeclaration.None
+    if (found.size > 1) {
+        return ColumnDeclaration.Unsupported(
+            found.filterIsInstance<ColumnDeclaration.Unsupported>()
+                .firstOrNull()?.secondKo ?: "서로 다른 선언이 여럿",
+        )
+    }
+    return found.first()
+}
+
+private fun declarationIn(line: String): ColumnDeclaration? {
     val fields = line
         .removePrefix("#").removePrefix("*").removePrefix(";")
-        .split(',', '	')
+        .split(',', '\t')
         .flatMap { it.split(Regex(" {2,}")) }
         .map { it.trim().trim('"').trim() }
         .filter { it.isNotEmpty() }
-    if (fields.size < 2) return@any false
-    // 칸이 길면 이름이 아니라 문장이다.
-    if (fields.any { it.length > MAX_COLUMN_NAME }) return@any false
-    fields.any { f -> FREQ_WORDS.any { f.lowercase().contains(it) } }
+    if (fields.size < 2) return null
+    // **첫 칸이 주파수 열 이름이어야 한다.** 파서가 Hz 를 읽는 자리가 거기다.
+    if (normalizeColumn(fields[0]) !in FREQ_COLUMNS) return null
+    return when (normalizeColumn(fields[1])) {
+        in RESPONSE_COLUMNS -> ColumnDeclaration.Second(CurveReading.Response)
+        in CORRECTION_COLUMNS -> ColumnDeclaration.Second(CurveReading.Correction)
+        else -> ColumnDeclaration.Unsupported(fields[1])
+    }
 }
 
-/** 열 이름으로 볼 최대 길이. 이보다 길면 문장이다. */
-private const val MAX_COLUMN_NAME = 24
+/**
+ * 열 이름을 견줄 수 있는 꼴로 만든다.
+ *
+ * 괄호 안(단위)을 떼고 소문자로 바꿔 공백을 하나로 줄인다 —
+ * `Frequency (Hz)` · `Frequency(Hz)` · `FREQUENCY` 가 모두 `frequency` 다.
+ * **낱말을 찾지 않고 통째로 견준다**: 「Frequency range: 20 Hz」 같은
+ * 문장은 어느 이름과도 같지 않다.
+ */
+private fun normalizeColumn(raw: String): String = raw
+    .replace(Regex("""[(\[][^)\]]*[)\]]"""), " ")
+    .lowercase()
+    .replace(Regex("""\s+"""), " ")
+    .trim()
+
+/** 파서가 첫 열로 받아들이는 이름. */
+private val FREQ_COLUMNS = setOf("frequency", "freq", "hz", "f", "주파수", "frequency hz")
+
+/** 둘째 열이 **마이크의 응답**임을 뜻하는 이름. */
+private val RESPONSE_COLUMNS = setOf(
+    "spl", "db", "db spl", "dbspl", "magnitude", "mag", "level", "response",
+    "amplitude", "amp", "응답", "레벨",
+)
+
+/** 둘째 열이 **이미 뒤집힌 보정값**임을 뜻하는 이름. */
+private val CORRECTION_COLUMNS = setOf(
+    "correction", "corr", "compensation", "comp", "보정", "보정값",
+)
 
 /** 우리 가정과 **반대**를 가리키는 말. */
 private val CORRECTION_WORDS = listOf("correction", "compensation", "보정값", "보정 값")
@@ -223,25 +287,78 @@ fun decideReading(
     evidence: SignEvidence,
     stakes: ReadingStakes,
     /**
-     * 머리글이 **열 이름을 선언**했는가(독립 재검토 CA-R05).
+     * 머리글의 **열 선언**(독립 재검토 CA-R05 · CAR-04).
      *
      * 설명문에서 낱말을 찾는 것만으로는 둘째 열이 무엇인지 알 수 없다 —
      * `# Reference SPL: 94 dB` 도, `# For frequency response measurements`
      * 도 「응답」으로 확정됐다. 앞의 것은 잰 세기이고 뒤의 것은 쓰임새다.
      *
-     * 그래서 **기준 CAL 은 열 선언이 있을 때만** 자동으로 확정한다.
-     * 설명문은 사람에게 보일 단서로만 쓴다([signEvidenceOf]).
+     * 처음에는 「선언이 있는가」(Boolean)로 고쳤는데 그것도 모자랐다.
+     * `Frequency,Phase,SPL` 은 선언이 맞지만 **둘째 열은 Phase** 이고,
+     * 파서는 언제나 둘째 값을 읽는다 — SPL 이 아니라 위상을 보정에 쓴다.
+     *
+     * 그래서 **둘째 열의 이름 자체**를 받는다. 그 이름이 말해 주면 그것이
+     * 가장 센 증거이고, 설명문과 어긋나면 사람에게 묻는다.
      *
      * 표시용 곡선은 예전대로다 — 틀려도 화면에서 드러나고 되돌리기 쉽다.
      */
-    columnDeclared: Boolean = true,
+    columns: ColumnDeclaration = ColumnDeclaration.None,
+): ReadingDecision {
+    // **둘째 열의 이름이 곧 답이다.** 설명문보다 세다 — 파서가 읽는
+    // 바로 그 자리를 가리키기 때문이다.
+    if (columns is ColumnDeclaration.Second) {
+        val named = columns.reading
+        val text = when (evidence) {
+            SignEvidence.LooksLikeResponse -> CurveReading.Response
+            SignEvidence.LooksLikeCorrection -> CurveReading.Correction
+            SignEvidence.Unknown -> null
+        }
+        if (text != null && text != named && stakes == ReadingStakes.ReferenceForCalibration) {
+            return ReadingDecision.NeedsPerson(
+                named,
+                "둘째 열은 「${named.labelKo}」 으로 선언됐는데 설명문은 " +
+                    "「${text.labelKo}」 쪽으로 읽힙니다. 이 파일은 교정의 기준이 되므로 " +
+                    "확인이 필요합니다 — 잘못 읽으면 보정이 반대로 걸립니다.",
+            )
+        }
+        if (named == CurveReading.Correction) {
+            return ReadingDecision.NeedsPerson(
+                named,
+                "둘째 열이 「보정값(correction)」으로 선언됐습니다. 앱의 기본 가정과 " +
+                    "반대라 확인이 필요합니다 — 잘못 읽으면 보정이 반대로 두 배 걸립니다.",
+            )
+        }
+        return ReadingDecision.Settled(named, "둘째 열이 「${named.labelKo}」 으로 선언돼 있습니다.")
+    }
+
+    // **선언이 있는데 둘째 열을 모르면 묻는다**(CAR-04). 다른 열의
+    // 이름으로 채우지 않는다 — 파서는 둘째 값만 읽는다.
+    if (columns is ColumnDeclaration.Unsupported &&
+        stakes == ReadingStakes.ReferenceForCalibration
+    ) {
+        return ReadingDecision.NeedsPerson(
+            CurveReading.Response,
+            "둘째 열이 「${columns.secondKo}」 로 선언돼 있어 무엇인지 알 수 없습니다. " +
+                "앱은 둘째 값을 마이크의 응답(dB)으로 읽습니다 — 이 파일이 그 꼴이 " +
+                "맞는지 확인해 주십시오.",
+        )
+    }
+
+    return decideFromProse(evidence, stakes)
+}
+
+private fun decideFromProse(
+    evidence: SignEvidence,
+    stakes: ReadingStakes,
 ): ReadingDecision = when (evidence) {
     SignEvidence.LooksLikeResponse -> if (
-        stakes == ReadingStakes.ReferenceForCalibration && !columnDeclared
+        stakes == ReadingStakes.ReferenceForCalibration
     ) {
         ReadingDecision.NeedsPerson(
             CurveReading.Response,
-            "머리글이 「응답」 쪽으로 읽히지만, 둘째 열이 무엇인지 **선언하지는 않았습니다**. " +
+            // **별표를 쓰지 않는다.** 이 자리는 서식 없는 Text 라
+            // 마크다운 강조가 글자 그대로 보인다(2026-09-22 실기기).
+            "머리글이 「응답」 쪽으로 읽히지만, 둘째 열이 무엇인지 선언하지는 않았습니다. " +
                 "이 파일은 교정의 기준이 되므로 확인이 필요합니다 — 잘못 읽으면 이 기준으로 " +
                 "만든 프로파일이 전부 같은 방향으로 틀어집니다.",
         )

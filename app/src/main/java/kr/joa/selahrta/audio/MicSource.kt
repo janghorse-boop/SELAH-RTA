@@ -315,8 +315,23 @@ class MicSource(
         // 알아채지 못하면 **다른 마이크의 소리에 옛 보정값을 그대로 적용**하게
         // 된다 — 화면의 숫자는 멀쩡해 보이는데 전혀 다른 값이다.
         routingListener = AudioRouting.OnRoutingChangedListener { routing ->
-            val now = routing.routedDevice?.let { scanner.infoOf(it) } ?: return@OnRoutingChangedListener
             val known = opened
+            val now = routing.routedDevice?.let { scanner.infoOf(it) }
+            if (now == null) {
+                // **모르게 되었으면 그렇게 알린다**(독립 재검토 CAR-03).
+                //
+                // 예전에는 여기서 조용히 돌아갔다. 그러면 「확인했다」가
+                // 그대로 남아, 어디로 붙었는지 모르게 된 뒤에도 **옛
+                // 보정을 계속 걸면서 「보정 완료」로 표시**한다.
+                //
+                // 확인한 적이 있을 때만 알린다 — 확인 전이라면 아직
+                // 뒤집을 것이 없다.
+                if (known != null && known.routeConfirmed) {
+                    Log.w(TAG, "라우팅을 알 수 없게 되었다: ${known.deviceKey}")
+                    onRoutingChanged?.invoke(null)
+                }
+                return@OnRoutingChangedListener
+            }
             when {
                 // 아직 확인 못 했던 경로가 이제 잡혔다.
                 known != null && !known.routeConfirmed ->
