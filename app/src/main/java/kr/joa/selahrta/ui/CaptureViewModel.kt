@@ -1269,6 +1269,17 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     private fun watchCalibration(format: OpenedFormat) {
         calibrationJob?.cancel()
         val key = CalibrationKey.of(format)
+        // **이 경로에 맞는 기종 기본값**을 한 번 찾아 둔다(개발지시서 17장).
+        //
+        // 경로가 바뀌면 이 함수가 다시 불리므로 여기서 굳혀도 된다 —
+        // 표는 앱 안에 있어 도중에 변하지 않는다.
+        val factory = kr.joa.selahrta.calibration.findFactoryCalibration(
+            build = deviceBuild,
+            micKind = format.micKind,
+            source = format.audioSource,
+            routedAddress = format.routedAddress,
+            routeConfirmed = format.routeConfirmed,
+        )
         calibrationJob = viewModelScope.launch {
             store.watch(key).collect { saved ->
                 // **자리를 견주고 건다**(독립 재검토 CAR-03). 예전에는
@@ -1283,6 +1294,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                             saved,
                             nowRoute = format.routedAddress,
                             routeConfirmed = format.routeConfirmed,
+                            factory = factory,
                         ),
                     )
                 }
@@ -1607,12 +1619,33 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * 사람이 잰 보정값을 지운다.
+     *
+     * **기종 기본값은 지우지 않는다** — 지울 수 없다. 그것은 앱 안에
+     * 있고 [CalibrationStore] 에 없다. 그래서 여기서 지우고 나면 값이
+     * 없어지는 것이 아니라 **기본값으로 되돌아간다.** 화면이 그 말을
+     * 해야 사람이 「분명히 지웠는데 왜 숫자가 그대로지」를 겪지 않는다.
+     */
     fun clearCalibration() {
         val format = controller.confirmedFormat() ?: return
+        val factory = kr.joa.selahrta.calibration.findFactoryCalibration(
+            build = deviceBuild,
+            micKind = format.micKind,
+            source = format.audioSource,
+            routedAddress = format.routedAddress,
+            routeConfirmed = format.routeConfirmed,
+        )
         viewModelScope.launch {
             store.clear(CalibrationKey.of(format))
             controller.postToCapture { session -> session.engine.resetPeaks() }
-            controller.update { st -> st.copy(calibrationNoticeKo = "보정값을 지웠습니다.") }
+            val notice = if (factory != null) {
+                "잰 보정값을 지웠습니다. 이 기종의 기본값" +
+                    "(${"%+.1f".format(factory.offsetDb)} dB)으로 돌아갑니다."
+            } else {
+                "보정값을 지웠습니다."
+            }
+            controller.update { st -> st.copy(calibrationNoticeKo = notice) }
         }
     }
 

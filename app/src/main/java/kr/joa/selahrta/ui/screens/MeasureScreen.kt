@@ -319,10 +319,21 @@ fun MeasureScreen(
                 // 「미보정」 배지가 말하고 있어 같은 말이 두 번 나왔다.
                 // 다만 **색은 남긴다** — 단위가 주황이면 그 숫자가 아직
                 // 짐작임을 배지와 같은 색으로 잇는다(명세 1장).
+                //
+                // **주황은 「미보정」에만 쓴다.** 기종 기본값은 짐작이
+                // 아니라 잰 값이라, 같은 주황으로 물들이면 배지가 「기본값」
+                // 이라고 적은 것과 단위가 말하는 것이 어긋난다.
                 Text(
                     weighting.unitSuffix,
                     fontSize = 14.sp,
-                    color = if (uncalibrated) SelahColors.Warn else SelahColors.TextSecondary,
+                    color = if (
+                        capture.calibration.state ==
+                        kr.joa.selahrta.domain.CalibrationState.Uncalibrated
+                    ) {
+                        SelahColors.Warn
+                    } else {
+                        SelahColors.TextSecondary
+                    },
                 )
             }
         }
@@ -444,7 +455,7 @@ fun MeasureScreen(
                 weighting = weighting,
                 leqLabelKo = capture.meterSettings.leqWindow.labelKo,
                 timeWeightKo = capture.meterSettings.timeWeight.labelKo,
-                uncalibrated = uncalibrated,
+                calState = capture.calibration.state,
                 onClose = { shownMetric = null },
             )
         }
@@ -605,7 +616,7 @@ private fun MetricDialog(
     weighting: Weighting,
     leqLabelKo: String,
     timeWeightKo: String,
-    uncalibrated: Boolean,
+    calState: kr.joa.selahrta.domain.CalibrationState,
     onClose: () -> Unit,
 ) {
     val clipped = metric == Metric.Peak && meter.peakClipped
@@ -744,14 +755,31 @@ private fun MetricDialog(
                     }
                 }
 
-                if (uncalibrated) {
-                    Text(
+                // **미보정과 기종 기본값은 다른 말을 해야 한다.**
+                //
+                // 둘 다 「이 기기를 잰 값이 아니다」지만 그 다음이 다르다 —
+                // 미보정은 짐작이라 얼마나 틀릴지 모르고, 기본값은 같은
+                // 기종을 잰 값이라 개체 차이만큼만 틀린다. 한 문장으로
+                // 뭉치면 둘 중 하나는 거짓이 된다.
+                when (calState) {
+                    kr.joa.selahrta.domain.CalibrationState.Uncalibrated -> Text(
                         "지금은 미보정이라 이 숫자도 짐작입니다. 절대 음압은 " +
                             "기준 소음계나 1kHz 교정기로 맞춘 뒤에야 뜻이 있습니다.",
                         color = SelahColors.Warn,
                         fontSize = 11.sp,
                         lineHeight = 16.sp,
                     )
+
+                    kr.joa.selahrta.domain.CalibrationState.FactoryDefault -> Text(
+                        "지금은 같은 기종에서 잰 기본값이 걸려 있습니다. 짐작보다는 " +
+                            "가깝지만 이 기기를 잰 값은 아닙니다 — 기준 소음계나 " +
+                            "1kHz 교정기로 직접 맞추면 그 값이 대신 걸립니다.",
+                        color = SelahColors.TextSecondary,
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                    )
+
+                    else -> Unit
                 }
             }
         },

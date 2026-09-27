@@ -669,7 +669,7 @@ private fun TopBrandBar(capture: CaptureUiState) {
             }
             StatusPill(
                 capture.calibration.state.shortKo,
-                if (capture.calibration.isReferenceOnly) SelahColors.Warn else SelahColors.InRange,
+                kr.joa.selahrta.ui.theme.calibrationTone(capture.calibration.state),
             )
         }
     }

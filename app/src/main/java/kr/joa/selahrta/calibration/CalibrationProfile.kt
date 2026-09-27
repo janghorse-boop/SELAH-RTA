@@ -164,9 +164,27 @@ data class ActiveCalibration(
      * 다시 보정하면 곧바로 걸린다(독립 재검토 CAR-03).
      */
     val holdNoticeKo: String? = null,
+    /**
+     * 이 경로에 있는 **기종 기본값**. 지금 걸려 있든 아니든 채워진다.
+     *
+     * **걸려 있는지는 [usingFactory] 로 묻는다.** 둘을 한 칸에 담으면
+     * 「초기화하면 어디로 돌아가는가」를 화면이 말할 수 없다 — 사용자
+     * 값이 걸려 있는 동안 기본값이 null 이 되어 버리기 때문이다.
+     */
+    val factory: FactoryCalibration? = null,
 ) {
-    /** 이 값으로 나온 음압을 측정값이라 불러도 되는가. */
-    val isReferenceOnly: Boolean get() = state == CalibrationState.Uncalibrated
+    /** 지금 화면의 숫자가 기종 기본값으로 나온 것인가. */
+    val usingFactory: Boolean get() = state == CalibrationState.FactoryDefault
+    /**
+     * 이 값으로 나온 음압을 측정값이라 불러도 되는가.
+     *
+     * **기종 기본값도 여기서는 「아니다」다.** 개발자가 같은 기종을 재서
+     * 실어 둔 값이라 짐작보다는 훨씬 낫지만, **이 기기를 잰 것은 아니다.**
+     * 개체 차이는 남아 있고 사람은 그 차이를 화면에서 볼 수 없다.
+     */
+    val isReferenceOnly: Boolean
+        get() = state == CalibrationState.Uncalibrated ||
+            state == CalibrationState.FactoryDefault
 
     /** 저장된 값이 있는데 자리를 확인하지 못해 멈춰 둔 상태인가. */
     val heldForRoute: Boolean get() = holdNoticeKo != null
@@ -186,6 +204,13 @@ data class ActiveCalibration(
      * 복제**했다. CAR-03 의 보호가 그 경로에서만 무효였다.
      *
      * 값을 묻는 자리를 하나로 모은다. 둘을 따로 읽으면 한쪽만 고치게 된다.
+     *
+     * ## 기종 기본값은 여기로 나가지 않는다
+     *
+     * [isReferenceOnly] 가 기본값에서도 참이므로 이 값은 null 이다.
+     * 일부러 그렇게 두었다 — 기본값은 **다른 기기를 잰 값**이라 「이
+     * 경로의 감도」로 옮기면, 그 순간 개체 차이가 다른 마이크의 절대
+     * 보정으로 굳어 버린다.
      */
     val appliedOffsetDb: Double?
         get() = if (isReferenceOnly) null else saved?.offsetDb
@@ -206,28 +231,72 @@ data class ActiveCalibration(
          * 모르면 **걸지 않고 값만 들고 있는다** — 지우면 사람이 다시
          * 재야 하고, 그대로 걸면 근거 없이 승인하는 것이 된다.
          *
+         * ## 순서 (기종 기본값)
+         *
+         * 1. **사람이 이 기기에서 잰 값**이 걸 수 있는 상태면 그것.
+         * 2. 아니면 **기종 기본값**([factory]) — 짐작보다 낫다.
+         * 3. 그것도 없으면 짐작([ASSUMED_FULL_SCALE_SPL]).
+         *
+         * 1 이 2 를 **언제나** 이긴다. 기본값은 출발점이지 도착점이 아니다.
+         *
+         * 자리를 확인하지 못해 1 을 보류한 때에도 2 로 내려온다. 그때는
+         * 보류 까닭과 기본값 안내를 **함께** 적는다 — 저장된 값이 왜 안
+         * 걸렸는지 모른 채 숫자만 바뀌면 사람이 화면을 못 믿는다.
+         *
          * @param nowRoute 지금 열린 경로의 자리. 모르면 빈 문자열.
          * @param routeConfirmed 지금 경로를 실제로 확인했는가.
+         * @param factory 이 경로에 맞는 기종 기본값. 없으면 null.
          */
         fun from(
             saved: GlobalCalibration?,
             nowRoute: String = "",
             routeConfirmed: Boolean = false,
+            factory: FactoryCalibration? = null,
         ): ActiveCalibration {
-            if (saved == null) return assumed
+            if (saved == null) return fallback(factory, saved = null, holdNoticeKo = null)
             val verdict = judgeCalibrationRoute(saved.routeAddress, nowRoute, routeConfirmed)
             if (verdict.mayAutoApply) {
                 return ActiveCalibration(
-                    saved.toOffset(),
-                    CalibrationState.GlobalCalibrated,
-                    saved,
+                    offset = saved.toOffset(),
+                    state = CalibrationState.GlobalCalibrated,
+                    saved = saved,
+                    // 걸지는 않지만 **들고 있는다.** 「초기화하면 어디로
+                    // 돌아가는지」를 화면이 미리 말할 수 있어야 한다.
+                    factory = factory,
+                )
+            }
+            return fallback(
+                factory = factory,
+                saved = saved,
+                holdNoticeKo = routeNoticeKo(verdict, saved.routeAddress, nowRoute),
+            )
+        }
+
+        /** 사람이 잰 값을 걸 수 없을 때 — 기본값이 있으면 그것, 없으면 짐작. */
+        private fun fallback(
+            factory: FactoryCalibration?,
+            saved: GlobalCalibration?,
+            holdNoticeKo: String?,
+        ): ActiveCalibration {
+            if (factory == null) {
+                return ActiveCalibration(
+                    offset = CalibrationOffset(ASSUMED_FULL_SCALE_SPL),
+                    state = CalibrationState.Uncalibrated,
+                    saved = saved,
+                    holdNoticeKo = holdNoticeKo,
+                    factory = null,
                 )
             }
             return ActiveCalibration(
-                offset = CalibrationOffset(ASSUMED_FULL_SCALE_SPL),
-                state = CalibrationState.Uncalibrated,
+                offset = CalibrationOffset(factory.offsetDb),
+                state = CalibrationState.FactoryDefault,
                 saved = saved,
-                holdNoticeKo = routeNoticeKo(verdict, saved.routeAddress, nowRoute),
+                // 보류 까닭에 **무엇으로 대신하고 있는지**를 붙인다.
+                holdNoticeKo = holdNoticeKo?.let {
+                    "$it 그동안은 기종 기본값(${"%+.1f".format(factory.offsetDb)} dB)으로 " +
+                        "보여 드립니다."
+                },
+                factory = factory,
             )
         }
     }

@@ -8,6 +8,7 @@ import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.AudioTimestamp
 import android.media.AudioRouting
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.Process
@@ -281,6 +282,21 @@ class MicSource(
         if (!asRequested) {
             Log.w(TAG, "고른 기기와 다른 곳으로 열렸다: ${target?.stableKey} → ${info.stableKey}")
         }
+        // **실제로 소리를 받는 마이크를 여기서 묻는다**(개발지시서 4장).
+        //
+        // 녹음을 시작한 뒤라야 답이 나온다 — 경로를 확인하는 바로 이
+        // 자리가 그 시점이다. 지시서 18장이 「매 프레임마다 조회하여
+        // 성능을 저하시키지 않는다」고 했고, 여기는 그 말이 허락한 네
+        // 시점(시작 직후·입력 변경 직후·재생성 직후·Resume) 위다.
+        val active = activeMicsOf(rec)
+        val changeKo = activeMicChangeKo(provisional.activeMics, active)
+        if (changeKo != null) {
+            Log.w(
+                TAG,
+                "활성 마이크 조합이 바뀌었다: " +
+                    "${activeMicComboKey(provisional.activeMics)} → ${activeMicComboKey(active)}",
+            )
+        }
         val fmt = provisional.copy(
             micKind = info.kind,
             deviceLabel = info.displayName,
@@ -291,13 +307,30 @@ class MicSource(
             routedAddress = info.address,
             routedAsRequested = asRequested,
             routeConfirmed = true,
+            activeMics = active,
+            activeMicChangeKo = changeKo,
         )
         opened = fmt
-        // **주소도 함께 적는다.** 내장 마이크의 열쇠에는 주소가 없어
-        // (2026-09-23 결정) 로그만 보고는 어느 자리로 열렸는지 알 수 없다.
-        // 보정이 그 자리에 매이므로 진단에 꼭 필요하다(독립 재검토 CA-R03).
-        Log.i(TAG, "경로 확인: ${fmt.deviceKey} addr=${fmt.routedAddress.ifEmpty { "(없음)" }}")
+        // **지시서 22장의 로그.** 주소가 꼭 들어가야 한다 — 내장 마이크의
+        // 열쇠에는 주소가 없어(2026-09-23 결정) 로그만 보고는 어느 자리로
+        // 열렸는지 알 수 없고, 보정이 그 자리에 매인다(독립 재검토 CA-R03).
+        Log.i(
+            TAG,
+            "경로 확인: " +
+                fmt.diagnosticLinesKo().joinToString(" | ") { "${it.first}=${it.second}" },
+        )
         return fmt
+    }
+
+    /**
+     * 지금 녹음에 쓰이는 마이크들. **모르면 빈 목록**이다.
+     *
+     * `getActiveMicrophones()` 는 API 28 부터다. `minSdk` 는 26 이라 그
+     * 아래에서는 물어볼 길이 없다 — 없는 것을 있는 것처럼 적지 않는다.
+     */
+    private fun activeMicsOf(rec: AudioRecord): List<ActiveMicInfo> {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return emptyList()
+        return runCatching { rec.activeMicrophones }.getOrNull().orEmpty().map { it.toInfo() }
     }
 
     override fun start(onBlock: (AudioBlock, BlockStats) -> Unit) {
@@ -355,6 +388,20 @@ class MicSource(
                     Log.w(TAG, "마이크 자리가 바뀌었다: ${known.routedAddress} → ${now.address}")
                     onRoutingChanged?.invoke(now)
                 }
+
+                // **기기도 자리도 그대로인데 조합만 바뀌는 자리**
+                // (개발지시서 18장). 지시서가 든 예가 바로 이것이다 —
+                // `Mic 5 + Mic 7` 로 시작했다가 `Mic 5` 만 남는다.
+                //
+                // 열쇠도 주소도 그대로라 위의 두 갈래가 잡지 못한다.
+                // 그러면 **옛 조합으로 맞춘 보정값이 그대로 걸린 채**
+                // 숫자만 어긋나고, 화면은 멀쩡해 보인다.
+                //
+                // 라우팅 통지가 온 때만 본다 — 지시서가 말한 「입력 변경
+                // 직후」다. 프레임마다 묻지 않는다.
+                known != null -> confirmRoute(rec)
+                    ?.takeIf { it.activeMicChangeKo != null }
+                    ?.let { onRouteConfirmed?.invoke(it) }
             }
         }
         rec.addOnRoutingChangedListener(routingListener, Handler(Looper.getMainLooper()))

@@ -112,7 +112,45 @@ data class OpenedFormat(
      * 것이 아니다.** 그 상태로 보정값을 걸면 안 된다.
      */
     val routeConfirmed: Boolean = false,
+    /**
+     * **녹음 중 실제로 소리를 받는 마이크들**(개발지시서 4장).
+     *
+     * `AudioRecord.getActiveMicrophones()` 가 알려 준 것이다. 녹음을
+     * 시작한 뒤에만 뜻이 있어 [routeConfirmed] 와 같은 자리에서 읽는다.
+     *
+     * **빈 목록은 「없다」가 아니라 「모른다」다.** 안드로이드 28 아래에서는
+     * 물어볼 수 없고, 그 위에서도 제조사에 따라 빈 목록을 준다. 견주는
+     * 규칙은 [activeMicChangeKo] 에 있다.
+     */
+    val activeMics: List<ActiveMicInfo> = emptyList(),
+    /**
+     * 재는 도중에 마이크 조합이 바뀌었다면 그 말(지시서 18장). 아니면 null.
+     *
+     * 바뀌면 **보정값은 옛 조합의 것**이라 숫자가 그만큼 어긋나는데
+     * 화면은 그대로 멀쩡해 보인다. 그래서 형식에 실어 화면까지 올린다.
+     */
+    val activeMicChangeKo: String? = null,
 ) {
+    /**
+     * 진단 한 덩어리(지시서 15·22장).
+     *
+     * 지시서가 적으라고 한 것을 한 자리에 모은다 — 입력·자리·소스·격자·
+     * 채널·활성 마이크. **로그와 화면이 같은 것을 보게** 하려고 한 자리에
+     * 둔다. 따로 적으면 한쪽만 고치게 된다.
+     */
+    fun diagnosticLinesKo(): List<Pair<String, String>> = listOf(
+        "입력" to deviceLabel,
+        "자리" to routedAddress.ifEmpty { "확인 불가" },
+        "Audio Source" to audioSource.labelKo,
+        "격자" to "$sampleRate Hz",
+        "채널" to if (channelCount > 1) {
+            "$channelCount 개 중 ${channelIndex + 1}번"
+        } else {
+            "1개(모노)"
+        },
+        "활성 마이크" to activeMicComboKo(activeMics),
+    )
+
     /**
      * 지금 들어오는 소리를 얼마나 믿을 수 있는가. 화면에 그대로 띄운다.
      *
