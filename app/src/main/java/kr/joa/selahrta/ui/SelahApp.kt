@@ -551,6 +551,7 @@ fun SelahApp() {
                             onDismissNotice = vm::dismissHistoryNotice,
                             audioFileOf = { vm.audioFileOf(it) ?: java.io.File("") },
                             onShareAudio = vm::shareAudioOnly,
+                        onMemo = vm::setSessionMemo,
                             rows = capture.openedRows,
                         )
                     }

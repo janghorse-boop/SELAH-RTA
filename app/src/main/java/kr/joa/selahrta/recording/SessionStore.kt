@@ -76,6 +76,29 @@ class SessionStore(private val root: File) {
         }
     }
 
+    /**
+     * 메모만 고쳐 쓴다(명세 12장).
+     *
+     * ## 통째로 다시 쓴다
+     *
+     * 겉장은 `키=값` 줄의 묶음이라 한 줄만 바꿔치기할 수도 있지만,
+     * 그렇게 하면 **읽는 쪽과 쓰는 쪽이 갈라진다** — 인코더가 바뀌면
+     * 조용히 어긋난다. 읽어서 고치고 통째로 다시 쓰는 편이 안전하다.
+     * 쓰는 자리는 [writeMeta] 하나뿐이므로 임시 파일 안전장치도 그대로
+     * 따라온다.
+     *
+     * ## 빈 메모는 지우기다
+     *
+     * 공백만 적으면 화면에 빈 줄이 생긴다. 앞뒤를 떼고, 남는 것이
+     * 없으면 「없음」으로 돌아간다.
+     *
+     * @return 없는 기록이면 실패. **조용히 새로 만들지 않는다.**
+     */
+    fun setMemo(id: String, memo: String): Result<Unit> = runCatching {
+        val meta = readMeta(id).getOrThrow()
+        writeMeta(meta.copy(memo = memo.trim().take(MEMO_MAX))).getOrThrow()
+    }
+
     /** 겉장 하나를 읽는다. */
     fun readMeta(id: String): Result<SessionMeta> = runCatching {
         val f = metaFile(id)

@@ -2233,6 +2233,34 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      *
      * 되돌릴 수 없으므로 묻는 일은 화면이 한다.
      */
+    /**
+     * 기록에 메모를 적는다(명세 12장).
+     *
+     * **열어 둔 기록도 함께 갱신한다.** 목록만 새로 읽으면 지금 보고
+     * 있는 화면은 옛 메모를 그대로 들고 있어, 적었는데 안 적힌 것처럼
+     * 보인다.
+     */
+    fun setSessionMemo(id: String, memo: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val r = sessionStore.setMemo(id, memo)
+            val updated = r.map { sessionStore.readMeta(id).getOrNull() }.getOrNull()
+            onMainThread {
+                controller.update {
+                    it.copy(
+                        // 열어 둔 것이 이 기록이면 갈아 끼운다.
+                        openedSession = if (it.openedSession?.id == id && updated != null) {
+                            updated
+                        } else {
+                            it.openedSession
+                        },
+                        historyNoticeKo = if (r.isSuccess) null else "메모를 저장하지 못했습니다.",
+                    )
+                }
+            }
+            refreshSessions()
+        }
+    }
+
     fun deleteSession(meta: kr.joa.selahrta.recording.SessionMeta) {
         viewModelScope.launch(Dispatchers.IO) {
             val ok = sessionStore.delete(meta.id).isSuccess
