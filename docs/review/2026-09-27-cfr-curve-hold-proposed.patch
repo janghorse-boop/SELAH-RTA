@@ -1,0 +1,124 @@
+diff --git a/app/src/main/java/kr/joa/selahrta/calibration/CurveStore.kt b/app/src/main/java/kr/joa/selahrta/calibration/CurveStore.kt
+index 687b1bd..7dc0f38 100644
+--- a/app/src/main/java/kr/joa/selahrta/calibration/CurveStore.kt
++++ b/app/src/main/java/kr/joa/selahrta/calibration/CurveStore.kt
+@@ -13,6 +13,7 @@ import kr.joa.selahrta.dsp.CalibrationCurve
+ import kr.joa.selahrta.dsp.CalibrationFile
+ import kr.joa.selahrta.dsp.ReadingStakes
+ import kr.joa.selahrta.dsp.decideReading
++import kr.joa.selahrta.dsp.signEvidenceOf
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.flow.Flow
+ import kotlinx.coroutines.flow.catch
+@@ -59,7 +60,11 @@ data class ActiveCurve(
+      * 다시 가져오게 하면 아무도 견주지 않는다(USB 오디오 지시서 11장).
+      */
+     val enabled: Boolean = true,
+-)
++) {
++    /** A plain on/off toggle is not confirmation of the file's sign convention. */
++    val readingConfirmationNeeded: Boolean
++        get() = !decideReading(signEvidenceOf(headerLines), ReadingStakes.DisplayCurve).settled
++}
+ 
+ /**
+  * 주파수 보정이 어디까지 걸리는지.
+@@ -174,7 +179,7 @@ class CurveStore(private val context: Context) {
+                 val name = prefs[nameKey(key)] ?: return@map null
+                 val f = fileFor(key)
+                 if (!f.exists()) return@map null
+-                val loaded = runCatching { CalibrationFile.load(f.readText()) }
++                val loaded = runCatching { CalibrationFile.load(f.readText().removePrefix(KEY_COMMENT_PREFIX + key.storageKey() + "\n")) }
+                     .getOrNull()?.getOrNull() ?: return@map null
+                 ActiveCurve(
+                     curve = loaded.curve,
+@@ -182,7 +187,8 @@ class CurveStore(private val context: Context) {
+                     pointCount = prefs[countKey(key)] ?: loaded.pointCount,
+                     headerLines = loaded.headerLines,
+                     importedAtEpochMs = prefs[atKey(key)] ?: 0L,
+-                    enabled = prefs[onKey(key)] != "false",
++                    enabled = prefs[onKey(key)] != "false" &&
++                        decideReading(loaded.signEvidence, ReadingStakes.DisplayCurve).settled,
+                     micName = prefs[micNameKey(key)].orEmpty(),
+                 )
+             }
+@@ -236,6 +242,13 @@ class CurveStore(private val context: Context) {
+      * 전·후를 견주지 못한다.
+      */
+     suspend fun setEnabled(key: CalibrationKey, on: Boolean) = withContext(Dispatchers.IO) {
++        if (on) {
++            val loaded = runCatching { CalibrationFile.load(fileFor(key).readText().removePrefix(KEY_COMMENT_PREFIX + key.storageKey() + "\n")).getOrThrow() }
++                .getOrNull() ?: return@withContext
++            if (!decideReading(loaded.signEvidence, ReadingStakes.DisplayCurve).settled) {
++                return@withContext
++            }
++        }
+         runCatching {
+             context.curveDataStore.edit { p -> p[onKey(key)] = on.toString() }
+         }
+@@ -268,3 +281,5 @@ class CurveStore(private val context: Context) {
+         Unit
+     }
+ }
++
++
+diff --git a/app/src/main/java/kr/joa/selahrta/ui/components/CurveCard.kt b/app/src/main/java/kr/joa/selahrta/ui/components/CurveCard.kt
+index 7d240e1..82a91dc 100644
+--- a/app/src/main/java/kr/joa/selahrta/ui/components/CurveCard.kt
++++ b/app/src/main/java/kr/joa/selahrta/ui/components/CurveCard.kt
+@@ -86,6 +86,7 @@ fun CurveCard(
+                     curve == null -> "없음"
+                     // **「꺼 둠」과 「없음」은 다른 상태다.** 파일은 그대로 있고,
+                     // 다시 켤 때 가져올 필요가 없다.
++                    curve.readingConfirmationNeeded -> "파일 확인 필요"
+                     !curve.enabled -> "꺼 둠"
+                     else -> "적용됨"
+                 },
+@@ -111,6 +112,12 @@ fun CurveCard(
+         InfoBar(FREQUENCY_SCOPE_NOTE, tone = SelahColors.Warn)
+ 
+         if (curve != null) {
++            if (curve.readingConfirmationNeeded) {
++                InfoBar(
++                    "파일의 응답/보정값 해석을 확인해야 합니다. 아래 곡선은 미리보기이며 측정 보정에는 적용하지 않습니다.",
++                    tone = SelahColors.Warn,
++                )
++            }
+             CurveGraph(curve.curve, Modifier.fillMaxWidth().height(120.dp))
+             Text(
+                 "${curve.fileName} · 점 ${curve.pointCount}개 · " +
+@@ -207,6 +214,7 @@ fun CurveCard(
+                 }
+                 Switch(
+                     checked = curve.enabled,
++                    enabled = !curve.readingConfirmationNeeded,
+                     onCheckedChange = onToggleEnabled,
+                 )
+             }
+@@ -446,3 +454,4 @@ private fun CurveClearRow(label: String, value: String) {
+         )
+     }
+ }
++
+diff --git a/app/src/main/java/kr/joa/selahrta/ui/CaptureViewModel.kt b/app/src/main/java/kr/joa/selahrta/ui/CaptureViewModel.kt
+index defdc5c..e2e07d9 100644
+--- a/app/src/main/java/kr/joa/selahrta/ui/CaptureViewModel.kt
++++ b/app/src/main/java/kr/joa/selahrta/ui/CaptureViewModel.kt
+@@ -1396,7 +1396,11 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
+                                 "sign=${loaded?.signEvidence} points=${c.pointCount}",
+                         )
+                         buildString {
+-                            append("${c.fileName} 을(를) 적용했습니다. 점 ${c.pointCount}개.")
++                            if (c.enabled) {
++                                append("${c.fileName} 을(를) 적용했습니다. 점 ${c.pointCount}개.")
++                            } else {
++                                append("${c.fileName} 을(를) 가져왔습니다. 읽는 방식을 확인하기 전에는 적용하지 않습니다. 점 ${c.pointCount}개.")
++                            }
+                             warn?.let { append(" ").append(it) }
+                         }
+                     },
+@@ -1899,3 +1903,4 @@ private fun RtaFrame.toView(
+         BooleanArray(covered.size) { !covered[it] }
+     },
+ )
++
