@@ -1,0 +1,46 @@
+diff --git a/app/src/main/java/kr/joa/selahrta/calibration/WizardCoordinator.kt b/app/src/main/java/kr/joa/selahrta/calibration/WizardCoordinator.kt
+index 70f2665..26bc11b 100644
+--- a/app/src/main/java/kr/joa/selahrta/calibration/WizardCoordinator.kt
++++ b/app/src/main/java/kr/joa/selahrta/calibration/WizardCoordinator.kt
+@@ -426,7 +426,14 @@ class WizardCoordinator(
+         // `quality`·`outcome` 이 그대로 남아 있으면, 새 시도가 끝나기도
+         // 전에 저장 관문이 **지난 Pass** 를 보고 통과시킨다. 다시 재겠다고
+         // 누른 순간 그 결과는 더 이상 지금을 설명하지 않는다.
+-        if (session.frameCount(step) > 0) discardStep(step)
++        // A fresh measurement must precede every dependent stage.
++        // Earlier valid stages remain reusable; later stages must be collected again.
++        val dependentSteps = when (step) {
++            MeasureStep.ReferenceBefore -> listOf(MeasureStep.ReferenceBefore, MeasureStep.Target, MeasureStep.ReferenceAfter)
++            MeasureStep.Target -> listOf(MeasureStep.Target, MeasureStep.ReferenceAfter)
++            MeasureStep.ReferenceAfter -> listOf(MeasureStep.ReferenceAfter)
++        }
++        dependentSteps.forEach { discardStep(it) }
+ 
+         // **이 단계의 증거를 쓴다**(독립 재검토 CA-R02). 예전에는 「마지막에
+         // 점검한 것」(`st.noiseFloorDb`)을 넘겼는데, 그것이 다른 기기·다른
+@@ -797,3 +804,4 @@ fun stepNameKo(step: MeasureStep): String = when (step) {
+     MeasureStep.Target -> "대상"
+     MeasureStep.ReferenceAfter -> "기준(마지막)"
+ }
++
+diff --git a/dsp/src/main/kotlin/kr/joa/selahrta/dsp/CalibrationSign.kt b/dsp/src/main/kotlin/kr/joa/selahrta/dsp/CalibrationSign.kt
+index 068d2b2..2375140 100644
+--- a/dsp/src/main/kotlin/kr/joa/selahrta/dsp/CalibrationSign.kt
++++ b/dsp/src/main/kotlin/kr/joa/selahrta/dsp/CalibrationSign.kt
+@@ -382,9 +382,7 @@ fun decideReading(
+     // `# Correction factors` + `Frequency (Hz),Response (dB)` 가 그렇게
+     // 통과했다. 모르는 것은 관례로 갈 수 있지만 **어긋나는 것은 물어야**
+     // 한다.
+-    if (evidence == SignEvidence.Conflicting &&
+-        stakes == ReadingStakes.ReferenceForCalibration
+-    ) {
++    if (evidence == SignEvidence.Conflicting) {
+         val suggest = (columns as? ColumnDeclaration.Second)?.reading ?: CurveReading.Response
+         return ReadingDecision.NeedsPerson(
+             suggest,
+@@ -537,3 +535,5 @@ fun describeShapeKo(shape: CurveShape): String {
+     }
+     return "$head $tail 어느 쪽인지는 제조사 설명으로 확인하십시오."
+ }
++
++

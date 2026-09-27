@@ -389,9 +389,85 @@ class WizardCoordinatorTest {
         assertNotNull("사람에게 말해야 한다", core.noticeKo.value)
     }
 
-    /** 대조군 — **같은 채널**로 다시 재면 멀쩡한 것을 다시 재게 하지 않는다. */
+    /**
+     * **같은 입력이어도 뒤 단계는 버린다**(독립 재검토 CFR-01).
+     *
+     * 예전 계약은 「같은 경로면 남긴다」였다. 멀쩡한 대상 120장을 다시
+     * 재게 하지 않으려던 것인데, **경로가 같다고 순서가 맞는 것은
+     * 아니다.**
+     *
+     * 두 기준의 차이로 「재는 동안 무엇이 변했나」를 보는데, 두 기준을
+     * 다 잰 뒤 첫 기준만 다시 재면 마지막 기준이 **시간상 앞**에 놓인다.
+     * 그 상태의 차이는 아무것도 말하지 않는다.
+     */
     @Test
-    fun `같은 입력으로 처음 기준을 다시 재면 나머지는 남는다`() = runTest {
+    fun `같은 입력으로 처음 기준을 다시 재도 뒤 단계는 버린다`() = runTest {
+        val scope = TestScope(UnconfinedTestDispatcher(testScheduler))
+        val core = coordinator(scope)
+        loadFlatCal(core)
+
+        val ref = FakeCapture(identity(0, "card=1;device=0"))
+        val tgt = FakeCapture(builtInIdentity())
+        check(core, ref)
+        check(core, tgt)
+        core.measureStep(MeasureStep.ReferenceBefore, ref, fft, rate, ticker(ref) { 1e-6 })
+        testScheduler.advanceUntilIdle()
+        core.measureStep(MeasureStep.Target, tgt, fft, rate, ticker(tgt) { 1e-6 })
+        testScheduler.advanceUntilIdle()
+        core.measureStep(MeasureStep.ReferenceAfter, ref, fft, rate, ticker(ref) { 1e-6 })
+        testScheduler.advanceUntilIdle()
+        assertNotNull("전제 — 정상 순서는 셈이 나와야 한다", core.state.value.outcome)
+
+        // **같은 입력**으로 처음 기준만 다시 잰다.
+        core.measureStep(MeasureStep.ReferenceBefore, ref, fft, rate, ticker(ref) { 1e-6 })
+        testScheduler.advanceUntilIdle()
+
+        assertEquals("대상이 남았다", 0, core.framesFor(MeasureStep.Target))
+        assertEquals("마지막 기준이 남았다", 0, core.framesFor(MeasureStep.ReferenceAfter))
+        assertNull("옛 셈이 남았다", core.state.value.outcome)
+        assertNotNull("무엇을 버렸는지 말해야 한다", core.noticeKo.value)
+        // 다시 잰 첫 기준은 남는다 — 그것이 지금 시도의 출발점이다.
+        assertTrue(core.framesFor(MeasureStep.ReferenceBefore) > 0)
+    }
+
+    /**
+     * **대상을 다시 재면 마지막 기준만 다시 요구한다**(CFR-01).
+     *
+     * 검토자가 대상 전력만 10배로 올려 다시 재고 Pass 를 받아 냈다 —
+     * 두 기준을 다 잰 뒤의 변화는 그 둘의 차이에 나타날 수 없다.
+     */
+    @Test
+    fun `대상을 다시 재면 마지막 기준을 다시 요구한다`() = runTest {
+        val scope = TestScope(UnconfinedTestDispatcher(testScheduler))
+        val core = coordinator(scope)
+        loadFlatCal(core)
+
+        val ref = FakeCapture(identity(0, "card=1;device=0"))
+        val tgt = FakeCapture(builtInIdentity())
+        check(core, ref)
+        check(core, tgt)
+        core.measureStep(MeasureStep.ReferenceBefore, ref, fft, rate, ticker(ref) { 1e-6 })
+        testScheduler.advanceUntilIdle()
+        core.measureStep(MeasureStep.Target, tgt, fft, rate, ticker(tgt) { 1e-6 })
+        testScheduler.advanceUntilIdle()
+        core.measureStep(MeasureStep.ReferenceAfter, ref, fft, rate, ticker(ref) { 1e-6 })
+        testScheduler.advanceUntilIdle()
+        assertNotNull("전제", core.state.value.outcome)
+
+        // 대상만 **전력을 10배로** 올려 다시 잰다.
+        core.measureStep(MeasureStep.Target, tgt, fft, rate, ticker(tgt) { 1e-5 })
+        testScheduler.advanceUntilIdle()
+
+        assertEquals("마지막 기준이 남았다", 0, core.framesFor(MeasureStep.ReferenceAfter))
+        assertNull("옛 셈으로 통과했다", core.state.value.outcome)
+        assertNull(core.state.value.levelTransfer)
+        // 앞선 첫 기준은 시간상 여전히 앞이라 그대로 쓴다.
+        assertTrue("멀쩡한 첫 기준까지 버렸다", core.framesFor(MeasureStep.ReferenceBefore) > 0)
+    }
+
+    /** 마지막 기준만 다시 재는 것은 **앞을 건드리지 않는다.** */
+    @Test
+    fun `마지막 기준만 다시 재면 앞은 그대로다`() = runTest {
         val scope = TestScope(UnconfinedTestDispatcher(testScheduler))
         val core = coordinator(scope)
         loadFlatCal(core)
@@ -407,14 +483,11 @@ class WizardCoordinatorTest {
         core.measureStep(MeasureStep.ReferenceAfter, ref, fft, rate, ticker(ref) { 1e-6 })
         testScheduler.advanceUntilIdle()
 
-        core.measureStep(MeasureStep.ReferenceBefore, ref, fft, rate, ticker(ref) { 1e-6 })
+        core.measureStep(MeasureStep.ReferenceAfter, ref, fft, rate, ticker(ref) { 1e-6 })
         testScheduler.advanceUntilIdle()
 
-        assertTrue(
-            "같은 입력인데 마지막 기준을 버렸다",
-            core.framesFor(MeasureStep.ReferenceAfter) > 0,
-        )
-        assertTrue("대상까지 버렸다", core.framesFor(MeasureStep.Target) > 0)
+        assertTrue(core.framesFor(MeasureStep.ReferenceBefore) > 0)
+        assertTrue(core.framesFor(MeasureStep.Target) > 0)
         assertNotNull("다시 셈이 나야 한다", core.state.value.outcome)
     }
 

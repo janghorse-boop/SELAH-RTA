@@ -420,13 +420,39 @@ class WizardCoordinator(
             return
         }
 
-        // **다시 재기 시작하면 옛 판정을 먼저 버린다**(독립 재검토 CARF-04).
+        // **다시 재면 그 뒤 단계까지 버린다**(독립 재검토 CFR-01).
         //
-        // 화면의 「다시」는 이미 장이 있는 단계에도 눌린다. 그때 옛
-        // `quality`·`outcome` 이 그대로 남아 있으면, 새 시도가 끝나기도
-        // 전에 저장 관문이 **지난 Pass** 를 보고 통과시킨다. 다시 재겠다고
-        // 누른 순간 그 결과는 더 이상 지금을 설명하지 않는다.
-        if (session.frameCount(step) > 0) discardStep(step)
+        // 처음에는 그 단계만 버렸다. 「같은 경로면 멀쩡한 것을 다시 재게
+        // 하지 말자」는 생각이었는데, **경로가 같다고 순서가 맞는 것은
+        // 아니다.**
+        //
+        // 이 순서는 「기준 → 대상 → 기준」이고, 두 기준의 차이로 **재는
+        // 동안 무엇이 변했는지**를 본다(`CalibrationSession` 의 계약).
+        // 두 기준을 다 잰 뒤에 대상만 다시 재면, 그 대상의 변화는 두
+        // 기준 사이에 있지 않으므로 **차이에 나타날 수 없다.** 검토자가
+        // 대상 전력만 10배로 올려 다시 재고 Pass 를 받아 냈다:
+        //
+        // ```
+        // TARGET_AFTER_FINAL_REFERENCE retainedBefore=120 retainedAfter=120
+        // targetPowerRatio=10 verdict=Pass
+        // ```
+        //
+        // 순서가 맞는다고 모든 변화가 잡히는 것은 아니지만, **순서가
+        // 틀리면 전후 점검이라는 것 자체가 성립하지 않는다.**
+        //
+        // 시간상 **앞선** 단계는 그대로 둔다 — 그것까지 버리면 멀쩡히 잰
+        // 것을 다시 재게 한다.
+        val dropped = dependentSteps(step).filter { session.frameCount(it) > 0 }
+        dropped.forEach { discardStep(it) }
+        // **무엇을 왜 버렸는지 말한다.** 말없이 지우면 다음 화면에서
+        // 「아까 잰 것이 어디 갔지」가 된다.
+        val alsoDropped = dropped.filter { it != step }
+        if (alsoDropped.isNotEmpty()) {
+            _noticeKo.value = "${stepNameKo(step)} 을(를) 다시 재므로 " +
+                alsoDropped.joinToString("·") { stepNameKo(it) } +
+                " 도 버렸습니다. 기준→대상→기준 순서로 재야 그 사이의 변화를 볼 수 있습니다 — " +
+                "이어서 다시 재십시오."
+        }
 
         // **이 단계의 증거를 쓴다**(독립 재검토 CA-R02). 예전에는 「마지막에
         // 점검한 것」(`st.noiseFloorDb`)을 넘겼는데, 그것이 다른 기기·다른
@@ -491,10 +517,6 @@ class WizardCoordinator(
                         // 썼고, 그래서 첫 기준만 바꾸면 옛 채널 자료가 새
                         // 이름표를 물려받았다.
                         _state.update { it.copy(stepIdentities = it.stepIdentities + (step to startId)) }
-                        // **경로가 바뀐 첫 기준은 마지막 기준을 못 쓰게 한다.**
-                        // 전후 기준은 같은 마이크여야 뜻이 있다 — 다르면 그
-                        // 둘의 차이가 무엇 때문인지 말할 수 없다.
-                        if (step == MeasureStep.ReferenceBefore) dropStaleReferenceAfter(startId)
                         if (session.complete) finishMeasurement()
                     }
                 }
@@ -510,22 +532,23 @@ class WizardCoordinator(
     // 「실제로 막는가」를 확인할 수 있기 때문이다(CAR-01·CAR-05).
 
     /**
-     * 첫 기준을 **다른 경로로** 다시 쟀다 — 마지막 기준의 옛 장을 버린다.
+     * 이 단계를 다시 재면 **함께 버려야 하는** 단계들(독립 재검토 CFR-01).
      *
-     * 같은 경로로 다시 잰 것이면 그대로 둔다. 「첫 기준이 잘 안 잡혀서
-     * 다시」는 흔한 일이고, 그때 멀쩡한 대상 120장까지 다시 재게 하면
-     * 사람이 화면을 믿지 않게 된다.
+     * 자기 자신과 **그 뒤**다. 앞선 단계는 시간상 여전히 앞이라 그대로
+     * 쓸 수 있다.
+     *
+     * 경로가 같은지 다른지는 묻지 않는다. 같은 마이크로 다시 재도
+     * **순서는 어긋난다** — 그것이 이 규칙의 요점이다.
      */
-    private fun dropStaleReferenceAfter(newBefore: CaptureIdentity) {
-        val after = _state.value.stepIdentities[MeasureStep.ReferenceAfter] ?: return
-        if (after.sameRouteAs(newBefore)) return
-        session.discard(MeasureStep.ReferenceAfter)
-        _state.update {
-            it.discardingStep(MeasureStep.ReferenceAfter)
-                .copy(stepIdentities = it.stepIdentities - MeasureStep.ReferenceAfter)
-        }
-        _noticeKo.value = "기준을 다른 입력(${newBefore.labelKo()})으로 다시 쟀습니다. " +
-            "마지막 기준은 앞의 입력으로 잰 것이라 함께 쓸 수 없어 버렸습니다 — 다시 재십시오."
+    private fun dependentSteps(step: MeasureStep): List<MeasureStep> = when (step) {
+        MeasureStep.ReferenceBefore -> listOf(
+            MeasureStep.ReferenceBefore,
+            MeasureStep.Target,
+            MeasureStep.ReferenceAfter,
+        )
+
+        MeasureStep.Target -> listOf(MeasureStep.Target, MeasureStep.ReferenceAfter)
+        MeasureStep.ReferenceAfter -> listOf(MeasureStep.ReferenceAfter)
     }
 
     /** 세 번이 다 찼다. 셈해서 5단계에 올린다. */
