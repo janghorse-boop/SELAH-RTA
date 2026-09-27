@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
@@ -50,10 +51,16 @@ fun SegmentRangeCard(
     onReset: () -> Unit,
     /** 이름을 고친다. 빈 값이면 기본 이름으로 되돌린다. */
     onRename: (String) -> Unit,
+    /**
+     * 이 구간을 뺀다. **null 이면 뺄 수 없는 구간**(설교·찬양)이라
+     * 단추를 그리지 않는다.
+     */
+    onRemove: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     var editing by remember(segment) { mutableStateOf(false) }
     var renaming by remember(segment) { mutableStateOf(false) }
+    var confirmRemove by remember(segment) { mutableStateOf(false) }
 
     Column(
         modifier
@@ -76,22 +83,10 @@ fun SegmentRangeCard(
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
                 )
-                if (isCustomName) {
-                    Text(
-                        "  고친 이름",
-                        color = SelahColors.Accent,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
-                if (isCustom) {
-                    Text(
-                        "  고친 값",
-                        color = SelahColors.Accent,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
+                // **「고친 값」·「고친 이름」 배지는 뺐다**(담당자 지시
+                // 2026-09-28). 고쳤다는 사실이 화면에 늘 붙어 있을 까닭이
+                // 없다 — 고친 값이 곧 그 사람의 값이다. 되돌릴 길은
+                // 아래 「기본값으로」가 그대로 맡는다.
             }
             Row {
                 TextButton(onClick = { renaming = !renaming }) {
@@ -171,6 +166,38 @@ fun SegmentRangeCard(
         // 측정 화면의 판정도 그대로 쓴다. 카드에 넉 줄이 쌓여 있던 것을
         // 두 줄로 줄인 것뿐이다.
 
+        // **빼기는 한 번 묻는다.** 범위와 이름은 저장소에 남지만,
+        // 화면에서 사라지는 것은 되돌릴 수 없는 일처럼 보인다.
+        if (confirmRemove && onRemove != null) {
+            AlertDialog(
+                onDismissRequest = { confirmRemove = false },
+                containerColor = SelahColors.DialogSurface,
+                tonalElevation = 0.dp,
+                shape = RoundedCornerShape(20.dp),
+                title = { Text("「$name」 구간을 뺄까요?", color = SelahColors.TextPrimary) },
+                text = {
+                    Text(
+                        "측정 화면의 목록에서 사라집니다. 고쳐 둔 범위와 이름은 " +
+                            "그대로 남아, 다시 더하면 돌아옵니다. " +
+                            "이 구간으로 남긴 기록도 그대로 있습니다.",
+                        color = SelahColors.TextSecondary,
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp,
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { confirmRemove = false; onRemove() }) {
+                        Text("빼기", color = SelahColors.Warn, fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmRemove = false }) {
+                        Text("그대로 두기", color = SelahColors.TextSecondary)
+                    }
+                },
+            )
+        }
+
         if (editing) {
             RangeEditor(
                 range = range,
@@ -193,12 +220,12 @@ private fun RangeEditor(
 ) {
     var avgLow by remember { mutableStateOf(range.avgLowDb.toInt().toString()) }
     var avgHigh by remember { mutableStateOf(range.avgHighDb.toInt().toString()) }
-    var peakLow by remember { mutableStateOf(range.peakLowDb.toInt().toString()) }
-    var peakHigh by remember { mutableStateOf(range.peakHighDb.toInt().toString()) }
-
-    val edited = listOf(avgLow, avgHigh, peakLow, peakHigh).map { it.trim().toDoubleOrNull() }
+    // **피크 아래·위 칸은 뺐다**(담당자 지시 2026-09-28). 그 값으로
+    // 판정하는 자리가 어디에도 없었다 — 저장만 되고 아무 일도
+    // 하지 않았다.
+    val edited = listOf(avgLow, avgHigh).map { it.trim().toDoubleOrNull() }
     val candidate = if (edited.none { it == null }) {
-        SegmentRange(edited[0]!!, edited[1]!!, edited[2]!!, edited[3]!!)
+        SegmentRange(edited[0]!!, edited[1]!!)
     } else {
         null
     }
@@ -214,15 +241,10 @@ private fun RangeEditor(
             NumberField("평균 아래", avgLow, { avgLow = it }, Modifier.weight(1f))
             NumberField("평균 위", avgHigh, { avgHigh = it }, Modifier.weight(1f))
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            NumberField("피크 아래", peakLow, { peakLow = it }, Modifier.weight(1f))
-            NumberField("피크 위", peakHigh, { peakHigh = it }, Modifier.weight(1f))
-        }
-
         if (candidate != null && !sane) {
             Text(
-                "값이 서로 맞지 않습니다. 아래값 < 위값 이어야 하고, " +
-                    "피크 위값이 평균 위값보다 커야 합니다.",
+                "값이 서로 맞지 않습니다. 아래값이 위값보다 작아야 하고, " +
+                    "둘 다 30 ~ 140 dB 안이어야 합니다.",
                 color = SelahColors.Warn,
                 fontSize = 11.sp,
                 lineHeight = 15.sp,
@@ -243,8 +265,6 @@ private fun RangeEditor(
                     onDefault()?.let {
                         avgLow = it.avgLowDb.toInt().toString()
                         avgHigh = it.avgHighDb.toInt().toString()
-                        peakLow = it.peakLowDb.toInt().toString()
-                        peakHigh = it.peakHighDb.toInt().toString()
                     }
                     onReset()
                 },

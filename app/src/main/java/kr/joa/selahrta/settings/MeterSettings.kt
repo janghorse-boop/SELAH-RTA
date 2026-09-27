@@ -11,6 +11,8 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import androidx.datastore.preferences.core.doublePreferencesKey
 import kr.joa.selahrta.domain.ChurchSegment
+import kr.joa.selahrta.domain.DEFAULT_SEGMENTS
+import kr.joa.selahrta.domain.MAX_SEGMENTS
 import kr.joa.selahrta.domain.MicKind
 import kr.joa.selahrta.domain.DefaultSegmentRanges
 import kr.joa.selahrta.domain.SegmentRange
@@ -154,6 +156,14 @@ data class MeterSettings(
     /** 지금 재고 있는 예배 구간. */
     val segment: ChurchSegment = ChurchSegment.Sermon,
     /**
+     * **쓰는 구간들**(담당자 지시 2026-09-28: 최대 5개).
+     *
+     * 설교·찬양은 늘 들어 있다 — 뺄 수 없다. 나머지는 사람이 더하고
+     * 뺀다. 뺀 칸의 범위와 이름은 **저장소에 그대로 남으므로**, 다시
+     * 더하면 고쳐 둔 값이 돌아온다.
+     */
+    val segments: Set<ChurchSegment> = DEFAULT_SEGMENTS,
+    /**
      * 구간별 참고 범위. 고친 것이 없으면 초기값을 쓴다.
      *
      * 명세 10장이 「사용자 수정 가능한 참고값」이라고 못박았다 —
@@ -174,6 +184,32 @@ data class MeterSettings(
      */
     val names: Map<ChurchSegment, String> = emptyMap(),
 ) {
+    /**
+     * 화면에 그릴 차례대로의 구간 목록.
+     *
+     * enum 차례를 따른다 — 사람이 더한 차례로 두면 기기를 바꿀 때마다
+     * 줄이 뒤바뀐다.
+     */
+    val orderedSegments: List<ChurchSegment>
+        get() = ChurchSegment.entries.filter { it in segments }
+
+    /**
+     * 지금 견주고 있는 구간. **하나도 더하지 않았으면 null.**
+     *
+     * [segment] 는 저장된 값이라 목록에서 뺀 뒤에도 남아 있을 수 있다.
+     * 화면은 반드시 이쪽을 본다 — 뺀 구간의 범위와 견주면 「지우지도
+     * 않은 기준」으로 색이 뜬다.
+     */
+    val activeSegment: ChurchSegment?
+        get() = segment.takeIf { it in segments } ?: orderedSegments.firstOrNull()
+
+    /** 더 더할 자리가 있는가. */
+    val canAddSegment: Boolean get() = segments.size < MAX_SEGMENTS
+
+    /** 다음에 더할 칸. 더 없으면 null. */
+    val nextFreeSegment: ChurchSegment?
+        get() = ChurchSegment.entries.firstOrNull { it !in segments }
+
     /** 이 구간의 참고 범위. 고친 값이 있으면 그것을, 없으면 초기값을. */
     fun rangeFor(s: ChurchSegment): SegmentRange? =
         ranges[s] ?: DefaultSegmentRanges.of(s)
@@ -218,6 +254,14 @@ class MeterSettingsStore(private val context: Context) {
     /** 한 번이라도 연결됐던 기기. 값은 `종류|이름`. */
     private fun knownKey(deviceKey: String) = stringPreferencesKey("$KNOWN_PREFIX$deviceKey")
     private val segmentKey = stringPreferencesKey("segment")
+
+    /**
+     * 쓰는 구간들. `Sermon,Worship` 처럼 쉼표로 잇는다.
+     *
+     * 저장된 것이 없으면 **기본 둘**이다 — 지금까지 쓰던 사람에게
+     * 화면이 달라지지 않는다.
+     */
+    private val segmentsKey = stringPreferencesKey("segments")
 
     // 범위는 구간마다 네 값이라 열쇠를 만들어 쓴다.
     private fun rangeKey(s: ChurchSegment, part: String) =
@@ -279,14 +323,27 @@ class MeterSettingsStore(private val context: Context) {
                 segment = p[segmentKey]?.let { n ->
                     ChurchSegment.entries.firstOrNull { it.name == n }
                 } ?: ChurchSegment.Sermon,
+                // **저장된 것이 없으면 하나도 없다.** 앱이 먼저 깔아
+                // 두지 않는다 — 권장 범위는 예배당마다 다른 참고값이라,
+                // 쓰지도 않는 범위와 견주어 색이 뜨면 안 된다.
+                //
+                // 빈 문자열은 「다 뺐다」는 뜻이다. `split` 이 빈 칸
+                // 하나를 돌려주지만 아는 이름이 아니라 걸러진다.
+                segments = p[segmentsKey]
+                    ?.split(',')
+                    ?.mapNotNull { n -> ChurchSegment.entries.firstOrNull { it.name == n } }
+                    ?.toSet()
+                    ?: DEFAULT_SEGMENTS,
                 ranges = ChurchSegment.entries.mapNotNull { seg ->
-                    // 네 값이 모두 있을 때만 고친 것으로 본다. 하나라도 빠지면
+                    // 두 값이 다 있을 때만 고친 것으로 본다. 하나라도 빠지면
                     // 반쯤 저장된 상태라 초기값으로 돌아가는 편이 안전하다.
+                    //
+                    // **옛 `peakLow`/`peakHigh` 는 읽지 않는다**(2026-09-28
+                    // 에 걷어냈다). 저장소에 남아 있어도 그냥 지나간다 —
+                    // 지우려고 돌아다니면 지울 것이 더 생긴다.
                     val al = p[rangeKey(seg, "avgLow")] ?: return@mapNotNull null
                     val ah = p[rangeKey(seg, "avgHigh")] ?: return@mapNotNull null
-                    val pl = p[rangeKey(seg, "peakLow")] ?: return@mapNotNull null
-                    val ph = p[rangeKey(seg, "peakHigh")] ?: return@mapNotNull null
-                    val r = SegmentRange(al, ah, pl, ph)
+                    val r = SegmentRange(al, ah)
                     // 저장된 값이 말이 안 되면 무시한다 — 앱 판이 바뀌거나
                     // 손으로 건드린 경우다.
                     if (r.isSane) seg to r else null
@@ -352,14 +409,50 @@ class MeterSettingsStore(private val context: Context) {
         write { it[channelKey(deviceKey)] = index.coerceAtLeast(0) }
     suspend fun setSegment(s: ChurchSegment) = write { it[segmentKey] = s.name }
 
+    /**
+     * 구간을 하나 더한다. 다섯을 넘으면 아무 일도 없다.
+     *
+     * **범위와 이름은 건드리지 않는다.** 전에 쓰다 뺀 칸이면 그때 고쳐 둔
+     * 값이 그대로 돌아온다.
+     */
+    suspend fun addSegment(s: ChurchSegment) = write { p ->
+        val now = readSegments(p)
+        if (s in now || now.size >= MAX_SEGMENTS) return@write
+        p[segmentsKey] = (now + s).joinToString(",") { it.name }
+    }
+
+    /**
+     * 구간을 뺀다. **설교·찬양은 빼지 못한다.**
+     *
+     * 범위와 이름은 저장소에 남긴다 — 다시 더하면 돌아온다. 지금 고른
+     * 구간을 뺐으면 설교로 돌린다.
+     */
+    suspend fun removeSegment(s: ChurchSegment) = write { p ->
+        val now = readSegments(p)
+        if (s !in now) return@write
+        val left = now - s
+        p[segmentsKey] = left.joinToString(",") { it.name }
+        // 지금 고른 것을 뺐으면 남은 첫 칸으로 옮긴다. 남은 것이 없으면
+        // 고른 것도 없다 — 화면이 권장 범위 상자를 그리지 않는다.
+        if (p[segmentKey] == s.name) {
+            val next = ChurchSegment.entries.firstOrNull { it in left }
+            if (next == null) p.remove(segmentKey) else p[segmentKey] = next.name
+        }
+    }
+
+    private fun readSegments(p: Preferences): Set<ChurchSegment> =
+        p[segmentsKey]
+            ?.split(',')
+            ?.mapNotNull { n -> ChurchSegment.entries.firstOrNull { it.name == n } }
+            ?.toSet()
+            ?: DEFAULT_SEGMENTS
+
     /** 구간 범위를 고친다. 말이 안 되는 값은 저장하지 않는다. */
     suspend fun setRange(s: ChurchSegment, r: SegmentRange): Boolean {
         if (!r.isSane) return false
         write {
             it[rangeKey(s, "avgLow")] = r.avgLowDb
             it[rangeKey(s, "avgHigh")] = r.avgHighDb
-            it[rangeKey(s, "peakLow")] = r.peakLowDb
-            it[rangeKey(s, "peakHigh")] = r.peakHighDb
         }
         return true
     }
@@ -380,6 +473,7 @@ class MeterSettingsStore(private val context: Context) {
 
     /** 초기값으로 되돌린다. */
     suspend fun resetRange(s: ChurchSegment) = write {
+        // 옛 피크 열쇠도 함께 지운다 — 되돌리기는 자취를 남기지 않는다.
         listOf("avgLow", "avgHigh", "peakLow", "peakHigh").forEach { part ->
             it.remove(rangeKey(s, part))
         }

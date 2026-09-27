@@ -18,8 +18,14 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.remember
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -93,6 +99,8 @@ fun MeasureScreen(
      * 권장 범위**일 뿐이라 칩 두 자리를 쓸 까닭이 없었다(2026-09-24).
      */
     onSegment: (ChurchSegment) -> Unit,
+    /** 구간을 더한다. 하나도 없을 때 화면에서 바로 부른다. */
+    onAddSegment: (ChurchSegment) -> Unit,
     hasPermission: Boolean,
     onRequestPermission: () -> Unit,
     onStart: () -> Unit,
@@ -103,8 +111,11 @@ fun MeasureScreen(
     onStopRecording: () -> Unit = {},
     onDismissDeviceNotice: () -> Unit = {},
 ) {
-    val segment = capture.meterSettings.segment
-    val range = capture.meterSettings.rangeFor(segment)
+    // **하나도 더하지 않았으면 null 이다**(담당자 지시 2026-09-28:
+    // 구간은 0개에서 시작한다). 그때는 권장 범위 상자를 그리지 않고,
+    // 큰 숫자는 견줄 것 없이 그대로 보여 준다.
+    val segment = capture.meterSettings.activeSegment
+    val range = segment?.let { capture.meterSettings.rangeFor(it) }
 
     val running = capture.measure is MeasureState.Running
     val m = capture.meter
@@ -254,6 +265,15 @@ fun MeasureScreen(
         // 한 줄을 통째로 쓸 까닭이 없었다. 상자 안에 넣으니 「무엇을
         // 고르면 이 숫자가 바뀐다」가 붙어 읽히고, 그만큼 아래가 올라와
         // **세로 화면에서 측정 버튼이 보인다.**
+        // **구간이 하나도 없으면 여기서 바로 더한다**(담당자 지시
+        // 2026-09-28). 설정까지 찾아 들어가게 하면, 견줄 것이 없다는
+        // 사실만 보이고 **고칠 길은 안 보인다.**
+        if (segment == null || range == null) {
+            EmptyRangeCard(
+                onAdd = { capture.meterSettings.nextFreeSegment?.let(onAddSegment) },
+                modifier = Modifier.padding(top = 4.dp, bottom = 18.dp),
+            )
+        } else {
         RangeCard(
             segment = segment,
             onSegment = onSegment,
@@ -261,11 +281,13 @@ fun MeasureScreen(
             isCustom = capture.meterSettings.isCustom(segment),
             leqLabelKo = capture.meterSettings.leqWindow.labelKo,
             nameOf = { capture.meterSettings.nameFor(it) },
+            segmentOptions = capture.meterSettings.orderedSegments,
             // **아래를 넉넉히 띄운다**(2026-09-25 담당자 지시: 「간격이 너무
             // 좁아서 답답해 보입니다」). 상자와 계기가 붙어 있으면 둘이 한
             // 덩어리로 보여, 눈이 어디서 끊어 읽어야 할지 모른다.
             modifier = Modifier.padding(top = 4.dp, bottom = 18.dp),
         )
+        }
 
         // **색이 말하는 것을 읽어 주는 쪽에도 남긴다.** 화면의
         // 「낮음/적정/높음」 배지는 지웠지만, 배지를 지우는 것과 뜻을 지우는
@@ -1029,6 +1051,41 @@ private const val GAUGE_GLIDE_MS = 90
  * 한마디에 계기가 빨개지는 것을 「너무 크다」로 읽게 된다. 그래서 숫자
  * 옆에 평균시간을 붙여 둔다(가격·구독 전략 3장의 요구이기도 하다).
  */
+/**
+ * 권장 범위가 **하나도 없을 때** 그 자리를 채운다.
+ *
+ * 구간은 0개에서 시작한다(담당자 지시 2026-09-28) — 권장 범위는
+ * 예배당마다 다른 참고값이라, 앱이 먼저 깔아 두면 쓰지도 않는 기준과
+ * 견주어 색이 뜬다.
+ *
+ * **고칠 길을 같은 자리에 둔다.** 「없습니다」만 적어 두고 설정으로
+ * 찾아 들어가게 하면, 없다는 사실만 보이고 어떻게 만드는지는 안 보인다.
+ */
+@Composable
+private fun EmptyRangeCard(onAdd: () -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        modifier
+            .fillMaxWidth()
+            .background(SelahColors.SurfaceVariant, RoundedCornerShape(12.dp))
+            .border(1.dp, SelahColors.Outline, RoundedCornerShape(12.dp))
+            .padding(start = 14.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("권장 범위", color = SelahColors.TextMuted, fontSize = 11.sp)
+            Text(
+                "견줄 구간이 없습니다",
+                color = SelahColors.TextSecondary,
+                fontSize = 13.sp,
+            )
+        }
+        TextButton(onClick = onAdd) {
+            Text("추가", color = SelahColors.Accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
 @Composable
 private fun RangeCard(
     segment: ChurchSegment,
@@ -1038,6 +1095,8 @@ private fun RangeCard(
     leqLabelKo: String,
     /** 구간 이름. 사용자가 고칠 수 있다(`MeterSettings.nameFor`). */
     nameOf: (ChurchSegment) -> String,
+    /** 쓰는 구간들. 설정에서 더하고 뺀다(최대 5). */
+    segmentOptions: List<ChurchSegment>,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -1062,7 +1121,11 @@ private fun RangeCard(
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 Text(
-                    "권장 범위" + if (isCustom) " (고친 값)" else "",
+                    // **「(고친 값)」을 붙이지 않는다**(담당자 지시
+                    // 2026-09-28). 고쳤다는 사실이 예배 내내 화면에
+                    // 붙어 있을 까닭이 없다 — 고친 값이 곧 그 사람의
+                    // 값이다. 되돌릴 길은 설정의 「기본값으로」가 맡는다.
+                    "권장 범위",
                     color = SelahColors.TextMuted,
                     fontSize = 11.sp,
                 )
@@ -1094,7 +1157,7 @@ private fun RangeCard(
                     }
                 }
             }
-            SegmentPills(segment, nameOf, onSegment)
+            SegmentPills(segment, nameOf, onSegment, segmentOptions)
         }
         // 구간 설명(「말이 또렷한지가 먼저입니다…」)은 **뺐다**
         // (2026-09-25 담당자 지시). 고를 것이 설교·찬양 둘뿐이라 알약만
@@ -1117,28 +1180,86 @@ private fun SegmentPills(
     /** 구간 이름. 사용자가 고친 이름이 있으면 그것이 온다. */
     nameOf: (ChurchSegment) -> String,
     onPick: (ChurchSegment) -> Unit,
+    /** 쓰는 구간들. 차례는 부르는 쪽이 정한다. */
+    options: List<ChurchSegment>,
 ) {
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        ChurchSegment.entries.forEach { s ->
-            val on = s == selected
-            Box(
-                Modifier
-                    .background(
-                        if (on) SelahColors.Accent else SelahColors.Surface,
-                        RoundedCornerShape(999.dp),
-                    )
-                    .clickable { onPick(s) }
-                    // 눌리는 자리가 글자만 해지면 손가락이 빗나간다.
-                    // 알약을 작게 두되 여백으로 누를 자리는 남긴다.
-                    .padding(horizontal = 14.dp, vertical = 7.dp)
-                    .semantics { stateDescription = if (on) "선택됨" else "선택 안 됨" },
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    nameOf(s),
-                    color = if (on) Color(0xFF00201C) else SelahColors.TextSecondary,
-                    fontSize = 13.sp,
-                    fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
+    // **알약에서 드롭다운으로 바꿨다**(담당자 지시 2026-09-28).
+    //
+    // 구간이 둘일 때는 알약 둘이 나란히 들어갔지만, **다섯까지 늘어나면**
+    // 이름이 긴 구간(「특별기도회」)이 섞였을 때 줄이 넘치거나 글자가
+    // 쪼개진다. 드롭다운은 몇 개가 되든 한 줄이다.
+    var open by remember { mutableStateOf(false) }
+
+    Box {
+        // **채운 알약이 아니라 테두리 알약이다**(담당자 지시 2026-09-28:
+        // 「드롭다운이 너무 이쁘지 않습니다」).
+        //
+        // 알약 둘을 나란히 두던 때는 **고른 쪽을 채워** 갈랐다. 드롭다운은
+        // 하나뿐이라 가를 것이 없는데, 채운 채로 두니 화면에서 가장 센
+        // 덩어리가 되어 정작 큰 숫자보다 먼저 눈에 들어왔다.
+        Row(
+            Modifier
+                .background(SelahColors.SurfaceVariant, RoundedCornerShape(999.dp))
+                .border(1.dp, SelahColors.Outline, RoundedCornerShape(999.dp))
+                .clickable { open = true }
+                // 눌리는 자리가 글자만 해지면 손가락이 빗나간다.
+                .padding(start = 14.dp, end = 11.dp, top = 7.dp, bottom = 7.dp)
+                .semantics { stateDescription = "구간 고르기" },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                nameOf(selected),
+                color = SelahColors.Accent,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            // **펼쳐진다는 것을 보인다.** 글자만 있으면 누를 수 있는지
+            // 알 수 없다. 글자보다 작게 두어 이름이 주인공으로 남는다.
+            Text(
+                "▾",
+                color = SelahColors.TextMuted,
+                fontSize = 10.sp,
+                modifier = Modifier.offset(y = (-1).dp),
+            )
+        }
+        DropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+            // 앱의 다른 상자와 같은 모서리·테두리를 준다. 기본값은 각지고
+            // 테두리가 없어 혼자 떠 보인다.
+            modifier = Modifier
+                .background(SelahColors.DialogSurface, RoundedCornerShape(12.dp))
+                .border(1.dp, SelahColors.Outline, RoundedCornerShape(12.dp)),
+            shape = RoundedCornerShape(12.dp),
+            containerColor = SelahColors.DialogSurface,
+            tonalElevation = 0.dp,
+            shadowElevation = 8.dp,
+        ) {
+            options.forEach { s ->
+                val on = s == selected
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            nameOf(s),
+                            color = if (on) SelahColors.Accent else SelahColors.TextPrimary,
+                            fontSize = 14.sp,
+                            fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
+                            // **가운데로 맞춘다.** 메뉴에는 안드로이드가
+                            // 정한 최소 너비가 있어, 「설교」처럼 짧은
+                            // 이름을 왼쪽에 붙이면 오른쪽이 휑하게 빈다.
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    },
+                    onClick = {
+                        onPick(s)
+                        open = false
+                    },
+                    // 기본 높이(48dp)에 세로 여백까지 더해지면 구간 다섯이
+                    // 화면 절반을 덮는다.
+                    contentPadding = PaddingValues(horizontal = 12.dp),
+                    modifier = Modifier.height(42.dp),
                 )
             }
         }

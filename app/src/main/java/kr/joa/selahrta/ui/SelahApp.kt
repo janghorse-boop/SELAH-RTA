@@ -495,11 +495,14 @@ fun SelahApp() {
                         onSaveRange = vm::setRange,
                         onResetRange = vm::resetRange,
                         onRenameSegment = vm::setSegmentName,
+                        onAddSegment = vm::addSegment,
+                        onRemoveSegment = vm::removeSegment,
                     )
 
                     ViewMode.Spl -> MeasureScreen(
                         capture = capture,
                         onSegment = vm::setSegment,
+                        onAddSegment = vm::addSegment,
                         hasPermission = hasPermission,
                         onRequestPermission = {
                             askPermission.launch(Manifest.permission.RECORD_AUDIO)
