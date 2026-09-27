@@ -60,9 +60,13 @@ class CalibrationSignTest {
      * 있다. 그런 파일에 한쪽을 골라 경고하면 틀린 쪽으로 사람을 민다.
      */
     @Test
-    fun `둘 다 나오면 사람에게 미룬다`() {
+    fun `둘 다 나오면 어긋남으로 본다`() {
+        // **「모름」과 가른다**(독립 재검토 CF2-02). 한 값으로 뭉갰더니
+        // `decideReading` 이 이것을 「단서 없음」으로 읽고, 열 선언만
+        // 있으면 그대로 확정했다 — 모르는 것은 관례로 갈 수 있지만
+        // 어긋나는 것은 물어야 한다.
         assertEquals(
-            SignEvidence.Unknown,
+            SignEvidence.Conflicting,
             signEvidenceOf(listOf("Correction derived from measured response")),
         )
     }

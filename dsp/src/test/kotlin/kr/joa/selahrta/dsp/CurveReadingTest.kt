@@ -178,10 +178,22 @@ class CurveReadingTest {
 
     /** 모순된 머리글은 「모름」이다 — 거기서 억지로 고르지 않는다. */
     @Test
-    fun `모순된 머리글은 모름으로 본다`() {
+    fun `모순된 머리글은 열 선언이 있어도 묻는다`() {
         val e = signEvidenceOf(listOf("Correction derived from measured response"))
-        assertEquals(SignEvidence.Unknown, e)
+        assertEquals("「모름」과 갈라야 한다", SignEvidence.Conflicting, e)
         assertFalse(decideReading(e, ReadingStakes.ReferenceForCalibration).settled)
+
+        // **열 선언이 있어도 묻는다**(독립 재검토 CF2-02).
+        // `# Correction factors` + `Frequency (Hz),Response (dB)` 가
+        // 선언만 보고 확정되던 자리다.
+        assertFalse(
+            "어긋나는데 열 선언으로 확정했다",
+            decideReading(
+                e,
+                ReadingStakes.ReferenceForCalibration,
+                ColumnDeclaration.Second(CurveReading.Response),
+            ).settled,
+        )
     }
 
     // ------------------------------------------------------------------

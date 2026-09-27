@@ -42,13 +42,19 @@ class WizardCaptureBridge(private val vm: CaptureViewModel) : WizardCapture {
         }
 
     /**
-     * 그 경로에 **저장된** 보정값. 짐작값(ASSUMED_FULL_SCALE_SPL)이 아니다.
+     * 그 경로에 **지금 걸려 있는** 보정값. 걸려 있지 않으면 null.
      *
-     * `calibration.saved` 가 null 이면 그 경로는 미보정이고, 그때는
-     * 절대 레벨을 옮길 근거가 없다 — 짐작을 옮기는 것이 되기 때문이다.
+     * 미보정이면 옮길 근거가 없다 — 짐작값(`ASSUMED_FULL_SCALE_SPL`)을
+     * 옮기는 것이 되기 때문이다.
+     *
+     * **`saved` 를 읽지 않는다**(독립 재검토 CARF-02). 자리를 확인하지
+     * 못해 적용을 **보류한** 상태에서도 `saved` 는 남아 있다 — 지우면
+     * 사람이 다시 재야 하므로 그렇게 두었다. 그런데 여기서 그것을 읽어
+     * 가는 바람에, 화면에는 「미보정 · 적용 보류」라고 적히면서 그 값이
+     * **다른 마이크의 절대 보정으로 복제**됐다.
      */
     override val openedOffsetDb: Double?
-        get() = vm.state.value.calibration.saved?.offsetDb
+        get() = vm.state.value.calibration.appliedOffsetDb
 
     /**
      * 캡처가 세는 값은 **세션 누적**이라, 금을 그은 뒤로 늘었는지를 본다.

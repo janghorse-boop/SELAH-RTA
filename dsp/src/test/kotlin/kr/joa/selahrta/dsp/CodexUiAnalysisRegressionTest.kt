@@ -329,6 +329,99 @@ class CodexUiAnalysisRegressionTest {
         assertEquals(CurveReading.Correction, d.reading)
     }
 
+    /**
+     * **CARF-05** — 단위가 다르면 같은 수량이 아니다.
+     *
+     * 파서는 단위를 바꾸지 않고 첫 숫자를 Hz, 둘째를 dB 로 쓴다. 그런데
+     * 괄호 안을 통째로 지우던 때에는 `Frequency (kHz)` 도 `Amplitude (Pa)`
+     * 도 정상으로 확정됐다 — **선형 크기 2 를 2dB 로 읽는 것**은 잰 값이
+     * 아니다.
+     *
+     * 모든 형식을 지원하라는 말이 아니다. **해석하지 못하는 형식을 이미
+     * 이해한 것으로 승인하지 않으면** 된다.
+     */
+    @Test
+    fun `지원하지 않는 단위는 기준 CAL 을 정하지 않는다`() {
+        val cases = listOf(
+            "Frequency (kHz),Response (dB)",
+            "Frequency (Hz),Amplitude (Pa)",
+            "Frequency (Hz),Magnitude (linear)",
+            // 이름과 괄호 안이 서로 다른 말을 한다.
+            "Frequency,Response (correction)",
+        )
+        for (line in cases) {
+            val declared = columnDeclarationOf(listOf(line))
+            assertTrue(
+                "「$line」 을 그대로 확정했다: $declared",
+                declared is ColumnDeclaration.Unsupported,
+            )
+            val d = decideReading(
+                signEvidenceOf(listOf(line)),
+                ReadingStakes.ReferenceForCalibration,
+                declared,
+            )
+            assertFalse("「$line」 로 정해졌다: $d", d.settled)
+        }
+    }
+
+    /** 대조군 — Hz/dB 는 그대로 정해진다. 단위가 없어도 된다. */
+    @Test
+    fun `Hz 와 dB 는 그대로 정해진다`() {
+        for (line in listOf("Frequency (Hz),Response (dB)", "Frequency,SPL")) {
+            val declared = columnDeclarationOf(listOf(line))
+            assertEquals(
+                "「$line」",
+                ColumnDeclaration.Second(CurveReading.Response),
+                declared,
+            )
+            assertTrue(
+                "「$line」 인데 묻는다",
+                decideReading(
+                    signEvidenceOf(listOf(line)),
+                    ReadingStakes.ReferenceForCalibration,
+                    declared,
+                ).settled,
+            )
+        }
+    }
+
+    /**
+     * **CF2-02** — 괄호가 여럿일 때 뒤쪽 모순이 사라지면 안 된다.
+     *
+     * 첫 괄호만 읽었더니 **첫 괄호에 멀쩡한 단위를 두면** 검사를
+     * 우회했다. 그리고 설명문의 「응답+보정값」을 `Unknown` 으로 뭉개
+     * 두어, 그것을 「단서 없음」으로 읽고 열 선언만으로 확정했다.
+     */
+    @Test
+    fun `괄호가 여럿이어도 모순을 놓치지 않는다`() {
+        val cases = listOf(
+            listOf("# Correction factors", "Frequency (Hz),Response (dB)"),
+            listOf("Frequency (Hz),Response (dB) (correction)"),
+            listOf("Frequency (Hz) (kHz),Response (dB)"),
+        )
+        for (lines in cases) {
+            val d = decideReading(
+                signEvidenceOf(lines),
+                ReadingStakes.ReferenceForCalibration,
+                columnDeclarationOf(lines),
+            )
+            assertFalse("「$lines」 로 정해졌다: $d", d.settled)
+        }
+    }
+
+    /** 대조군 — 괄호가 하나이고 멀쩡하면 그대로 정해진다. */
+    @Test
+    fun `괄호가 멀쩡하면 정해진다`() {
+        val lines = listOf("Frequency (Hz),Response (dB)")
+        assertTrue(
+            decideReading(
+                signEvidenceOf(lines),
+                ReadingStakes.ReferenceForCalibration,
+                columnDeclarationOf(lines),
+            ).settled,
+        )
+    }
+
     /** 선언이 여럿이고 서로 어긋나면 **어느 쪽도 믿지 않는다.** */
     @Test
     fun `어긋나는 선언이 여럿이면 묻는다`() {

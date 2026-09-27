@@ -6,6 +6,7 @@ import kr.joa.selahrta.dsp.LevelTransfer
 import kr.joa.selahrta.dsp.CalibrationOutcome
 import kr.joa.selahrta.dsp.ColumnDeclaration
 import kr.joa.selahrta.dsp.CurveReading
+import kr.joa.selahrta.dsp.MeasureStep
 import kr.joa.selahrta.dsp.ReadingDecision
 import kr.joa.selahrta.dsp.ReadingStakes
 import kr.joa.selahrta.dsp.SignEvidence
@@ -276,6 +277,26 @@ data class WizardState(
     val targetIdentity: CaptureIdentity? = null,
     /** 기준을 잰 그 순간의 수집 신원. 마지막 기준이 이 **경로**와 같아야 한다. */
     val referenceIdentity: CaptureIdentity? = null,
+    /**
+     * **단계마다 제 신원을 지닌다**(독립 재검토 CF2-01).
+     *
+     * 마지막 기준에는 이름표가 없고 첫 기준의 것을 빌려 썼다. 그래서
+     * **처음 기준만 다른 채널로 다시 재면** 마지막 기준의 장(옛 채널)이
+     * 새 이름표를 물려받았다 — 그리고 세 단계가 이미 차 있으므로 곧바로
+     * 셈이 돌아 Pass 가 났다. 검토자가 잰 것:
+     *
+     * ```
+     * REFERENCE_RETRY newBeforeChannel=1 retainedAfterChannel=0
+     * retainedAfterFrames=120 verdict=Pass
+     * ```
+     *
+     * 정상 순서에서 **마지막** 기준을 바꾸는 것은 막혀 있었는데,
+     * **처음** 기준을 나중에 바꾸는 역방향이 뚫려 있었다.
+     *
+     * 이제 단계마다 제 신원을 적고, 셈하기 전에 셋이 서로 맞는지 본다
+     * ([sessionIdentityMismatchKo]).
+     */
+    val stepIdentities: Map<MeasureStep, CaptureIdentity> = emptyMap(),
     /**
      * 대상을 **잴 때** 쓰던 증거의 이름(독립 재검토 CA-R02).
      *
