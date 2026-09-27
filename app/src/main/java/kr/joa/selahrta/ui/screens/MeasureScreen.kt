@@ -56,6 +56,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import kr.joa.selahrta.domain.ChurchSegment
 import kr.joa.selahrta.domain.MeasureState
 import kr.joa.selahrta.domain.SegmentRange
+import kr.joa.selahrta.audio.chooseInput
+import kr.joa.selahrta.audio.ChoiceReason
 import kr.joa.selahrta.dsp.Weighting
 import kr.joa.selahrta.dsp.leqLabel
 import kr.joa.selahrta.dsp.peakLabel
@@ -265,6 +267,15 @@ fun MeasureScreen(
         // 한 줄을 통째로 쓸 까닭이 없었다. 상자 안에 넣으니 「무엇을
         // 고르면 이 숫자가 바뀐다」가 붙어 읽히고, 그만큼 아래가 올라와
         // **세로 화면에서 측정 버튼이 보인다.**
+        // **무엇으로 잴지 먼저 보인다**(담당자 지시 2026-09-28).
+        //
+        // 재는 동안에는 캡처 진단이 **실제로 열린 값**을 적고 있으므로
+        // 뜨지 않는다 — 요청과 결과가 다를 수 있는데 두 줄이 같은 말을
+        // 하면 어느 쪽을 믿을지가 흐려진다.
+        if (!running) {
+            InputBeforeStart(capture, Modifier.padding(bottom = 12.dp))
+        }
+
         // **구간이 하나도 없으면 여기서 바로 더한다**(담당자 지시
         // 2026-09-28). 설정까지 찾아 들어가게 하면, 견줄 것이 없다는
         // 사실만 보이고 **고칠 길은 안 보인다.**
@@ -1061,6 +1072,74 @@ private const val GAUGE_GLIDE_MS = 90
  * **고칠 길을 같은 자리에 둔다.** 「없습니다」만 적어 두고 설정으로
  * 찾아 들어가게 하면, 없다는 사실만 보이고 어떻게 만드는지는 안 보인다.
  */
+/**
+ * **무엇으로 잴지 시작 전에 보인다**(담당자 지시 2026-09-28: 「설정에
+ * 들어가서 입력 기기가 무엇인지 불필요하게 확인하지 않게」).
+ *
+ * ## 짐작하지 않는다
+ *
+ * 화면이 제 나름대로 「아마 내장이겠지」 하고 적지 않는다. 실제로 열
+ * 때 쓰는 [chooseInput] 을 **그대로 불러** 그 답을 적는다 — 그래야
+ * 여기 적힌 것과 실제로 열리는 것이 어긋날 수 없다.
+ *
+ * ## 재는 동안에는 뜨지 않는다
+ *
+ * 그때는 캡처 진단이 **실제로 열린 값**(요청이 아니라)을 적고 있고,
+ * 그쪽이 더 정확하다. 두 줄이 같은 말을 하면 어느 쪽을 믿을지가
+ * 흐려진다.
+ */
+@Composable
+private fun InputBeforeStart(capture: CaptureUiState, modifier: Modifier = Modifier) {
+    val choice = chooseInput(capture.inputs, capture.meterSettings.preferredInputKey)
+    val device = choice.device
+
+    Row(
+        modifier
+            .fillMaxWidth()
+            .background(SelahColors.Surface, RoundedCornerShape(12.dp))
+            .border(1.dp, SelahColors.Outline, RoundedCornerShape(12.dp))
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("이 마이크로 잽니다", color = SelahColors.TextMuted, fontSize = 10.sp)
+            Text(
+                device?.productName ?: "쓸 수 있는 입력이 없습니다",
+                color = if (device == null) SelahColors.Warn else SelahColors.TextPrimary,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            )
+            device?.let {
+                Text(
+                    // **고른 것인지 앱이 정한 것인지 가른다.** 둘을
+                    // 뭉뚱그리면 「내가 고른 줄 알았는데 아니었다」가 된다.
+                    buildString {
+                        append(it.typeKo)
+                        when (choice.reason) {
+                            ChoiceReason.UserPicked -> append(" · 고르신 기기")
+                            ChoiceReason.Auto -> append(" · 고른 것이 없어 이것으로")
+                            ChoiceReason.PreferredMissing ->
+                                append(" · 고르신 기기가 없어 이것으로")
+                            ChoiceReason.NoDevice -> Unit
+                        }
+                    },
+                    color = if (choice.reason == ChoiceReason.PreferredMissing) {
+                        SelahColors.Warn
+                    } else {
+                        SelahColors.TextMuted
+                    },
+                    fontSize = 11.sp,
+                    maxLines = 2,
+                    lineHeight = 15.sp,
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun EmptyRangeCard(onAdd: () -> Unit, modifier: Modifier = Modifier) {
     Row(
