@@ -17,6 +17,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,6 +39,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import kr.joa.selahrta.ui.nav.NavSection
 import kr.joa.selahrta.ui.nav.ViewMode
+import kr.joa.selahrta.calibration.ActiveCalibration
 import kr.joa.selahrta.ui.CaptureUiState
 import kr.joa.selahrta.ui.RtaView
 import kr.joa.selahrta.ui.SpectrumView
@@ -52,7 +54,10 @@ import kr.joa.selahrta.ui.components.NO_VALUE
 import kr.joa.selahrta.ui.components.NotYet
 import kr.joa.selahrta.ui.components.ValueTile
 import kr.joa.selahrta.ui.components.formatDb
-import kr.joa.selahrta.ui.components.RTA_RANGE
+import kr.joa.selahrta.ui.components.AxisMode
+import kr.joa.selahrta.ui.components.rememberAxisRange
+import kr.joa.selahrta.ui.components.rtaTopSpl
+import kr.joa.selahrta.ui.components.spectrumTopSpl
 import kr.joa.selahrta.ui.components.SpectrumChart
 import kr.joa.selahrta.ui.components.SpectrogramChart
 import kr.joa.selahrta.ui.components.SpectrogramState
@@ -90,10 +95,21 @@ fun RtaScreen(
     }
     val rta = if (frozen) held else capture.rta
     val feedback = if (frozen) heldFeedback else capture.feedback
-    val controls: @Composable () -> Unit = { HoldPill(frozen) { frozen = !frozen } }
 
-    // **축은 움직이지 않는다** — 0~120dB 고정(2026-09-26 담당자 지시).
-    val (floor, ceil) = RTA_RANGE
+    // **축은 기본이 고정(0~120dB)이고, 눌러서 자동으로 바꾼다**
+    // (2026-09-26 담당자 지시). 까닭은 [rememberAxisRange] 머리말 참고.
+    var axisMode by remember { mutableStateOf(AxisMode.Fixed) }
+    val (floor, ceil) = rememberAxisRange(axisMode, rtaTopSpl(rta))
+    val onAxisTap = { axisMode = axisMode.next() }
+    val controls: @Composable () -> Unit = {
+        ChartControls(
+            frozen = frozen,
+            calibration = capture.calibration,
+            onToggle = { frozen = !frozen },
+            axisMode = axisMode,
+            onAxisMode = onAxisTap,
+        )
+    }
     val unresolved = rta?.resolved?.indexOfFirst { it }?.takeIf { it > 0 }
 
     val running = capture.measure is MeasureState.Running
@@ -124,6 +140,7 @@ fun RtaScreen(
             chartHeight = null,
             modes = { AnalyzeModes(ViewMode.Rta, onMode) },
             controls = controls,
+            onAxisTap = onAxisTap,
             // **눕히면 31칸이 다 들어온다 — 늘이지 않는다.**
             //
             // 늘여 두었더니(칸당 30dp = 930dp) 화면보다 넓어져 6.3k 위가
@@ -158,6 +175,7 @@ fun RtaScreen(
             chartHeight = 260.dp,
             modes = { AnalyzeModes(ViewMode.Rta, onMode) },
             controls = controls,
+            onAxisTap = onAxisTap,
             minSlotWidth = BAND_SLOT_WIDE,
             feedback = feedback,
         )
@@ -307,14 +325,13 @@ fun RtaScreen(
 @Composable
 fun SpectrumScreen(
     capture: CaptureUiState,
-    onSpectrumEnabled: (Boolean) -> Unit,
     /** 기본값을 두지 않는다 — 까닭은 [RtaScreen] 의 같은 자리 참고. */
     onMode: (ViewMode) -> Unit,
 ) {
-    DisposableEffect(Unit) {
-        onSpectrumEnabled(true)
-        onDispose { onSpectrumEnabled(false) }
-    }
+    // **켜고 끄는 일은 여기서 하지 않는다**(2026-09-27). 분석 구역에
+    // 들어오는 순간 `SelahApp` 이 켜고 떠날 때 끈다 — 화면마다 켜고 끄면
+    // RTA↔Spectrum 을 오갈 때마다 엔진이 꺼졌다 켜지고, 그 사이의 장이
+    // 스펙트로그램에서 빈틈이 된다.
 
     // **멈추는 것은 화면뿐이다.** 봉우리가 몇 Hz 인지 읽을 틈을 준다 —
     // 이 화면의 값어치가 거기 있다.
@@ -328,9 +345,19 @@ fun SpectrumScreen(
     }
     val spectrum = if (frozen) held else capture.spectrum
     val feedback = if (frozen) heldFeedback else capture.feedback
-    val controls: @Composable () -> Unit = { HoldPill(frozen) { frozen = !frozen } }
 
-    val (floor, ceil) = RTA_RANGE
+    var axisMode by remember { mutableStateOf(AxisMode.Fixed) }
+    val (floor, ceil) = rememberAxisRange(axisMode, spectrumTopSpl(spectrum))
+    val onAxisTap = { axisMode = axisMode.next() }
+    val controls: @Composable () -> Unit = {
+        ChartControls(
+            frozen = frozen,
+            calibration = capture.calibration,
+            onToggle = { frozen = !frozen },
+            axisMode = axisMode,
+            onAxisMode = onAxisTap,
+        )
+    }
 
     val cfg = LocalConfiguration.current
     val landscape = cfg.screenWidthDp > cfg.screenHeightDp
@@ -347,6 +374,7 @@ fun SpectrumScreen(
             feedback = feedback,
             modes = { AnalyzeModes(ViewMode.Spectrum, onMode) },
             controls = controls,
+            onAxisTap = onAxisTap,
         )
         return
     }
@@ -369,6 +397,7 @@ fun SpectrumScreen(
             feedback = feedback,
             modes = { AnalyzeModes(ViewMode.Spectrum, onMode) },
             controls = controls,
+            onAxisTap = onAxisTap,
         )
 
         FeedbackStrip(
@@ -392,53 +421,34 @@ fun SpectrumScreen(
 @Composable
 fun SpectrogramScreen(
     capture: CaptureUiState,
-    onSpectrumEnabled: (Boolean) -> Unit,
+    /**
+     * 쌓아 둔 그림. **화면 밖에서 산다**(2026-09-27 담당자 지시).
+     *
+     * 예전에는 이 화면이 들고 있어서 떠나면 사라졌다. 그때는 그것이
+     * 맞았다 — 떠나 있는 동안 쌓이지 않으므로, 돌아와서 옛 그림을 보면
+     * **몇 분 전 것을 지금으로 읽게** 된다.
+     *
+     * 이제는 분석 구역에 있는 동안 **계속 쌓인다.** 끊긴 자리가 없으니
+     * 남겨 두어도 지금이 맞다. 까닭이 사라졌으므로 규칙도 바뀐다.
+     */
+    feed: SpectrogramFeed,
     /** 기본값을 두지 않는다 — 까닭은 [RtaScreen] 의 같은 자리 참고. */
     onMode: (ViewMode) -> Unit,
 ) {
-    DisposableEffect(Unit) {
-        onSpectrumEnabled(true)
-        onDispose { onSpectrumEnabled(false) }
-    }
-
-    // **화면이 들고 있는다.** 떠나면 사라지는 것이 맞다 — 다시 들어왔을 때
-    // 몇 분 전 그림이 남아 있으면 그것을 지금으로 읽는다.
-    val state = remember { SpectrogramState(SpectrumAxis.DEFAULT_COLUMNS, SPECTROGRAM_FRAMES) }
-    var frozen by remember { mutableStateOf(false) }
-
-    // 장이 새로 오면 한 줄 밀어 넣는다.
-    //
-    // **객체가 아니라 장 번호를 본다**(독립 검토 UA-04). `SpectrumView` 는
-    // 같은 FFT 한 장이라도 기본 상태가 바뀌면 새 껍데기로 다시 온다
-    // (`withMeasurement`). 객체를 키로 쓰면 같은 순간이 여러 칸에 늘여
-    // 그려져 시간축이 부풀었다.
-    //
-    // 시각도 **덩어리를 받은 단조 시각**을 쓴다. 그릴 때의 벽시계를 쓰면
-    // UI 가 밀린 만큼 어긋나고, 시계를 바꾸면 뛴다.
-    // **번호는 세션 안에서만 뜻이 있다**(독립 검토 CA-07). 엔진이 다시
-    // 열리면 `seq` 가 0 부터 다시 시작하므로, 번호만 견주면 새 장이 옛
-    // 최대값을 넘을 때까지 **화면이 통째로 멈춘다** — 오래 재고 있었을수록
-    // 오래 멈춘다. 세션이 바뀌면 들고 있던 그림도 버린다.
-    val spectrum = capture.spectrum
-    var lastSession by remember { mutableStateOf(Long.MIN_VALUE) }
-    var lastSeq by remember { mutableStateOf(-1L) }
-    LaunchedEffect(spectrum?.seq, capture.session, frozen) {
-        if (frozen || spectrum == null) return@LaunchedEffect
-        if (capture.session != lastSession) {
-            state.clear()
-            lastSession = capture.session
-            lastSeq = -1L
-        }
-        if (spectrum.seq > lastSeq) {
-            lastSeq = spectrum.seq
-            state.push(spectrum.columnsSpl, spectrum.atMs)
-        }
-    }
+    val state = feed.state
+    val frozen = feed.frozen
 
     val cfg = LocalConfiguration.current
     val landscape = cfg.screenWidthDp > cfg.screenHeightDp
 
-    val controls: @Composable () -> Unit = { HoldPill(frozen) { frozen = !frozen } }
+    // 세로축이 주파수라 「고정/자동」이 없다 — 그 표시는 안 그린다.
+    val controls: @Composable () -> Unit = {
+        ChartControls(
+            frozen = frozen,
+            calibration = capture.calibration,
+            onToggle = feed::toggleFrozen,
+        )
+    }
 
     if (landscape) {
         SpectrogramChart(
@@ -468,6 +478,92 @@ fun SpectrogramScreen(
             controls = controls,
         )
     }
+}
+
+/**
+ * 스펙트로그램이 **쌓아 둔 그림과 그 흐름**.
+ *
+ * ## 왜 화면 밖에 있는가 (2026-09-27 담당자 지시)
+ *
+ * 「분석 버튼을 누르면 보이지 않지만 시작을 해 달라. 다른 곳을 눌렀다가
+ * 돌아와도 계속 흘러가고 있는 게 좋아 보인다.」
+ *
+ * 맞는 요구다. 스펙트로그램은 **시간이 쌓여야** 쓸모가 생긴다 —
+ * 「2.5kHz 가 언제부터 올라왔나」를 보려고 여는 화면인데, 열고 나서
+ * 30초를 기다려야 그림이 차면 정작 궁금한 순간은 이미 지나 있다.
+ *
+ * 예전에는 화면이 들고 있었고, 그때는 그것이 맞았다 — 떠나 있는 동안
+ * 쌓이지 않으므로 돌아와서 옛 그림을 보면 **몇 분 전 것을 지금으로**
+ * 읽게 된다. 이제는 떠나 있어도 쌓이므로 끊긴 자리가 없고, 그 까닭이
+ * 사라졌다.
+ *
+ * ## 분석을 떠나면 멈추고 **버린다**
+ *
+ * 구역을 떠나면 엔진도 끈다 — 칸 2049개를 곱하고 줄이는 일을 예배 내내
+ * 하면 배터리로 돌아온다. 그리고 그때 그림을 **버린다.** 끊겼다가 다시
+ * 이어 붙이면 그 자리에 없는 시간이 생기는데, 그림만 보아서는 알 수
+ * 없다. 비어 있는 것과 틀린 것은 다른 일이다.
+ */
+class SpectrogramFeed internal constructor(
+    val state: SpectrogramState,
+    frozenState: MutableState<Boolean>,
+) {
+    private var frozenFlag by frozenState
+
+    /** 멈춰 있는가. 멈추면 **쌓기도 멈춘다** — 화면만 멈추면 빈틈이 생긴다. */
+    val frozen: Boolean get() = frozenFlag
+
+    fun toggleFrozen() {
+        frozenFlag = !frozenFlag
+    }
+}
+
+/**
+ * 분석 구역이 켜져 있는 동안 장을 쌓는다.
+ *
+ * @param running 분석 구역에 있는가. 꺼지면 멈추고 그림을 버린다.
+ */
+@Composable
+fun rememberSpectrogramFeed(capture: CaptureUiState, running: Boolean): SpectrogramFeed {
+    val state = remember { SpectrogramState(SpectrumAxis.DEFAULT_COLUMNS, SPECTROGRAM_FRAMES) }
+    val frozen = remember { mutableStateOf(false) }
+    val feed = remember(state) { SpectrogramFeed(state, frozen) }
+
+    // 구역을 떠나면 버린다. 까닭은 위 머리말 참고.
+    DisposableEffect(running) {
+        onDispose { if (running) state.clear() }
+    }
+
+    // 장이 새로 오면 한 줄 밀어 넣는다.
+    //
+    // **객체가 아니라 장 번호를 본다**(독립 검토 UA-04). `SpectrumView` 는
+    // 같은 FFT 한 장이라도 기본 상태가 바뀌면 새 껍데기로 다시 온다
+    // (`withMeasurement`). 객체를 키로 쓰면 같은 순간이 여러 칸에 늘여
+    // 그려져 시간축이 부풀었다.
+    //
+    // 시각도 **덩어리를 받은 단조 시각**을 쓴다. 그릴 때의 벽시계를 쓰면
+    // UI 가 밀린 만큼 어긋나고, 시계를 바꾸면 뛴다.
+    //
+    // **번호는 세션 안에서만 뜻이 있다**(독립 검토 CA-07). 엔진이 다시
+    // 열리면 `seq` 가 0 부터 다시 시작하므로, 번호만 견주면 새 장이 옛
+    // 최대값을 넘을 때까지 **화면이 통째로 멈춘다**. 세션이 바뀌면 들고
+    // 있던 그림도 버린다.
+    val spectrum = capture.spectrum
+    var lastSession by remember { mutableStateOf(Long.MIN_VALUE) }
+    var lastSeq by remember { mutableStateOf(-1L) }
+    LaunchedEffect(spectrum?.seq, capture.session, feed.frozen, running) {
+        if (!running || feed.frozen || spectrum == null) return@LaunchedEffect
+        if (capture.session != lastSession) {
+            state.clear()
+            lastSession = capture.session
+            lastSeq = -1L
+        }
+        if (spectrum.seq > lastSeq) {
+            lastSeq = spectrum.seq
+            state.push(spectrum.columnsSpl, spectrum.atMs)
+        }
+    }
+    return feed
 }
 
 /**
@@ -664,22 +760,106 @@ private fun CandidateRow(c: FeedbackCandidate) {
  * 흐른다 — 그림이 멈췄다고 재기를 멈추면 그 사이의 소리가 통째로
  * 사라지는데, 화면만 보아서는 그 사실을 알 수 없다.
  */
+/**
+ * 차트 안의 **보정 상태 표시**(2026-09-26 담당자 지시: 「RTA, Spectrum,
+ * Spectrogram 그래프에는 미보정 표시가 있어야 합니다」).
+ *
+ * ## 왜 차트 안인가
+ *
+ * 분석 구역은 눕히면 **차트만 남는다** — 위쪽 제목줄과 배지가 통째로
+ * 사라진다. 그런데 세로축은 이제 0~120 dB SPL 로 고정돼 있어, 표시가
+ * 없으면 화면에 90 이라 적힌 것을 **잰 음압**으로 읽게 된다.
+ *
+ * 미보정 값은 0dBFS 를 120dB SPL 로 **짐작한** 눈금이고 실제와 10dB 넘게
+ * 차이 날 수 있다(명세 1장). 숫자를 크게 보여 주는 화면일수록 그 말이
+ * 곁에 있어야 한다.
+ *
+ * 보정된 뒤에도 적는다 — 「무엇으로 잰 값인가」는 늘 보여야 하는 것이고,
+ * 없다가 생기면 그 자리에 무엇이 있었는지 알 수 없다.
+ */
+@Composable
+internal fun CalibrationPill(calibration: ActiveCalibration) {
+    val uncalibrated = calibration.isReferenceOnly
+    val tone = if (uncalibrated) SelahColors.Warn else SelahColors.InRange
+    Text(
+        calibration.state.shortKo,
+        color = tone,
+        fontSize = 10.sp,
+        fontWeight = FontWeight.SemiBold,
+        softWrap = false,
+        modifier = Modifier
+            .background(tone.copy(alpha = 0.14f), RoundedCornerShape(999.dp))
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+    )
+}
+
+/** 멈춤 단추와 보정 표시를 한 줄에. 세 화면이 같은 것을 쓴다. */
+@Composable
+internal fun ChartControls(
+    frozen: Boolean,
+    calibration: ActiveCalibration,
+    onToggle: () -> Unit,
+    /** 세로축 방식. null 이면 안 그린다(Spectrogram 은 세로가 주파수다). */
+    axisMode: AxisMode? = null,
+    onAxisMode: () -> Unit = {},
+) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        HoldPill(frozen, onToggle)
+        CalibrationPill(calibration)
+        axisMode?.let { AxisModePill(it, onAxisMode) }
+    }
+}
+
 @Composable
 internal fun HoldPill(frozen: Boolean, onToggle: () -> Unit) {
+    // **멈춰 있지 않을 때도 보여야 한다**(2026-09-26 담당자 지시:
+    // 「멈춤 버튼은 눈에 띄지 않아서 수정해 달라. 누르면 이어보기가
+    // 나와서 눈에 띈다」).
+    //
+    // 켜진 상태만 색을 주었더니, 정작 **누를 수 있다는 것**을 알려야 할
+    // 평소에 배경과 섞여 있었다. 누를 것은 평소에 보여야 하고, 켜진
+    // 것은 그것대로 달라야 한다 — 둘 다 색을 준다.
+    val tone = if (frozen) SelahColors.Warn else SelahColors.Accent
     Text(
         if (frozen) "이어보기" else "멈춤",
-        color = if (frozen) Color(0xFF00201C) else SelahColors.TextSecondary,
-        fontSize = 10.sp,
+        color = if (frozen) Color(0xFF00201C) else tone,
+        fontSize = 11.sp,
         fontWeight = FontWeight.Bold,
         softWrap = false,
         modifier = Modifier
             .background(
-                if (frozen) SelahColors.Warn else SelahColors.SurfaceVariant,
+                if (frozen) tone else tone.copy(alpha = 0.16f),
                 RoundedCornerShape(999.dp),
             )
+            .border(1.dp, tone.copy(alpha = if (frozen) 1f else 0.55f), RoundedCornerShape(999.dp))
             .clickable { onToggle() }
-            .padding(horizontal = 10.dp, vertical = 5.dp)
+            .padding(horizontal = 12.dp, vertical = 5.dp)
             .semantics { stateDescription = if (frozen) "멈춤" else "흐르는 중" },
+    )
+}
+
+/**
+ * 세로축 방식 표시 — **누르는 곳은 축이다**(2026-09-26 담당자 지시).
+ *
+ * 단추를 따로 두지 않고 축 자체를 누르게 했다. 바꾸려는 대상이 바로
+ * 거기 있고, 눕힌 화면에서 단추 한 자리를 더 쓰지 않는다. 지금 어느
+ * 방식인지는 이 작은 글자가 말한다.
+ */
+@Composable
+internal fun AxisModePill(mode: AxisMode, onToggle: () -> Unit) {
+    Text(
+        "세로축 ${mode.labelKo}",
+        color = SelahColors.TextSecondary,
+        fontSize = 10.sp,
+        softWrap = false,
+        modifier = Modifier
+            .background(SelahColors.SurfaceVariant, RoundedCornerShape(999.dp))
+            .clickable { onToggle() }
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .semantics { stateDescription = mode.labelKo },
     )
 }
 

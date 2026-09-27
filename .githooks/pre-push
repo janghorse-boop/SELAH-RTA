@@ -1,0 +1,11 @@
+#!/bin/sh
+# 밀기 직전 검사 — **병합이 끝난 가지에 커밋을 더 올리는 것**을 막는다.
+#
+# 왜: PR 이 병합된 뒤 같은 가지에 올린 커밋은 아무 PR 에도 담기지 않는다. push 는 성공하고
+# 경고도 없어서 다 된 줄 알고 넘어간다. 2026-09-27 이 저장소에서 겪었다 — PR #10 병합 뒤
+# 그 가지에 세 커밋을 더 올렸고, 담당자가 묻고서야 알았다.
+#
+# 켜는 방법(복제한 뒤 한 번): git config core.hooksPath .githooks
+# 급할 때 건너뛰기: git push --no-verify  (무엇을 건너뛰는지 알고 쓸 것)
+
+node scripts/check-branch-open.mjs || exit 1

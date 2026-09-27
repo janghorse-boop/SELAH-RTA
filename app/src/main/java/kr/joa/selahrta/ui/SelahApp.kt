@@ -70,6 +70,7 @@ import kr.joa.selahrta.ui.screens.HistoryScreen
 import kr.joa.selahrta.ui.screens.MeasureScreen
 import kr.joa.selahrta.ui.screens.RtaScreen
 import kr.joa.selahrta.ui.screens.SpectrogramScreen
+import kr.joa.selahrta.ui.screens.rememberSpectrogramFeed
 import kr.joa.selahrta.ui.screens.SpectrumScreen
 import kr.joa.selahrta.ui.screens.SettingsScreen
 import kr.joa.selahrta.ui.screens.ToolsScreen
@@ -331,6 +332,24 @@ fun SelahApp() {
         // 있다. 분석을 떠나면 `onDispose` 가 원래 방향으로 돌려놓는다.
         if (screen?.section == NavSection.Analyze) LockLandscape()
 
+        // **분석에 들어오면 곧바로 쌓기 시작한다**(2026-09-27 담당자 지시:
+        // 「분석 버튼을 누르면 보이지 않지만 시작을 해 달라」).
+        //
+        // 스펙트로그램은 시간이 쌓여야 쓸모가 생긴다 — 열고 나서 30초를
+        // 기다려야 그림이 차면 정작 궁금한 순간은 이미 지나 있다. RTA 를
+        // 보는 동안 미리 쌓아 두면 넘어가는 즉시 읽을 것이 있다.
+        //
+        // **구역을 떠나면 끈다.** 칸 2049개를 곱하고 줄이는 일을 예배
+        // 내내 하면 배터리로 돌아온다. 화면마다 켜고 끄지 않는 까닭은
+        // RTA↔Spectrum 을 오갈 때마다 엔진이 꺼졌다 켜져 그 사이의 장이
+        // 스펙트로그램에서 빈틈이 되기 때문이다.
+        val analyzing = screen?.section == NavSection.Analyze
+        DisposableEffect(analyzing) {
+            vm.setSpectrumEnabled(analyzing)
+            onDispose { if (analyzing) vm.setSpectrumEnabled(false) }
+        }
+        val spectrogram = rememberSpectrogramFeed(capture, running = analyzing)
+
         Column(Modifier.fillMaxSize().padding(inner)) {
             // **RTA 에서는 머리글을 접는다**(2026-09-24 담당자 지시: 「SELAH RTA
             // 제목 포함, USB MIC·미보정 표시도 없어도 된다 — RTA 만 해당」).
@@ -415,12 +434,11 @@ fun SelahApp() {
                     ViewMode.Rta -> RtaScreen(capture, onMode = { mode = it })
                     ViewMode.Spectrogram -> SpectrogramScreen(
                         capture = capture,
-                        onSpectrumEnabled = vm::setSpectrumEnabled,
+                        feed = spectrogram,
                         onMode = { mode = it },
                     )
                     ViewMode.Spectrum -> SpectrumScreen(
                         capture = capture,
-                        onSpectrumEnabled = vm::setSpectrumEnabled,
                         onMode = { mode = it },
                     )
                     ViewMode.Fr -> FrScreen(

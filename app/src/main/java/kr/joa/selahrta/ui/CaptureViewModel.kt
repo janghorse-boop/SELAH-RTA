@@ -174,6 +174,32 @@ data class CaptureUiState(
     /** 곡선 가져오기 결과 안내. */
     val curveNoticeKo: String? = null,
     val meterSettings: MeterSettings = MeterSettings(),
+    /**
+     * 저장된 설정이 **도착했는가**.
+     *
+     * ## 왜 필요한가 (2026-09-27 담당자 보고)
+     *
+     * 「앱을 열면 첫 SPL 화면이 나오는데, 자세히 보면 원래 화면이 있고
+     * 짧은 시간에 화면이 바뀐다」.
+     *
+     * 맞았습니다. 기기에서 재 보니 **50ms 동안 기본값으로 한 번 그리고**
+     * 곧바로 저장된 값으로 갈아엎었다:
+     *
+     * | | 먼저 그린 것 | 곧바로 바뀐 것 |
+     * |---|---|---|
+     * | 구간 | 설교 | **찬양** |
+     * | 권장 범위 | 68~75 dBA | **78~85 dBA** |
+     * | Leq | (1분) | **(10초)** |
+     *
+     * [MeterSettings] 의 기본값은 **DataStore 를 읽기 전의 자리표시**인데
+     * 화면이 그것을 그대로 그렸다. 짧아서 넘어갈 일이 아니다 — 잠깐이라도
+     * **틀린 권장 범위**가 보이는 것은 이 앱이 하면 안 되는 일이고,
+     * 화면이 저 혼자 뒤집히면 「내가 뭘 잘못 눌렀나」가 된다.
+     *
+     * 그래서 도착하기 전에는 그 값들을 **아예 그리지 않는다.** 없는 것을
+     * 비워 두는 것과 틀린 것을 보여 주는 것은 다른 일이다.
+     */
+    val settingsLoaded: Boolean = false,
     /** 지금 쓸 수 있는 입력 기기들. 꽂고 빼면 바뀐다. */
     val inputs: List<InputDeviceInfo> = emptyList(),
     /** 기기 선택·전환에 관해 알릴 것. 사실을 숨기지 않는다. */
@@ -685,7 +711,9 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         settingsJob = viewModelScope.launch {
             settingsStore.settings.collect { s ->
                 val old = controller.baseState.value.meterSettings
-                controller.update { st -> st.copy(meterSettings = s) }
+                // **도착했다고 함께 적는다.** 그 전까지 화면은 이 값들을
+                // 그리지 않는다([CaptureUiState.settingsLoaded]).
+                controller.update { st -> st.copy(meterSettings = s, settingsLoaded = true) }
                 controller.onSettingsChanged(old, s)
             }
         }

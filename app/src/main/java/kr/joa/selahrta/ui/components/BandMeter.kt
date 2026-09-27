@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -177,6 +178,8 @@ fun BandMeter(
      * 숫자를 가렸다(Spectrogram 에서 실제로 겪었다).
      */
     controls: (@Composable () -> Unit)? = null,
+    /** 세로축을 누르면 부른다(고정↔자동). null 이면 누를 수 없다. */
+    onAxisTap: (() -> Unit)? = null,
 ) {
     // **눈금 글자는 막대와 함께 밀려야 한다.** 따로 두면 밀고 난 뒤 막대와
     // 글자가 어긋나, 솟은 자리의 주파수를 잘못 읽는다.
@@ -237,6 +240,7 @@ fun BandMeter(
                     ceilDb = ceilDb,
                     height = barsHeight,
                     modifier = Modifier.padding(end = 4.dp),
+                    onTap = onAxisTap,
                 )
                 Column(Modifier.horizontalScroll(scroll)) {
                 Canvas(Modifier.width(chartWidth).height(barsHeight)) {
@@ -250,12 +254,11 @@ fun BandMeter(
                 // 선도 dB 자리에 박는다.
                 for (db in gridLinesDb(floorDb, ceilDb)) {
                     val y = (((ceilDb - db) / span) * size.height).toFloat()
-                    val strong = db in EMPHASIS_DB
                     drawLine(
-                        if (strong) SelahColors.TextMuted else SelahColors.Outline,
+                        SelahColors.Outline,
                         Offset(0f, y),
                         Offset(size.width, y),
-                        strokeWidth = if (strong) 2f else 1f,
+                        strokeWidth = 1f,
                     )
                 }
 
@@ -476,6 +479,107 @@ fun rtaTopSpl(rta: RtaView?, resolvedOnly: Boolean = true): Double? {
 val RTA_RANGE: Pair<Double, Double> = RTA_FLOOR_DB to RTA_CEIL_DB
 
 /**
+ * 세로축을 어떻게 잡을 것인가(2026-09-26 담당자 지시: 「세로축을 누르면
+ * 자동으로도 되게 하면 좋겠네요. 사용자가 바꿀 수 있게요」).
+ *
+ * 기본은 [Fixed] 다 — 움직이지 않는 축이라야 시간을 건너 견줄 수 있다.
+ * 다만 조용한 방에서는 막대가 아래 3분의 1에 눌려 모양이 안 보이므로,
+ * **그때만** 눌러서 [Auto] 로 바꾼다.
+ */
+enum class AxisMode(val labelKo: String) {
+    /** 0 ~ 120 dB 고정. 기기가 낼 수 있는 값의 전부다. */
+    Fixed("고정"),
+
+    /** 들어오는 값을 따라간다. **가끔만** 옮긴다 — 아래 머리말 참고. */
+    Auto("자동"),
+    ;
+
+    fun next(): AxisMode = if (this == Fixed) Auto else Fixed
+}
+
+/**
+ * 고른 방식대로 눈금을 낸다.
+ *
+ * ## 자동은 「따라다니기」가 아니다
+ *
+ * 처음 만든 자동은 장마다 천장을 다시 셈해 **초당 여러 번 튀었다.**
+ * 그러면 전체가 커져도 그림이 그대로라, RTA 로 보려던 것이 가려진다.
+ *
+ * 그래서 자동도 **가끔만** 옮긴다: 값이 천장에 닿으려 하면 곧바로 올리고
+ * (잘려 나간 값은 없는 값이다), 한참 아래에 깔려 있으면 [SETTLE_MS] 동안
+ * 그대로일 때만 내린다. 말 사이의 빈틈에는 움직이지 않는다.
+ *
+ * ## 한 번만 띄우고 값 흐름을 받는다
+ *
+ * `LaunchedEffect(top)` 으로 적었다가 고쳤다. `top` 은 초당 열몇 번
+ * 바뀌므로 효과가 그때마다 끊기고 다시 시작했고, 시작도 하기 전에 끊기는
+ * 일이 잦아 갱신이 띄엄띄엄 들어갔다 — 기기에서 축이 100 → 50 → 100 으로
+ * 뛰었다. `snapshotFlow` 로 받으면 빠뜨리는 장이 없다.
+ */
+@Composable
+fun rememberAxisRange(mode: AxisMode, top: Double?): Pair<Double, Double> {
+    var ceil by remember { mutableStateOf(Double.NaN) }
+    val latest = rememberUpdatedState(top)
+
+    LaunchedEffect(mode) {
+        if (mode != AxisMode.Auto) return@LaunchedEffect
+        var lowSinceMs = 0L
+        snapshotFlow { latest.value }.collect { v ->
+            if (v == null) return@collect
+            if (ceil.isNaN()) {
+                ceil = stepUp(v + HEADROOM_DB)
+                return@collect
+            }
+            val now = System.currentTimeMillis()
+            when {
+                v > ceil - HEADROOM_DB -> {
+                    ceil = stepUp(v + HEADROOM_DB)
+                    lowSinceMs = 0L
+                }
+
+                v < ceil - AUTO_SPAN_DB + SLACK_DB -> {
+                    if (lowSinceMs == 0L) {
+                        lowSinceMs = now
+                    } else if (now - lowSinceMs >= SETTLE_MS) {
+                        ceil = stepUp(v + HEADROOM_DB)
+                        lowSinceMs = 0L
+                    }
+                }
+
+                else -> lowSinceMs = 0L
+            }
+        }
+    }
+
+    if (mode == AxisMode.Fixed || ceil.isNaN()) return RTA_RANGE
+    return (ceil - AUTO_SPAN_DB).coerceAtLeast(RTA_FLOOR_DB) to ceil
+}
+
+/** [STEP_DB] 배수로 올려 맞춘다. */
+private fun stepUp(db: Double): Double = kotlin.math.ceil(db / STEP_DB) * STEP_DB
+
+/** 위쪽 여유. 값이 이 안으로 들어오면 천장을 올린다. */
+private const val HEADROOM_DB = 6.0
+
+/** 이만큼 아래에 깔려 있어야 「내려도 된다」로 본다. */
+private const val SLACK_DB = 25.0
+
+/**
+ * 내리기 전에 그 상태가 이어져야 하는 시간.
+ *
+ * **말 사이의 빈틈보다 길어야 한다.** 3초로 두었더니 설교 중 문장
+ * 사이에서 내려갔다 올라오기를 되풀이했다 — 천천히 튀는 것일 뿐 튀는
+ * 것은 같다.
+ */
+private const val SETTLE_MS = 10_000L
+
+/** 천장이 움직이는 단위. 5dB 로 하면 경계에서 자주 오간다. */
+private const val STEP_DB = 10.0
+
+/** 자동일 때 보여 주는 폭. 예배당에서 읽히는 폭이다. */
+private const val AUTO_SPAN_DB = 50.0
+
+/**
  * 바닥 — **음압에 음수는 없다.**
  *
  * 예전 자리표시는 `-60 ~ 0` 이었는데 그 숫자는 **dBFS 의 눈금**이다. 값은
@@ -508,56 +612,27 @@ internal val Y_AXIS_WIDTH = 26.dp
 internal val CONTROL_ROW_HEIGHT = 30.dp
 
 /**
- * 가로선을 그을 dB 자리.
+ * 가로선을 그을 dB 자리 — [GRID_STEP_DB] 마다 한 줄.
  *
- * [GRID_STEP_DB] 마다 한 줄, 그리고 [EMPHASIS_DB] 를 더한다. 굵게 그리는
- * 셋은 **예배당에서 실제로 읽는 자리**다 — 설교 권장이 68~75 dBA 이고
- * 찬양은 그 위라, 70·80·90 에 선이 있으면 막대 끝을 숫자로 옮기지 않고도
- * 「권장 범위 안인가」가 바로 보인다(2026-09-26 담당자 지시).
+ * ## 70·80·90 을 굵게 그었다가 뺐다 (2026-09-26)
+ *
+ * 설교 권장이 68~75dBA 라 그 자리에 선이 있으면 좋겠다고 보았는데,
+ * 담당자가 지우라고 했다. 맞는 판단이다 — **RTA 막대는 가중 없는
+ * 밴드별 값**이고 권장 범위는 **A 가중 Leq** 다. 같은 그림에 그어 두면
+ * 서로 견줄 수 있는 두 값처럼 보이는데, 실제로는 다른 잣대다.
+ *
+ * 권장 범위와 견주는 자리는 측정 화면의 큰 숫자다. 거기서는 같은
+ * 가중·같은 시간평균으로 잰 값을 견준다.
  */
 internal fun gridLinesDb(floorDb: Double, ceilDb: Double): List<Double> {
-    val out = sortedSetOf<Double>()
+    val out = ArrayList<Double>()
     var db = kotlin.math.ceil(floorDb / GRID_STEP_DB) * GRID_STEP_DB
     while (db <= ceilDb) {
         out.add(db)
         db += GRID_STEP_DB
     }
-    EMPHASIS_DB.filterTo(out) { it in floorDb..ceilDb }
-    return out.toList()
+    return out
 }
-
-/** 굵게 긋는 자리. 예배당에서 읽는 대역이다. */
-internal val EMPHASIS_DB = listOf(70.0, 80.0, 90.0)
-
-/*
- * **막대는 밴드를 색으로 가르지 않는다**(2026-09-26 담당자 지시:
- * 「100Hz 이하도 다른 주파수와 같이 색상을 같게 표현해 달라」).
- *
- * ## 무엇을 색으로 말하고 있었나
- *
- * 4096점·48kHz 의 칸 폭은 11.7Hz 인데 25Hz 밴드는 5.8Hz 다 — **한 칸보다
- * 좁다.** 그래서 저역 몇 밴드는 제 대역의 에너지가 아니라 이웃에서 새어
- * 온 값을 담는다(63Hz −2.19dB, 80Hz −1.12dB · 독립 검증 R08). 그 사실을
- * 알파 0.25 로 알리고 있었다.
- *
- * ## 왜 뗐나
- *
- * **알리는 값보다 헷갈리게 하는 값이 컸다.** 0.25 는 「못 믿는 값」이
- * 아니라 **다른 종류의 것**으로 읽혔고(0.5 로 올려도 마찬가지였다),
- * 정작 그 사실이 무엇인지는 색이 말해 주지 못한다. 예배당에서 킥·베이스를
- * 볼 때 저역이 늘 흐리게 깔려 있는 것도 읽기를 방해한다.
- *
- * ## 사실은 어디에 남아 있나
- *
- * 없애지 않았다. `RtaFrame.resolved`·`lossDb` 는 그대로 있고, 세로
- * 화면의 차트 아래가 **몇 밴드가 얼마나 새는지 글로 적는다.** 색은 늘
- * 보이지만 뜻을 못 말하고, 글은 볼 때만 보이지만 정확히 말한다.
- *
- * FFT 를 늘리면 실제로 해결된다(8192 면 80Hz 가 살아난다). 그런데 같은
- * 스펙트럼을 하울링 탐지가 쓰므로 창이 길어지면 **후보를 늦게 잡는다** —
- * 8192 는 171ms, 16384 는 341ms 다. 저역 두 밴드를 얻자고 하울링을 늦게
- * 잡을 일은 아니다.
- */
 
 /** 보통 선의 간격. */
 private const val GRID_STEP_DB = 20.0
@@ -576,20 +651,28 @@ private val LABEL_HALF = 5.dp
  * 없었지만, 축을 고정한 지금은 **숫자가 dB 자리에 박힌다.**
  */
 @Composable
-internal fun YAxis(floorDb: Double, ceilDb: Double, height: Dp, modifier: Modifier = Modifier) {
+internal fun YAxis(
+    floorDb: Double,
+    ceilDb: Double,
+    height: Dp,
+    modifier: Modifier = Modifier,
+    /** 누르면 고정↔자동을 오간다. null 이면 누를 수 없다. */
+    onTap: (() -> Unit)? = null,
+) {
     val span = (ceilDb - floorDb).coerceAtLeast(1.0)
-    Box(modifier.width(Y_AXIS_WIDTH).height(height)) {
+    Box(
+        modifier
+            .width(Y_AXIS_WIDTH)
+            .height(height)
+            .then(if (onTap != null) Modifier.clickable { onTap() } else Modifier),
+    ) {
         for (db in gridLinesDb(floorDb, ceilDb)) {
             // 맨 위·맨 아래 글자가 상자 밖으로 나가지 않게 잡아 둔다.
             val y = (height * (((ceilDb - db) / span).toFloat()) - LABEL_HALF)
                 .coerceIn(0.dp, (height - LABEL_HALF * 2).coerceAtLeast(0.dp))
             Text(
                 "%.0f".format(db),
-                color = if (db in EMPHASIS_DB) {
-                    SelahColors.TextSecondary
-                } else {
-                    SelahColors.TextMuted
-                },
+                color = SelahColors.TextMuted,
                 fontSize = 8.sp,
                 maxLines = 1,
                 softWrap = false,
