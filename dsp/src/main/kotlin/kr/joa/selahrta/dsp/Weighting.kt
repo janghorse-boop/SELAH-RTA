@@ -10,14 +10,32 @@ package kr.joa.selahrta.dsp
  */
 enum class Weighting(val labelKo: String, val unitSuffix: String) {
     /** 사람 귀의 감도를 흉내 낸다. 음압 규제와 청력 기준이 쓰는 가중이다. */
-    A("A 가중", "dBA"),
+    A("A-weighting", "dB(A)"),
 
     /** 저역을 덜 깎는다. 큰 소리와 피크를 볼 때 쓴다. */
-    C("C 가중", "dBC"),
+    C("C-weighting", "dB(C)"),
 
-    /** 가중 없음(flat). 실제 음압 그대로다. */
-    Z("무가중 (Z)", "dB(Z)"),
+    /**
+     * 깎지도 올리지도 않는다(평탄).
+     *
+     * **이름은 「Z-weighting」 하나다.** 「무가중」·「가중 없음」·「Flat」을
+     * 이름 자리에 쓰지 않는다 — 같은 것을 네 가지로 부르던 탓에 「고정된
+     * Z 와 무가중이 다른 것인가」라는 물음이 실제로 나왔다(2026-09-27).
+     * 평탄하다는 사실은 고를 때 나오는 설명 줄에서 말한다.
+     */
+    Z("Z-weighting", "dB(Z)"),
 }
+
+/**
+ * `LAeq 1분` 처럼 L 기호 꼴로 적는다(지시서 §10).
+ *
+ * **화면이 글자를 손으로 적지 않게 하려고 여기 둔다.** 손으로 적으면
+ * 가중을 바꾼 뒤에도 옛 글자가 남아, 표기와 계산이 어긋난다.
+ */
+fun Weighting.leqLabel(windowKo: String): String = "L${name}eq $windowKo"
+
+/** `LZpeak` 처럼 적는다. PEAK 은 창이 없어 뒤에 붙는 말이 없다. */
+fun Weighting.peakLabel(): String = "L${name}peak"
 
 /**
  * IEC 61672-1 이 정한 극점 주파수(Hz).
