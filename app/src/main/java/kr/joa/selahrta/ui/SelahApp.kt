@@ -107,12 +107,32 @@ fun SelahApp() {
     androidx.compose.runtime.LaunchedEffect(shareUri) {
         val uri = shareUri ?: return@LaunchedEffect
         val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-            type = "text/csv"
+            // **`text/` 으로 보내지 않는다**(2026-09-27 실기기).
+            //
+            // 담당자가 카카오톡 「나에게 보내기」를 눌렀는데 파일이 안
+            // 갔다. 권한 문제가 아니었다 — 기기에 물어보니
+            // (`cmd package query-activities`) **카카오톡은 `text/csv` 를
+            // 아예 받지 않는다.** 그러면 `text/` 를 받는 다른 길로 가고,
+            // 그쪽은 글자(`EXTRA_TEXT`)만 보므로 **아무것도 안 간다.**
+            //
+            // 파일임을 분명히 한다. 이름이 `.csv` 로 끝나므로 받는 쪽에서
+            // 엑셀로 여는 데는 지장이 없다.
+            type = "application/octet-stream"
             putExtra(android.content.Intent.EXTRA_STREAM, uri)
+            // **권한을 ClipData 로도 싣는다.** `EXTRA_STREAM` 하나만으로는
+            // 받는 앱에 읽기 권한이 따라가지 않는 경로가 있다.
+            clipData = android.content.ClipData.newRawUri(
+                uri.lastPathSegment ?: "measurement.csv",
+                uri,
+            )
             addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         runCatching {
-            ctx.startActivity(android.content.Intent.createChooser(send, "측정 기록 보내기"))
+            val chooser = android.content.Intent.createChooser(send, "측정 기록 보내기")
+            // 고르는 창 자체에도 권한을 붙인다 — 미리보기를 그리는 쪽이
+            // 따로 읽는 경우가 있다.
+            chooser.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            ctx.startActivity(chooser)
         }
         vm.clearShareUri()
     }
