@@ -155,8 +155,17 @@ class RtaEngine(
     /** 붙어 있는 수. 시험이 「정말 떨어졌는가」를 보는 데 쓴다. */
     val spectrumSinkCount: Int get() = sinks.size
 
+    /** 마이크 보정 곡선의 칸별 계수. 곡선이 없으면 null. */
+    private var curveCorrection: DoubleArray? = null
+
+    /** 분석 가중의 칸별 전력 이득. Z 면 null. */
+    private var weightCorrection: DoubleArray? = null
+
     /**
-     * 마이크 보정 곡선을 칸마다 걸 계수. 없으면 보정하지 않는다.
+     * 위 둘을 **미리 곱해 둔 것**. 뜨거운 반복문은 이것만 본다.
+     *
+     * 곱셈을 반복문 안에서 두 번 하지 않으려고 합쳐 둔다 — 칸마다 초당
+     * 수만 번 도는 자리다. 둘 다 없으면 null 이라 곱셈 자체가 없다.
      *
      * 주 스레드가 갈아 끼우고 오디오 스레드가 읽는다. 다 만든 배열의
      * **참조만** 바꾸므로 `@Volatile` 로 그 참조가 보이게만 하면 된다 —
@@ -164,6 +173,17 @@ class RtaEngine(
      */
     @Volatile
     private var binCorrection: DoubleArray? = null
+
+    /**
+     * 지금 걸린 분석 가중.
+     *
+     * **RTA·Spectrum·Spectrogram 이 함께 쓴다.** 셋이 같은 FFT 장을 나눠
+     * 쓰므로 따로 둘 수 없다 — 따로 두면 RTA 의 63Hz 막대와 Spectrum 의
+     * 63Hz 봉우리가 다른 값이 된다.
+     */
+    @Volatile
+    var analysisWeighting: Weighting = Weighting.Z
+        private set
 
     /**
      * 지금 결과가 **몇 번째 곡선으로** 계산된 것인가.
@@ -188,7 +208,8 @@ class RtaEngine(
      * 까닭은 [CalibrationCurve.binCorrectionLinear] 의 `referenceHz` 참고.
      */
     fun setCurve(curve: CalibrationCurve?) {
-        binCorrection = curve?.binCorrectionLinear(fftSize, sampleRateHz, CURVE_REFERENCE_HZ)
+        curveCorrection = curve?.binCorrectionLinear(fftSize, sampleRateHz, CURVE_REFERENCE_HZ)
+        rebuildCorrection()
         curveGeneration++
         smoothing.reset()
         peakHold.reset()
@@ -198,6 +219,48 @@ class RtaEngine(
         spectrumSmoothing.reset()
         spectrumHold.reset()
         latestSpectrum = null
+    }
+
+    /**
+     * 분석 화면(RTA·Spectrum·Spectrogram)의 가중을 바꾼다.
+     *
+     * **화면의 글자만 바꾸지 않는다**(지시서 §18: 「UI에서 dBA/dBC/dBZ만
+     * 변경하고 실제 DSP 결과가 동일한 상태가 발생해서는 안 된다」).
+     * 칸별 이득을 새로 만들어 곡선과 합친다.
+     *
+     * **엔진을 새로 만들지 않는다.** 가중만 갈아 끼우므로 쌓아 둔 평활과
+     * Peak Hold 가 살아 있다 — 다만 그 값들은 옛 가중으로 만든 것이라
+     * 곡선을 바꿀 때와 같은 까닭으로 비운다.
+     */
+    fun setAnalysisWeighting(w: Weighting) {
+        if (w == analysisWeighting) return
+        analysisWeighting = w
+        weightCorrection = weightBinGain(w, fftSize, sampleRateHz)
+        rebuildCorrection()
+        // 옛 가중으로 만든 값을 새 이름표와 함께 내보내지 않는다.
+        smoothing.reset()
+        peakHold.reset()
+        latest = null
+        spectrumSmoothing.reset()
+        spectrumHold.reset()
+        latestSpectrum = null
+    }
+
+    /**
+     * 곡선과 가중을 하나로 합친다.
+     *
+     * **둘 다 없으면 null 이다** — 1 로 채운 배열을 두면 아무 일도 안 하는
+     * 곱셈을 칸마다 하게 된다. 하나뿐이면 그 배열을 그대로 쓴다(복사하지
+     * 않는다 — 만든 쪽이 다시 건드리지 않는 배열이다).
+     */
+    private fun rebuildCorrection() {
+        val c = curveCorrection
+        val w = weightCorrection
+        binCorrection = when {
+            c == null -> w
+            w == null -> c
+            else -> DoubleArray(c.size) { c[it] * w[it] }
+        }
     }
 
     /**

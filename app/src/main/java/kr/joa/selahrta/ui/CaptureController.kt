@@ -17,6 +17,7 @@ import kr.joa.selahrta.domain.MeasureState
 import kr.joa.selahrta.domain.MicKind
 import kr.joa.selahrta.dsp.BlockStats
 import kr.joa.selahrta.dsp.MultiWeightEngine
+import kr.joa.selahrta.settings.LeqWindow
 import kr.joa.selahrta.settings.MeterSettings
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -258,6 +259,12 @@ class CaptureController(
     /** 설정이 바뀌었을 때 엔진을 다시 만들어야 하는지 보고, 필요하면 만든다. */
     fun onSettingsChanged(old: MeterSettings, new: MeterSettings) {
         if (running && needsEngineRestart(old, new)) restartEngine(new)
+        // **분석 가중은 엔진을 새로 만들지 않는다.** 칸별 이득만 갈아
+        // 끼우므로 쌓아 둔 음압 Leq·MAX 가 살아 있다 — 예배 중에 잠깐
+        // A 로 보고 돌아와도 그동안의 평균이 사라지지 않는다.
+        if (old.analysisWeighting != new.analysisWeighting) {
+            postToCapture { session -> session.rta.setAnalysisWeighting(new.analysisWeighting) }
+        }
     }
 
     /**
@@ -268,24 +275,51 @@ class CaptureController(
      * 갈아 끼우므로 측정이 끊기지는 않는다.
      */
     private fun restartEngine(s: MeterSettings) {
+        // **엔진에는 engineMillis 를 준다.** leqWindow.millis 를 그대로
+        // 넘기면 「전체」의 -1 이 창 길이로 들어가 측정이 통째로 망가진다.
+        val ms = s.leqWindow.engineMillis
         postToCapture { session ->
             session.engine = MultiWeightEngine(
                 sampleRate = session.sampleRate,
                 timeWeight = s.timeWeight,
-                leqLongMs = s.leqWindow.millis,
+                leqLongMs = ms,
             )
         }
+        engineLeqLongMs = ms
         _state.value = _state.value.copy(meter = MeterReading())
     }
+
+    /**
+     * 지금 엔진에 걸려 있는 긴 Leq 창(ms).
+     *
+     * 설정값이 아니라 **엔진에 실제로 들어간 값**이다. 「전체」는 엔진에
+     * 요구하는 창이 없어 설정과 엔진이 갈라지는데, 그 갈라짐을 여기서
+     * 기억해야 「전체」에서 돌아올 때 새로 만들지 말지를 바르게 가른다.
+     */
+    private var engineLeqLongMs: Long? = null
 
     /**
      * 설정이 바뀌었을 때 엔진을 다시 만들어야 하는가.
      *
      * 가중치와 구간·범위는 엔진 밖의 일이라 다시 만들 필요가 없다.
      * 필요 없는데 다시 만들면 Leq 와 MAX 가 사라진다.
+     *
+     * ## 「전체」로 드나드는 것만으로는 새로 만들지 않는다
+     *
+     * 세션 Leq 는 창이 아니라 **측정 시작부터의 누적 합계**다. 엔진을 새로
+     * 만들면 그 누적이 사라져 **「전체」가 전체가 아니게 된다** — 화면은
+     * 멀쩡한 숫자를 보여 주는데 실제로는 방금 바꾼 순간부터의 평균이다.
+     * 조용히 틀린 값이라 더 나쁘다.
+     *
+     * 그래서 **엔진에 실제로 들어간 창**([engineLeqLongMs])과 견준다.
+     * 「전체」는 엔진에 요구가 없으므로 그대로 두고, 「전체」에서 다른
+     * 창으로 나올 때는 그 창이 지금 엔진의 것과 다를 때만 새로 만든다.
      */
-    private fun needsEngineRestart(old: MeterSettings, new: MeterSettings): Boolean =
-        old.timeWeight != new.timeWeight || old.leqWindow != new.leqWindow
+    private fun needsEngineRestart(old: MeterSettings, new: MeterSettings): Boolean {
+        if (old.timeWeight != new.timeWeight) return true
+        if (new.leqWindow == LeqWindow.Session) return false
+        return engineLeqLongMs != new.leqWindow.engineMillis
+    }
 
     /**
      * 기기 목록이 바뀌었다. 쓰던 것이 빠졌으면 정책대로 처리한다(명세 2장).
@@ -509,8 +543,19 @@ class CaptureController(
                     settings = _state.value.meterSettings,
                 )
                 session.startedNs = nowNs()
+                // 엔진에 실제로 들어간 창을 기억한다. 「전체」에서 돌아올 때
+                // 새로 만들지 말지를 이 값으로 가른다([needsEngineRestart]).
+                engineLeqLongMs = _state.value.meterSettings.leqWindow.engineMillis
                 // 새 엔진에 지금 화면 상태를 그대로 물려준다.
                 session.rta.spectrumEnabled = spectrumEnabled
+                // 분석 가중도 물려준다. 안 걸면 엔진은 Z 인데 화면은 A 라고
+                // 적는 상태가 된다 — 지시서 §18 이 막으라는 바로 그것이다.
+                session.rta.setAnalysisWeighting(
+                    _state.value.meterSettings.analysisWeighting,
+                )
+                // 화면이 「무슨 잣대로 그렸나」를 적을 때 쓴다. 엔진이
+                // 실제로 쓰는 값이라야 거짓말이 아니다.
+                _state.value = _state.value.copy(analysisFftSize = session.rta.fftSize)
                 active = session
                 // **이전 기기의 보정을 여기서 끊는다.** 남겨 두면 새 기기의
                 // 첫 덩어리들이 지난 마이크의 보정값으로 나간다

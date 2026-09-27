@@ -81,7 +81,7 @@ val ChurchSegment.focusKo: String
  * 청력 안전기준과 동일시하지 않는다」고 못박았다.
  */
 val SEGMENT_CAUTIONS: List<String> = listOf(
-    "85 dBA 이상이 장시간 지속되지 않도록 합니다.",
+    "85 dB(A) 이상이 장시간 지속되지 않도록 합니다.",
     "음량보다 명료도와 주파수 밸런스가 더 중요합니다.",
     "좌우 편차는 ±3~5 dB 이내로 맞추는 것이 좋습니다.",
 )

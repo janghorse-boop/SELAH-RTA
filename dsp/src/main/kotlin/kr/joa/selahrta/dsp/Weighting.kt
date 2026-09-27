@@ -10,13 +10,73 @@ package kr.joa.selahrta.dsp
  */
 enum class Weighting(val labelKo: String, val unitSuffix: String) {
     /** 사람 귀의 감도를 흉내 낸다. 음압 규제와 청력 기준이 쓰는 가중이다. */
-    A("A 가중", "dBA"),
+    A("A-weighting", "dB(A)"),
 
     /** 저역을 덜 깎는다. 큰 소리와 피크를 볼 때 쓴다. */
-    C("C 가중", "dBC"),
+    C("C-weighting", "dB(C)"),
 
-    /** 가중 없음(flat). 실제 음압 그대로다. */
-    Z("무가중 (Z)", "dB(Z)"),
+    /**
+     * 깎지도 올리지도 않는다(평탄).
+     *
+     * **이름은 「Z-weighting」 하나다.** 「무가중」·「가중 없음」·「Flat」을
+     * 이름 자리에 쓰지 않는다 — 같은 것을 네 가지로 부르던 탓에 「고정된
+     * Z 와 무가중이 다른 것인가」라는 물음이 실제로 나왔다(2026-09-27).
+     * 평탄하다는 사실은 고를 때 나오는 설명 줄에서 말한다.
+     */
+    Z("Z-weighting", "dB(Z)"),
+}
+
+/**
+ * `LAeq 1분` 처럼 L 기호 꼴로 적는다(지시서 §10).
+ *
+ * **화면이 글자를 손으로 적지 않게 하려고 여기 둔다.** 손으로 적으면
+ * 가중을 바꾼 뒤에도 옛 글자가 남아, 표기와 계산이 어긋난다.
+ */
+fun Weighting.leqLabel(windowKo: String): String = "L${name}eq $windowKo"
+
+/** `LZpeak` 처럼 적는다. PEAK 은 창이 없어 뒤에 붙는 말이 없다. */
+fun Weighting.peakLabel(): String = "L${name}peak"
+
+/**
+ * 가중의 **칸별 전력 이득**. RTA·Spectrum 이 칸마다 곱한다.
+ *
+ * ## 왜 칸마다인가
+ *
+ * 1/3 옥타브 대역은 ±11.6% 폭이다. 저역에서 A-weighting 의 기울기는
+ * 옥타브당 12dB 에 가까워 **한 대역 안에서 4dB 가 달라진다.** 대역
+ * 중심값 하나를 대역 전체에 걸면 대역 안의 소리 모양에 따라 1dB 가까이
+ * 어긋난다. 칸마다 걸고 나서 묶으면 근사가 아니다.
+ *
+ * ## 음압과 같은 필터를 쓴다
+ *
+ * [weightingFilter] 의 응답을 그대로 읽는다. 규격의 아날로그 식으로
+ * 따로 셈하면 더 정확하겠지만, **그러면 같은 소리를 두 화면이 다르게
+ * 말한다** — 음압은 이 필터를 시간축으로 통과시켜 얻은 값이기 때문이다.
+ * 정확함보다 두 값이 맞아떨어지는 쪽이 낫다.
+ *
+ * ## 전력 이득이다
+ *
+ * 돌려주는 값은 **전력에 곱하는 것**이라 진폭비의 제곱이다. 진폭비를
+ * 그대로 쓰면 dB 가 절반으로 나온다 — 100Hz 에서 -19.1dB 이어야 할
+ * A-weighting 이 -9.6dB 로 보인다.
+ *
+ * @return Z 이면 null — **곱할 것이 없다**는 뜻이다. 1 로 채운 배열을
+ *   돌려주면 아무 일도 안 하는 곱셈을 칸마다 하게 된다.
+ */
+fun weightBinGain(w: Weighting, fftSize: Int, sampleRate: Int): DoubleArray? {
+    require(fftSize > 0) { "FFT 길이가 0 이하다: $fftSize" }
+    require(sampleRate > 0) { "샘플레이트가 0 이하다: $sampleRate" }
+    if (w == Weighting.Z) return null
+
+    val chain = weightingFilter(w, sampleRate)
+    val binWidth = sampleRate.toDouble() / fftSize
+    return DoubleArray(fftSize / 2 + 1) { bin ->
+        // 진폭비를 제곱해 전력비로 만든다.
+        val m = chain.magnitudeAt(bin * binWidth, sampleRate)
+        // **성하지 않은 값은 0 으로 둔다.** 0Hz 근처에서 셈이 무너지면
+        // NaN 이 곱셈으로 번져 그 대역이 통째로 빈다.
+        if (m.isFinite() && m > 0.0) m * m else 0.0
+    }
 }
 
 /**

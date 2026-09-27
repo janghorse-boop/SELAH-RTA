@@ -152,6 +152,14 @@ data class CaptureUiState(
     val measure: MeasureState = MeasureState.Idle,
     val opened: OpenedFormat? = null,
     val diagnostics: CaptureDiagnostics = CaptureDiagnostics(),
+    /**
+     * 지금 도는 분석 엔진의 FFT 길이. 측정 중이 아니면 null.
+     *
+     * **설정값이 아니라 엔진이 실제로 쓰는 값이다.** 설정은 다음
+     * 측정부터 적용되므로, 설정값을 화면에 적으면 측정 중에 바꾼
+     * 순간 화면이 거짓말을 한다.
+     */
+    val analysisFftSize: Int? = null,
     val meter: MeterReading = MeterReading(),
     val calibration: ActiveCalibration = ActiveCalibration.assumed,
     /** 31밴드 RTA. 아직 첫 FFT 가 안 찼으면 null. */
@@ -432,10 +440,15 @@ class CaptureSession(
     var engine: MultiWeightEngine = MultiWeightEngine(
         sampleRate = sampleRate,
         timeWeight = settings.timeWeight,
-        leqLongMs = settings.leqWindow.millis,
+        // **engineMillis 다.** millis 를 넘기면 「전체」의 -1 이 창 길이로
+        // 들어가 측정이 통째로 망가진다.
+        leqLongMs = settings.leqWindow.engineMillis,
     )
 
-    val rta = RtaEngine(sampleRate)
+    // **FFT 길이는 여기서 못박힌다.** 측정 중에는 바꾸지 않는다 —
+    // 엔진을 새로 만들면 하울링 탐지와 FR 수집이 붙어 있던 자리가
+    // 끊긴다. 설정은 다음 측정부터 적용된다.
+    val rta = RtaEngine(sampleRate, fftSize = settings.fftSize)
 
     /**
      * 하울링 후보 탐지기(명세 9장).
@@ -1330,9 +1343,37 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { settingsStore.setSegmentName(s, name) }
     }
 
-    fun setWeighting(w: Weighting) { viewModelScope.launch { settingsStore.setWeighting(w) } }
+    fun setSplWeighting(w: Weighting) {
+        viewModelScope.launch { settingsStore.setSplWeighting(w) }
+    }
+
+    fun setPeakWeighting(w: Weighting) {
+        viewModelScope.launch { settingsStore.setPeakWeighting(w) }
+    }
+
+    /**
+     * 분석 가중을 바꾼다. **엔진에도 바로 흘린다** — 설정만 바꾸고
+     * 엔진에 안 흘리면 화면 글자만 바뀌는 바로 그 상태가 된다(지시서 §18).
+     */
+    fun setAnalysisWeighting(w: Weighting) {
+        viewModelScope.launch { settingsStore.setAnalysisWeighting(w) }
+    }
+
+    fun resetSplWeighting() { viewModelScope.launch { settingsStore.resetSplWeighting() } }
+    fun resetPeakWeighting() { viewModelScope.launch { settingsStore.resetPeakWeighting() } }
+    fun resetAnalysisWeighting() {
+        viewModelScope.launch { settingsStore.resetAnalysisWeighting() }
+    }
     fun setTimeWeight(t: TimeWeight) { viewModelScope.launch { settingsStore.setTimeWeight(t) } }
     fun setLeqWindow(w: LeqWindow) { viewModelScope.launch { settingsStore.setLeqWindow(w) } }
+
+    /**
+     * FFT 길이를 고른다. **다음 측정부터 적용된다.**
+     *
+     * 측정 중에 엔진을 새로 만들면 하울링 탐지와 FR 수집이 붙어 있던
+     * 자리가 끊긴다 — FR 을 재는 도중이면 그 회차를 잃는다.
+     */
+    fun setFftSize(n: Int) { viewModelScope.launch { settingsStore.setFftSize(n) } }
 
 
 
@@ -1864,8 +1905,10 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             java.util.UUID.randomUUID().toString().take(4),
         )
         val cal = st.calibration
+        // 기록 겉장에는 **표시값**(millis)을 적는다 — Session 이면 -1 이고,
+        // 리포트가 그것을 「전체」로 읽는다.
         val window = st.meterSettings.leqWindow.millis
-        val weighting = st.meterSettings.weighting
+        val weighting = st.meterSettings.splWeighting
         val fmt = st.audioFormat
 
         // 자리를 먼저 만든다. 겉장은 끝낼 때 쓴다 — 그것이 「온전하다」는
@@ -1989,6 +2032,10 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                         // 측정 전체를 재고 있어, 기록 시작 전의 소리까지
                         // 겉장에 섞여 들어갔다(2026-09-26 기기에서 확인).
                         weighting = rec.summary.weighting,
+                        // PEAK·분석 가중은 기록기가 세지 않는다 — 요약
+                        // 숫자와 달리 재는 동안 바뀌지 않는 설정이다.
+                        peakWeighting = st.meterSettings.peakWeighting,
+                        analysisWeighting = st.meterSettings.analysisWeighting,
                         timeWeight = st.meterSettings.timeWeight,
                         leqWindowMs = st.meterSettings.leqWindow.millis,
                         leqDb = rec.summary.leqDb ?: Double.NaN,
@@ -2255,16 +2302,31 @@ internal fun CaptureUiState.withMeasurement(m: MeasurementSnapshot?): CaptureUiS
     return copy(
         diagnostics = m.diagnostics,
         meter = m.spl?.let { w ->
-            val f = w.of(meterSettings.weighting)
+            val f = w.of(meterSettings.splWeighting)
+            // **두 번 집는다.** 음압과 PEAK 의 잣대가 다를 수 있다 —
+            // 킥·스네어의 저역이 A 가중에 깎여 순간 음압을 놓치는 일을
+            // 막자고 갈라 둔 것이다(지시서 §16).
+            val pf = w.of(meterSettings.peakWeighting)
+            // **Session 은 창이 아니라 누적이다.** 엔진에는 기본 창을 주고
+            // (engineMillis) 화면에 적을 값만 여기서 갈아 낀다.
+            val session = meterSettings.leqWindow == LeqWindow.Session
             MeterReading(
                 currentSpl = f.currentDbfs.toSpl(offset).value,
                 leqShort = f.leqShortDbfs?.toSpl(offset)?.value,
-                leqLong = f.leqLongDbfs?.toSpl(offset)?.value,
-                leqLongFull = f.leqLongFull,
+                leqLong = if (session) {
+                    f.leqSessionDbfs?.toSpl(offset)?.value
+                } else {
+                    f.leqLongDbfs?.toSpl(offset)?.value
+                },
+                // 세션 Leq 는 「가득 찬다」는 개념이 없다 — 값이 있으면
+                // 그것이 처음부터 지금까지의 평균이다.
+                leqLongFull = if (session) f.leqSessionDbfs != null else f.leqLongFull,
                 maxSpl = f.maxDbfs.toSpl(offset).value,
                 minSpl = f.minDbfs?.toSpl(offset)?.value,
-                peakSpl = f.peakDbfs.toSpl(offset).value,
-                peakClipped = f.peakClipped,
+                // **가중 뒤 값이다.** 클리핑 판정(peakClipped)은 가중 전
+                // 값으로 내려야 ADC 포화를 놓치지 않는다.
+                peakSpl = pf.weightedPeakDbfs.toSpl(offset).value,
+                peakClipped = pf.peakClipped,
                 anyClipping = m.anyClipping,
                 currentDbfs = f.currentDbfs.value,
                 // 차이는 보정과 무관하다 — 두 쪽에 같은 값이 더해진다.

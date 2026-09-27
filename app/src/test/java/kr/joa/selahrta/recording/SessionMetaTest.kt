@@ -147,4 +147,57 @@ class SessionMetaTest {
         assertTrue("미보정 표시가 사라졌다", back.referenceOnly)
         assertNotNull(back)
     }
+
+    // ── 세 가중 ─────────────────────────────────────────
+
+    /** 셋이 따로 왕복해야 PEAK 이 어느 잣대인지 알 수 있다. */
+    @Test
+    fun `세 가중이 왕복한다`() {
+        val m = sample().copy(
+            weighting = Weighting.C,
+            peakWeighting = Weighting.Z,
+            analysisWeighting = Weighting.A,
+        )
+        val back = decodeSessionMeta(encodeSessionMeta(m)).getOrThrow()
+        assertEquals(Weighting.C, back.weighting)
+        assertEquals(Weighting.Z, back.peakWeighting)
+        assertEquals(Weighting.A, back.analysisWeighting)
+    }
+
+    /**
+     * **옛 기록을 짐작으로 채우지 않는다.**
+     *
+     * 없는 것을 Z 라고 적으면 「이 기록의 PEAK 은 Z 로 쟀다」는 거짓말이
+     * 된다 — 실제로는 무엇이었는지 아무도 모른다.
+     */
+    @Test
+    fun `옛 기록에는 새 가중이 없다`() {
+        val full = encodeSessionMeta(
+            sample().copy(peakWeighting = Weighting.C, analysisWeighting = Weighting.C),
+        )
+        // 두 줄이 실제로 있었는지 먼저 본다 — 없으면 아래 지우기가
+        // 아무 일도 안 한 채 시험이 통과한다.
+        assertTrue("peakWeighting 줄이 없다", full.contains("peakWeighting="))
+        assertTrue("analysisWeighting 줄이 없다", full.contains("analysisWeighting="))
+
+        val old = full.lineSequence()
+            .filterNot { it.startsWith("peakWeighting=") }
+            .filterNot { it.startsWith("analysisWeighting=") }
+            .joinToString(System.lineSeparator())
+
+        val back = decodeSessionMeta(old).getOrThrow()
+        assertNull("없는 PEAK 가중을 짐작으로 채웠다", back.peakWeighting)
+        assertNull("없는 분석 가중을 짐작으로 채웠다", back.analysisWeighting)
+        // 나머지는 멀쩡히 읽혀야 한다 — 새 열쇠가 없다고 통째로 거절하면
+        // 옛 기록이 전부 못 읽는 것이 된다.
+        assertEquals(sample().id, back.id)
+    }
+
+    /** 「전체」(-1)가 그대로 왕복해야 리포트가 그 뜻으로 읽는다. */
+    @Test
+    fun `전체 Leq 구간이 그대로 왕복한다`() {
+        val m = sample().copy(leqWindowMs = kr.joa.selahrta.settings.SESSION_MILLIS)
+        val back = decodeSessionMeta(encodeSessionMeta(m)).getOrThrow()
+        assertEquals(kr.joa.selahrta.settings.SESSION_MILLIS, back.leqWindowMs)
+    }
 }

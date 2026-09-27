@@ -365,11 +365,18 @@ class CaptureControllerOrderingTest {
 
         val after = composed()
         assertNotNull("여전히 MAX 가 있어야 한다", after.meter.maxSpl)
-        assertEquals(
+        // **내려가지 않았는가**를 본다. 같은가가 아니다.
+        //
+        // 예전에는 같음(1e-9)으로 적었는데, 시간가중 기본이 Slow 로 바뀌자
+        // 깨졌다 — 큰 소리 60덩어리로는 레벨이 아직 오르는 중이라, 뒤이어
+        // 들어간 덩어리가 MAX 를 **더 밀어올렸다**(79.3 → 80.2). 엔진이
+        // 살아 있다는 증거이지 실패가 아니다.
+        //
+        // 이 시험이 잡으려는 것은 「엔진이 새로 만들어져 MAX 가 조용한
+        // 값으로 내려앉는 것」이다. 그때는 30dB 넘게 떨어진다.
+        assertTrue(
             "조용해졌다고 MAX 가 내려가면 안 된다 (전 $maxBefore / 후 ${after.meter.maxSpl})",
-            maxBefore!!,
-            after.meter.maxSpl!!,
-            1e-9,
+            after.meter.maxSpl!! >= maxBefore!! - 1e-9,
         )
         // **Leq 도 이력을 잃지 않아야 한다.** null 검사만으로는 리셋을
         // 잡지 못한다(독립 검증 권고). 조용한 소리만 넣은 쪽과 견준다 —

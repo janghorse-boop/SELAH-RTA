@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kr.joa.selahrta.domain.MeasureState
 import kr.joa.selahrta.dsp.ThirdOctave
+import kr.joa.selahrta.dsp.Weighting
 import kr.joa.selahrta.dsp.FeedbackCandidate
 import kr.joa.selahrta.dsp.FeedbackEvent
 import kr.joa.selahrta.dsp.FeedbackState
@@ -106,6 +107,7 @@ fun RtaScreen(
             frozen = frozen,
             calibration = capture.calibration,
             onToggle = { frozen = !frozen },
+            analysisWeighting = capture.meterSettings.analysisWeighting,
             axisMode = axisMode,
             onAxisMode = onAxisTap,
         )
@@ -160,7 +162,8 @@ fun RtaScreen(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
     ) {
         InfoBar(
-            "1/3 옥타브 31밴드 · 20Hz ~ 20kHz · 가중 없음(원음 그대로)",
+            "1/3 옥타브 31밴드 · 20Hz ~ 20kHz · " +
+                capture.meterSettings.analysisWeighting.labelKo,
             modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
         )
 
@@ -179,6 +182,8 @@ fun RtaScreen(
             minSlotWidth = BAND_SLOT_WIDE,
             feedback = feedback,
         )
+
+        AnalysisFootnote(capture)
 
         FeedbackStrip(
             feedback.firstOrNull(),
@@ -228,7 +233,9 @@ fun RtaScreen(
                 top?.let { formatDb(rta.bandsSpl[it]) } ?: NO_VALUE,
                 // RTA 는 늘 가중 없이 본다. 위의 큰 숫자(dBA 등)와 다른 값이므로
                 // 단위에 그 사실을 적는다 — 안 적으면 두 숫자가 안 맞는다고 읽힌다.
-                "dB · 가중 없음",
+                // 위의 큰 숫자(음압)와 다른 잣대일 수 있으므로 단위에
+                // 그 사실을 적는다. 안 적으면 두 숫자가 안 맞는다고 읽힌다.
+                capture.meterSettings.analysisWeighting.unitSuffix,
                 Modifier.weight(1f),
             )
         }
@@ -346,7 +353,11 @@ fun SpectrumScreen(
     val spectrum = if (frozen) held else capture.spectrum
     val feedback = if (frozen) heldFeedback else capture.feedback
 
-    var axisMode by remember { mutableStateOf(AxisMode.Fixed) }
+    // **자동이 기본이다**(담당자 지시 2026-09-27). 봉우리가 몇 Hz 인지
+    // 찾는 화면이라 축이 값을 따라가야 보인다. RTA·SPL 은 권장 범위
+    // 띠와 견주는 화면이라 「고정」을 유지한다 — 축이 움직이면
+    // 판정 자체가 흔들린다.
+    var axisMode by remember { mutableStateOf(AxisMode.Auto) }
     val (floor, ceil) = rememberAxisRange(axisMode, spectrumTopSpl(spectrum))
     val onAxisTap = { axisMode = axisMode.next() }
     val controls: @Composable () -> Unit = {
@@ -354,6 +365,7 @@ fun SpectrumScreen(
             frozen = frozen,
             calibration = capture.calibration,
             onToggle = { frozen = !frozen },
+            analysisWeighting = capture.meterSettings.analysisWeighting,
             axisMode = axisMode,
             onAxisMode = onAxisTap,
         )
@@ -399,6 +411,8 @@ fun SpectrumScreen(
             controls = controls,
             onAxisTap = onAxisTap,
         )
+
+        AnalysisFootnote(capture)
 
         FeedbackStrip(
             feedback.firstOrNull(),
@@ -447,6 +461,7 @@ fun SpectrogramScreen(
             frozen = frozen,
             calibration = capture.calibration,
             onToggle = feed::toggleFrozen,
+            analysisWeighting = capture.meterSettings.analysisWeighting,
         )
     }
 
@@ -477,6 +492,8 @@ fun SpectrogramScreen(
             modes = { AnalyzeModes(ViewMode.Spectrogram, onMode) },
             controls = controls,
         )
+
+        AnalysisFootnote(capture)
     }
 }
 
@@ -574,6 +591,30 @@ fun rememberSpectrogramFeed(capture: CaptureUiState, running: Boolean): Spectrog
  * 가로 폭이 좁아져 짧은 소리가 실선처럼 얇아진다.
  */
 private const val SPECTROGRAM_FRAMES = 720
+
+/**
+ * 차트 아래에 **늘** 적는 한 줄.
+ *
+ * 이 값들이 없으면 「이 그림이 무슨 잣대로 그려졌나」를 화면에서 알 수
+ * 없다 — 스크린샷을 남겨 놓고 나중에 보면 특히 그렇다.
+ *
+ * **FFT 길이는 엔진이 실제로 쓰는 값을 적는다**(설정값이 아니다).
+ * 설정은 다음 측정부터 적용되므로, 설정값을 적으면 측정 중에 바꾼 순간
+ * 화면이 거짓말을 하게 된다.
+ */
+@Composable
+private fun AnalysisFootnote(capture: CaptureUiState) {
+    Text(
+        // 측정 중이 아니면 엔진이 없다 — 그때는 다음 측정에 쓰일
+        // 설정값을 적는다. 둘 다 참이다.
+        "FFT ${capture.analysisFftSize ?: capture.meterSettings.fftSize} · Hann 창 · " +
+            "${capture.opened?.sampleRate ?: 48_000} Hz · " +
+            capture.meterSettings.analysisWeighting.unitSuffix,
+        color = SelahColors.TextMuted,
+        fontSize = 10.sp,
+        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+    )
+}
 
 @Composable
 private fun FeedbackStrip(
@@ -798,6 +839,16 @@ internal fun ChartControls(
     frozen: Boolean,
     calibration: ActiveCalibration,
     onToggle: () -> Unit,
+    /**
+     * 이 그림에 걸린 가중.
+     *
+     * **알약으로 둔 까닭**: 분석 화면은 폰에서 늘 가로로 돈다
+     * ([kr.joa.selahrta.ui.LandscapeWhile]). 가로에서는 차트만 남기므로,
+     * 아래에 적는 긴 각주는 **폰에서 한 번도 보이지 않는다** — 실제로
+     * 그렇게 만들었다가 기기에서 알았다(2026-09-27). 잣대는 차트와 같은
+     * 자리에 있어야 한다.
+     */
+    analysisWeighting: Weighting? = null,
     /** 세로축 방식. null 이면 안 그린다(Spectrogram 은 세로가 주파수다). */
     axisMode: AxisMode? = null,
     onAxisMode: () -> Unit = {},
@@ -808,8 +859,28 @@ internal fun ChartControls(
     ) {
         HoldPill(frozen, onToggle)
         CalibrationPill(calibration)
+        analysisWeighting?.let { WeightingPill(it) }
         axisMode?.let { AxisModePill(it, onAxisMode) }
     }
+}
+
+/**
+ * 이 그림에 걸린 가중을 적는다.
+ *
+ * **누를 수 없다.** 가중은 설정에서 바꾼다 — 세 화면이 같은 잣대를
+ * 쓰므로 한 화면에서만 바꾸면 나머지와 어긋난 것처럼 보인다.
+ */
+@Composable
+private fun WeightingPill(w: Weighting) {
+    Text(
+        w.unitSuffix,
+        color = SelahColors.TextSecondary,
+        fontSize = 10.sp,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier
+            .background(SelahColors.SurfaceVariant, RoundedCornerShape(999.dp))
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+    )
 }
 
 @Composable

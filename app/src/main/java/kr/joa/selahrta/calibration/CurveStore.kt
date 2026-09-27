@@ -136,7 +136,7 @@ data class ActiveCurve(
  */
 const val FREQUENCY_SCOPE_NOTE: String =
     "주파수 보정은 RTA·Spectrum·Spectrogram 에 적용됩니다. " +
-        "큰 음압 숫자(dBA·Leq·MAX·PEAK)는 " +
+        "큰 음압 숫자(dB(A)·Leq·MAX·PEAK)는 " +
         "전대역 보정값만 씁니다 — 마이크 응답이 고르지 않으면, 보정을 맞춘 " +
         "주파수와 실제 소리가 놓인 주파수의 응답 차이만큼 오차가 남습니다."
 

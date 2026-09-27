@@ -64,7 +64,18 @@ data class SessionMeta(
     val curveLabel: String = "",
 
     // ---- 설정 ----
+    /** 음압(SPL·Leq·MIN·MAX)을 잰 가중. */
     val weighting: Weighting,
+    /**
+     * PEAK 을 잰 가중. **옛 기록에는 없다**(null).
+     *
+     * 없는 것을 Z 라고 적으면 「이 기록의 PEAK 은 Z 로 쟀다」는 거짓말이
+     * 된다 — 그때 무엇이었는지 아무도 모른다. 리포트가 null 을
+     * 「기록 없음」으로 적는다.
+     */
+    val peakWeighting: Weighting? = null,
+    /** 분석 화면을 그린 가중. 옛 기록에는 없다(null). */
+    val analysisWeighting: Weighting? = null,
     val timeWeight: TimeWeight,
     val leqWindowMs: Long,
 
@@ -240,6 +251,10 @@ fun encodeSessionMeta(m: SessionMeta): String = buildString {
     put("curveLabel", m.curveLabel)
 
     put("weighting", m.weighting.name)
+    // **없으면 적지 않는다.** 빈 줄을 남기면 읽는 쪽이 「빈 값」과
+    // 「없음」을 가리지 못한다.
+    m.peakWeighting?.let { put("peakWeighting", it.name) }
+    m.analysisWeighting?.let { put("analysisWeighting", it.name) }
     put("timeWeight", m.timeWeight.name)
     put("leqWindowMs", m.leqWindowMs)
 
@@ -319,6 +334,10 @@ fun decodeSessionMeta(text: String): Result<SessionMeta> {
 
     val micKind = r.enum<MicKind>("micKind")
     val weighting = r.enum<Weighting>("weighting")
+    // **없는 것이 정상이다.** 옛 기록에는 이 두 줄이 없다 — 없다고
+    // 통째로 거절하면 옛 기록을 하나도 못 읽는다.
+    val peakWeighting = r.enumOrNull<Weighting>("peakWeighting")
+    val analysisWeighting = r.enumOrNull<Weighting>("analysisWeighting")
     val timeWeight = r.enum<TimeWeight>("timeWeight")
 
     // **없어도 되는 칸이다**(판 2). 옛 기록에는 통째로 없다.
@@ -365,6 +384,8 @@ fun decodeSessionMeta(text: String): Result<SessionMeta> {
         curveApplied = r.bool("curveApplied"),
         curveLabel = r.str("curveLabel"),
         weighting = weighting ?: Weighting.A,
+        peakWeighting = peakWeighting,
+        analysisWeighting = analysisWeighting,
         timeWeight = timeWeight ?: TimeWeight.Fast,
         leqWindowMs = r.long("leqWindowMs"),
         leqDb = r.dbl("leqDb"),
