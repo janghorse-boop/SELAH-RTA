@@ -1460,20 +1460,16 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                             "$fileName header=${loaded?.headerLines} " +
                                 "sign=${loaded?.signEvidence} points=${c.pointCount}",
                         )
-                        buildString {
-                            // **보류를 「적용했습니다」라고 말하지 않는다**
-                            // (독립 재검토 CFRF-01). 읽는 법이 안 정해진
-                            // 파일은 꺼진 채로 들어오는데, 예전에는 그때도
-                            // 적용했다고 적었다 — 사람은 걸린 줄 알고 넘어간다.
-                            if (c.enabled) {
-                                append("${c.fileName} 을(를) 적용했습니다. 점 ${c.pointCount}개.")
-                            } else {
-                                append("${c.fileName} 을(를) 가져왔습니다. 점 ${c.pointCount}개. ")
-                                append("읽는 법을 정하기 전에는 걸지 않습니다 — ")
-                                append("아래에서 「응답으로 사용」이나 「보정값으로 사용」을 고르십시오.")
-                            }
-                            warn?.let { append(" ").append(it) }
-                        }
+                        // **셋을 가려서 말한다**(실기기 확인 2026-09-27).
+                        // 여기서 문구를 만들다가, 고를 수 없는 파일에
+                        // 「고르십시오」라고 말하고 있었다.
+                        kr.joa.selahrta.calibration.curveImportNoticeKo(
+                            fileName = c.fileName,
+                            pointCount = c.pointCount,
+                            enabled = c.enabled,
+                            unsupportedKo = c.readingUnsupportedKo,
+                            warnKo = warn,
+                        )
                     },
                     onFailure = { it.message ?: "보정 파일을 읽지 못했습니다." },
                 ),
@@ -1561,7 +1557,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             controller.update { st ->
                 st.copy(
                     curveNoticeKo = why
-                        ?: "이 파일을 「${reading.labelKo}」 로 읽기로 했습니다. 보정을 겁니다.",
+                        ?: "이 파일을 「${reading.labelKo}」으로 읽기로 했습니다. 보정을 겁니다.",
                 )
             }
         }

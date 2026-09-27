@@ -271,4 +271,69 @@ class CurveStoreConfirmationTest {
         assertFalse("설명문 쪽 낱말 하나로 확정됐다", c.enabled)
         assertTrue(c.readingConfirmationNeeded)
     }
+
+    // ── 가져온 뒤 사람에게 하는 말 ─────────────────────────
+    //
+    // **실기기에서 찾았다**(2026-09-27). 카드는 「지원하지 않는 형식」
+    // 으로 제대로 적는데, 그 아래 안내만 「고르십시오」라고 딴 말을
+    // 하고 있었다 — 저장소가 셋을 가려 놓았는데 문구는 둘로만 갈라
+    // 적은 탓이다.
+
+    @Test
+    fun `지원하지 않는 형식에는 고르라고 안내하지 않는다`() = runTest {
+        val s = store()
+        val c = s.save(key, "phase.cal", "Frequency,Phase,SPL" + rows()).getOrThrow()
+        val ko = curveImportNoticeKo(
+            fileName = c.fileName,
+            pointCount = c.pointCount,
+            enabled = c.enabled,
+            unsupportedKo = c.readingUnsupportedKo,
+        )
+        assertFalse("고를 수 없는 파일에 고르라고 한다: $ko", ko.contains("고르십시오"))
+        assertTrue(ko, ko.contains("고칠 수 있는 문제가 아닙니다"))
+        assertFalse("걸지 않았는데 적용했다고 한다", ko.contains("적용했습니다"))
+    }
+
+    @Test
+    fun `고를 수 있는 파일에는 고르라고 안내한다`() = runTest {
+        val s = store()
+        val c = s.save(key, "conflict.cal", conflicting("A")).getOrThrow()
+        val ko = curveImportNoticeKo(
+            fileName = c.fileName,
+            pointCount = c.pointCount,
+            enabled = c.enabled,
+            unsupportedKo = c.readingUnsupportedKo,
+        )
+        assertTrue(ko, ko.contains("고르십시오"))
+        assertFalse("걸지 않았는데 적용했다고 한다", ko.contains("적용했습니다"))
+    }
+
+    @Test
+    fun `그냥 걸리는 파일에는 적용했다고 말한다`() = runTest {
+        val s = store()
+        val c = s.save(key, "plain.cal", plain).getOrThrow()
+        val ko = curveImportNoticeKo(
+            fileName = c.fileName,
+            pointCount = c.pointCount,
+            enabled = c.enabled,
+            unsupportedKo = c.readingUnsupportedKo,
+        )
+        assertTrue(ko, ko.contains("적용했습니다"))
+        assertFalse(ko.contains("고르십시오"))
+    }
+
+    /** 화면에 그대로 나가는 문장이다. 마크다운 강조는 글자로 보인다. */
+    @Test
+    fun `안내 문구에 마크다운이 없다`() = runTest {
+        val s = store()
+        listOf(
+            "phase.cal" to "Frequency,Phase,SPL" + rows(),
+            "conflict.cal" to conflicting("A"),
+            "plain.cal" to plain,
+        ).forEach { (name, text) ->
+            val c = s.save(key, name, text).getOrThrow()
+            val ko = curveImportNoticeKo(c.fileName, c.pointCount, c.enabled, c.readingUnsupportedKo)
+            assertFalse(ko, ko.contains("**"))
+        }
+    }
 }

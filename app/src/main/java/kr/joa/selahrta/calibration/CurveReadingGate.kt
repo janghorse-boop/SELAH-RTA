@@ -210,7 +210,46 @@ private fun confirmedReadingOf(
 fun curveEnableRefusalKo(resolution: CurveReadingResolution): String? =
     resolution.rejectionKo ?: if (resolution.needsPerson) {
         "이 파일은 읽는 법을 먼저 정해야 걸 수 있습니다. " +
-            "「마이크 응답 으로 사용」이나 「보정값 으로 사용」을 골라 주십시오."
+            "「마이크 응답으로 사용」이나 「보정값으로 사용」을 골라 주십시오."
     } else {
         null
     }
+
+/**
+ * 곡선을 가져온 뒤 사람에게 할 말(실기기 확인 2026-09-27).
+ *
+ * ## 왜 떼어 두나
+ *
+ * 화면에서 만들던 문구가 **고를 수 없는 파일에 「고르십시오」**라고
+ * 말하고 있었다. 카드는 「지원하지 않는 형식」으로 제대로 적는데 그
+ * 아래 안내만 딴 말을 했다 — 검토자가 CFRC-02 에서 「두 부호 선택으로
+ * 고칠 수 있다는 안내를 내보내지 않는다」고 못박은 자리다.
+ *
+ * 저장소가 이미 셋을 가려 놓았는데 문구만 둘로 갈라 적은 탓이다. 셋을
+ * 한 자리에서 적고, 시험이 본다.
+ */
+fun curveImportNoticeKo(
+    fileName: String,
+    pointCount: Int,
+    enabled: Boolean,
+    unsupportedKo: String?,
+    warnKo: String? = null,
+): String = buildString {
+    when {
+        // **부호로 풀 수 없는 것은 고르라고 하지 않는다.**
+        unsupportedKo != null -> {
+            append("$fileName 을(를) 가져왔습니다. 점 ${pointCount}개. ")
+            append(unsupportedKo)
+        }
+
+        // **보류를 「적용했습니다」라고 말하지 않는다**(CFRF-01).
+        enabled -> append("$fileName 을(를) 적용했습니다. 점 ${pointCount}개.")
+
+        else -> {
+            append("$fileName 을(를) 가져왔습니다. 점 ${pointCount}개. ")
+            append("읽는 법을 정하기 전에는 걸지 않습니다 — ")
+            append("아래에서 「마이크 응답으로 사용」이나 「보정값으로 사용」을 고르십시오.")
+        }
+    }
+    warnKo?.let { append(" ").append(it) }
+}
