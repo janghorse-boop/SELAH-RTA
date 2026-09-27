@@ -11,6 +11,7 @@ import androidx.compose.ui.unit.dp
 import kr.joa.selahrta.audio.SignalChannels
 import kr.joa.selahrta.audio.TestSignal
 import kr.joa.selahrta.ui.CaptureUiState
+import kr.joa.selahrta.ui.components.MicLocationCard
 import kr.joa.selahrta.ui.components.SignalGeneratorCard
 
 /**
@@ -63,6 +64,17 @@ fun ToolsScreen(
             onChannels = onSignalChannels,
             onDismissNotice = onDismissSignalNotice,
             modifier = Modifier.padding(top = 4.dp, bottom = 16.dp),
+        )
+
+        // **재기 전에 폰을 어디에 놓을지 알려 준다.**
+        //
+        // 마이크 구멍이 벽이나 책상을 보고 있으면 그 측정은 시작부터
+        // 틀린다. 도구 화면에 두는 까닭은 이것이 **재는 동안 보는 것이
+        // 아니라 재기 전에 한 번 보는 것**이기 때문이다.
+        MicLocationCard(
+            db = capture.micLocationDb,
+            match = capture.micLocation,
+            modifier = Modifier.padding(bottom = 16.dp),
         )
     }
 }

@@ -268,6 +268,16 @@ data class CaptureUiState(
      * 한다(지시서 6장: 재시작 시 현재 상태와 다시 대조).
      */
     val micProbe: kr.joa.selahrta.audio.MicrophoneProbe.Report? = null,
+    /**
+     * 갤럭시 내장 마이크 **위치 안내** 자료. 못 읽었으면 null.
+     *
+     * **실행 중 마이크 진단과 섞지 않는다**(자료 제공자 지시 5A). 이것은
+     * 도면에 적힌 외관상 구멍 자리이고, 지금 녹음에 어느 마이크가 쓰이는지는
+     * `opened.activeMics` 가 말한다.
+     */
+    val micLocationDb: kr.joa.selahrta.micdb.MicLocationDb? = null,
+    /** 이 기기의 모델코드로 찾아본 결과. 자료를 못 읽었으면 null. */
+    val micLocation: kr.joa.selahrta.micdb.MicLocationMatch? = null,
 ) {
     /**
      * 지금 숫자를 그 기기의 측정값이라 불러도 되는가.
@@ -449,6 +459,7 @@ class CaptureSession(
 
 class CaptureViewModel(app: Application) : AndroidViewModel(app) {
 
+
     private val store = CalibrationStore(app)
     private val curveStore = CurveStore(app)
     private val settingsStore = MeterSettingsStore(app)
@@ -469,6 +480,40 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         // 폴더가 남는다. 목록에는 안 뜨지만 자리를 차지한다.
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             runCatching { sessionStore.sweepUnfinished() }
+        }
+        loadMicLocationDb()
+    }
+
+    /**
+     * **마이크 위치 안내 자료**를 한 번 읽는다(`assets/galaxy-mic-locations.json`).
+     *
+     * 자산이라 변하지 않으므로 한 번이면 된다. 읽기는 IO 스레드에서 한다 —
+     * 89KB 를 주 스레드에서 열면 앱이 뜨는 동안 한 박자 멈춘다.
+     *
+     * **못 읽어도 앱은 그대로 돈다.** 이 자료는 안내일 뿐이고, 재는 일과
+     * 아무 상관이 없다. 없으면 카드가 안 나올 뿐이다.
+     */
+    private fun loadMicLocationDb() {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val db = runCatching {
+                getApplication<Application>().assets
+                    .open(MIC_LOCATION_ASSET)
+                    .use { it.readBytes().toString(Charsets.UTF_8) }
+            }.getOrNull()?.let { kr.joa.selahrta.micdb.MicLocationDbParser.parse(it) }
+                ?: return@launch
+            // **모델코드가 정확히 같을 때만** 자동 안내다. 다듬기는
+            // `lookupMicLocations` 안에 있다(앞뒤 공백·대문자까지).
+            //
+            // `deviceBuild` 를 쓰지 않고 여기서 다시 읽는다 — 그 값은 이
+            // 파일 아래쪽에 선언돼 있어, `init` 에서 읽으면 아직 채워지지
+            // 않았을 수 있다.
+            val build = kr.joa.selahrta.calibration.DeviceBuildInfo.current()
+            val match = kr.joa.selahrta.micdb.lookupMicLocations(
+                db,
+                build.manufacturer,
+                build.model,
+            )
+            controller.update { st -> st.copy(micLocationDb = db, micLocation = match) }
         }
     }
     private val scanner = InputDeviceScanner(app)
@@ -654,6 +699,14 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     private var inForeground: Boolean = true
 
     private companion object {
+        /**
+         * 갤럭시 마이크 **위치 안내** 자료(`assets/`).
+         *
+         * JSON 이 원본이다. 자료를 고칠 때는 이 파일을 갈아 끼우고
+         * `docs/data/galaxy-mic-location-db/validate_db.py` 를 돌린다.
+         */
+        const val MIC_LOCATION_ASSET = "galaxy-mic-locations.json"
+
         /**
          * 배경을 몇 장 모을 것인가. 48kHz·FFT4096·50% 겹침이면 초당 23장쯤이라
          * 3초쯤이다.

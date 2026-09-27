@@ -6,6 +6,11 @@
 > **문구는 원본 그대로이고 손대지 않았다** — 목차만 뺐다(마크다운 제목이 그 일을 한다).
 > 이 지시서를 지금 코드와 맞춰 본 결과는
 > [2026-09-27-tonevista-multimic-review.md](2026-09-27-tonevista-multimic-review.md) 에 있다.
+>
+> **앱 이름은 「SELAH RTA」다.** 이 문서가 「ToneVista」로 적은 것은 이름을
+> 바꿀지 검토하던 때의 흔적이고, 바꾸지 않기로 했다 —
+> [../decisions/2026-09-27-app-name-stays-selah-rta.md](../decisions/2026-09-27-app-name-stays-selah-rta.md).
+> 본문은 원본 그대로 두었다.
 
 ## 1. 목적
 
