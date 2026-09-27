@@ -3,6 +3,8 @@ package kr.joa.selahrta.calibration
 import kr.joa.selahrta.audio.CaptureSource
 import kr.joa.selahrta.dsp.CurveReading
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -36,12 +38,29 @@ class CurveStoreConfirmationTest {
     private fun store() = CurveStore(TestApplication(tmp.newFolder()))
 
     /**
-     * **같은 자리를 새 저장소로 다시 연다** — 앱을 껐다 켜는 것과 같다.
+     * **디스크에서 다시 읽는 저장소를 연다**(독립 재검토 CFRC-R02).
      *
-     * 확인이 설정 저장소에 제대로 남았는지는 이렇게만 알 수 있다. 같은
-     * 객체에 다시 물으면 메모리에 남은 것을 볼 뿐이다.
+     * 예전에는 `CurveStore(TestApplication(dir))` 하나로 「앱을 껐다 켠
+     * 것과 같다」고 적었다. **그 말을 증명하지 못하고 있었다** —
+     * `by preferencesDataStore` 는 한 JVM 안에서 같은 인스턴스를
+     * 돌려주므로, `Context` 만 바꿔서는 새 DataStore 가 되지 않는다.
+     * 검토자가 재 보였다(`sharedAcrossContexts=true`).
+     *
+     * 이제 DataStore 를 직접 만들어 넣는다. 쓰던 쪽의 scope 를 끊은 뒤
+     * **같은 파일을 새 DataStore 로** 열어야 디스크를 실제로 읽는다.
+     *
+     * 그래도 **프로세스를 다시 띄운 것은 아니다.** 같은 JVM 안이다.
      */
-    private fun reopen(dir: java.io.File) = CurveStore(TestApplication(dir))
+    private fun dataStoreOn(dir: java.io.File, scope: kotlinx.coroutines.CoroutineScope) =
+        androidx.datastore.preferences.core.PreferenceDataStoreFactory.create(
+            scope = scope,
+            produceFile = { java.io.File(dir, "curves.preferences_pb") },
+        )
+
+    private fun storeOn(
+        dir: java.io.File,
+        ds: androidx.datastore.core.DataStore<androidx.datastore.preferences.core.Preferences>,
+    ) = CurveStore(TestApplication(dir), ds)
 
     /** 부호가 모호해 사람에게 묻게 되는 파일. 내용은 서로 다르다. */
     private fun conflicting(mark: String) = """
@@ -136,22 +155,83 @@ class CurveStoreConfirmationTest {
 
     }
 
-    /** 앱을 껐다 켠 뒤에도 그 확인이 남아 있어야 한다. */
+    /**
+     * **디스크에서 다시 읽어도 확인이 남는다.**
+     *
+     * 쓰던 DataStore 의 scope 를 끊은 뒤 같은 파일을 새 DataStore 로
+     * 연다. 프로세스를 다시 띄운 것은 아니지만, 메모리에 남은 것을
+     * 보는 것과는 다르다.
+     */
     @Test
-    fun `앱을 다시 켜도 확인이 남는다`() = runTest {
+    fun `디스크에서 다시 읽어도 확인이 남는다`() = runBlocking {
         val dir = tmp.newFolder()
-        val a = CurveStore(TestApplication(dir)).let { s ->
+        val writer = kotlinx.coroutines.CoroutineScope(
+            kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO,
+        )
+        val written = dataStoreOn(dir, writer)
+        val a = storeOn(dir, written).let { s ->
             val c = s.save(key, "A.cal", conflicting("A")).getOrThrow()
             assertNull(s.confirmReading(c.confirmationToken!!, CurveReading.Correction))
             c
         }
         assertNotNull(a.confirmationToken)
 
-        val now = reopen(dir).watch(key).first()!!
-        assertTrue("다시 켜니 확인이 사라졌다", now.readingConfirmed)
-        assertTrue(now.enabled)
-        assertEquals(CurveReading.Correction, now.reading)
-        assertEquals(-3.0, now.curve.gainDbAt(1000.0), 1e-9)
+        // **넣어 준 DataStore 에 정말 썼는가.**
+        //
+        // 이 줄이 없으면 이 시험은 주입을 못 박는다 — 저장소가 주입을
+        // 무시하고 공용 delegate 를 쓰더라도 같은 JVM 안이라 값이 보여서
+        // 그대로 통과한다(실제로 그랬다).
+        val raw = written.data.first().asMap().keys.map { it.name }
+        assertTrue(
+            "넣어 준 DataStore 가 비어 있다 — 다른 곳에 썼다: $raw",
+            raw.any { it.startsWith(key.storageKey()) },
+        )
+
+        // **쓰던 쪽을 끊는다.** 같은 파일에 살아 있는 DataStore 가 둘이면
+        // 안 된다.
+        writer.cancel()
+        writer.coroutineContext[kotlinx.coroutines.Job]!!.join()
+
+        val reader = kotlinx.coroutines.CoroutineScope(
+            kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO,
+        )
+        try {
+            val now = storeOn(dir, dataStoreOn(dir, reader)).watch(key).first()!!
+            assertTrue("디스크에서 읽으니 확인이 사라졌다", now.readingConfirmed)
+            assertTrue(now.enabled)
+            assertEquals(CurveReading.Correction, now.reading)
+            assertEquals(-3.0, now.curve.gainDbAt(1000.0), 1e-9)
+        } finally {
+            reader.cancel()
+        }
+    }
+
+    /**
+     * **시험끼리 설정 저장소가 섞이지 않는다.**
+     *
+     * `by preferencesDataStore` 는 폴더를 달리해도 같은 것을 돌려주므로,
+     * 넣어 준 DataStore 라야 갈린다. **곡선 파일이 아니라 설정이 갈리는지**
+     * 를 본다 — 파일은 `filesDir` 로 이미 갈려 있어, 그것만 보면 설정이
+     * 섞여 있어도 통과한다.
+     */
+    @Test
+    fun `넣어 준 저장소끼리 설정이 섞이지 않는다`() = runBlocking {
+        val one = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob())
+        val two = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob())
+        try {
+            val dirA = tmp.newFolder()
+            val dsA = dataStoreOn(dirA, one)
+            val dsB = dataStoreOn(tmp.newFolder(), two)
+            storeOn(dirA, dsA).save(key, "A.cal", plain).getOrThrow()
+
+            assertTrue("쓴 쪽이 비어 있다", dsA.data.first().asMap().isNotEmpty())
+            assertTrue(
+                "안 쓴 쪽에 값이 들어갔다 — 설정이 섞였다",
+                dsB.data.first().asMap().isEmpty(),
+            )
+        } finally {
+            one.cancel(); two.cancel()
+        }
     }
 
     @Test
@@ -334,6 +414,108 @@ class CurveStoreConfirmationTest {
             val c = s.save(key, name, text).getOrThrow()
             val ko = curveImportNoticeKo(c.fileName, c.pointCount, c.enabled, c.readingUnsupportedKo)
             assertFalse(ko, ko.contains("**"))
+        }
+    }
+
+    // ── CFRC-R01 — 부호 예외가 다른 오류를 가리지 않는가 ──────
+    //
+    // 검토자가 낸 조합 반례다. 「부호만 어긋남」이 **「나머지는 다 읽을
+    // 수 있는 꼴임을 확인했다」**가 아니라 **「맨 처음 걸린 문제가
+    // 부호였다」**가 되어 있었다.
+    //
+    // 그래서 **줄 순서·괄호 순서만 바꾸면 판정이 뒤집혔다.** 같은 형식
+    // 오류는 순서가 달라도 같은 결과여야 한다.
+
+    /** 머리글 두 줄을 잇는다. */
+    private fun twoLines(a: String, b: String) = a + System.lineSeparator() + b
+
+    /** save → 두 규약 확인 → 일반 켜기까지 모두 막히는지 본다. */
+    private suspend fun assertAllRejected(headers: List<String>, id: String) {
+        val s = store()
+        headers.forEachIndexed { i, h ->
+            val k = CalibrationKey("$id-$i", CaptureSource.Unprocessed)
+            val saved = s.save(k, "$id-$i.cal", h + rows()).getOrThrow()
+            assertFalse(h, saved.enabled)
+            assertNotNull("$h — 지원하지 않는다고 말하지 않는다", saved.readingUnsupportedKo)
+            CurveReading.entries.forEach { r ->
+                assertNotNull("$h — $r 로 확인하니 걸렸다", s.confirmReading(saved.confirmationToken!!, r))
+                val now = s.watch(k).first()!!
+                assertFalse(h, now.enabled)
+                assertFalse(h, now.readingConfirmed)
+            }
+            assertNotNull("$h — 스위치로 걸렸다", s.setEnabled(k, true))
+            assertFalse(h, s.watch(k).first()!!.enabled)
+        }
+    }
+
+    @Test
+    fun `괄호 순서가 바뀌어도 잘못된 단위가 이긴다`() = runTest {
+        assertAllRejected(
+            listOf(
+                "Frequency (Hz),Response (dB) (correction) (Pa)",
+                "Frequency (Hz),Response (dB) (Pa) (correction)",
+                "Frequency (Hz),Corr (response) (linear)",
+                "Frequency (Hz),Corr (linear) (response)",
+            ),
+            "notes",
+        )
+    }
+
+    @Test
+    fun `줄 순서가 바뀌어도 못 푸는 사유가 이긴다`() = runTest {
+        val conflict = "Frequency (Hz),Response (dB) (correction)"
+        val hard = listOf("Frequency (kHz),Response (dB)", "Frequency,Phase,SPL")
+        // **두 줄의 차례를 뒤집어서도 본다.** 순서가 판정을 바꾸면 안 된다.
+        assertAllRejected(
+            hard.flatMap { listOf(twoLines(conflict, it), twoLines(it, conflict)) },
+            "lines",
+        )
+    }
+
+    /** 선언이 여럿이면 어느 것으로 읽을지 고를 길이 없다. */
+    @Test
+    fun `서로 다른 선언이 여럿이면 거절한다`() = runTest {
+        val conflict = "Frequency (Hz),Response (dB) (correction)"
+        val normal = "Frequency (Hz),Response (dB)"
+        assertAllRejected(
+            listOf(twoLines(conflict, normal), twoLines(normal, conflict)),
+            "ambiguous",
+        )
+    }
+
+    /** 한 괄호 안에 부호 낱말과 단위가 함께 있으면 낱말이 단위를 가린다. */
+    @Test
+    fun `같은 괄호 안의 단위를 부호 낱말이 가리지 않는다`() = runTest {
+        assertAllRejected(
+            listOf(
+                "Frequency (Hz),Response (dB) (correction Pa)",
+                "Frequency (Hz),Response (dB) (Pa correction)",
+                "Frequency (Hz),Corr (dB) (response linear)",
+                "Frequency (Hz),Response (response Pa)",
+            ),
+            "compound",
+        )
+    }
+
+    /**
+     * **막기만 하지 않는다.** 정말로 방향만 모르는 파일은 그대로 고를 수
+     * 있어야 한다 — 이것까지 막으면 멀쩡한 파일을 영영 못 쓴다.
+     */
+    @Test
+    fun `방향만 어긋나는 파일은 여전히 고를 수 있다`() = runTest {
+        val s = store()
+        listOf(
+            "Frequency (Hz),Response (dB) (correction)",
+            "Frequency (Hz),Corr (dB) (response)",
+        ).forEachIndexed { i, h ->
+            val k = CalibrationKey("good-$i", CaptureSource.Unprocessed)
+            val saved = s.save(k, "good.cal", h + rows()).getOrThrow()
+            assertFalse(h, saved.enabled)
+            assertNull("$h — 고를 수 있는 것을 막았다", saved.readingUnsupportedKo)
+            assertNull(h, s.confirmReading(saved.confirmationToken!!, CurveReading.Correction))
+            val now = s.watch(k).first()!!
+            assertTrue(h, now.enabled)
+            assertEquals(h, -3.0, now.curve.gainDbAt(1000.0), 1e-9)
         }
     }
 }
