@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  내보낸 파일을 다른 앱에 건네는 통로.
+
+  **여는 것은 「만들 수 있는 주소」의 범위일 뿐이다.** 실제 읽기 권한은
+  보낼 때 그 파일 하나에만 준다(FLAG_GRANT_READ_URI_PERMISSION). 그래서
+  폴더를 열어 두어도 받는 앱이 다른 기록까지 읽지는 못한다.
+
+  - export : 내보낸 CSV. 캐시라 앱을 지우면 함께 사라진다.
+  - sessions : 기록 폴더. **소리 파일이 여기 있다** — 100MB 가 넘을 수
+    있어 캐시로 옮겨 담지 않고 그 자리에서 건넨다.
+-->
+<paths>
+    <cache-path name="export" path="export/" />
+    <files-path name="sessions" path="sessions/" />
+</paths>

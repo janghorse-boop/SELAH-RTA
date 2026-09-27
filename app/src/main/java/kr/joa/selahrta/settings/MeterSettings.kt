@@ -42,6 +42,13 @@ data class MeterSettings(
     val weighting: Weighting = Weighting.A,
     val timeWeight: TimeWeight = TimeWeight.Fast,
     val leqWindow: LeqWindow = LeqWindow.OneMinute,
+    /**
+     * 소리를 담기로 했을 때 어느 꼴로 담을지.
+     *
+     * **담을지 말지는 여기 없다** — 그것은 기록을 시작할 때마다 묻는다.
+     */
+    val audioFormat: kr.joa.selahrta.recording.AudioFileFormat =
+        kr.joa.selahrta.recording.AudioFileFormat.M4a,
     /** 사용자가 고른 입력 기기의 열쇠. null 이면 자동. */
     val preferredInputKey: String? = null,
     /**
@@ -114,6 +121,7 @@ class MeterSettingsStore(private val context: Context) {
     private val weightingKey = stringPreferencesKey("weighting")
     private val timeWeightKey = stringPreferencesKey("timeWeight")
     private val leqWindowKey = longPreferencesKey("leqWindowMs")
+    private val audioFormatKey = stringPreferencesKey("audioFormat")
     private val preferredInputKey = stringPreferencesKey("preferredInput")
 
     /** 기기 열쇠가 길고 임의라 접두어로 모아 둔다. */
@@ -147,6 +155,13 @@ class MeterSettingsStore(private val context: Context) {
                 timeWeight = p[timeWeightKey]?.let { n ->
                     TimeWeight.entries.firstOrNull { it.name == n }
                 } ?: TimeWeight.Fast,
+                // **모르는 이름이면 기본값이다.** 임의로 고르지 않는다.
+                audioFormat = p[audioFormatKey]
+                    ?.let { n ->
+                        kr.joa.selahrta.recording.AudioFileFormat.entries
+                            .firstOrNull { it.name == n }
+                    }
+                    ?: kr.joa.selahrta.recording.AudioFileFormat.M4a,
                 leqWindow = p[leqWindowKey]?.let { ms ->
                     LeqWindow.entries.firstOrNull { it.millis == ms }
                 } ?: LeqWindow.OneMinute,
@@ -195,6 +210,15 @@ class MeterSettingsStore(private val context: Context) {
     suspend fun setWeighting(w: Weighting) = write { it[weightingKey] = w.name }
     suspend fun setTimeWeight(t: TimeWeight) = write { it[timeWeightKey] = t.name }
     suspend fun setLeqWindow(w: LeqWindow) = write { it[leqWindowKey] = w.millis }
+
+    /**
+     * 소리를 담기로 했을 때 어느 꼴로 담을지.
+     *
+     * **담을지 말지는 여기 없다.** 그것은 기록을 시작할 때마다 묻는다 —
+     * 실수로 켜진 채 다음 예배까지 담기는 일이 없어야 한다.
+     */
+    suspend fun setAudioFormat(f: kr.joa.selahrta.recording.AudioFileFormat) =
+        write { it[audioFormatKey] = f.name }
     suspend fun setPreferredInput(key: String?) = write { it[preferredInputKey] = key ?: "" }
 
     /**

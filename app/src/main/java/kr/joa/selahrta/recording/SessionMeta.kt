@@ -86,6 +86,28 @@ data class SessionMeta(
     /** 큐가 밀려 버린 조각 수. **0 이 아니면 화면이 말한다.** */
     val droppedPackets: Int = 0,
 
+    /**
+     * **찌그러진 행의 수.** 모르면 null(옛 기록).
+     *
+     * 찌그러짐은 사건이 아니라 **행**에 적힌다(`TimelineRow.clipped`).
+     * 그런데 겉장에 세어 두지 않으면 목록과 리포트가 1.4MB 짜리
+     * 타임라인을 열어야 알 수 있다 — 그래서 저장할 때 한 번 센다.
+     *
+     * **0 과 「모름」은 다르다.** 옛 기록은 세어 둔 적이 없으므로 null
+     * 이고, 화면은 「기록 없음」이라 적는다. 0 으로 채우면 **찌그러진
+     * 기록을 「없음」이라고 안심시킨다** — 그 구간의 숫자는 전부 하한이다.
+     */
+    val clippedRows: Int? = null,
+
+    /**
+     * **소리도 파일로 담았는가.** 안 담았으면 null.
+     *
+     * 담는 것은 기본이 아니다 — 기록을 시작할 때마다 묻고, 사람이
+     * 그렇다고 해야 담긴다. 그 사실이 기록에 남아야 나중에 「이 예배는
+     * 소리가 있나」를 열어 보지 않고 알 수 있다.
+     */
+    val audio: RecordedAudio? = null,
+
     /** 어느 셈으로 만든 기록인가. 셈이 바뀌면 옛 기록과 견줄 수 없다. */
     val analysisVersion: Int = ANALYSIS_VERSION,
 
@@ -99,6 +121,19 @@ data class SessionMeta(
      * 「기록 없음」이라 적는다.
      */
     val conditions: MeasurementConditions = MeasurementConditions(),
+
+    /**
+     * **보정이 바뀐 자리들**(겉장 판 2).
+     *
+     * 행은 값과 함께 `epochId` 만 지니고 **보정은 읽을 때 건다**. 그런데
+     * 이 표를 디스크에 안 남기면 다시 열었을 때 그 id 를 풀 길이 없다 —
+     * 보정이 도중에 바뀐 기록은 **내보낼 때 한 가지 값으로 뭉뚱그려져
+     * 조용히 틀린다.**
+     *
+     * 비어 있으면 옛 기록이다. 그때는 겉장의 [calibrationOffsetDb] 하나로
+     * 내보내고, **그 사실을 CSV 머리말에 적는다.**
+     */
+    val epochs: List<RecordingEpoch> = emptyList(),
 ) {
     /** 목록에 적을 이름. 시작 시각과 구간으로 만든다. */
     val hasTimeline: Boolean get() = durationMs > 0
@@ -137,6 +172,27 @@ enum class SessionEventKind(val labelKo: String) {
 
     /** 보정이 바뀌었다. 그 뒤 숫자는 다른 잣대다. */
     CalibrationChange("보정 바뀜"),
+}
+
+/**
+ * 기록에 함께 담긴 소리 파일.
+ *
+ * **담는 것은 기본이 아니다.** 예배 소리를 담는 일은 dB 숫자를 남기는
+ * 것과 성격이 다르다 — 설교와 성도들의 목소리가 그대로 들어간다.
+ */
+data class RecordedAudio(
+    val format: AudioFileFormat,
+    val fileName: String,
+    val bytes: Long,
+    /** 밀려 버린 덩어리 수. **0 이 아니면 소리에 빈 자리가 있다.** */
+    val droppedBlocks: Int = 0,
+) {
+    /** 사람이 읽을 크기. */
+    fun sizeKo(): String = when {
+        bytes >= 1_000_000L -> "%.1fMB".format(bytes / 1_000_000.0)
+        bytes > 0L -> "%dKB".format(bytes / 1000)
+        else -> "0KB"
+    }
 }
 
 /**
@@ -193,6 +249,15 @@ fun encodeSessionMeta(m: SessionMeta): String = buildString {
     put("peakDb", m.peakDb)
 
     put("droppedPackets", m.droppedPackets)
+    // **모르면 적지 않는다.** 0 과 「모름」은 다르다.
+    m.clippedRows?.let { put("clippedRows", it) }
+
+    m.audio?.let { a ->
+        put("audio.format", a.format.name)
+        put("audio.fileName", a.fileName)
+        put("audio.bytes", a.bytes)
+        put("audio.droppedBlocks", a.droppedBlocks)
+    }
     put("analysisVersion", m.analysisVersion)
     put("memo", m.memo)
 
@@ -212,6 +277,16 @@ fun encodeSessionMeta(m: SessionMeta): String = buildString {
     c.calibrationSource?.let { put("cond.calibrationSource", it.name) }
     c.curveReading?.let { put("cond.curveReading", it.name) }
     put("cond.curveReadingConfirmed", c.curveReadingConfirmed)
+
+    // ---- 보정이 바뀐 자리(판 2) ----
+    put("epochs.count", m.epochs.size)
+    m.epochs.forEachIndexed { i, e ->
+        put("epochs.$i.id", e.id)
+        put("epochs.$i.startFrame", e.startFrame)
+        put("epochs.$i.calibrationOffsetDb", e.calibrationOffsetDb)
+        put("epochs.$i.isReferenceOnly", e.isReferenceOnly)
+        put("epochs.$i.leqWindowMs", e.leqWindowMs)
+    }
 
     put("events.count", m.events.size)
     m.events.forEachIndexed { i, e ->
@@ -245,6 +320,20 @@ fun decodeSessionMeta(text: String): Result<SessionMeta> {
     val micKind = r.enum<MicKind>("micKind")
     val weighting = r.enum<Weighting>("weighting")
     val timeWeight = r.enum<TimeWeight>("timeWeight")
+
+    // **없어도 되는 칸이다**(판 2). 옛 기록에는 통째로 없다.
+    val epochCount = r.intOrNull("epochs.count") ?: 0
+    val epochs = (0 until epochCount).mapNotNull { i ->
+        val id = r.intOrNull("epochs.$i.id") ?: return@mapNotNull null
+        RecordingEpoch(
+            id = id,
+            startFrame = r.longOrNull("epochs.$i.startFrame") ?: return@mapNotNull null,
+            calibrationOffsetDb = r.dblOrNull("epochs.$i.calibrationOffsetDb")
+                ?: return@mapNotNull null,
+            isReferenceOnly = r.boolOrNull("epochs.$i.isReferenceOnly") ?: return@mapNotNull null,
+            leqWindowMs = r.longOrNull("epochs.$i.leqWindowMs") ?: return@mapNotNull null,
+        )
+    }
 
     val count = r.int("events.count")
     val events = (0 until count).map { i ->
@@ -284,6 +373,16 @@ fun decodeSessionMeta(text: String): Result<SessionMeta> {
         peakDb = r.dbl("peakDb"),
         events = events,
         droppedPackets = r.int("droppedPackets"),
+        clippedRows = r.intOrNull("clippedRows"),
+        // **없어도 되는 칸이다.** 소리를 안 담은 기록이 훨씬 많다.
+        audio = r.enumOrNull<AudioFileFormat>("audio.format")?.let { fmt ->
+            RecordedAudio(
+                format = fmt,
+                fileName = r.strOrNull("audio.fileName").orEmpty(),
+                bytes = r.longOrNull("audio.bytes") ?: 0L,
+                droppedBlocks = r.intOrNull("audio.droppedBlocks") ?: 0,
+            )
+        },
         analysisVersion = r.int("analysisVersion"),
         memo = r.str("memo"),
         // **조건 칸은 없어도 된다**(판 2에서 생겼다).
@@ -306,6 +405,7 @@ fun decodeSessionMeta(text: String): Result<SessionMeta> {
             curveReading = r.enumOrNull<kr.joa.selahrta.dsp.CurveReading>("cond.curveReading"),
             curveReadingConfirmed = r.boolOrNull("cond.curveReadingConfirmed") ?: false,
         ),
+        epochs = epochs,
     )
 
     // **빠진 칸이 있으면 읽지 않는다.** 반쯤 읽은 기록은 화면에서

@@ -142,26 +142,47 @@ private fun resultSection(m: SessionMeta) = ReportSection(
     ),
 )
 
-private fun healthSection(m: SessionMeta): ReportSection {
-    val clipped = m.events.count { it.kind == SessionEventKind.Clipped }
-    val dropouts = m.events.count { it.kind == SessionEventKind.Dropout }
-    return ReportSection(
-        "재는 동안",
-        buildList {
-            add(ReportLine("구간 바뀜", "${m.events.count { it.kind == SessionEventKind.SegmentChange }}회"))
-            // **찌그러진 구간의 숫자는 전부 하한이다.** 0 이 아니면 말한다.
-            add(ReportLine("찌그러짐", if (clipped > 0) "${clipped}회" else "없음"))
-            add(ReportLine("끊김", if (dropouts > 0) "${dropouts}회" else "없음"))
-            add(
-                ReportLine(
-                    "놓친 조각",
-                    if (m.droppedPackets > 0) "${m.droppedPackets}개" else "없음",
-                ),
-            )
-            add(ReportLine("보정 바뀜", "${m.events.count { it.kind == SessionEventKind.CalibrationChange }}회"))
-            add(ReportLine("셈 판", "v${m.analysisVersion}"))
-        },
-    )
+private fun healthSection(m: SessionMeta) = ReportSection(
+    "재는 동안",
+    listOf(
+        ReportLine("구간 바뀜", "${m.events.count { it.kind == SessionEventKind.SegmentChange }}회"),
+        // **찌그러짐은 사건이 아니라 행에 적힌다.**
+        //
+        // 예전에는 여기서 `SessionEventKind.Clipped` 를 세었다. 그런데
+        // 그 사건은 **아무 데서도 만들어지지 않는다** — 그래서 실제로
+        // 0dBFS 까지 찌그러진 기록에도 「없음」이라 적혔다(실기기에서
+        // 확인: PEAK 120.0dB = 만재인데 「찌그러짐 없음」).
+        //
+        // 겉장이 세어 둔 값을 쓴다. **모르면 모른다고 적는다** — 0 으로
+        // 때우면 찌그러진 기록을 안심시킨다.
+        ReportLine("찌그러짐", clippedKo(m)),
+        // 놓친 조각이 곧 끊김이다. 따로 적던 「끊김」 줄은 없앴다 —
+        // 만들어지지 않는 사건을 세어 늘 「없음」이었다.
+        ReportLine(
+            "놓친 조각",
+            if (m.droppedPackets > 0) "${m.droppedPackets}개" else "없음",
+        ),
+        ReportLine(
+            "보정 바뀜",
+            "${m.events.count { it.kind == SessionEventKind.CalibrationChange }}회",
+        ),
+        // **소리를 담았는가.** 담는 것은 기본이 아니므로, 담긴 기록은
+        // 그렇다고 적어야 나중에 열어 보지 않고 안다.
+        ReportLine("담긴 소리", audioKo(m)),
+        ReportLine("셈 판", "v${m.analysisVersion}"),
+    ),
+)
+
+private fun audioKo(m: SessionMeta): String {
+    val a = m.audio ?: return "담지 않음"
+    val dropped = if (a.droppedBlocks > 0) " · 못 담은 조각 ${a.droppedBlocks}개" else ""
+    return "${a.format.labelKo} · ${a.sizeKo()}$dropped"
+}
+
+private fun clippedKo(m: SessionMeta): String = when (val n = m.clippedRows) {
+    null -> NOT_RECORDED_KO
+    0 -> "없음"
+    else -> "${n}행"
 }
 
 // ── 사람이 읽을 말로 ────────────────────────────────────────
@@ -194,8 +215,12 @@ fun reportWarningsKo(m: SessionMeta): List<String> = buildList {
     if (m.droppedPackets > 0) {
         add("소리 조각 ${m.droppedPackets}개를 놓쳤습니다. 그 구간의 값은 비어 있습니다.")
     }
-    if (m.events.any { it.kind == SessionEventKind.Clipped }) {
-        add("입력이 찌그러진 구간이 있습니다. 그 구간의 숫자는 실제보다 낮습니다.")
+    val clipped = m.clippedRows ?: 0
+    if (clipped > 0) {
+        add(
+            "입력이 찌그러진 구간이 ${clipped}행 있습니다. 그 구간의 숫자는 " +
+                "실제보다 낮습니다 — 얼마나 낮은지는 알 수 없습니다.",
+        )
     }
 }
 

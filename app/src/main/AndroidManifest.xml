@@ -69,6 +69,24 @@
             android:name=".audio.CaptureService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <!--
+          내보낸 CSV 를 다른 앱에 건네는 통로.
+
+          **파일 경로를 그대로 주지 않는다.** `file://` 은 안드로이드 7
+          부터 막혀 있고, 막히지 않았더라도 받는 앱에 우리 폴더를
+          통째로 여는 셈이다. 여는 곳은 캐시의 `export/` 한 칸뿐이다
+          (res/xml/file_paths.xml).
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>

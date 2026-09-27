@@ -34,6 +34,7 @@ class MeasurementReportTest {
         curveLabel: String = "",
         events: List<SessionEvent> = emptyList(),
         dropped: Int = 0,
+        clippedRows: Int? = 0,
     ) = SessionMeta(
         id = "s1",
         startedAtEpochMs = 1_700_000_000_000L,
@@ -59,6 +60,7 @@ class MeasurementReportTest {
         peakDb = 96.0,
         events = events,
         droppedPackets = dropped,
+        clippedRows = clippedRows,
         conditions = conditions,
     )
 
@@ -186,11 +188,34 @@ class MeasurementReportTest {
         assertTrue("$warn", warn.any { it.contains("가공 없는 입력을 지원하지 않아") })
     }
 
+    /**
+     * **찌그러짐은 사건이 아니라 행에 적힌다.**
+     *
+     * 예전에는 `SessionEventKind.Clipped` 를 세었는데 그 사건은 **아무
+     * 데서도 만들어지지 않는다** — 실기기에서 PEAK 이 만재(0dBFS)인
+     * 기록에도 「없음」이라 적혔다(2026-09-27).
+     */
     @Test
-    fun `찌그러진 구간이 있으면 말한다`() {
-        val m = meta(events = listOf(SessionEvent(100, SessionEventKind.Clipped)))
+    fun `찌그러진 행이 있으면 말한다`() {
+        val m = meta(clippedRows = 12)
         assertTrue(reportWarningsKo(m).any { it.contains("찌그러진") })
-        assertEquals("1회", value(m, "찌그러짐"))
+        assertEquals("12행", value(m, "찌그러짐"))
+    }
+
+    @Test
+    fun `사건으로는 찌그러짐을 세지 않는다`() {
+        // 이 사건은 만들어지지 않지만, 있더라도 행이 0이면 「없음」이다.
+        val m = meta(clippedRows = 0, events = listOf(SessionEvent(100, SessionEventKind.Clipped)))
+        assertEquals("없음", value(m, "찌그러짐"))
+        assertFalse(reportWarningsKo(m).any { it.contains("찌그러진") })
+    }
+
+    /** **0 과 「모름」은 다르다.** 0 으로 때우면 찌그러진 기록을 안심시킨다. */
+    @Test
+    fun `세어 둔 적이 없으면 기록 없음이다`() {
+        val m = meta(clippedRows = null)
+        assertEquals(NOT_RECORDED_KO, value(m, "찌그러짐"))
+        assertFalse(reportWarningsKo(m).any { it.contains("찌그러진") })
     }
 
     @Test

@@ -92,6 +92,11 @@ internal class Reader(private val map: Map<String, String>) {
 
     fun long(key: String): Long = num(key) { it.toLongOrNull() } ?: 0L
 
+    /** 없어도 되는 정수. 빠졌다고 적지 않는다([enumOrNull] 과 같은 까닭). */
+    fun longOrNull(key: String): Long? = map[key]?.let { v ->
+        v.toLongOrNull() ?: run { malformed += key; null }
+    }
+
     /**
      * **`NaN`·`Infinity` 는 숫자로 받지 않는다**(독립 검증 CP03).
      *
