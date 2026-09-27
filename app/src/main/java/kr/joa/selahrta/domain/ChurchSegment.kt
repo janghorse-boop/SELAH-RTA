@@ -65,7 +65,13 @@ object DefaultSegmentRanges {
     }
 }
 
-/** 구간별로 무엇을 눈여겨봐야 하는가(명세 10장). */
+/**
+ * 구간별로 무엇을 눈여겨봐야 하는가(명세 10장).
+ *
+ * **지금은 어느 화면도 이것을 그리지 않는다** — 담당자 지시(2026-09-27)로
+ * 구간 카드에서 뺐다. 글은 그대로 두었으니, 다시 띄울 자리가 생기면
+ * 새로 쓰지 말고 이것을 쓴다.
+ */
 val ChurchSegment.focusKo: String
     get() = when (this) {
         ChurchSegment.Sermon ->

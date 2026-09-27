@@ -304,12 +304,8 @@ fun SettingsScreen(
             }
         }
 
-        InfoBar(
-            "이 범위는 보편적 표준이 아니라 참고값입니다. " +
-                "공식 청력 안전기준과 같게 보지 마십시오. 예배당마다 다릅니다.",
-            tone = SelahColors.Warn,
-            modifier = Modifier.padding(vertical = 12.dp),
-        )
+        // **참고값 경고 상자를 뺐다**(담당자 지시 2026-09-27).
+        // 바로 아래 「주의사항」이 같은 말을 하고 있어 두 번 적혀 있었다.
 
         SectionTitle("주의사항")
         Column(

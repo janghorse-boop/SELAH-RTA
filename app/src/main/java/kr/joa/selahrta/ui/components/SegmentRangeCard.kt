@@ -28,7 +28,6 @@ import androidx.compose.ui.unit.sp
 import kr.joa.selahrta.domain.ChurchSegment
 import kr.joa.selahrta.domain.DefaultSegmentRanges
 import kr.joa.selahrta.domain.SegmentRange
-import kr.joa.selahrta.domain.focusKo
 import kr.joa.selahrta.ui.theme.SelahColors
 
 /**
@@ -166,15 +165,11 @@ fun SegmentRangeCard(
             color = SelahColors.TextSecondary,
             fontSize = 12.sp,
         )
-        Text(
-            // 「피크」라고만 적으면 PEAK 타일과 견주게 되는데, 그쪽은 가중 전
-            // 파형의 최대라 dBA 가 아니다(독립 검증 R10). 어느 숫자와 견줄
-            // 값인지 이름으로 못박는다.
-            "짧은 최대(MAX) ${range.peakLowDb.toInt()} ~ ${range.peakHighDb.toInt()} dB(A)",
-            color = SelahColors.TextSecondary,
-            fontSize = 12.sp,
-        )
-        Text(segment.focusKo, color = SelahColors.TextMuted, fontSize = 11.sp, lineHeight = 15.sp)
+        // **짧은 최대(MAX) 줄과 안내 문구를 뺐다**(담당자 지시 2026-09-27).
+        //
+        // 값 자체는 그대로다 — 「범위」를 눌러 고칠 수 있고, 저장도 되고,
+        // 측정 화면의 판정도 그대로 쓴다. 카드에 넉 줄이 쌓여 있던 것을
+        // 두 줄로 줄인 것뿐이다.
 
         if (editing) {
             RangeEditor(
