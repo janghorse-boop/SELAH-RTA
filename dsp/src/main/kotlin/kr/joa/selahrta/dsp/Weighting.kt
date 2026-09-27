@@ -38,6 +38,48 @@ fun Weighting.leqLabel(windowKo: String): String = "L${name}eq $windowKo"
 fun Weighting.peakLabel(): String = "L${name}peak"
 
 /**
+ * 가중의 **칸별 전력 이득**. RTA·Spectrum 이 칸마다 곱한다.
+ *
+ * ## 왜 칸마다인가
+ *
+ * 1/3 옥타브 대역은 ±11.6% 폭이다. 저역에서 A-weighting 의 기울기는
+ * 옥타브당 12dB 에 가까워 **한 대역 안에서 4dB 가 달라진다.** 대역
+ * 중심값 하나를 대역 전체에 걸면 대역 안의 소리 모양에 따라 1dB 가까이
+ * 어긋난다. 칸마다 걸고 나서 묶으면 근사가 아니다.
+ *
+ * ## 음압과 같은 필터를 쓴다
+ *
+ * [weightingFilter] 의 응답을 그대로 읽는다. 규격의 아날로그 식으로
+ * 따로 셈하면 더 정확하겠지만, **그러면 같은 소리를 두 화면이 다르게
+ * 말한다** — 음압은 이 필터를 시간축으로 통과시켜 얻은 값이기 때문이다.
+ * 정확함보다 두 값이 맞아떨어지는 쪽이 낫다.
+ *
+ * ## 전력 이득이다
+ *
+ * 돌려주는 값은 **전력에 곱하는 것**이라 진폭비의 제곱이다. 진폭비를
+ * 그대로 쓰면 dB 가 절반으로 나온다 — 100Hz 에서 -19.1dB 이어야 할
+ * A-weighting 이 -9.6dB 로 보인다.
+ *
+ * @return Z 이면 null — **곱할 것이 없다**는 뜻이다. 1 로 채운 배열을
+ *   돌려주면 아무 일도 안 하는 곱셈을 칸마다 하게 된다.
+ */
+fun weightBinGain(w: Weighting, fftSize: Int, sampleRate: Int): DoubleArray? {
+    require(fftSize > 0) { "FFT 길이가 0 이하다: $fftSize" }
+    require(sampleRate > 0) { "샘플레이트가 0 이하다: $sampleRate" }
+    if (w == Weighting.Z) return null
+
+    val chain = weightingFilter(w, sampleRate)
+    val binWidth = sampleRate.toDouble() / fftSize
+    return DoubleArray(fftSize / 2 + 1) { bin ->
+        // 진폭비를 제곱해 전력비로 만든다.
+        val m = chain.magnitudeAt(bin * binWidth, sampleRate)
+        // **성하지 않은 값은 0 으로 둔다.** 0Hz 근처에서 셈이 무너지면
+        // NaN 이 곱셈으로 번져 그 대역이 통째로 빈다.
+        if (m.isFinite() && m > 0.0) m * m else 0.0
+    }
+}
+
+/**
  * IEC 61672-1 이 정한 극점 주파수(Hz).
  *
  * 규격이 아날로그 전달함수로 정의한 값이라 소수점까지 그대로 옮긴다.
