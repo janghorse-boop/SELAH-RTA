@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kr.joa.selahrta.audio.CaptureDiagnostics
 import kr.joa.selahrta.audio.OpenedFormat
+import kr.joa.selahrta.audio.activeMicComboKo
 import kr.joa.selahrta.dsp.CLIP_THRESHOLD
 import kr.joa.selahrta.dsp.SILENCE_FLOOR_DBFS
 import kr.joa.selahrta.dsp.dbfs
@@ -140,7 +141,37 @@ fun DiagnosticsPanel(
             letterSpacing = 1.sp,
         )
 
+        // **마이크 조합이 바뀌었으면 맨 위에 적는다**(개발지시서 18장).
+        //
+        // 그 구간의 숫자에는 **옛 조합으로 맞춘 보정값**이 걸려 있다.
+        // 화면은 멀쩡해 보이므로, 아래로 밀려 내려가면 안 되는 말이다.
+        opened.activeMicChangeKo?.let { InfoBar(it, tone = SelahColors.Warn) }
+
         DiagRow("입력 기기", opened.deviceLabel, helpKo = "지금 소리를 받고 있는 마이크·오디오 인터페이스의 이름입니다. 안드로이드가 알려 준 그대로 적습니다.")
+        // **어느 자리로 열렸는가.** 내장 마이크의 저장 열쇠에는 자리가
+        // 없어(2026-09-23 결정) 이 줄이 없으면 하단인지 후면인지 화면
+        // 어디에도 남지 않는다. 보정이 그 자리에 매인다(CAR-03).
+        DiagRow(
+            "마이크 자리",
+            opened.routedAddress.ifEmpty { "확인 불가" },
+            warn = opened.routedAddress.isEmpty(),
+            helpKo = "안드로이드가 알려 준 입력의 주소입니다(bottom·back 같은 것). " +
+                "이름표일 뿐 실제 물리 위치를 보장하지 않습니다 — 갤럭시 S23 Ultra 는 " +
+                "상단 마이크를 back 이라 알립니다. 보정값은 이 자리마다 따로 " +
+                "매이므로, 자리를 모르면 저장된 보정을 걸지 않습니다.",
+        )
+        // **실제로 소리를 받는 마이크**(개발지시서 4장). 목록에 셋이 보여도
+        // 한 번의 녹음에 쓰이는 것은 하나일 수도 둘일 수도 있다.
+        DiagRow(
+            "활성 마이크",
+            activeMicComboKo(opened.activeMics),
+            warn = opened.activeMics.isEmpty(),
+            helpKo = "녹음이 도는 동안 안드로이드가 실제로 쓰고 있다고 알려 준 " +
+                "마이크입니다. 폰에 마이크가 여럿 있어도 한 번에 하나만 쓰일 수 " +
+                "있고, 여럿이 함께 쓰이기도 합니다. 「확인 불가」는 마이크가 " +
+                "없다는 뜻이 아니라 안드로이드가 말해 주지 않았다는 뜻입니다" +
+                "(안드로이드 9 아래에서는 물어볼 수 없습니다).",
+        )
         DiagRow("입력 경로", opened.audioSource.labelKo, warn = !opened.audioSource.trustworthy, helpKo = "안드로이드에 어떤 입력으로 열어 달라고 했는지입니다. 「가공 없는 입력(UNPROCESSED)」이면 자동 게인·잡음 억제 같은 손질이 걸리지 않습니다. 그 입력을 지원하지 않는 기기는 덜 가공된 쪽으로 내려가 열립니다.")
         DiagRow(
             "UNPROCESSED 지원",

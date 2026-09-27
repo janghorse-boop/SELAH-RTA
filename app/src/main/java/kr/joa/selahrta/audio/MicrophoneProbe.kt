@@ -188,7 +188,7 @@ class MicrophoneProbe(private val context: Context) {
  * 옳게 짚었다. 여기서 계약을 밝힌다.
  */
 @RequiresApi(Build.VERSION_CODES.P)
-private fun MicrophoneInfo.toInfo(): ActiveMicInfo = ActiveMicInfo(
+internal fun MicrophoneInfo.toInfo(): ActiveMicInfo = ActiveMicInfo(
     id = id,
     address = address.orEmpty(),
     description = description.orEmpty(),
