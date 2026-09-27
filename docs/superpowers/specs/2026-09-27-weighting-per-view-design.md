@@ -212,28 +212,30 @@ fun weightBinGain(w: Weighting, fftSize: Int, sampleRate: Int): DoubleArray?
 - **하울링 탐지**(`SpectrumSink`)는 지금처럼 보정·가중 **전** 스펙트럼을
   받는다. 봉우리가 둘레보다 얼마나 솟았는지를 보는 것이라, 기울기를
   씌우면 솟은 정도가 달라져 판정이 흔들린다.
-- **FR** 은 Z-weighting 밴드값을 받는다. FR 은 신호에서 잡음을 빼는 상대값인데,
-  대역 안에서 두 소리의 모양이 다르므로 **가중이 빼기에서 지워지지 않는다.**
+- **FR** 도 같은 통로로 이미 격리되어 있다. `MeasurementTap` 이
+  `SpectrumSink` 로 붙어 **보정 전 스펙트럼**을 받아 제 손으로 밴드를 묶는다
+  (`toBandPower(power, bandPower, null)`). **`RtaFrame` 을 읽지 않는다.**
 
-FR 이 받는 길은 이렇다. 분석 가중이 Z 이면 밴드가 하나뿐이므로 그것을
-그대로 준다. A·C 이면 `RtaFrame` 에 **Z-weighting 밴드 배열을 하나 더 실어**
-FR 수집기가 그쪽을 읽는다. 화면에 보이는 배열과 FR 이 읽는 배열의 이름을
-갈라 둔다 — 같은 이름이면 언젠가 섞인다.
+  그래서 **FR 에는 손댈 것이 없다.** 분석 가중을 무엇으로 두든 FR 은 같은
+  곡선을 낸다.
 
-```kotlin
-class RtaFrame(
-    val bandsDbfs: DoubleArray,        // 화면용. 곡선 + 가중
-    val bandsPlainDbfs: DoubleArray,   // FR 용. 곡선만. Z 면 위와 같은 배열
-    ...
-)
-```
+  이것이 중요한 까닭: FR 은 신호에서 잡음을 빼는 상대값인데, 대역 안에서
+  두 소리의 모양이 다르므로 **가중이 빼기에서 지워지지 않는다.** 만약 FR 이
+  `RtaFrame` 을 읽었다면 분석 가중이 FR 곡선을 조용히 기울였을 것이다.
+  지금 구조가 그 일을 이미 막고 있으므로, 시험으로 못박아 두는 것이
+  이 항목의 전부다.
 
 ### 비용
 
-가중이 Z 일 때(= 기본값) **계산이 하나도 늘지 않는다** — 곱할 배열이 null
-이므로 지금 경로 그대로다. A·C 를 고른 동안만 밴드 묶기가 한 번 더 돈다
-(FR 용 Z-weighting 밴드를 따로 내야 해서다). 4096점·48kHz 에서 한 장에
-31×2049 번의 곱셈·덧셈이고 초당 20장이므로 폰에서 문제가 되지 않는다.
+**어느 가중에서도 계산이 늘지 않는다.**
+
+가중 배열은 곡선 배열과 **미리 곱해 하나로 합쳐 두므로**, 뜨거운 반복문에
+들어가는 곱셈 수가 지금과 같다. 곡선도 가중도 없으면 합친 배열이 null 이라
+곱셈 자체가 없다 — 지금 경로 그대로다.
+
+FR 은 별도 통로(`MeasurementTap`)로 이미 갈라져 있어 밴드를 한 번 더 묶을
+까닭이 없다. 합친 배열을 다시 만드는 일은 사람이 가중이나 곡선을 바꿀
+때만 일어나고, 칸 2049개짜리 곱셈 한 줄이다.
 
 ---
 
@@ -382,7 +384,7 @@ analysisWeighting  = Z      # 새로
 |---|---|
 | `dsp/…/Weighting.kt` | `unitSuffix` 표기, `leqLabel`·`peakLabel`, `weightBinGain` |
 | `dsp/…/SplEngine.kt` | `weightedPeakDbfs` 누적 하나 추가 |
-| `dsp/…/RtaEngine.kt` | 가중 칸 배열을 `binCorrection` 과 합쳐 곱함, FR 용 Z-weighting 밴드 |
+| `dsp/…/RtaEngine.kt` | 가중 칸 배열을 `binCorrection` 과 **미리 곱해** 하나로 합침 |
 | `app/…/settings/MeterSettings.kt` | 가중 셋, `LeqWindow.Session`, FFT 크기 |
 | `app/…/ui/CaptureViewModel.kt` | 셋을 골라 화면 상태로, Session Leq 배선 |
 | `app/…/ui/screens/HistorySettingsScreens.kt` | 세 줄 + 설명 줄 + 「기본값으로」, FFT 크기 |
