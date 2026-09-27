@@ -8,6 +8,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
+import kr.joa.selahrta.domain.CalibrationState
 
 /**
  * 어두운 방송실과 예배당에서 쓰는 도구다. 명세 11장이 Dark Theme 을 못박았고
@@ -75,6 +76,24 @@ object SelahColors {
     val InRange = Color(0xFF4CAF50)
     val High = Color(0xFFFF6B6B)
     val Warn = Color(0xFFFFB74D)
+}
+
+/**
+ * 보정 표시의 색. **세 상태를 세 색으로** 가른다.
+ *
+ * - 「보정됨」 초록 — 이 기기에서 기준과 맞춰 잰 값이 걸려 있다.
+ * - 「기본값」 **중간색** — 값은 걸려 있지만 **다른 기기를 잰 것**이다.
+ *   경고가 아니다(고장 난 것이 아니므로) 그러나 초록도 아니다(이 기기를
+ *   잰 것이 아니므로). 그 사이를 색으로 말한다.
+ * - 「미보정」 주황 — 걸린 값이 짐작이다.
+ *
+ * 네 화면이 같은 것을 쓰므로 한 자리에 둔다. 따로 칠하면 한 곳만
+ * 고치게 된다.
+ */
+fun calibrationTone(state: CalibrationState): Color = when (state) {
+    CalibrationState.Uncalibrated -> SelahColors.Warn
+    CalibrationState.FactoryDefault -> SelahColors.TextSecondary
+    CalibrationState.GlobalCalibrated, CalibrationState.FrequencyCalibrated -> SelahColors.InRange
 }
 
 private val SelahTypography = Typography(

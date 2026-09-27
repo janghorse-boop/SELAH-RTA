@@ -51,6 +51,17 @@ enum class FailureReason {
  */
 enum class CalibrationState(val labelKo: String, val shortKo: String) {
     Uncalibrated("보정 안 함", "미보정"),
+
+    /**
+     * **개발자가 같은 기종에서 재서 앱에 실어 둔 값**이 걸려 있다
+     * (`FactoryCalibration`).
+     *
+     * 짐작(`ASSUMED_FULL_SCALE_SPL`)보다 낫지만 **이 기기를 잰 것은
+     * 아니다.** 그래서 「보정됨」과 한 칸으로 묶지 않는다 — 묶는 순간
+     * 화면이 「이 폰은 맞춰져 있다」고 말하게 되고 그것은 사실이 아니다.
+     */
+    FactoryDefault("기종 기본값", "기본값"),
+
     GlobalCalibrated("전대역 보정", "보정됨"),
     FrequencyCalibrated("주파수 보정", "주파수 보정"),
 }

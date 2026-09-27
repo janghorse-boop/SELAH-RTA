@@ -779,8 +779,7 @@ private fun CandidateRow(c: FeedbackCandidate) {
  */
 @Composable
 internal fun CalibrationPill(calibration: ActiveCalibration) {
-    val uncalibrated = calibration.isReferenceOnly
-    val tone = if (uncalibrated) SelahColors.Warn else SelahColors.InRange
+    val tone = kr.joa.selahrta.ui.theme.calibrationTone(calibration.state)
     Text(
         calibration.state.shortKo,
         color = tone,

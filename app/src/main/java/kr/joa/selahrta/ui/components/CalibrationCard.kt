@@ -33,15 +33,21 @@ import androidx.compose.ui.text.style.TextAlign
 import kr.joa.selahrta.calibration.GlobalCalibration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.ui.text.font.FontFamily
 import kr.joa.selahrta.calibration.CalibrationSource
 import kr.joa.selahrta.calibration.CalibratorLevel
+import kr.joa.selahrta.calibration.DeviceBuildInfo
+import kr.joa.selahrta.calibration.FactoryCalibration
 import kr.joa.selahrta.calibration.PLAUSIBLE_REFERENCE_RANGE
 import kr.joa.selahrta.calibration.computeOffset
-import kr.joa.selahrta.domain.CalibrationState
+import kr.joa.selahrta.calibration.factoryEntrySnippet
+import kr.joa.selahrta.domain.MicKind
 import kr.joa.selahrta.dsp.CalibratorToneCheck
 import kr.joa.selahrta.dsp.checkCalibratorTone
 import kr.joa.selahrta.ui.CaptureUiState
 import kr.joa.selahrta.ui.theme.SelahColors
+import kr.joa.selahrta.ui.theme.calibrationTone
 
 /**
  * 간편 보정(명세 8장, 컨셉 화면 5번).
@@ -97,12 +103,33 @@ fun CalibrationCard(
             Text("간편 보정", color = SelahColors.TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
             Text(
                 capture.calibration.state.labelKo,
-                color = when (capture.calibration.state) {
-                    CalibrationState.Uncalibrated -> SelahColors.Warn
-                    else -> SelahColors.InRange
-                },
+                color = calibrationTone(capture.calibration.state),
                 fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold,
+            )
+        }
+
+        // **기종 기본값이 걸려 있으면 먼저 말한다.**
+        //
+        // 이 카드는 「보정하는 자리」다. 값이 이미 걸려 있는데 어디서 온
+        // 것인지 적지 않으면, 사람은 제가 언젠가 보정한 줄 알고 그냥
+        // 넘어간다 — 그러면 개체 차이가 영영 남는다.
+        capture.calibration.factory?.takeIf { capture.calibration.usingFactory }?.let { f ->
+            InfoBar(
+                buildString {
+                    append("지금은 이 기종의 기본값 ")
+                    append("%+.1f dB".format(f.offsetDb))
+                    append(" 이 걸려 있습니다. 개발자가 같은 기종에서 재어 앱에 실어 둔 ")
+                    append("값이라 짐작보다는 가깝지만, 이 기기를 잰 값은 아닙니다.")
+                    appendLine()
+                    appendLine()
+                    append("잰 내력: ").append(f.originKo())
+                    appendLine()
+                    appendLine()
+                    append("아래에서 기준 소음계나 교정기로 맞추면 그 값이 대신 걸립니다. ")
+                    append("기본값은 지워지지 않으니, 잰 값을 초기화하면 여기로 돌아옵니다.")
+                },
+                tone = SelahColors.TextSecondary,
             )
         }
 
@@ -332,6 +359,7 @@ fun CalibrationCard(
                 ClearCalibrationDialog(
                     saved = saved,
                     deviceLabel = capture.inputForDisplay?.deviceLabel ?: "이 기기",
+                    factory = capture.calibration.factory,
                     onConfirm = { input = ""; onClear(); confirmClear = false },
                     onCancel = { confirmClear = false },
                 )
@@ -359,6 +387,17 @@ fun CalibrationCard(
             )
         }
 
+        // **재는 것과 앱에 싣는 것 사이를 사람 손이 잇는다.**
+        //
+        // 기종 기본값은 개발자가 재서 `FACTORY_CALIBRATIONS` 에 적어야
+        // 생긴다. 그 사이를 눈으로 옮겨 적게 두면 숫자 하나가 틀려도
+        // 아무도 모른 채 그 기종 전체에 걸린다. 그래서 화면이 붙여 넣을
+        // 줄을 그대로 준다.
+        //
+        // 접어 둔다 — 쓰는 사람은 개발자 하나뿐이고, 늘 펴 두면 보정
+        // 화면이 코드로 어수선해진다.
+        FactorySnippet(capture)
+
         capture.calibrationNoticeKo?.let {
             Row(
                 Modifier.fillMaxWidth(),
@@ -378,6 +417,70 @@ fun CalibrationCard(
             }
         }
     }
+}
+
+/**
+ * **개발자용** — 이 기기에서 잰 값을 기종 기본값 표에 붙일 코드로 적는다.
+ *
+ * 내장 마이크에서 실제로 잰 값이 있을 때만 나온다. USB 마이크는 폰의
+ * 일부가 아니라 기종으로 값을 정할 수 없고([findFactoryCalibration]),
+ * 잰 값이 없으면 실을 것도 없다.
+ */
+@Composable
+private fun FactorySnippet(capture: CaptureUiState) {
+    val saved = capture.calibration.saved ?: return
+    val opened = capture.opened ?: return
+    if (opened.micKind != MicKind.BuiltIn) return
+
+    var open by remember { mutableStateOf(false) }
+    val build = remember { DeviceBuildInfo.current() }
+    val day = remember(saved.savedAtEpochMs) {
+        java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.KOREA)
+            .format(java.util.Date(saved.savedAtEpochMs))
+    }
+
+    TextButton(onClick = { open = !open }) {
+        Text(
+            if (open) "기종 기본값으로 실을 코드 접기" else "개발자용 · 기종 기본값으로 실을 코드",
+            color = SelahColors.TextMuted,
+            fontSize = 11.sp,
+        )
+    }
+    if (!open) return
+
+    Text(
+        "${build.manufacturer} / ${build.model} 를 쓰는 사람 모두에게 걸립니다. " +
+            "한 대만 재고 싣지 마십시오 — 개체 차이를 확인한 뒤 noteKo 에 몇 대를 " +
+            "쟀는지 적으십시오.",
+        color = SelahColors.Warn,
+        fontSize = 10.sp,
+        lineHeight = 15.sp,
+    )
+    SelectionContainer {
+        Text(
+            factoryEntrySnippet(
+                build = build,
+                source = opened.audioSource,
+                routeAddress = opened.routedAddress,
+                cal = saved,
+                measuredOn = day,
+            ),
+            color = SelahColors.TextSecondary,
+            fontSize = 10.sp,
+            lineHeight = 15.sp,
+            fontFamily = FontFamily.Monospace,
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(SelahColors.SurfaceVariant, RoundedCornerShape(8.dp))
+                .padding(10.dp),
+        )
+    }
+    Text(
+        "길게 눌러 복사한 뒤 FactoryCalibration.kt 의 FACTORY_CALIBRATIONS 에 붙이십시오.",
+        color = SelahColors.TextMuted,
+        fontSize = 10.sp,
+        lineHeight = 15.sp,
+    )
 }
 
 /**
@@ -429,6 +532,8 @@ private fun RowScope.CalibratorButton(
 private fun ClearCalibrationDialog(
     saved: GlobalCalibration,
     deviceLabel: String,
+    /** 지우고 나면 돌아갈 기종 기본값. 없으면 null — 그때는 짐작으로 내려간다. */
+    factory: FactoryCalibration?,
     onConfirm: () -> Unit,
     onCancel: () -> Unit,
 ) {
@@ -471,11 +576,35 @@ private fun ClearCalibrationDialog(
                     fontSize = 12.sp,
                     lineHeight = 17.sp,
                 )
+                // **지운 뒤에 무엇이 걸리는지가 다르다.**
+                //
+                // 기종 기본값이 있으면 「미보정」으로 떨어지지 않는다 —
+                // 그쪽으로 되돌아간다. 없는데 있다고 하거나, 있는데 없다고
+                // 하면 사람이 지울지 말지를 잘못 정한다.
+                if (factory != null) {
+                    Text(
+                        "지운 뒤에는 이 기종의 기본값 %+.1f dB 이 대신 걸립니다. ".format(
+                            factory.offsetDb,
+                        ) +
+                            "기본값은 앱에 실려 있어 지워지지 않습니다. " +
+                            "같은 기종을 잰 값이라 짐작보다는 가깝지만, 이 기기를 잰 값은 " +
+                            "아니므로 그만큼 차이가 남습니다.",
+                        color = SelahColors.TextSecondary,
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                    )
+                } else {
+                    Text(
+                        "지운 뒤에는 이 기기의 음압이 다시 「미보정」이 되어, " +
+                            "화면의 숫자가 실제와 10dB 넘게 차이 날 수 있습니다.",
+                        color = SelahColors.Warn,
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                    )
+                }
                 Text(
-                    "지운 뒤에는 이 기기의 음압이 다시 「미보정」이 되어, " +
-                        "화면의 숫자가 실제와 10dB 넘게 차이 날 수 있습니다. " +
-                        "주파수 보정 곡선은 그대로 남습니다 — 다른 값입니다.",
-                    color = SelahColors.Warn,
+                    "주파수 보정 곡선은 그대로 남습니다 — 다른 값입니다.",
+                    color = SelahColors.TextMuted,
                     fontSize = 11.sp,
                     lineHeight = 16.sp,
                 )

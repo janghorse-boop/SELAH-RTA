@@ -368,8 +368,26 @@ private fun DeviceCalibration(
         CalibRow(
             "절대 레벨",
             calibration.state.labelKo,
-            warn = calibration.isReferenceOnly,
+            tone = kr.joa.selahrta.ui.theme.calibrationTone(calibration.state),
         )
+        // **어디서 온 값인지 적는다.** 「기본값」 석 자만 보면 누가 언제
+        // 무엇으로 잰 것인지 알 길이 없고, 그러면 그 숫자를 얼마나 믿을지
+        // 정할 수 없다.
+        calibration.factory?.let { f ->
+            Text(
+                "%+.1f dB · %s".format(f.offsetDb, f.originKo()),
+                color = SelahColors.TextMuted,
+                fontSize = 10.sp,
+                lineHeight = 14.sp,
+            )
+            Text(
+                "이 기기를 잰 값이 아닙니다 — 기준 소음계나 교정기로 직접 맞추면 " +
+                    "그 값이 대신 걸립니다.",
+                color = SelahColors.TextMuted,
+                fontSize = 10.sp,
+                lineHeight = 14.sp,
+            )
+        }
         CalibRow(
             "주파수 곡선",
             when {
@@ -379,14 +397,14 @@ private fun DeviceCalibration(
                 !curve.enabled -> "${curve.fileName} · 꺼 둠"
                 else -> "${curve.fileName} · 걸림"
             },
-            warn = curve == null || !curve.enabled,
+            tone = if (curve == null || !curve.enabled) SelahColors.Warn else SelahColors.InRange,
         )
     }
 }
 
 /** 이름과 값 한 줄. 색만으로 알리지 않으려고 값을 글자로 적는다(명세 11장). */
 @Composable
-private fun CalibRow(label: String, value: String, warn: Boolean) {
+private fun CalibRow(label: String, value: String, tone: androidx.compose.ui.graphics.Color) {
     Row(
         Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -395,7 +413,7 @@ private fun CalibRow(label: String, value: String, warn: Boolean) {
         Text(label, color = SelahColors.TextMuted, fontSize = 11.sp, softWrap = false)
         Text(
             value,
-            color = if (warn) SelahColors.Warn else SelahColors.InRange,
+            color = tone,
             fontSize = 11.sp,
             fontWeight = FontWeight.SemiBold,
             textAlign = TextAlign.End,
