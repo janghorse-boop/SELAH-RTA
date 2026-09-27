@@ -89,12 +89,48 @@ private val FREQ_WORDS = listOf("freq", "hz", "주파수")
  * 순서의 **알려진 이름**일 때만 확정하고 나머지는 사람에게 묻는다.
  * 길이 제한 같은 어림으로 가르지 않는다 — 검토자의 반례는 모두 짧았다.
  */
+/**
+ * 읽을 수 없는 까닭(독립 재검토 CFRC-02).
+ *
+ * **사람이 고르면 풀리는가**가 갈림길이다.
+ *
+ * 위상을 응답으로 바꾸거나, kHz 축을 Hz 로 바꾸거나, Pa·선형 크기를 dB 로
+ * 만드는 일은 **부호를 고르는 것이 아니다.** 그런 파일에 「응답으로
+ * 사용 / 보정값으로 사용」을 띄우면, 사람은 고르면 될 일이라고 믿고
+ * 고른다 — 그리고 위상이 보정량으로 걸린다.
+ *
+ * 반대로 한 칸 안에서 「응답」과 「보정값」이 어긋나는 것은 Hz·dB 파일이
+ * 맞고 방향만 모르는 것이다. 그것까지 막으면 멀쩡한 파일을 영영 못 쓴다.
+ */
+enum class UnsupportedColumn(val fixableBySign: Boolean, val labelKo: String) {
+    /** 둘째 열이 **다른 수량**이다(Phase·Amplitude 등). */
+    Quantity(false, "둘째 열이 우리가 읽는 수량이 아닙니다"),
+
+    /** **단위**가 다르다(kHz 축·Pa·선형 크기). 축이나 잣대가 어긋난다. */
+    Unit(false, "단위가 이 앱이 읽는 꼴이 아닙니다"),
+
+    /** 한 칸 안에서 **응답과 보정값이 어긋난다.** 사람이 고르면 풀린다. */
+    ConflictingSign(true, "한 칸 안에서 응답과 보정값이 어긋납니다"),
+
+    /** 선언이 여럿이고 서로 다르다. **어느 쪽도 믿을 수 없다.** */
+    Ambiguous(false, "열 선언이 여럿이고 서로 다릅니다"),
+}
+
 sealed interface ColumnDeclaration {
     /** 열 선언이 없다. 설명문뿐이다. */
     data object None : ColumnDeclaration
 
-    /** 선언은 있는데 **둘째 열을 모른다**(Phase 등). 사람에게 묻는다. */
-    data class Unsupported(val secondKo: String) : ColumnDeclaration
+    /**
+     * 선언은 있는데 **이 파서가 읽을 수 있는 꼴이 아니다.**
+     *
+     * [reason] 으로 가른다 — **부호를 고르면 풀리는 것과 아닌 것**이
+     * 섞여 있고, 그 둘을 한 칸에 담으면 막을 때 함께 막거나 열 때 함께
+     * 열게 된다(독립 재검토 CFRC-02).
+     */
+    data class Unsupported(
+        val reason: UnsupportedColumn,
+        val secondKo: String,
+    ) : ColumnDeclaration
 
     /** 둘째 열이 무엇인지 선언이 **직접** 말한다. */
     data class Second(val reading: CurveReading) : ColumnDeclaration
@@ -111,9 +147,12 @@ fun columnDeclarationOf(headerLines: List<String>): ColumnDeclaration {
     val found = headerLines.mapNotNull { declarationIn(it) }.distinct()
     if (found.isEmpty()) return ColumnDeclaration.None
     if (found.size > 1) {
+        val bad = found.filterIsInstance<ColumnDeclaration.Unsupported>().firstOrNull()
         return ColumnDeclaration.Unsupported(
-            found.filterIsInstance<ColumnDeclaration.Unsupported>()
-                .firstOrNull()?.secondKo ?: "서로 다른 선언이 여럿",
+            // 읽을 수 없는 선언이 섞여 있으면 그 까닭이 더 구체적이다.
+            // 그런 것이 없으면 「어느 쪽도 믿을 수 없다」가 까닭이다.
+            reason = bad?.reason ?: UnsupportedColumn.Ambiguous,
+            secondKo = bad?.secondKo ?: "서로 다른 선언이 여럿",
         )
     }
     return found.first()
@@ -138,26 +177,35 @@ private fun declarationIn(line: String): ColumnDeclaration? {
     // **괄호를 모두 본다**(독립 재검토 CF2-02). 하나만 보면 나머지의
     // 모순이 사라진다 — 첫 괄호에 멀쩡한 단위를 두면 검사를 우회했다.
     if (first.notes.any { it !in FREQ_UNITS }) {
-        return ColumnDeclaration.Unsupported("${fields[0]} — 지원하지 않는 단위")
+        return ColumnDeclaration.Unsupported(
+            UnsupportedColumn.Unit,
+            "${fields[0]} — 지원하지 않는 단위",
+        )
     }
 
     val second = splitColumn(fields[1])
     val byName = when (second.name) {
         in RESPONSE_COLUMNS -> CurveReading.Response
         in CORRECTION_COLUMNS -> CurveReading.Correction
-        else -> return ColumnDeclaration.Unsupported(fields[1])
+        else -> return ColumnDeclaration.Unsupported(UnsupportedColumn.Quantity, fields[1])
     }
     for (note in second.notes) {
         val says = readingOfWord(note)
         // **단위는 dB 여야 한다.** `Amplitude (Pa)`·`Magnitude (linear)` 는
         // 같은 수량이 아니다 — 선형 크기 2 를 2dB 로 읽는 것은 잰 값이 아니다.
         if (says == null && note !in LEVEL_UNITS) {
-            return ColumnDeclaration.Unsupported("${fields[1]} — 지원하지 않는 단위")
+            return ColumnDeclaration.Unsupported(
+                UnsupportedColumn.Unit,
+                "${fields[1]} — 지원하지 않는 단위",
+            )
         }
         // **괄호 안이 이름과 어긋나면 모르는 것이다.**
         // `Response (dB) (correction)` 은 한 칸 안에서 서로 다른 말을 한다.
         if (says != null && says != byName) {
-            return ColumnDeclaration.Unsupported("${fields[1]} — 이름과 설명이 어긋남")
+            return ColumnDeclaration.Unsupported(
+                UnsupportedColumn.ConflictingSign,
+                "${fields[1]} — 이름과 설명이 어긋남",
+            )
         }
     }
     return ColumnDeclaration.Second(byName)

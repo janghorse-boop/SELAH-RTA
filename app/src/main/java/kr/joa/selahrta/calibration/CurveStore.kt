@@ -87,6 +87,21 @@ data class ActiveCurve(
     val reading: CurveReading = CurveReading.Response,
     /** 자동 판정이 아니라 **사람이** 확인해 준 규약인가. */
     val readingConfirmed: Boolean = false,
+    /**
+     * **화면이 보여 준 바로 이 내용**을 가리키는 표(독립 재검토 CFRC-01).
+     *
+     * 확인 단추가 이것을 들고 돌아간다. 저장소는 이 표가 가리키는 내용과
+     * 지금 디스크에 있는 내용이 같을 때만 확인을 발급한다 — 그러지 않으면
+     * 사람이 본 적 없는 파일에 그 선택이 붙는다.
+     */
+    val confirmationToken: CurveConfirmationToken? = null,
+    /**
+     * **부호를 골라도 풀리지 않는** 까닭. 풀 수 있으면 null.
+     *
+     * 이것이 있으면 화면은 확인 단추를 띄우지 않는다 — 띄우면 고르면 될
+     * 일이라고 믿게 만든다.
+     */
+    val readingUnsupportedKo: String? = null,
 )
 
 /**
@@ -276,6 +291,12 @@ class CurveStore(private val context: Context) {
                     suggestedReading = r.decision.reading,
                     reading = r.reading ?: CurveReading.Response,
                     readingConfirmed = r.confirmed,
+                    confirmationToken = CurveConfirmationToken(
+                        key = key,
+                        sourceSha = sha256Hex(source),
+                        rulesVersion = CURVE_READING_RULES_VERSION,
+                    ),
+                    readingUnsupportedKo = r.rejectionKo,
                 )
             }
 
@@ -290,12 +311,15 @@ class CurveStore(private val context: Context) {
             val loaded = CalibrationFile.load(text).getOrElse { return@withContext Result.failure(it) }
             // **읽을 때와 똑같이 판정한다.** 여기만 열 선언을 빼면 저장할
             // 때와 다시 열 때의 답이 갈린다(독립 재검토 CFRF-01).
-            val decision = resolveCurveReading(
+            val r = resolveCurveReading(
                 loaded.headerLines,
                 sha256Hex(text),
                 // 새로 가져오는 참이다 — 확인 기록이 있을 수 없다.
                 record = null,
-            ).decision
+            )
+            // **걸 수 있는가**는 판정이 아니라 결론으로 묻는다. 판정만 보면
+            // 지원하지 않는 형식이 「사람에게 묻는 중」으로 읽힌다.
+            val settled = !r.needsPerson
             runCatching {
                 // 원래 열쇠를 첫 줄 주석으로 남긴다. 해석기가 건너뛰는 줄이라
                 // 곡선에는 영향이 없고, 폴더만 봐도 어느 기기 것인지 알 수 있다.
@@ -312,7 +336,7 @@ class CurveStore(private val context: Context) {
                     // R04). 머리글이 우리 가정과 반대를 가리키는 파일을 그대로
                     // 걸면 보정이 반대로 두 배 걸리고, 그 차이는 ±30dB 경고로
                     // 잡히지 않는다 — 측정 마이크 파일은 대개 ±5dB 안쪽이다.
-                    if (decision.settled) p.remove(onKey(key)) else p[onKey(key)] = "false"
+                    if (settled) p.remove(onKey(key)) else p[onKey(key)] = "false"
                     // **새 파일에는 옛 확인이 따라오지 않는다.** 해시가
                     // 달라 어차피 인정되지 않지만, 남겨 두면 같은 내용을
                     // 다시 넣었을 때 묻지 않고 지나간다 — 그 사이에 사람이
@@ -325,14 +349,23 @@ class CurveStore(private val context: Context) {
                     curve = loaded.curve,
                     fileName = fileName,
                     // 읽는 법이 안 정해졌으면 꺼진 채로 들어온다(R04).
-                    enabled = decision.settled,
+                    enabled = settled,
                     pointCount = loaded.pointCount,
                     headerLines = loaded.headerLines,
                     importedAtEpochMs = System.currentTimeMillis(),
-                    readingConfirmationNeeded = !decision.settled,
-                    readingWhyKo = decision.whyKo.takeIf { !decision.settled },
-                    suggestedReading = decision.reading,
-                    reading = if (decision.settled) decision.reading else CurveReading.Response,
+                    readingConfirmationNeeded = !settled,
+                    readingWhyKo = r.decision.whyKo.takeIf { !settled },
+                    suggestedReading = r.decision.reading,
+                    reading = r.reading ?: CurveReading.Response,
+                    confirmationToken = CurveConfirmationToken(
+                        key = key,
+                        // **원본 내용의 해시다.** 앱이 앞에 붙이는 주석은
+                        // 넣지 않는다 — 그러면 저장 열쇠가 바뀔 때 같은
+                        // 파일의 해시가 달라진다.
+                        sourceSha = sha256Hex(text),
+                        rulesVersion = CURVE_READING_RULES_VERSION,
+                    ),
+                    readingUnsupportedKo = r.rejectionKo,
                 )
             }.recoverCatching {
                 throw IOException("보정 파일을 저장하지 못했습니다: ${it.message}")
@@ -391,10 +424,31 @@ class CurveStore(private val context: Context) {
      *
      * @return 막혔으면 그 까닭, 됐으면 null.
      */
-    suspend fun confirmReading(key: CalibrationKey, reading: CurveReading): String? =
+    suspend fun confirmReading(token: CurveConfirmationToken, reading: CurveReading): String? =
         withContext(Dispatchers.IO) {
+            val key = token.key
+            // **규칙이 바뀌었으면 옛 화면의 선택을 받지 않는다.** 그 화면은
+            // 지금과 다른 말을 물어 놓고 답을 받아 온 것이다.
+            if (token.rulesVersion != CURVE_READING_RULES_VERSION) {
+                return@withContext "읽기 규칙이 바뀌었습니다. 파일을 다시 보고 골라 주십시오."
+            }
             val source = sourceTextOf(fileFor(key))
                 ?: return@withContext "보정 파일을 찾지 못했습니다."
+            // **화면이 보여 준 그 내용인가**(독립 재검토 CFRC-01).
+            //
+            // 이 검사가 없으면 저장소는 「지금 디스크에 있는 파일」에 확인을
+            // 붙인다. 그 사이에 다른 파일이 들어왔으면 **사람이 본 적 없는
+            // 파일에 그 선택이 붙고**, 그 뒤의 해시 검사는 전부 통과한다.
+            if (sha256Hex(source) != token.sourceSha) {
+                return@withContext "보고 계시던 파일이 그 사이에 바뀌었습니다. " +
+                    "새 파일을 보고 다시 골라 주십시오."
+            }
+            // **부호로 풀 수 없는 형식은 확인으로도 안 풀린다**(CFRC-02).
+            resolveCurveReading(
+                CalibrationFile.parse(source).headerLines,
+                token.sourceSha,
+                record = null,
+            ).rejectionKo?.let { return@withContext it }
             // **고른 규약으로 실제로 만들어 본다.** 만들어지지 않는 파일을
             // 확인만 받아 두면, 다음에 열 때 조용히 곡선이 없다.
             CalibrationFile.load(source, reading).getOrElse {

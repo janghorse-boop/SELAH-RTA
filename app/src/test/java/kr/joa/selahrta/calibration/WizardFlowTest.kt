@@ -64,7 +64,10 @@ class WizardFlowTest {
      */
     @Test
     fun `둘째 열을 모르면 사람에게 묻는다`() {
-        val phase = cal.copy(columns = ColumnDeclaration.Unsupported("Phase"))
+        val phase = cal.copy(columns = ColumnDeclaration.Unsupported(
+            kr.joa.selahrta.dsp.UnsupportedColumn.Quantity,
+            "Phase",
+        ))
         assertFalse("둘째 열을 모르는데 정해졌다", phase.readingSettled)
     }
 
