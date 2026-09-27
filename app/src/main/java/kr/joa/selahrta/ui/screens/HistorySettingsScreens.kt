@@ -51,32 +51,6 @@ import kr.joa.selahrta.ui.components.InfoBar
 import kr.joa.selahrta.ui.components.NotYet
 import kr.joa.selahrta.ui.theme.SelahColors
 
-/** 컨셉 화면 7번 — 예배 기록. Phase 10 에서 실제 저장이 붙는다. */
-@Composable
-fun HistoryScreen() {
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
-    ) {
-        InfoBar(
-            "기본 측정은 소리를 저장하지 않습니다. 음압·주파수 요약만 남습니다.",
-            modifier = Modifier.padding(top = 4.dp, bottom = 16.dp),
-        )
-        Column(
-            Modifier.fillMaxWidth().padding(vertical = 40.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Text("아직 기록이 없습니다.", color = SelahColors.TextSecondary, fontSize = 14.sp)
-            Text(
-                "예배를 측정하면 여기에 남습니다.",
-                color = SelahColors.TextMuted,
-                fontSize = 12.sp,
-            )
-        }
-        NotYet("세션 저장은 Phase 10, 리포트는 Phase 11 입니다.", "Phase 10 · 11")
-    }
-}
-
 /**
  * 컨셉 화면 5·6·8 을 한 자리에 모은 설정.
  *

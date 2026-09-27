@@ -97,6 +97,26 @@ fun SelahApp() {
     val vm: CaptureViewModel = viewModel()
     val capture by vm.state.collectAsStateWithLifecycle()
 
+    // **내보낸 파일을 건넬 자리.**
+    //
+    // ViewModel 은 Intent 를 띄울 수 없다(Context 가 Activity 여야 한다).
+    // 그래서 상태로 올려 두고 화면이 띄운 뒤 지운다 — 안 지우면 화면을
+    // 다시 그릴 때마다 공유 창이 또 뜬다.
+    val shareUri = capture.shareCsvUri
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    androidx.compose.runtime.LaunchedEffect(shareUri) {
+        val uri = shareUri ?: return@LaunchedEffect
+        val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+            type = "text/csv"
+            putExtra(android.content.Intent.EXTRA_STREAM, uri)
+            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        runCatching {
+            ctx.startActivity(android.content.Intent.createChooser(send, "측정 기록 보내기"))
+        }
+        vm.clearShareUri()
+    }
+
     val profiles: ProfilesViewModel = viewModel()
     val profilesState by profiles.state.collectAsStateWithLifecycle()
     // 기기 신원은 안 바뀐다. 한 번만 읽는다.
@@ -457,7 +477,22 @@ fun SelahApp() {
                         onMode = { mode = it },
                     )
                     // 지난 기록을 보는 화면이라 마이크가 필요 없다.
-                    ViewMode.History -> HistoryScreen()
+                    ViewMode.History -> {
+                        // **화면이 열릴 때 읽는다.** 켜 둔 채 재고 돌아오는
+                        // 흐름이 흔해서, 처음 한 번만 읽으면 방금 잰 것이
+                        // 목록에 없다.
+                        androidx.compose.runtime.LaunchedEffect(capture.recordingId) {
+                            vm.refreshSessions()
+                        }
+                        HistoryScreen(
+                            capture = capture,
+                            onOpen = vm::openSession,
+                            onClose = vm::closeSession,
+                            onExport = vm::exportSession,
+                            onDelete = vm::deleteSession,
+                            onDismissNotice = vm::dismissHistoryNotice,
+                        )
+                    }
                     ViewMode.Signal -> ToolsScreen(
                         capture = capture,
                         onPlaySignal = vm::playSignal,

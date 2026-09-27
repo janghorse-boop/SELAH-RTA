@@ -160,6 +160,16 @@ data class CaptureUiState(
     val spectrum: SpectrumView? = null,
     /** 기록 중이면 그 이름. 아니면 null(Phase 10). */
     val recordingId: String? = null,
+    /** 저장된 기록 목록. 화면이 열릴 때 읽는다. */
+    val sessions: List<kr.joa.selahrta.recording.SessionMeta> = emptyList(),
+    /** 읽지 못한 기록 수. **조용히 빼지 않는다.** */
+    val brokenSessions: Int = 0,
+    /** 지금 열어 본 기록. 목록만 볼 때는 null. */
+    val openedSession: kr.joa.selahrta.recording.SessionMeta? = null,
+    /** 내보내기·삭제 결과를 사람에게 한 줄로. */
+    val historyNoticeKo: String? = null,
+    /** 공유 창을 띄울 파일. 띄운 뒤 화면이 지운다. */
+    val shareCsvUri: android.net.Uri? = null,
     /** 하울링 후보(명세 9장). 센 것부터. 없으면 빈 목록이다. */
     val feedback: List<FeedbackCandidate> = emptyList(),
     /**
@@ -1896,6 +1906,13 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                         peakDb = rec.summary.peakDb ?: Double.NaN,
                         events = rec.events,
                         droppedPackets = rec.droppedPackets,
+                        // **찌그러짐은 행에 있다.** 여기서 한 번 세어 두지
+                        // 않으면 목록과 리포트가 타임라인을 열어야 안다.
+                        clippedRows = rec.rows.count { it.clipped },
+                        // **보정이 바뀐 자리를 남긴다.** 행은 epoch id 만
+                        // 지니므로, 이 표가 없으면 다시 열었을 때 그 id 를
+                        // 풀 길이 없다 — 한 가지 값으로 뭉뚱그려진다.
+                        epochs = rec.epochs,
                         // **잰 조건을 함께 남긴다**(담당자 지시 2026-09-27).
                         //
                         // 숫자만 남기면 나중에 그 숫자를 해석할 수 없다.
@@ -1931,6 +1948,98 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 runCatching { sessionStore.delete(id) }
             }
             onMainThread { controller.update { it.copy(recordingId = null) } }
+        }
+    }
+
+    // ── 기록(컨셉 화면 7번) ────────────────────────────────
+
+    /**
+     * 저장된 기록을 다시 읽는다. 화면이 열릴 때와 지운 뒤에 부른다.
+     *
+     * **겉장만 읽는다.** 타임라인은 내보낼 때만 연다 — 2시간이면
+     * 1.4MB 라, 목록을 그리려고 전부 읽으면 화면이 멈춘다.
+     */
+    fun refreshSessions() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val list = runCatching { sessionStore.list() }.getOrNull() ?: return@launch
+            onMainThread {
+                controller.update {
+                    it.copy(sessions = list.sessions, brokenSessions = list.broken)
+                }
+            }
+        }
+    }
+
+    fun openSession(meta: kr.joa.selahrta.recording.SessionMeta) {
+        controller.update { it.copy(openedSession = meta) }
+    }
+
+    fun closeSession() {
+        controller.update { it.copy(openedSession = null, historyNoticeKo = null) }
+    }
+
+    fun dismissHistoryNotice() {
+        controller.update { it.copy(historyNoticeKo = null) }
+    }
+
+    /**
+     * 기록 하나를 CSV 로 내보내 **나눠 보낸다.**
+     *
+     * 파일은 캐시에 쓴다. 앱이 지워도 함께 사라지고, 받는 쪽은 이미
+     * 제 앱으로 옮겨 간 뒤다.
+     */
+    fun exportSession(meta: kr.joa.selahrta.recording.SessionMeta) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val app = getApplication<Application>()
+            val r = runCatching {
+                val dir = java.io.File(app.cacheDir, "export").apply { mkdirs() }
+                val f = java.io.File(dir, kr.joa.selahrta.recording.SessionExport.fileName(meta))
+                sessionStore.timelineFile(meta.id).inputStream().buffered().use { input ->
+                    f.bufferedWriter().use { out ->
+                        kr.joa.selahrta.recording.SessionExport.writeCsv(meta, input, out)
+                    }
+                }
+                androidx.core.content.FileProvider.getUriForFile(
+                    app,
+                    "${app.packageName}.files",
+                    f,
+                )
+            }
+            onMainThread {
+                r.fold(
+                    onSuccess = { uri -> controller.update { it.copy(shareCsvUri = uri) } },
+                    onFailure = { e ->
+                        controller.update {
+                            it.copy(historyNoticeKo = "내보내지 못했습니다: ${e.message}")
+                        }
+                    },
+                )
+            }
+        }
+    }
+
+    /** 공유 창을 띄운 뒤 지운다. 같은 파일을 두 번 띄우지 않는다. */
+    fun clearShareUri() {
+        controller.update { it.copy(shareCsvUri = null) }
+    }
+
+    /**
+     * 기록을 지운다. **폴더째** 지운다.
+     *
+     * 되돌릴 수 없으므로 묻는 일은 화면이 한다.
+     */
+    fun deleteSession(meta: kr.joa.selahrta.recording.SessionMeta) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val ok = sessionStore.delete(meta.id).isSuccess
+            onMainThread {
+                controller.update {
+                    it.copy(
+                        openedSession = null,
+                        historyNoticeKo = if (ok) "기록을 지웠습니다." else "지우지 못했습니다.",
+                    )
+                }
+            }
+            refreshSessions()
         }
     }
 

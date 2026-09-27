@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  내보낸 CSV 를 다른 앱에 건네는 통로.
+
+  **캐시만 연다.** 기록 원본(`files/sessions`)은 열지 않는다 — 내보낸
+  한 장만 주면 되고, 원본 폴더를 열면 다른 앱이 모든 기록을 읽는다.
+-->
+<paths>
+    <cache-path name="export" path="export/" />
+</paths>
