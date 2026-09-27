@@ -66,4 +66,32 @@ class ChannelPlanTest {
         assertNotNull(runCatching { ChannelPlan(2, 2) }.exceptionOrNull())
         assertNotNull(runCatching { ChannelPlan(2, -1) }.exceptionOrNull())
     }
+
+    /**
+     * **1번을 고르면 모노로 열린다** — 그래서 채널별 레벨 막대가 뜨지
+     * 않는다.
+     *
+     * 버스 대역과 버퍼를 아끼려는 설계이고, 실기기(UMC404HD, 2026-09-23)에서
+     * 그대로 동작하는 것을 확인했다. 다만 **「마이크가 몇 번에 꽂혔나」를
+     * 찾을 때는 걸림돌**이다 — 가장 흔한 기본값(1번)에서 견줄 채널이
+     * 하나도 없다.
+     *
+     * 화면이 그 사실과 길을 적어 둔다(설정의 안내 문구). 이 시험은
+     * 그 안내가 **왜 있는지**를 코드로 남겨, 누가 planChannels 를 고쳤을
+     * 때 안내도 같이 손보게 한다.
+     */
+    @Test
+    fun `1번을 고르면 한 채널만 연다`() {
+        val plan = planChannels(listOf(1, 2, 3, 4), 0)
+        assertEquals(1, plan.count)
+        assertEquals(0, plan.index)
+    }
+
+    /** 마지막 번호를 고르면 **모든 입력이 함께 열린다.** 찾을 때 쓰는 길이다. */
+    @Test
+    fun `마지막 번호를 고르면 모든 채널이 열린다`() {
+        val plan = planChannels(listOf(1, 2, 3, 4), 3)
+        assertEquals(4, plan.count)
+        assertEquals(3, plan.index)
+    }
 }

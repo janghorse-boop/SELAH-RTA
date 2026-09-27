@@ -183,7 +183,27 @@ fun SettingsScreen(
             //
             // 이것이 없으면 채널을 하나씩 골라 가며 레벨이 움직이는지
             // 봐야 했다. 마이크에 대고 말하면 여기서 바로 갈린다.
-            capture.diagnostics.channelLevels?.let { ChannelLevelBars(it, picked) }
+            val bars = capture.diagnostics.channelLevels
+            if (bars != null) {
+                ChannelLevelBars(bars, picked)
+            } else if (capture.measure is MeasureState.Running && maxChannels > 1) {
+                // **Input 1 을 고르면 한 채널만 열린다.**
+                //
+                // 채널은 「고른 번호가 들어가는 가장 작은 수」로 연다
+                // (`planChannels`) — 버스 대역과 버퍼를 아끼려는
+                // 설계다. 그래서 1번을 고르면 견줄 채널이 아예 없고,
+                // 위의 막대도 뜰 수 없다.
+                //
+                // **길을 적는다.** 이 사실을 모르면 「막대가 왜 안 뜨지」로
+                // 끝난다.
+                InfoBar(
+                    "지금은 한 채널만 열려 있어 입력끼리 견줄 수 없습니다. " +
+                        "마이크가 몇 번에 꽂혔는지 찾으려면 " +
+                        "Input ${maxChannels} 를 고르십시오 — 그러면 모든 입력이 " +
+                        "함께 열려 어디에 소리가 들어오는지 보입니다. " +
+                        "찾은 뒤 그 번호로 되돌리십시오.",
+                )
+            }
         }
         // 「외부 기기 자동 사용」도 뺐다. 이제 고른 기기가 없거나 빠졌으면
         // 내장으로 연다 — 그것이 당연한 동작이라는 담당자 판단이다.
