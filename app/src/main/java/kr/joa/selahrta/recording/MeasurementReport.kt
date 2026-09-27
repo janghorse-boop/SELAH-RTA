@@ -124,9 +124,15 @@ private fun calibrationSection(m: SessionMeta): ReportSection {
             )
             add(ReportLine("무엇에 맞췄나", c.calibrationSource?.labelKo ?: NOT_RECORDED_KO))
             add(ReportLine("주파수 곡선", curveKo(m)))
-            add(ReportLine("가중치", m.weighting.name))
+            // **셋을 다 적는다.** 가중이 갈라진 뒤로는 하나만 적어서는
+            // PEAK 이 어느 잣대인지 알 수 없다.
+            add(ReportLine("음압 가중", m.weighting.labelKo))
+            // **짐작해서 채우지 않는다.** 옛 기록에는 이 두 줄이 없고,
+            // 그때 무엇이었는지는 아무도 모른다.
+            add(ReportLine("PEAK 가중", m.peakWeighting?.labelKo ?: NOT_RECORDED_KO))
+            add(ReportLine("분석 가중", m.analysisWeighting?.labelKo ?: NOT_RECORDED_KO))
             add(ReportLine("응답 속도", m.timeWeight.name))
-            add(ReportLine("Leq 구간", "${m.leqWindowMs / 1000}초"))
+            add(ReportLine("Leq 구간", leqWindowKo(m.leqWindowMs)))
         },
     )
 }
@@ -222,6 +228,19 @@ fun reportWarningsKo(m: SessionMeta): List<String> = buildList {
                 "실제보다 낮습니다 — 얼마나 낮은지는 알 수 없습니다.",
         )
     }
+}
+
+/**
+ * Leq 구간을 읽을 수 있게 적는다.
+ *
+ * **「전체」는 초로 적을 수 없다.** 표시값이 -1 이라 그대로 나누면
+ * 「0초」가 되어, 창이 없다는 뜻이 「아주 짧다」로 읽힌다.
+ * 알 수 없는 값도 짐작하지 않는다.
+ */
+private fun leqWindowKo(ms: Long): String = when {
+    ms == kr.joa.selahrta.settings.SESSION_MILLIS -> "전체(측정 시작부터)"
+    ms > 0 -> "${ms / 1000}초"
+    else -> NOT_RECORDED_KO
 }
 
 private fun calibrationStateKo(m: SessionMeta): String = when (m.conditions.calibrationState) {

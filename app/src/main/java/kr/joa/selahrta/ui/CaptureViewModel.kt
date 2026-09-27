@@ -2032,6 +2032,10 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                         // 측정 전체를 재고 있어, 기록 시작 전의 소리까지
                         // 겉장에 섞여 들어갔다(2026-09-26 기기에서 확인).
                         weighting = rec.summary.weighting,
+                        // PEAK·분석 가중은 기록기가 세지 않는다 — 요약
+                        // 숫자와 달리 재는 동안 바뀌지 않는 설정이다.
+                        peakWeighting = st.meterSettings.peakWeighting,
+                        analysisWeighting = st.meterSettings.analysisWeighting,
                         timeWeight = st.meterSettings.timeWeight,
                         leqWindowMs = st.meterSettings.leqWindow.millis,
                         leqDb = rec.summary.leqDb ?: Double.NaN,
