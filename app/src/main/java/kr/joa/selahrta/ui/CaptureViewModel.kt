@@ -1308,6 +1308,16 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         controller.update { st -> st.copy(deviceNoticeKo = null) }
     }
 
+    /** 구간을 더한다(최대 5). 더 자리가 없으면 아무 일도 없다. */
+    fun addSegment(s: ChurchSegment) {
+        viewModelScope.launch { settingsStore.addSegment(s) }
+    }
+
+    /** 구간을 뺀다. 설교·찬양은 저장소가 막는다. */
+    fun removeSegment(s: ChurchSegment) {
+        viewModelScope.launch { settingsStore.removeSegment(s) }
+    }
+
     fun setSegment(s: ChurchSegment) {
         viewModelScope.launch { settingsStore.setSegment(s) }
         // **기록에도 남긴다**(Phase 10). 구간은 행에 넣지 않고 사건으로

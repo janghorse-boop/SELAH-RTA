@@ -33,6 +33,7 @@ import kr.joa.selahrta.calibration.ActiveCalibration
 import kr.joa.selahrta.calibration.ActiveCurve
 import kr.joa.selahrta.calibration.CalibrationSource
 import kr.joa.selahrta.domain.ChurchSegment
+import kr.joa.selahrta.domain.MAX_SEGMENTS
 import kr.joa.selahrta.domain.SEGMENT_CAUTIONS
 import kr.joa.selahrta.domain.SegmentRange
 import kr.joa.selahrta.audio.InputDeviceInfo
@@ -105,6 +106,10 @@ fun SettingsScreen(
     onResetRange: (ChurchSegment) -> Unit,
     /** 구간 이름을 고친다. 빈 값이면 기본 이름으로 되돌린다. */
     onRenameSegment: (ChurchSegment, String) -> Unit,
+    /** 구간을 더한다(최대 5). */
+    onAddSegment: (ChurchSegment) -> Unit,
+    /** 구간을 뺀다. 설교·찬양은 오지 않는다. */
+    onRemoveSegment: (ChurchSegment) -> Unit,
 ) {
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
@@ -327,7 +332,9 @@ fun SettingsScreen(
         )
 
         SectionTitle("구간별 권장 범위")
-        ChurchSegment.entries.forEach { seg ->
+        // **쓰는 구간만 그린다**(담당자 지시 2026-09-28: 최대 5개).
+        // enum 차례를 따르므로 더한 차례와 무관하게 늘 같은 줄에 온다.
+        capture.meterSettings.orderedSegments.forEach { seg ->
             capture.meterSettings.rangeFor(seg)?.let { r ->
                 SegmentRangeCard(
                     segment = seg,
@@ -338,6 +345,28 @@ fun SettingsScreen(
                     onSave = { onSaveRange(seg, it) },
                     onReset = { onResetRange(seg) },
                     onRename = { onRenameSegment(seg, it) },
+                    // **무엇이든 뺄 수 있다**(담당자 지시 2026-09-28:
+                    // 0개에서 시작해 사람이 더하고 뺀다). 이 구간으로
+                    // 남긴 기록은 그대로 있다.
+                    onRemove = { onRemoveSegment(seg) },
+                )
+            }
+        }
+
+        // 하나도 없을 때는 무엇을 하는 자리인지부터 적는다.
+        if (capture.meterSettings.segments.isEmpty()) {
+            InfoBar(
+                "구간이 없습니다. 더하면 측정 화면의 큰 숫자를 그 범위와 " +
+                    "견주어 색으로 알려 줍니다. 예배당마다 알맞은 값이 " +
+                    "다르므로, 더한 뒤 「범위」에서 고쳐 쓰십시오.",
+            )
+        }
+        capture.meterSettings.nextFreeSegment?.let { next ->
+            TextButton(onClick = { onAddSegment(next) }) {
+                Text(
+                    "구간 더하기 (${capture.meterSettings.segments.size} / $MAX_SEGMENTS)",
+                    color = SelahColors.Accent,
+                    fontSize = 13.sp,
                 )
             }
         }
