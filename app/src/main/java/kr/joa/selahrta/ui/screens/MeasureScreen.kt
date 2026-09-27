@@ -50,7 +50,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import kr.joa.selahrta.domain.ChurchSegment
 import kr.joa.selahrta.domain.MeasureState
 import kr.joa.selahrta.domain.SegmentRange
-import kr.joa.selahrta.domain.focusKo
 import kr.joa.selahrta.dsp.Weighting
 import kr.joa.selahrta.dsp.leqLabel
 import kr.joa.selahrta.dsp.peakLabel
