@@ -17,6 +17,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -324,14 +325,13 @@ fun RtaScreen(
 @Composable
 fun SpectrumScreen(
     capture: CaptureUiState,
-    onSpectrumEnabled: (Boolean) -> Unit,
     /** 기본값을 두지 않는다 — 까닭은 [RtaScreen] 의 같은 자리 참고. */
     onMode: (ViewMode) -> Unit,
 ) {
-    DisposableEffect(Unit) {
-        onSpectrumEnabled(true)
-        onDispose { onSpectrumEnabled(false) }
-    }
+    // **켜고 끄는 일은 여기서 하지 않는다**(2026-09-27). 분석 구역에
+    // 들어오는 순간 `SelahApp` 이 켜고 떠날 때 끈다 — 화면마다 켜고 끄면
+    // RTA↔Spectrum 을 오갈 때마다 엔진이 꺼졌다 켜지고, 그 사이의 장이
+    // 스펙트로그램에서 빈틈이 된다.
 
     // **멈추는 것은 화면뿐이다.** 봉우리가 몇 Hz 인지 읽을 틈을 준다 —
     // 이 화면의 값어치가 거기 있다.
@@ -421,48 +421,22 @@ fun SpectrumScreen(
 @Composable
 fun SpectrogramScreen(
     capture: CaptureUiState,
-    onSpectrumEnabled: (Boolean) -> Unit,
+    /**
+     * 쌓아 둔 그림. **화면 밖에서 산다**(2026-09-27 담당자 지시).
+     *
+     * 예전에는 이 화면이 들고 있어서 떠나면 사라졌다. 그때는 그것이
+     * 맞았다 — 떠나 있는 동안 쌓이지 않으므로, 돌아와서 옛 그림을 보면
+     * **몇 분 전 것을 지금으로 읽게** 된다.
+     *
+     * 이제는 분석 구역에 있는 동안 **계속 쌓인다.** 끊긴 자리가 없으니
+     * 남겨 두어도 지금이 맞다. 까닭이 사라졌으므로 규칙도 바뀐다.
+     */
+    feed: SpectrogramFeed,
     /** 기본값을 두지 않는다 — 까닭은 [RtaScreen] 의 같은 자리 참고. */
     onMode: (ViewMode) -> Unit,
 ) {
-    DisposableEffect(Unit) {
-        onSpectrumEnabled(true)
-        onDispose { onSpectrumEnabled(false) }
-    }
-
-    // **화면이 들고 있는다.** 떠나면 사라지는 것이 맞다 — 다시 들어왔을 때
-    // 몇 분 전 그림이 남아 있으면 그것을 지금으로 읽는다.
-    val state = remember { SpectrogramState(SpectrumAxis.DEFAULT_COLUMNS, SPECTROGRAM_FRAMES) }
-    var frozen by remember { mutableStateOf(false) }
-
-    // 장이 새로 오면 한 줄 밀어 넣는다.
-    //
-    // **객체가 아니라 장 번호를 본다**(독립 검토 UA-04). `SpectrumView` 는
-    // 같은 FFT 한 장이라도 기본 상태가 바뀌면 새 껍데기로 다시 온다
-    // (`withMeasurement`). 객체를 키로 쓰면 같은 순간이 여러 칸에 늘여
-    // 그려져 시간축이 부풀었다.
-    //
-    // 시각도 **덩어리를 받은 단조 시각**을 쓴다. 그릴 때의 벽시계를 쓰면
-    // UI 가 밀린 만큼 어긋나고, 시계를 바꾸면 뛴다.
-    // **번호는 세션 안에서만 뜻이 있다**(독립 검토 CA-07). 엔진이 다시
-    // 열리면 `seq` 가 0 부터 다시 시작하므로, 번호만 견주면 새 장이 옛
-    // 최대값을 넘을 때까지 **화면이 통째로 멈춘다** — 오래 재고 있었을수록
-    // 오래 멈춘다. 세션이 바뀌면 들고 있던 그림도 버린다.
-    val spectrum = capture.spectrum
-    var lastSession by remember { mutableStateOf(Long.MIN_VALUE) }
-    var lastSeq by remember { mutableStateOf(-1L) }
-    LaunchedEffect(spectrum?.seq, capture.session, frozen) {
-        if (frozen || spectrum == null) return@LaunchedEffect
-        if (capture.session != lastSession) {
-            state.clear()
-            lastSession = capture.session
-            lastSeq = -1L
-        }
-        if (spectrum.seq > lastSeq) {
-            lastSeq = spectrum.seq
-            state.push(spectrum.columnsSpl, spectrum.atMs)
-        }
-    }
+    val state = feed.state
+    val frozen = feed.frozen
 
     val cfg = LocalConfiguration.current
     val landscape = cfg.screenWidthDp > cfg.screenHeightDp
@@ -472,7 +446,7 @@ fun SpectrogramScreen(
         ChartControls(
             frozen = frozen,
             calibration = capture.calibration,
-            onToggle = { frozen = !frozen },
+            onToggle = feed::toggleFrozen,
         )
     }
 
@@ -504,6 +478,92 @@ fun SpectrogramScreen(
             controls = controls,
         )
     }
+}
+
+/**
+ * 스펙트로그램이 **쌓아 둔 그림과 그 흐름**.
+ *
+ * ## 왜 화면 밖에 있는가 (2026-09-27 담당자 지시)
+ *
+ * 「분석 버튼을 누르면 보이지 않지만 시작을 해 달라. 다른 곳을 눌렀다가
+ * 돌아와도 계속 흘러가고 있는 게 좋아 보인다.」
+ *
+ * 맞는 요구다. 스펙트로그램은 **시간이 쌓여야** 쓸모가 생긴다 —
+ * 「2.5kHz 가 언제부터 올라왔나」를 보려고 여는 화면인데, 열고 나서
+ * 30초를 기다려야 그림이 차면 정작 궁금한 순간은 이미 지나 있다.
+ *
+ * 예전에는 화면이 들고 있었고, 그때는 그것이 맞았다 — 떠나 있는 동안
+ * 쌓이지 않으므로 돌아와서 옛 그림을 보면 **몇 분 전 것을 지금으로**
+ * 읽게 된다. 이제는 떠나 있어도 쌓이므로 끊긴 자리가 없고, 그 까닭이
+ * 사라졌다.
+ *
+ * ## 분석을 떠나면 멈추고 **버린다**
+ *
+ * 구역을 떠나면 엔진도 끈다 — 칸 2049개를 곱하고 줄이는 일을 예배 내내
+ * 하면 배터리로 돌아온다. 그리고 그때 그림을 **버린다.** 끊겼다가 다시
+ * 이어 붙이면 그 자리에 없는 시간이 생기는데, 그림만 보아서는 알 수
+ * 없다. 비어 있는 것과 틀린 것은 다른 일이다.
+ */
+class SpectrogramFeed internal constructor(
+    val state: SpectrogramState,
+    frozenState: MutableState<Boolean>,
+) {
+    private var frozenFlag by frozenState
+
+    /** 멈춰 있는가. 멈추면 **쌓기도 멈춘다** — 화면만 멈추면 빈틈이 생긴다. */
+    val frozen: Boolean get() = frozenFlag
+
+    fun toggleFrozen() {
+        frozenFlag = !frozenFlag
+    }
+}
+
+/**
+ * 분석 구역이 켜져 있는 동안 장을 쌓는다.
+ *
+ * @param running 분석 구역에 있는가. 꺼지면 멈추고 그림을 버린다.
+ */
+@Composable
+fun rememberSpectrogramFeed(capture: CaptureUiState, running: Boolean): SpectrogramFeed {
+    val state = remember { SpectrogramState(SpectrumAxis.DEFAULT_COLUMNS, SPECTROGRAM_FRAMES) }
+    val frozen = remember { mutableStateOf(false) }
+    val feed = remember(state) { SpectrogramFeed(state, frozen) }
+
+    // 구역을 떠나면 버린다. 까닭은 위 머리말 참고.
+    DisposableEffect(running) {
+        onDispose { if (running) state.clear() }
+    }
+
+    // 장이 새로 오면 한 줄 밀어 넣는다.
+    //
+    // **객체가 아니라 장 번호를 본다**(독립 검토 UA-04). `SpectrumView` 는
+    // 같은 FFT 한 장이라도 기본 상태가 바뀌면 새 껍데기로 다시 온다
+    // (`withMeasurement`). 객체를 키로 쓰면 같은 순간이 여러 칸에 늘여
+    // 그려져 시간축이 부풀었다.
+    //
+    // 시각도 **덩어리를 받은 단조 시각**을 쓴다. 그릴 때의 벽시계를 쓰면
+    // UI 가 밀린 만큼 어긋나고, 시계를 바꾸면 뛴다.
+    //
+    // **번호는 세션 안에서만 뜻이 있다**(독립 검토 CA-07). 엔진이 다시
+    // 열리면 `seq` 가 0 부터 다시 시작하므로, 번호만 견주면 새 장이 옛
+    // 최대값을 넘을 때까지 **화면이 통째로 멈춘다**. 세션이 바뀌면 들고
+    // 있던 그림도 버린다.
+    val spectrum = capture.spectrum
+    var lastSession by remember { mutableStateOf(Long.MIN_VALUE) }
+    var lastSeq by remember { mutableStateOf(-1L) }
+    LaunchedEffect(spectrum?.seq, capture.session, feed.frozen, running) {
+        if (!running || feed.frozen || spectrum == null) return@LaunchedEffect
+        if (capture.session != lastSession) {
+            state.clear()
+            lastSession = capture.session
+            lastSeq = -1L
+        }
+        if (spectrum.seq > lastSeq) {
+            lastSeq = spectrum.seq
+            state.push(spectrum.columnsSpl, spectrum.atMs)
+        }
+    }
+    return feed
 }
 
 /**

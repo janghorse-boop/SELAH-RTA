@@ -27,6 +27,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
@@ -123,7 +124,17 @@ fun SpectrogramChart(
                 Column {
                     Canvas(Modifier.width(plotWidth).height(plotHeight)) {
                         drawRect(SelahColors.Background)
-                        if (state.frames > 0) drawSpectrogram(state)
+                        // **시간이 왼쪽에서 오른쪽으로 흐른다**(2026-09-27
+                        // 담당자 지시). 왼쪽 끝이 지금이고, 오른쪽으로
+                        // 갈수록 오래된 것이다.
+                        //
+                        // 고리 버퍼는 그대로 두고 **그리는 자리만 뒤집는다.**
+                        // 버퍼를 뒤집으면 넣는 쪽·시간축·부분 채움이 저마다
+                        // 자리를 다시 셈해야 하고, 셋 중 하나만 어긋나도
+                        // 그림과 눈금이 따로 논다.
+                        if (state.frames > 0) {
+                            scale(scaleX = -1f, scaleY = 1f) { drawSpectrogram(state) }
+                        }
                     }
                     // 가로축 — **그 자리에 실제로 놓인 장의 시각**을 적는다.
                     //
@@ -138,7 +149,9 @@ fun SpectrogramChart(
                     // 없는 자리에는 아무것도 적지 않는다.
                     Canvas(Modifier.width(plotWidth).height(LABEL_ROW_HEIGHT)) {
                         for (f in TIME_TICKS) {
-                            val ago = state.agoMsAt(f) ?: continue
+                            // 그림을 뒤집었으므로 **자리도 뒤집어** 묻는다.
+                            // 화면의 왼쪽(f=0)이 고리의 가장 새 자리다.
+                            val ago = state.agoMsAt(1.0 - f) ?: continue
                             val secondsAgo = ago / 1000.0
                             val label = if (secondsAgo < 0.5) "지금" else "-${secondsAgo.roundToInt()}초"
                             val laid = measurer.measure(
