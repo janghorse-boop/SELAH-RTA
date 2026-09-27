@@ -37,6 +37,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kr.joa.selahrta.calibration.ActiveCurve
+import kr.joa.selahrta.calibration.CurveConfirmationToken
 import kr.joa.selahrta.dsp.CurveReading
 import kr.joa.selahrta.calibration.FREQUENCY_SCOPE_NOTE
 import kr.joa.selahrta.dsp.CalibrationCurve
@@ -65,7 +66,7 @@ fun CurveCard(
      * 켜기와 다른 물음이다 — 켜기는 「쓸 것인가」, 이것은 「둘째 열이
      * 응답인가 보정값인가」다.
      */
-    onConfirmReading: (CurveReading) -> Unit,
+    onConfirmReading: (CurveConfirmationToken, CurveReading) -> Unit,
     /** 어느 마이크의 보정인지 사람이 적은 것을 저장한다. */
     onMicName: (String) -> Unit,
     onDismissNotice: () -> Unit,
@@ -98,6 +99,10 @@ fun CurveCard(
                     // 사람이 끈 것이고 「확인 필요」는 앱이 막은 것이다.
                     // 한 글자로 뭉치면 스위치를 눌러 보고 안 켜져 고장 난
                     // 줄 안다.
+                    // **고를 수 없는 것과 고르면 되는 것을 가른다**
+                    // (독립 재검토 CFRC-02). 「확인 필요」라고 적으면
+                    // 사람은 고르면 될 일이라고 믿고 고른다.
+                    curve.readingUnsupportedKo != null -> "지원하지 않는 형식"
                     curve.readingConfirmationNeeded -> "확인 필요"
                     // **「꺼 둠」과 「없음」은 다른 상태다.** 파일은 그대로 있고,
                     // 다시 켤 때 가져올 필요가 없다.
@@ -478,8 +483,22 @@ private fun ClearCurveDialog(
 @Composable
 private fun ReadingConfirmRow(
     curve: ActiveCurve,
-    onConfirmReading: (CurveReading) -> Unit,
+    onConfirmReading: (CurveConfirmationToken, CurveReading) -> Unit,
 ) {
+    // **고를 수 없는 파일에는 고르는 단추를 띄우지 않는다**(CFRC-02).
+    //
+    // 위상을 응답으로 바꾸거나 kHz 를 Hz 로 바꾸는 일은 부호를 고르는
+    // 일이 아니다. 그런데도 두 단추를 띄우면, 사람은 고르면 되는 일이라
+    // 믿고 고른다 — 그리고 위상이 보정량으로 걸린다.
+    curve.readingUnsupportedKo?.let { why ->
+        InfoBar(
+            "$why 아래 곡선은 미리보기이며 측정 보정에는 걸지 않습니다.",
+            tone = SelahColors.Warn,
+        )
+        return
+    }
+    // 표가 없으면 무엇에 대한 확인인지 말할 수 없다. 묻지 않는다.
+    val token = curve.confirmationToken ?: return
     InfoBar(
         buildString {
             append("이 파일은 둘째 열을 어떻게 읽을지 정해야 걸 수 있습니다. ")
@@ -508,7 +527,7 @@ private fun ReadingConfirmRow(
             // 다만 기본으로 눌러 두지는 않는다 — 고르는 일은 사람 몫이다.
             val suggested = r == curve.suggestedReading
             OutlinedButton(
-                onClick = { onConfirmReading(r) },
+                onClick = { onConfirmReading(token, r) },
                 modifier = Modifier.weight(1f),
                 shape = RoundedCornerShape(10.dp),
                 border = BorderStroke(

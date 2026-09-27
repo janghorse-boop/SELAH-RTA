@@ -1,11 +1,13 @@
 package kr.joa.selahrta.calibration
 
 import kr.joa.selahrta.dsp.CURVE_READING_RULES_VERSION
+import kr.joa.selahrta.dsp.ColumnDeclaration
 import kr.joa.selahrta.dsp.CurveReading
 import kr.joa.selahrta.dsp.ReadingDecision
 import kr.joa.selahrta.dsp.ReadingStakes
 import kr.joa.selahrta.dsp.columnDeclarationOf
 import kr.joa.selahrta.dsp.decideReading
+import kr.joa.selahrta.dsp.UnsupportedColumn
 import kr.joa.selahrta.dsp.signEvidenceOf
 
 /**
@@ -65,6 +67,33 @@ data class ReadingConfirmationRecord(
     val rulesVersion: Int,
 )
 
+/**
+ * **화면이 보여 준 바로 그 파일**을 가리키는 표(독립 재검토 CFRC-01).
+ *
+ * 확인 단추는 이것을 들고 돌아온다. 저장소는 이 표가 가리키는 내용과
+ * 지금 디스크에 있는 내용이 **같을 때만** 확인을 발급한다.
+ *
+ * ## 왜 필요한가
+ *
+ * 예전에는 단추가 규약(`응답`/`보정값`)만 들고 왔다. 그러면 저장소는
+ * 「지금 디스크에 있는 파일」에 확인을 붙일 수밖에 없다 — 그 사이에
+ * 파일이 바뀌었어도 알 길이 없다. 검토자가 결정적으로 재현했다:
+ *
+ * ```
+ * STALE_CONFIRM shown=A.cal current=B.cal approved=true reading=Response
+ * ```
+ *
+ * 해시 검사는 **발급된 뒤** 파일이 바뀌는 것을 막는다. 발급하는 순간
+ * 엉뚱한 파일에 붙으면 그 뒤의 모든 검사를 통과한다 — 사람이 본 적
+ * 없는 B 에 A 를 위한 선택이 걸린다.
+ */
+data class CurveConfirmationToken(
+    val key: CalibrationKey,
+    /** 화면이 보여 준 그 내용의 SHA-256(앱 주석을 뺀 것). */
+    val sourceSha: String,
+    val rulesVersion: Int,
+)
+
 /** 이 파일을 지금 어떻게 읽을 것인가. */
 data class CurveReadingResolution(
     /**
@@ -76,6 +105,13 @@ data class CurveReadingResolution(
     val confirmed: Boolean,
     /** 지금 규칙으로 다시 내린 판정. 문구와 제안이 여기서 나온다. */
     val decision: ReadingDecision,
+    /**
+     * **부호를 고른다고 풀리지 않는** 까닭. 풀 수 있으면 null.
+     *
+     * 이것이 있으면 확인 기록이 있어도 걸지 않는다 — 위상을 응답으로
+     * 바꾸는 일은 사람이 승낙할 수 있는 종류의 일이 아니다.
+     */
+    val rejectionKo: String? = null,
 ) {
     /** 사람이 정해 줘야 하는가. */
     val needsPerson: Boolean get() = reading == null
@@ -98,15 +134,50 @@ fun resolveCurveReading(
     sourceSha: String,
     record: ReadingConfirmationRecord?,
 ): CurveReadingResolution {
-    val decision = decideReading(
-        signEvidenceOf(headerLines),
-        ReadingStakes.DisplayCurve,
-        // **열 선언까지 넘긴다.** 빼면 `Frequency,Correction(dB)` 처럼
-        // 둘째 열이 보정값이라고 **적혀 있는** 파일이 설명문 쪽으로 새어
-        // 「단서 없음 → 관례(응답)」로 확정된다.
-        columnDeclarationOf(headerLines),
-    )
+    // **열 선언까지 본다.** 빼면 `Frequency,Corr (dB)` 처럼 둘째 열이
+    // 보정값이라고 **적혀 있는** 파일이 설명문 쪽으로 새어 「단서 없음 →
+    // 관례(응답)」로 확정된다.
+    val columns = columnDeclarationOf(headerLines)
     val confirmed = confirmedReadingOf(record, sourceSha)
+
+    if (columns is ColumnDeclaration.Unsupported) {
+        // **부호로 풀 수 없는 것은 확인으로도 못 푼다**(CFRC-02).
+        //
+        // 파서는 첫 숫자를 그대로 Hz 로, 둘째 숫자를 그대로 dB 로 쓴다.
+        // 그래서 `Frequency,Phase,SPL` 은 **위상**을 보정량으로 걸고,
+        // `Frequency (kHz)` 는 축을 1000배 어긋나게 하고,
+        // `Amplitude (Pa)` 는 선형 크기를 dB 로 건다. 셋 다 부호를
+        // 고르는 일이 아니다 — 머리글이 「다른 수량이다」라고 적어 두었는데
+        // 우리가 못 본 척하는 것이다.
+        //
+        // **확인 기록이 있어도 거절한다.** 사람이 승낙할 수 있는 종류의
+        // 일이 아니다.
+        if (!columns.reason.fixableBySign) {
+            val why = "${columns.reason.labelKo}(${columns.secondKo}). " +
+                "이 앱은 첫 열이 Hz, 둘째 열이 dB 인 파일만 읽습니다 — " +
+                "읽는 법을 골라서 고칠 수 있는 문제가 아닙니다."
+            return CurveReadingResolution(
+                reading = null,
+                confirmed = false,
+                decision = ReadingDecision.NeedsPerson(CurveReading.Response, why),
+                rejectionKo = why,
+            )
+        }
+
+        // **한 칸 안에서 방향만 어긋난다.** Hz·dB 파일은 맞으므로 사람이
+        // 고르면 풀린다. 다만 **설명문에 맡기지 않는다** — `Corr (dB)
+        // (response)` 처럼 설명문 쪽 낱말만 하나 걸리면 아래 판정이
+        // 「응답으로 확정」해 버린다.
+        val why = "머리글 한 칸 안에서 응답과 보정값이 어긋납니다" +
+            "(${columns.secondKo}). 어느 쪽인지 파일만으로는 정할 수 없습니다."
+        return CurveReadingResolution(
+            reading = confirmed,
+            confirmed = confirmed != null,
+            decision = ReadingDecision.NeedsPerson(CurveReading.Response, why),
+        )
+    }
+
+    val decision = decideReading(signEvidenceOf(headerLines), ReadingStakes.DisplayCurve, columns)
     return CurveReadingResolution(
         reading = confirmed ?: (decision as? ReadingDecision.Settled)?.reading,
         confirmed = confirmed != null,
@@ -137,7 +208,7 @@ private fun confirmedReadingOf(
 
 /** 사람이 확인을 못 해서 막혔을 때 할 말. 막히지 않았으면 null. */
 fun curveEnableRefusalKo(resolution: CurveReadingResolution): String? =
-    if (resolution.needsPerson) {
+    resolution.rejectionKo ?: if (resolution.needsPerson) {
         "이 파일은 읽는 법을 먼저 정해야 걸 수 있습니다. " +
             "「마이크 응답 으로 사용」이나 「보정값 으로 사용」을 골라 주십시오."
     } else {

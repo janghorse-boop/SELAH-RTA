@@ -102,7 +102,10 @@ fun SettingsScreen(
     onClearCurve: () -> Unit,
     onToggleCurve: (Boolean) -> Unit,
     /** 가져온 곡선의 읽는 법을 사람이 정해 준다(독립 재검토 CFRF-01). */
-    onConfirmCurveReading: (kr.joa.selahrta.dsp.CurveReading) -> Unit,
+    onConfirmCurveReading: (
+        kr.joa.selahrta.calibration.CurveConfirmationToken,
+        kr.joa.selahrta.dsp.CurveReading,
+    ) -> Unit,
     onCurveMicName: (String) -> Unit,
     onDismissCurveNotice: () -> Unit,
     /** 교정 마법사를 연다(S23 지시서 6장). */

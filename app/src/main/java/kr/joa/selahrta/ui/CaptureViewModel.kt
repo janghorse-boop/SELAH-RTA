@@ -1539,10 +1539,25 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      * 「둘째 열이 응답인가 보정값인가」를 받는다 — 서로 다른 물음이라
      * 한 단추로 묶으면 묻지 않은 것에 답한 것이 된다.
      */
-    fun confirmCurveReading(reading: kr.joa.selahrta.dsp.CurveReading) {
+    fun confirmCurveReading(
+        token: kr.joa.selahrta.calibration.CurveConfirmationToken,
+        reading: kr.joa.selahrta.dsp.CurveReading,
+    ) {
         val format = controller.confirmedFormat() ?: return
+        // **입력이 바뀌었으면 옛 화면의 선택을 받지 않는다**(CFRC-01).
+        // 저장소도 같은 것을 보지만, 여기서 먼저 걸러야 사람에게 무엇이
+        // 어긋났는지 말할 수 있다.
+        if (CalibrationKey.of(format) != token.key) {
+            controller.update { st ->
+                st.copy(
+                    curveNoticeKo = "보고 계시던 입력이 그 사이에 바뀌었습니다. " +
+                        "지금 입력의 파일을 보고 다시 골라 주십시오.",
+                )
+            }
+            return
+        }
         viewModelScope.launch {
-            val why = curveStore.confirmReading(CalibrationKey.of(format), reading)
+            val why = curveStore.confirmReading(token, reading)
             controller.update { st ->
                 st.copy(
                     curveNoticeKo = why
