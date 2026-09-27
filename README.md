@@ -8,6 +8,13 @@ USB-C 측정 마이크를 연결하면 정확도가 올라갑니다.
 
 > **명세** → [`docs/spec/SELAH_RTA_Master_Spec_v1.2.md`](docs/spec/SELAH_RTA_Master_Spec_v1.2.md)
 > (원본 .docx 동봉. 이 문서가 Single Source of Truth 다 — 명세 0장)
+>
+> **무엇이 끝났고 무엇이 남았나** → [`CHANGELOG.md`](CHANGELOG.md)
+> **새 대화창을 열었으면 여기부터 본다.** `docs/spec/` 의 날짜별 문서는
+> **그때의 사진**이라, 끝난 일을 할 일로 오인하기 쉽다(실제로 겪었다).
+>
+> **USB 오디오인터페이스를 꽂아 볼 때** →
+> [`docs/manual/usb-audio-interface-check.md`](docs/manual/usb-audio-interface-check.md)
 
 ---
 
