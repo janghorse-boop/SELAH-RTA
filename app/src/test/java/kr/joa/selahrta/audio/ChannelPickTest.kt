@@ -2,6 +2,7 @@ package kr.joa.selahrta.audio
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -42,7 +43,7 @@ class ChannelPickTest {
     fun `모노면 그대로 읽는다`() {
         val fake = FakeRead(1)
         val into = FloatArray(8)
-        val n = readOneChannel(into, 8, 1, 0, null, fake.read)
+        val n = readOneChannel(into, 8, 1, 0, null, readSamples = fake.read)
 
         assertEquals("모노는 프레임 수가 곧 표본 수다", 8, fake.lastWant)
         assertEquals(8, n)
@@ -58,7 +59,7 @@ class ChannelPickTest {
         val into = FloatArray(frames)
         val mixed = FloatArray(frames * ch)
 
-        val n = readOneChannel(into, frames, ch, 2, mixed, fake.read)
+        val n = readOneChannel(into, frames, ch, 2, mixed, readSamples = fake.read)
 
         assertEquals("표본은 프레임의 네 배를 요청해야 한다", frames * ch, fake.lastWant)
         assertEquals("돌려주는 것은 프레임 수다", frames, n)
@@ -76,7 +77,7 @@ class ChannelPickTest {
         val into = FloatArray(10)
         val mixed = FloatArray(20)
 
-        val n = readOneChannel(into, 10, ch, 1, mixed, fake.read)
+        val n = readOneChannel(into, 10, ch, 1, mixed, readSamples = fake.read)
 
         assertEquals(20, fake.lastWant)
         assertEquals(3, n)
@@ -113,5 +114,67 @@ class ChannelPickTest {
                 readOneChannel(into, 4, 2, 0, FloatArray(4)) { _, _ -> 8 }
             }.exceptionOrNull(),
         )
+    }
+
+    // ── 채널별 레벨 ────────────────────────────────────
+
+    /**
+     * **섞인 것이 온전히 있는 자리에서 잰다.**
+     *
+     * 뽑은 뒤에 재면 고른 채널 하나밖에 남지 않아, 「어느 입력에 마이크가
+     * 꽂혀 있나」를 영영 알 수 없다(USB 오디오 지시서 6장).
+     */
+    @Test
+    fun `여러 채널이면 채널마다 레벨을 함께 잰다`() {
+        val ch = 4
+        val fake = FakeRead(ch)
+        val into = FloatArray(4)
+        val mixed = FloatArray(16)
+        val levels = kr.joa.selahrta.dsp.ChannelLevels(ch)
+
+        readOneChannel(into, 4, ch, 1, mixed, levels, fake.read)
+
+        // FakeRead 는 채널 c 에 10*(c+1)+f 를 넣는다 — 뒤 채널일수록 크다.
+        // 값이 1 을 넘지만 여기서 보는 것은 **채널 사이의 차례**다.
+        val p = levels.peakDbfs
+        assertEquals(ch, p.size)
+        for (c in 1 until ch) {
+            assertTrue(
+                "채널 ${c} 가 ${c - 1} 보다 크지 않다: ${p[c]} vs ${p[c - 1]}",
+                p[c] > p[c - 1],
+            )
+        }
+    }
+
+    /** **모노에서는 재지 않는다.** 고를 것이 없고 섞인 자리도 안 쓴다. */
+    @Test
+    fun `모노면 레벨을 건드리지 않는다`() {
+        val fake = FakeRead(1)
+        val into = FloatArray(8)
+        val levels = kr.joa.selahrta.dsp.ChannelLevels(1)
+
+        readOneChannel(into, 8, 1, 0, null, levels, fake.read)
+
+        assertEquals(
+            "모노인데 레벨을 쟀다",
+            kr.joa.selahrta.dsp.SILENCE_FLOOR_DBFS,
+            levels.peakDbfs[0],
+            1e-9,
+        )
+    }
+
+    /** 읽기가 실패하면(0 이하) **옛 값이 남지 않아야** 한다. */
+    @Test
+    fun `읽지 못하면 레벨을 갱신하지 않는다`() {
+        val ch = 2
+        val into = FloatArray(4)
+        val mixed = FloatArray(8)
+        val levels = kr.joa.selahrta.dsp.ChannelLevels(ch)
+
+        readOneChannel(into, 4, ch, 0, mixed, levels) { _, _ -> -3 }
+
+        levels.peakDbfs.forEach {
+            assertEquals(kr.joa.selahrta.dsp.SILENCE_FLOOR_DBFS, it, 1e-9)
+        }
     }
 }

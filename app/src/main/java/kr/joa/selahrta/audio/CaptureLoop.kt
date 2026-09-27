@@ -1,6 +1,7 @@
 package kr.joa.selahrta.audio
 
 import kr.joa.selahrta.dsp.BlockStats
+import kr.joa.selahrta.dsp.ChannelLevelSnapshot
 import kr.joa.selahrta.dsp.blockStats
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -38,6 +39,14 @@ interface CaptureRecorder {
      * 멈출 수 있다는 것이 이 루프의 어려운 점이다.
      */
     fun read(into: FloatArray, frames: Int): Int
+
+    /**
+     * 채널마다의 레벨. **모노이거나 재지 않으면 null.**
+     *
+     * 어느 입력에 마이크가 꽂혀 있는지 찾는 데만 쓴다(USB 오디오 지시서
+     * 6장). 측정에 들어가는 것은 고른 채널 하나다.
+     */
+    fun channelLevels(): ChannelLevelSnapshot? = null
 
     /**
      * 지금 실제로 붙어 있는 기기. 아직 모르면 null.

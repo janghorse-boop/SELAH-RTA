@@ -1,5 +1,6 @@
 package kr.joa.selahrta.audio
 
+import kr.joa.selahrta.dsp.ChannelLevels
 import kr.joa.selahrta.dsp.deinterleave
 import kr.joa.selahrta.dsp.framesToSamples
 
@@ -16,6 +17,9 @@ import kr.joa.selahrta.dsp.framesToSamples
  * @param channelCount 실제로 열린 채널 수.
  * @param channelIndex 그중 쓸 채널.
  * @param mixed 여러 채널이 섞인 것을 받을 자리. 모노면 null 이어도 된다.
+ * @param levels 있으면 **채널마다 레벨을 함께 잰다**(USB 오디오 지시서 6장).
+ *   어느 입력에 마이크가 꽂혀 있는지 찾는 데 쓴다. 모노에서는 고를 것이
+ *   없으므로 부르는 쪽이 null 을 준다.
  * @param readSamples 실제 읽기. **표본** 수를 받고 **표본** 수를 돌려준다.
  * @return 읽은 **프레임** 수. 0 이하는 그대로 흘려보낸다(멈추는 중이거나 오류).
  */
@@ -25,6 +29,7 @@ internal fun readOneChannel(
     channelCount: Int,
     channelIndex: Int,
     mixed: FloatArray?,
+    levels: ChannelLevels? = null,
     readSamples: (dst: FloatArray, wantSamples: Int) -> Int,
 ): Int {
     val want = framesToSamples(frames, channelCount)
@@ -42,6 +47,11 @@ internal fun readOneChannel(
     // 중인데, 여기서 프레임으로 나누면 −3 같은 오류 부호가 0 이 돼
     // 「그냥 조용한 덩어리」로 둔갑한다.
     if (n <= 0) return n
+
+    // **뽑기 전에 잰다.** 여기가 섞인 것이 온전히 있는 유일한 자리다.
+    // 읽은 만큼(n)만 넘긴다 — 버퍼에 남은 옛 값을 함께 세면 없던 소리가
+    // 생긴다.
+    levels?.update(mixed, n)
 
     return deinterleave(mixed, n, channelCount, channelIndex, into)
 }

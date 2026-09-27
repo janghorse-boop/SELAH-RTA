@@ -16,6 +16,8 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import kr.joa.selahrta.domain.MicKind
 import kr.joa.selahrta.dsp.BlockStats
+import kr.joa.selahrta.dsp.ChannelLevelSnapshot
+import kr.joa.selahrta.dsp.ChannelLevels
 import kr.joa.selahrta.dsp.blockStats
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -74,6 +76,17 @@ class MicSource(
     private val effects = AudioEffectsController()
     private var routingListener: AudioRouting.OnRoutingChangedListener? = null
     private var record: AudioRecord? = null
+
+    /**
+     * 지금 도는 읽기 어댑터. 안 돌고 있으면 null.
+     *
+     * 오디오 스레드가 채우고 주 스레드가 읽으므로 `@Volatile` 이다 —
+     * 참조만 건너간다.
+     */
+    @Volatile
+    private var active: RecordAdapter? = null
+
+    override fun channelLevels(): ChannelLevelSnapshot? = active?.channelLevels()
     @Volatile
     private var opened: OpenedFormat? = null
     private var thread: Thread? = null
@@ -440,12 +453,22 @@ class MicSource(
         /** 여러 채널이 섞인 float 를 받는 자리. 모노면 쓰지 않는다. */
         private val mixed = if (channelCount > 1) FloatArray(1024 * channelCount) else null
 
+        /**
+         * 채널마다의 레벨. **여러 채널일 때만 만든다.**
+         *
+         * 모노면 고를 것이 없어 잴 까닭도 없다 — 내장 마이크에서는
+         * 이 기능이 아예 돌지 않는다.
+         */
+        val levels: ChannelLevels? =
+            if (channelCount > 1) ChannelLevels(channelCount) else null
+
         override fun read(into: FloatArray, frames: Int): Int = readOneChannel(
             into = into,
             frames = frames,
             channelCount = channelCount,
             channelIndex = channelIndex,
             mixed = mixed,
+            levels = levels,
         ) { dst, wantSamples ->
             if (shorts == null) {
                 rec.read(dst, 0, wantSamples, AudioRecord.READ_BLOCKING)
@@ -460,6 +483,8 @@ class MicSource(
                 n
             }
         }
+
+        override fun channelLevels(): ChannelLevelSnapshot? = levels?.snapshot()
 
         override fun routedDevice(): InputDeviceInfo? =
             rec.routedDevice?.let { scanner.infoOf(it) }
@@ -482,8 +507,13 @@ class MicSource(
         // 오디오 캡처를 UI 보다 앞에 둔다(명세 17장).
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
 
+        // **지금 도는 어댑터를 들고 있는다.** 채널별 레벨을 화면까지
+        // 나르려면 바깥에서 물어볼 자리가 있어야 한다.
+        val adapter = RecordAdapter(rec, fmt.encoding, fmt.channelCount, fmt.channelIndex)
+        active = adapter
+
         runCaptureLoop(
-            recorder = RecordAdapter(rec, fmt.encoding, fmt.channelCount, fmt.channelIndex),
+            recorder = adapter,
             sampleRate = fmt.sampleRate,
             running = running,
             routeAlreadyConfirmed = { opened?.routeConfirmed == true },
