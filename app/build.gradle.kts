@@ -78,6 +78,10 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    // **시험에서는 진짜 org.json 을 쓴다.** android.jar 의 빈 구현은 예외를
+    // 던지므로, 그것만으로는 마이크 위치 DB 를 한 줄도 읽어 볼 수 없다.
+    // 기기에서는 안드로이드가 제 구현을 쓴다 — 앱에는 들어가지 않는다.
+    testImplementation(libs.json)
 
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

@@ -3,6 +3,10 @@
 원본: [2026-09-27-tonevista-galaxy-multimic-instruction.md](2026-09-27-tonevista-galaxy-multimic-instruction.md)
 검토·반영: Claude Code · 가지 `feat/factory-default-calibration`
 
+> **앱 이름은 「SELAH RTA」다.** 원본 지시서가 「ToneVista」로 적은 것은
+> 이름을 바꿀지 검토하던 때의 흔적이고, 바꾸지 않기로 했다 —
+> [../decisions/2026-09-27-app-name-stays-selah-rta.md](../decisions/2026-09-27-app-name-stays-selah-rta.md).
+
 ## 한 줄로
 
 **24장 중 17장은 이미 구현돼 있었다.** 이 앱이 지난 한 주 CAR·CARF·CF2·CFR
