@@ -294,7 +294,15 @@ fun SettingsScreen(
         )
         ChoiceRow(
             "응답 속도",
-            "Fast 는 짧은 봉우리를 그대로, Slow 는 뭉개서 보여 줍니다.",
+            // **고르는 자리에 대가를 적는다.**
+            //
+            // Slow 는 시작 직후 τ×3 = 3초 동안 값이 0 에서 올라오는
+            // 중이라 실제보다 낮다. 전에는 측정 화면에 상자로 알렸는데,
+            // **나왔다 사라져 눈에 거슬렸다**(담당자 지시 2026-09-28).
+            // 깜빡이는 알림 대신 고르는 자리에 늘 적어 둔다.
+            "Fast 는 짧은 봉우리를 그대로, Slow 는 뭉개서 보여 줍니다. " +
+                "Slow 는 측정을 시작한 뒤 약 3초 동안 값이 올라오는 중이라 " +
+                "실제보다 낮게 나옵니다(Fast 는 0.4초).",
             TimeWeight.entries,
             capture.meterSettings.timeWeight,
             { if (it == TimeWeight.Fast) "Fast" else "Slow" },

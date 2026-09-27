@@ -94,13 +94,28 @@ data class MeterSettings(
      */
     val analysisWeighting: Weighting = Weighting.Z,
     /**
-     * 시간가중. **기본은 Slow 다**(담당자 지시 2026-09-27).
+     * 시간가중. **기본은 Fast 다.**
      *
-     * 예배당에서 보는 것은 「지금 이 순간이 얼마나 센가」가 아니라
-     * 「이만한 크기로 얼마나 이어지나」다. Fast 는 말소리의 자음 하나에도
-     * 숫자가 튀어, 화면을 보는 사람이 그 튐을 쫓게 된다.
+     * 2026-09-27 에 Slow 로 바꿨다가 **하루 만에 되돌렸다**(담당자 지시
+     * 2026-09-28). 까닭은 화면이 자리를 잡는 시간이다 —
+     * `settleSamples = 샘플레이트 × τ × 3` 이라:
+     *
+     * | | τ | 자리 잡는 시간 |
+     * |---|---|---|
+     * | Fast | 125ms | **0.375초** |
+     * | Slow | 1초 | **3초** |
+     *
+     * 그 사이의 값은 0 에서 올라오는 중이라 실제보다 낮다. Fast 에서는
+     * 눈 깜짝할 새라 아무도 몰랐는데, Slow 로 바꾸니 **예배를 시작할
+     * 때마다 3초**가 되었다.
+     *
+     * 「이만한 크기로 얼마나 이어지나」를 보려는 뜻은 **Leq 가 이미
+     * 하고 있다.** 시간가중까지 느리게 할 까닭이 없었다.
+     *
+     * 사람이 고른 값은 그대로 남는다 — 이 기본값은 저장된 것이 없을
+     * 때만 쓰인다.
      */
-    val timeWeight: TimeWeight = TimeWeight.Slow,
+    val timeWeight: TimeWeight = TimeWeight.Fast,
     val leqWindow: LeqWindow = LeqWindow.OneMinute,
     /**
      * FFT 길이. 길수록 저역이 또렷하고 반응이 느려진다.
@@ -227,7 +242,7 @@ class MeterSettingsStore(private val context: Context) {
                 analysisWeighting = p.weightingOr(analysisWeightingKey, Weighting.Z),
                 timeWeight = p[timeWeightKey]?.let { n ->
                     TimeWeight.entries.firstOrNull { it.name == n }
-                } ?: TimeWeight.Slow,
+                } ?: TimeWeight.Fast,
                 // **목록에 없는 값이면 기본값이다.** 손으로 건드렸거나
                 // 앱 판이 바뀐 경우다 — 임의의 길이로 돌리지 않는다.
                 fftSize = p[fftSizeKey]?.takeIf { it in FFT_SIZES } ?: DEFAULT_FFT_SIZE,
