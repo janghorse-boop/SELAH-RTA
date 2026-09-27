@@ -1408,7 +1408,17 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                                 "sign=${loaded?.signEvidence} points=${c.pointCount}",
                         )
                         buildString {
-                            append("${c.fileName} 을(를) 적용했습니다. 점 ${c.pointCount}개.")
+                            // **보류를 「적용했습니다」라고 말하지 않는다**
+                            // (독립 재검토 CFRF-01). 읽는 법이 안 정해진
+                            // 파일은 꺼진 채로 들어오는데, 예전에는 그때도
+                            // 적용했다고 적었다 — 사람은 걸린 줄 알고 넘어간다.
+                            if (c.enabled) {
+                                append("${c.fileName} 을(를) 적용했습니다. 점 ${c.pointCount}개.")
+                            } else {
+                                append("${c.fileName} 을(를) 가져왔습니다. 점 ${c.pointCount}개. ")
+                                append("읽는 법을 정하기 전에는 걸지 않습니다 — ")
+                                append("아래에서 「응답으로 사용」이나 「보정값으로 사용」을 고르십시오.")
+                            }
                             warn?.let { append(" ").append(it) }
                         }
                     },
@@ -1460,7 +1470,33 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun setCurveEnabled(on: Boolean) {
         val format = controller.confirmedFormat() ?: return
-        viewModelScope.launch { curveStore.setEnabled(CalibrationKey.of(format), on) }
+        viewModelScope.launch {
+            // **막히면 그 까닭을 말한다**(독립 재검토 CFRF-01). 조용히
+            // 안 켜지면 사람은 스위치가 고장 난 줄 안다.
+            curveStore.setEnabled(CalibrationKey.of(format), on)?.let { why ->
+                controller.update { st -> st.copy(curveNoticeKo = why) }
+            }
+        }
+    }
+
+    /**
+     * 가져온 곡선의 **읽는 법을 사람이 정해 준다**(독립 재검토 CFRF-01).
+     *
+     * 켜기 스위치와 가른다. 스위치는 「쓸 것인가」만 받고, 이것은
+     * 「둘째 열이 응답인가 보정값인가」를 받는다 — 서로 다른 물음이라
+     * 한 단추로 묶으면 묻지 않은 것에 답한 것이 된다.
+     */
+    fun confirmCurveReading(reading: kr.joa.selahrta.dsp.CurveReading) {
+        val format = controller.confirmedFormat() ?: return
+        viewModelScope.launch {
+            val why = curveStore.confirmReading(CalibrationKey.of(format), reading)
+            controller.update { st ->
+                st.copy(
+                    curveNoticeKo = why
+                        ?: "이 파일을 「${reading.labelKo}」 로 읽기로 했습니다. 보정을 겁니다.",
+                )
+            }
+        }
     }
 
     fun clearCurve() {

@@ -406,6 +406,7 @@ fun SelahApp() {
                         onPickCurveFile = { pickCurve.launch(arrayOf("*/*")) },
                         onClearCurve = vm::clearCurve,
                         onToggleCurve = vm::setCurveEnabled,
+                        onConfirmCurveReading = vm::confirmCurveReading,
                         onCurveMicName = vm::setCurveMicName,
                         onDismissCurveNotice = vm::dismissCurveNotice,
                         onOpenCalibrationWizard = { wizardOpen = true },

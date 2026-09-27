@@ -13,7 +13,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.foundation.layout.PaddingValues
@@ -35,6 +37,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kr.joa.selahrta.calibration.ActiveCurve
+import kr.joa.selahrta.dsp.CurveReading
 import kr.joa.selahrta.calibration.FREQUENCY_SCOPE_NOTE
 import kr.joa.selahrta.dsp.CalibrationCurve
 import kr.joa.selahrta.ui.theme.SelahColors
@@ -56,6 +59,13 @@ fun CurveCard(
     onClear: () -> Unit,
     /** 걸기를 켜고 끈다. **파일은 건드리지 않는다.** */
     onToggleEnabled: (Boolean) -> Unit,
+    /**
+     * 사람이 **읽는 법을 정해 준다**(독립 재검토 CFRF-01).
+     *
+     * 켜기와 다른 물음이다 — 켜기는 「쓸 것인가」, 이것은 「둘째 열이
+     * 응답인가 보정값인가」다.
+     */
+    onConfirmReading: (CurveReading) -> Unit,
     /** 어느 마이크의 보정인지 사람이 적은 것을 저장한다. */
     onMicName: (String) -> Unit,
     onDismissNotice: () -> Unit,
@@ -84,6 +94,11 @@ fun CurveCard(
             Text(
                 when {
                     curve == null -> "없음"
+                    // **셋을 가른다**(독립 재검토 CFRF-01). 「꺼 둠」은
+                    // 사람이 끈 것이고 「확인 필요」는 앱이 막은 것이다.
+                    // 한 글자로 뭉치면 스위치를 눌러 보고 안 켜져 고장 난
+                    // 줄 안다.
+                    curve.readingConfirmationNeeded -> "확인 필요"
                     // **「꺼 둠」과 「없음」은 다른 상태다.** 파일은 그대로 있고,
                     // 다시 켤 때 가져올 필요가 없다.
                     !curve.enabled -> "꺼 둠"
@@ -111,6 +126,14 @@ fun CurveCard(
         InfoBar(FREQUENCY_SCOPE_NOTE, tone = SelahColors.Warn)
 
         if (curve != null) {
+            // **확인 전에는 미리보기라고 말한다**(독립 재검토 CFRF-01).
+            //
+            // 곡선은 그려 준다 — 무엇이 들어왔는지 봐야 「응답인가
+            // 보정값인가」를 사람이 고를 수 있다. 다만 그 그림이 측정에
+            // 걸려 있다고 오해하면 안 되므로, 그림 **위에** 적는다.
+            if (curve.readingConfirmationNeeded) {
+                ReadingConfirmRow(curve, onConfirmReading)
+            }
             CurveGraph(curve.curve, Modifier.fillMaxWidth().height(120.dp))
             Text(
                 "${curve.fileName} · 점 ${curve.pointCount}개 · " +
@@ -205,8 +228,12 @@ fun CurveCard(
                         lineHeight = 15.sp,
                     )
                 }
+                // **확인 전에는 눌리지 않는다**(독립 재검토 CFRF-01).
+                // 저장소도 같은 검사를 하므로 여기서 막는 것은 두 번째
+                // 그물이다 — 화면만 막으면 다른 부르는 곳에서 새어 나간다.
                 Switch(
                     checked = curve.enabled,
+                    enabled = !curve.readingConfirmationNeeded,
                     onCheckedChange = onToggleEnabled,
                 )
             }
@@ -427,6 +454,89 @@ private fun ClearCurveDialog(
             }
         },
     )
+}
+
+/**
+ * **읽는 법을 사람에게 묻는다**(독립 재검토 CFRF-01).
+ *
+ * ## 왜 막는 것만으로는 모자란가
+ *
+ * 검토자의 최소안은 확인이 필요한 파일을 **걸지 못하게** 막는다. 그것만
+ * 넣으면 「보정값(correction factors)」이라고 제대로 적힌 **정상 파일이
+ * 영영 못 걸린다** — 그 파일은 판정상 늘 「사람에게 물어야 함」이기
+ * 때문이다. 막는 길만 내고 나가는 길을 안 내면, 사람은 결국 파일을
+ * 지우거나 앱을 안 쓴다.
+ *
+ * 그래서 묻고, **답을 그 파일의 내용에 매달아 적어 둔다**([CurveStore]).
+ *
+ * ## 두 단추를 나란히 두는 까닭
+ *
+ * 「확인」 하나로는 무엇을 확인했는지 남지 않는다. 사람이 고르는 것은
+ * 「맞다/아니다」가 아니라 **「응답이다/보정값이다」** 이고, 그 둘은
+ * 부호가 반대라 잘못 고르면 보정이 **거꾸로 두 배** 걸린다.
+ */
+@Composable
+private fun ReadingConfirmRow(
+    curve: ActiveCurve,
+    onConfirmReading: (CurveReading) -> Unit,
+) {
+    InfoBar(
+        buildString {
+            append("이 파일은 둘째 열을 어떻게 읽을지 정해야 걸 수 있습니다. ")
+            append("아래 곡선은 미리보기이고 지금 측정에는 걸려 있지 않습니다.")
+            curve.readingWhyKo?.let {
+                appendLine()
+                appendLine()
+                append(it)
+            }
+        },
+        tone = SelahColors.Warn,
+    )
+    Text(
+        "제조사 설명을 보고 고르십시오. 잘못 고르면 보정이 거꾸로 두 배 걸리고, " +
+            "그 차이는 곡선 모양으로는 드러나지 않습니다.",
+        color = SelahColors.TextMuted,
+        fontSize = 11.sp,
+        lineHeight = 16.sp,
+    )
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        CurveReading.entries.forEach { r ->
+            // 앱이 보기에 이쪽일 것 같다는 쪽을 **채운 단추**로 둔다.
+            // 다만 기본으로 눌러 두지는 않는다 — 고르는 일은 사람 몫이다.
+            val suggested = r == curve.suggestedReading
+            OutlinedButton(
+                onClick = { onConfirmReading(r) },
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(
+                    1.dp,
+                    if (suggested) SelahColors.Accent else SelahColors.Outline,
+                ),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = if (suggested) SelahColors.Accent else SelahColors.TextSecondary,
+                ),
+            ) {
+                Text(
+                    "${r.labelKo} 으로 사용",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+    }
+    // **무엇을 고르는 것인지 낱낱이 적는다.** 「응답」과 「보정값」은
+    // 이 앱의 말이지 사람이 날마다 쓰는 말이 아니다.
+    CurveReading.entries.forEach { r ->
+        Text(
+            "· ${r.labelKo}: ${r.explainKo}",
+            color = SelahColors.TextMuted,
+            fontSize = 10.sp,
+            lineHeight = 15.sp,
+        )
+    }
 }
 
 @Composable

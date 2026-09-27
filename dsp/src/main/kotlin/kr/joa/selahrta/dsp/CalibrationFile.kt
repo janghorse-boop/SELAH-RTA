@@ -100,8 +100,13 @@ object CalibrationFile {
      * 파일을 읽어 곡선을 만든다. 실패하면 **왜** 실패했는지 말한다.
      *
      * 「파일을 읽을 수 없습니다」만 띄우면 담당자는 파일을 바꿔 볼 수도 없다.
+     *
+     * @param reading 둘째 열을 무엇으로 읽을 것인가. 기본은 관례(「응답」).
+     *   **사람이 확인해 준 규약으로 다시 읽을 때** 이 자리를 쓴다(독립
+     *   재검토 CFRF-01). 뒤집는 일은 [CalibrationCurve.of] **안에서만**
+     *   일어난다 — 여기서 점을 미리 뒤집어 넘기면 두 번 뒤집힌다.
      */
-    fun load(text: String): Result<Loaded> {
+    fun load(text: String, reading: CurveReading = CurveReading.Response): Result<Loaded> {
         val parsed = parse(text)
         if (parsed.points.isEmpty()) {
             return Result.failure(
@@ -112,7 +117,7 @@ object CalibrationFile {
                 ),
             )
         }
-        val curve = CalibrationCurve.of(parsed.points).getOrElse {
+        val curve = CalibrationCurve.of(parsed.points, reading).getOrElse {
             return Result.failure(it)
         }
         return Result.success(
