@@ -29,7 +29,24 @@ object SessionExport {
      * @param timeline 타임라인 파일의 스트림. 부르는 쪽이 닫는다.
      * @return 내보낸 줄 수(표의 데이터 줄만).
      */
+    /**
+     * **파일 첫머리에 BOM 을 쓴다.**
+     *
+     * 파일은 UTF-8 인데, **엑셀은 한국어 윈도에서 CSV 를 CP949 로
+     * 짐작해서 연다.** 그러면 「미보정」이 「誘몄낫??」 이 된다 —
+     * 담당자가 실제로 겪었다(2026-09-27).
+     *
+     * BOM 세 바이트가 있으면 엑셀이 UTF-8 로 읽는다. 첫 줄은 `#` 로
+     * 시작하는 주석이라 BOM 이 열 이름에 붙을 일도 없다.
+     */
+    private const val UTF8_BOM = "﻿"
+
+    /**
+     * @param out **UTF-8 로 쓰는 Writer 여야 한다.** 다른 인코딩이면
+     *   BOM 만 맞고 본문이 깨진다.
+     */
     fun writeCsv(meta: SessionMeta, timeline: InputStream, out: Writer): Int {
+        out.append(UTF8_BOM)
         val table = EpochTable(max = maxOf(1, meta.epochs.size)).also { t ->
             meta.epochs.forEach { t.add(it) }
         }

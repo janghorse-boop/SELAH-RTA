@@ -1995,7 +1995,9 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 val dir = java.io.File(app.cacheDir, "export").apply { mkdirs() }
                 val f = java.io.File(dir, kr.joa.selahrta.recording.SessionExport.fileName(meta))
                 sessionStore.timelineFile(meta.id).inputStream().buffered().use { input ->
-                    f.bufferedWriter().use { out ->
+                    // **UTF-8 로 못박는다.** 기본값이 UTF-8 이지만,
+                    // 여기서 인코딩이 달라지면 BOM 만 맞고 본문이 깨진다.
+                    f.bufferedWriter(Charsets.UTF_8).use { out ->
                         kr.joa.selahrta.recording.SessionExport.writeCsv(meta, input, out)
                     }
                 }

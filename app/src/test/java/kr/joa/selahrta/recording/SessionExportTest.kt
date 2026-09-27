@@ -97,7 +97,15 @@ class SessionExportTest {
         return w.toString()
     }
 
-    private fun dataLines(csv: String) = csv.lineSequence()
+    /**
+     * 표의 데이터 줄만.
+     *
+     * **BOM 을 먼저 뗀다.** 안 떼면 첫 줄이 `#` 로 시작하지 않는 것으로
+     * 읽혀 주석이 데이터로 섞인다 — 실제 CSV 읽는 쪽도 `utf-8-sig` 로
+     * 여는 까닭이 이것이다.
+     */
+    private fun dataLines(csv: String) = csv.removePrefix("﻿")
+        .lineSequence()
         .filter { it.isNotBlank() && !it.startsWith("#") }
         .drop(1) // 열 이름 줄
         .toList()
@@ -249,5 +257,54 @@ class SessionExportTest {
         val text = encodeSessionMeta(meta(epochs = emptyList()))
         val back = decodeSessionMeta(text).getOrThrow()
         assertTrue(back.epochs.isEmpty())
+    }
+
+    // ── 엑셀이 한글을 읽는가 ───────────────────────────────
+
+    /**
+     * **엑셀은 한국어 윈도에서 CSV 를 CP949 로 짐작한다.**
+     *
+     * 파일이 UTF-8 이어도 BOM 이 없으면 「미보정」이 「誘몄낫??」 이
+     * 된다 — 담당자가 실제로 겪었다(2026-09-27). BOM 세 바이트가 그
+     * 짐작을 막는다.
+     */
+    @Test
+    fun `파일이 BOM 으로 시작한다`() {
+        val csv = export(meta(), listOf(row(0, 0, -40.0)))
+        assertTrue("BOM 이 없다", csv.startsWith("﻿"))
+    }
+
+    /** UTF-8 로 쓰면 BOM 이 정확히 세 바이트(EF BB BF)다. */
+    @Test
+    fun `UTF-8 로 쓰면 세 바이트가 앞에 붙는다`() {
+        val csv = export(meta(), listOf(row(0, 0, -40.0)))
+        val bytes = csv.toByteArray(Charsets.UTF_8)
+        assertEquals(0xEF.toByte(), bytes[0])
+        assertEquals(0xBB.toByte(), bytes[1])
+        assertEquals(0xBF.toByte(), bytes[2])
+    }
+
+    /**
+     * **BOM 이 열 이름에 붙으면 안 된다.**
+     *
+     * 첫 줄이 `#` 주석이라 괜찮지만, 나중에 머리말을 없애면 `timestamp`
+     * 앞에 보이지 않는 글자가 붙어 **그 열을 이름으로 못 찾게 된다.**
+     */
+    @Test
+    fun `BOM 이 열 이름 줄에 붙지 않는다`() {
+        val csv = export(meta(), listOf(row(0, 0, -40.0)))
+        val header = csv.lineSequence().first { it.startsWith("timestamp") }
+        assertTrue(header, header.startsWith("timestamp,"))
+        assertTrue("BOM 이 주석이 아닌 줄에 있다", csv.substringAfter("﻿").none { it == '﻿' })
+    }
+
+    /** 한글이 그대로 왕복하는가. */
+    @Test
+    fun `한글이 UTF-8 로 왕복한다`() {
+        val csv = export(meta(), listOf(row(0, 0, -40.0)))
+        val back = String(csv.toByteArray(Charsets.UTF_8), Charsets.UTF_8)
+        assertTrue(back, back.contains("무엇으로 쟀나"))
+        assertTrue(back, back.contains("음성인식 경로"))
+        assertTrue(back, back.contains("마이크 자리"))
     }
 }
