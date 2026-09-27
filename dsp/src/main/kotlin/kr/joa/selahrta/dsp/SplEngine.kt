@@ -27,6 +27,17 @@ data class SplFrame(
     val peakDbfs: Dbfs,
     /** 그 피크가 풀스케일에 닿았는가. 닿았으면 그 값은 하한일 뿐이다. */
     val peakClipped: Boolean,
+    /**
+     * 가중 **뒤** 파형의 최고값. 화면의 PEAK 타일이 이것을 쓴다.
+     *
+     * **[peakDbfs] 와 나누어 둔 까닭**: [peakDbfs] 는 가중 전이라 클리핑을
+     * 잡을 수 있다 — 클리핑은 ADC 에서 일어나는 일이라, 저역이 깎인 뒤
+     * 값으로 재면 포화한 것을 놓친다. 화면에 적는 값은 반대로 「사람이
+     * 고른 잣대로 순간 음압이 얼마였나」이므로 가중을 거쳐야 한다.
+     *
+     * Z 에서는 통과 필터라 두 값이 같다.
+     */
+    val weightedPeakDbfs: Dbfs,
     /** 긴 Leq 의 창이 가득 찼는가. 차기 전 값은 이름보다 짧은 구간의 평균이다. */
     val leqLongFull: Boolean,
     /**
@@ -91,6 +102,14 @@ class SplEngine(
     private var minMeanSquare = Double.POSITIVE_INFINITY
     private var peakAbs = 0.0
     private var peakClipped = false
+
+    /**
+     * 가중 뒤 파형의 최고값. 화면의 PEAK 이 쓴다.
+     *
+     * [peakAbs] 와 따로 드는 까닭은 [SplFrame.weightedPeakDbfs] 참고 —
+     * 한마디로, 클리핑은 가중 전에 봐야 잡힌다.
+     */
+    private var weightedPeakAbs = 0.0
     private var anyInput = false
 
     /** 가중된 신호를 담는 작업 버퍼. 덩어리마다 새로 만들지 않는다. */
@@ -127,6 +146,13 @@ class SplEngine(
 
         filter.processInPlace(work, frames)
 
+        // **가중 뒤 최고값은 여기서 잰다.** 위의 [peakAbs] 는 가중 전이라
+        // 클리핑을 잡고, 이쪽은 화면에 적는 값이다.
+        for (i in 0 until frames) {
+            val a = kotlin.math.abs(work[i])
+            if (a > weightedPeakAbs) weightedPeakAbs = a
+        }
+
         if (frames > 0) anyInput = true
         // 덩어리 안의 **최대**를 본다. 마지막 값만 보면 덩어리 경계에 따라
         // MAX 가 달라진다 — 같은 PCM 을 1샘플씩 넣을 때와 1024개씩 넣을 때
@@ -153,6 +179,7 @@ class SplEngine(
             },
             peakDbfs = amplitudeToDbfs(peakAbs),
             peakClipped = peakClipped,
+            weightedPeakDbfs = amplitudeToDbfs(weightedPeakAbs),
             leqLongFull = leqLong.isFull,
             settled = timeWeighting.settled,
             // 덩어리가 비면 잰 것이 없다. **조용한 값이 아니라** 바닥으로
@@ -190,6 +217,7 @@ class SplEngine(
         maxMeanSquare = 0.0
         peakAbs = 0.0
         peakClipped = false
+        weightedPeakAbs = 0.0
     }
 
     fun reset() {
