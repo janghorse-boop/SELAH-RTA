@@ -9,13 +9,14 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import kr.joa.selahrta.dsp.CURVE_READING_RULES_VERSION
 import kr.joa.selahrta.dsp.CalibrationCurve
 import kr.joa.selahrta.dsp.CalibrationFile
-import kr.joa.selahrta.dsp.ReadingStakes
-import kr.joa.selahrta.dsp.decideReading
+import kr.joa.selahrta.dsp.CurveReading
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -57,8 +58,35 @@ data class ActiveCurve(
      *
      * 보정 전·후를 견주려면 꺼봤다 켜봐야 하는데, 그때마다 파일을
      * 다시 가져오게 하면 아무도 견주지 않는다(USB 오디오 지시서 11장).
+     *
+     * **켜 두었다는 것과 걸려 있다는 것은 다르다**(독립 재검토 CFRF-01).
+     * 읽는 법이 안 정해진 파일은 사람이 켜 두었어도 여기가 거짓이다.
      */
     val enabled: Boolean = true,
+    /**
+     * **읽는 법을 사람이 정해 줘야 걸린다**(독립 재검토 CFRF-01).
+     *
+     * 참이면 [enabled] 는 반드시 거짓이고, 곡선은 **미리보기**다 —
+     * 화면에 그리기만 하고 측정 보정에는 넣지 않는다.
+     *
+     * 계산해서 얻는 값이 아니라 [CurveStore] 가 읽으면서 **판정한 그대로**
+     * 실어 보낸다. 화면이 따로 다시 판정하면 두 답이 갈릴 수 있고, 그러면
+     * 「적용됨」이라고 적힌 채 안 걸리는 상태가 생긴다.
+     */
+    val readingConfirmationNeeded: Boolean = false,
+    /** 왜 확인이 필요한지. 그대로 화면에 적는다. */
+    val readingWhyKo: String? = null,
+    /** 앱이 보기에 이쪽일 것 같다는 제안. 확인 단추의 기본값이다. */
+    val suggestedReading: CurveReading = CurveReading.Response,
+    /**
+     * 지금 이 곡선을 어느 규약으로 읽고 있는가.
+     *
+     * 사람이 확인해 준 것이면 그 값, 아니면 판정이 정한 값이다. 확인이
+     * 필요한 동안의 미리보기는 관례(응답)로 그린다.
+     */
+    val reading: CurveReading = CurveReading.Response,
+    /** 자동 판정이 아니라 **사람이** 확인해 준 규약인가. */
+    val readingConfirmed: Boolean = false,
 )
 
 /**
@@ -104,9 +132,6 @@ const val FREQUENCY_SCOPE_NOTE: String =
  * 설정 저장소에 문자열로 넣기에는 크고, 원본을 남겨 두면 나중에 다시
  * 해석하거나 내보낼 수 있다.
  */
-/** 곡선 파일 첫 줄에 남기는 주인 표시. 해석기가 건너뛰는 주석이다. */
-const val KEY_COMMENT_PREFIX = "# selah-key: "
-
 class CurveStore(private val context: Context) {
 
     private fun nameKey(k: CalibrationKey) = stringPreferencesKey("${k.storageKey()}|curveFile")
@@ -123,6 +148,22 @@ class CurveStore(private val context: Context) {
 
     /** 사람이 적은 마이크 이름. */
     private fun micNameKey(k: CalibrationKey) = stringPreferencesKey("${k.storageKey()}|micName")
+
+    // ── 읽는 법 확인 기록 (독립 재검토 CFRF-01) ───────────────────────
+    //
+    // **파일 이름이나 Boolean 하나로 확인을 인정하지 않는다.** 이름이
+    // 같고 내용이 다른 파일을 다시 넣으면 옛 확인이 새 파일에 붙는다.
+    // 그래서 **내용의 해시**에 매단다 — 내용이 한 글자만 달라도 확인은
+    // 무효가 되고 다시 묻는다.
+
+    /** 확인해 준 그 내용의 SHA-256(앱이 붙인 주석은 뺀 원본). */
+    private fun readShaKey(k: CalibrationKey) = stringPreferencesKey("${k.storageKey()}|curveReadSha")
+
+    /** 사람이 고른 규약([CurveReading] 의 이름). */
+    private fun readAsKey(k: CalibrationKey) = stringPreferencesKey("${k.storageKey()}|curveReadAs")
+
+    /** 그때의 규칙 판. 규칙이 바뀌면 옛 확인을 인정하지 않는다. */
+    private fun readRulesKey(k: CalibrationKey) = intPreferencesKey("${k.storageKey()}|curveReadRules")
 
     private fun curveDir(): File = File(context.filesDir, "curves").apply { mkdirs() }
 
@@ -167,6 +208,26 @@ class CurveStore(private val context: Context) {
     fun hasLegacyFile(key: CalibrationKey): Boolean =
         !fileFor(key).exists() && legacyFileFor(key).exists()
 
+    /** 저장된 파일에서 앱이 붙인 주석을 뗀 **원본 CAL 내용**. 까닭은 [curveSourceText]. */
+    private fun sourceTextOf(f: File): String? =
+        runCatching { f.readText() }.getOrNull()?.let(::curveSourceText)
+
+    /** 설정 저장소에 남은 확인 기록. 세 값이 다 있어야 기록으로 친다. */
+    private fun recordOf(prefs: Preferences, key: CalibrationKey): ReadingConfirmationRecord? {
+        val sha = prefs[readShaKey(key)] ?: return null
+        val name = prefs[readAsKey(key)] ?: return null
+        val rules = prefs[readRulesKey(key)] ?: return null
+        return ReadingConfirmationRecord(sha, name, rules)
+    }
+
+    /** 이 파일을 지금 어떻게 읽을 것인가. 판단은 [resolveCurveReading] 이 한다. */
+    private fun resolve(
+        headerLines: List<String>,
+        source: String,
+        prefs: Preferences,
+        key: CalibrationKey,
+    ) = resolveCurveReading(headerLines, sha256Hex(source), recordOf(prefs, key))
+
     fun watch(key: CalibrationKey): Flow<ActiveCurve?> =
         context.curveDataStore.data
             .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
@@ -174,16 +235,47 @@ class CurveStore(private val context: Context) {
                 val name = prefs[nameKey(key)] ?: return@map null
                 val f = fileFor(key)
                 if (!f.exists()) return@map null
-                val loaded = runCatching { CalibrationFile.load(f.readText()) }
+                val source = sourceTextOf(f) ?: return@map null
+                val loaded = runCatching { CalibrationFile.load(source) }
                     .getOrNull()?.getOrNull() ?: return@map null
+
+                // **읽을 때 다시 판정한다**(독립 재검토 CFRF-01).
+                //
+                // 예전에는 켜짐 표시 하나만 봤다. 그래서 (1) 일반 스위치를
+                // 켜면 부호 확인을 건너뛰었고, (2) 옛 판에서 켜진 채로 남은
+                // 모순 파일이 앱을 올린 뒤에도 그대로 걸렸다. 검토자가
+                // 실제 DataStore 로 둘 다 재현했다:
+                //
+                //     TOGGLE_WITHOUT_READING enabled=true correction=FromFile
+                //     REOPEN                 enabled=true correction=FromFile
+                //
+                // 막는 자리를 **읽기 경계 하나로** 모은다. 스위치만 막으면
+                // 다른 부르는 곳이 생길 때 또 새어 나간다.
+                val r = resolve(loaded.headerLines, source, prefs, key)
+
+                // 확인된 규약이 관례와 다르면 **원본에서 다시 만든다.**
+                // 이미 뒤집힌 곡선을 또 뒤집지 않도록 점부터 다시 읽는다.
+                val curve = if (r.reading != null && r.reading != CurveReading.Response) {
+                    runCatching { CalibrationFile.load(source, r.reading) }
+                        .getOrNull()?.getOrNull()?.curve ?: loaded.curve
+                } else {
+                    loaded.curve
+                }
+
                 ActiveCurve(
-                    curve = loaded.curve,
+                    curve = curve,
                     fileName = name,
                     pointCount = prefs[countKey(key)] ?: loaded.pointCount,
                     headerLines = loaded.headerLines,
                     importedAtEpochMs = prefs[atKey(key)] ?: 0L,
-                    enabled = prefs[onKey(key)] != "false",
+                    // **켜 두었고 또 읽는 법이 정해졌을 때만** 걸린다.
+                    enabled = r.enabledWith(prefs[onKey(key)] != "false"),
                     micName = prefs[micNameKey(key)].orEmpty(),
+                    readingConfirmationNeeded = r.needsPerson,
+                    readingWhyKo = r.decision.whyKo.takeIf { r.needsPerson },
+                    suggestedReading = r.decision.reading,
+                    reading = r.reading ?: CurveReading.Response,
+                    readingConfirmed = r.confirmed,
                 )
             }
 
@@ -196,7 +288,14 @@ class CurveStore(private val context: Context) {
     suspend fun save(key: CalibrationKey, fileName: String, text: String): Result<ActiveCurve> =
         withContext(Dispatchers.IO) {
             val loaded = CalibrationFile.load(text).getOrElse { return@withContext Result.failure(it) }
-            val decision = decideReading(loaded.signEvidence, ReadingStakes.DisplayCurve)
+            // **읽을 때와 똑같이 판정한다.** 여기만 열 선언을 빼면 저장할
+            // 때와 다시 열 때의 답이 갈린다(독립 재검토 CFRF-01).
+            val decision = resolveCurveReading(
+                loaded.headerLines,
+                sha256Hex(text),
+                // 새로 가져오는 참이다 — 확인 기록이 있을 수 없다.
+                record = null,
+            ).decision
             runCatching {
                 // 원래 열쇠를 첫 줄 주석으로 남긴다. 해석기가 건너뛰는 줄이라
                 // 곡선에는 영향이 없고, 폴더만 봐도 어느 기기 것인지 알 수 있다.
@@ -214,6 +313,13 @@ class CurveStore(private val context: Context) {
                     // 걸면 보정이 반대로 두 배 걸리고, 그 차이는 ±30dB 경고로
                     // 잡히지 않는다 — 측정 마이크 파일은 대개 ±5dB 안쪽이다.
                     if (decision.settled) p.remove(onKey(key)) else p[onKey(key)] = "false"
+                    // **새 파일에는 옛 확인이 따라오지 않는다.** 해시가
+                    // 달라 어차피 인정되지 않지만, 남겨 두면 같은 내용을
+                    // 다시 넣었을 때 묻지 않고 지나간다 — 그 사이에 사람이
+                    // 마음을 바꿨을 수도 있다.
+                    p.remove(readShaKey(key))
+                    p.remove(readAsKey(key))
+                    p.remove(readRulesKey(key))
                 }
                 ActiveCurve(
                     curve = loaded.curve,
@@ -223,6 +329,10 @@ class CurveStore(private val context: Context) {
                     pointCount = loaded.pointCount,
                     headerLines = loaded.headerLines,
                     importedAtEpochMs = System.currentTimeMillis(),
+                    readingConfirmationNeeded = !decision.settled,
+                    readingWhyKo = decision.whyKo.takeIf { !decision.settled },
+                    suggestedReading = decision.reading,
+                    reading = if (decision.settled) decision.reading else CurveReading.Response,
                 )
             }.recoverCatching {
                 throw IOException("보정 파일을 저장하지 못했습니다: ${it.message}")
@@ -234,13 +344,72 @@ class CurveStore(private val context: Context) {
      *
      * 지우는 것과 다르다 — 지우면 다시 가져와야 하고, 그러면 보정
      * 전·후를 견주지 못한다.
+     *
+     * **켜는 것은 읽는 법의 확인이 아니다**(독립 재검토 CFRF-01).
+     *
+     * 이 스위치가 받는 말은 「쓸 것인가」뿐이고, 「응답인가 보정값인가」는
+     * 묻지도 저장하지도 않는다. 그런데 예전에는 이것을 켜면 부호 확인이
+     * 통째로 건너뛰어졌다 — 검토자가 실제 DataStore 로 재현했다:
+     *
+     *     TOGGLE_WITHOUT_READING enabled=true correction=FromFile
+     *
+     * 그래서 켤 때는 [watch] 와 **같은 판정**을 한 번 더 한다. 화면에서
+     * 스위치를 못 누르게 막는 것만으로는 모자라다 — 다른 부르는 곳이
+     * 생기면 또 새어 나간다.
+     *
+     * **끄는 것은 언제나 된다.** 거는 것을 막는 규칙이지 떼는 것을 막을
+     * 까닭은 없다.
+     *
+     * @return 막혔으면 그 까닭, 됐으면 null.
      */
-    suspend fun setEnabled(key: CalibrationKey, on: Boolean) = withContext(Dispatchers.IO) {
+    suspend fun setEnabled(key: CalibrationKey, on: Boolean): String? = withContext(Dispatchers.IO) {
+        if (on) {
+            val source = sourceTextOf(fileFor(key))
+                ?: return@withContext "보정 파일을 찾지 못했습니다."
+            val loaded = CalibrationFile.load(source).getOrNull()
+                ?: return@withContext "보정 파일을 읽지 못했습니다."
+            val prefs = context.curveDataStore.data
+                .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
+                .first()
+            curveEnableRefusalKo(resolve(loaded.headerLines, source, prefs, key))
+                ?.let { return@withContext it }
+        }
         runCatching {
             context.curveDataStore.edit { p -> p[onKey(key)] = on.toString() }
-        }
-        Unit
+        }.exceptionOrNull()?.let { "켜기를 저장하지 못했습니다: ${it.message}" }
     }
+
+    /**
+     * 사람이 **읽는 법을 정해 준다**(독립 재검토 CFRF-01 · 보고서 4장).
+     *
+     * 확인은 **그 내용**에 매단다. 파일 이름이나 전역 참·거짓에 매달면,
+     * 이름이 같고 내용이 다른 파일을 넣었을 때 하지도 않은 확인이
+     * 따라붙는다.
+     *
+     * 확인과 동시에 켠다 — 「읽는 법을 정했는데 왜 안 걸리지」를 겪게
+     * 할 까닭이 없다.
+     *
+     * @return 막혔으면 그 까닭, 됐으면 null.
+     */
+    suspend fun confirmReading(key: CalibrationKey, reading: CurveReading): String? =
+        withContext(Dispatchers.IO) {
+            val source = sourceTextOf(fileFor(key))
+                ?: return@withContext "보정 파일을 찾지 못했습니다."
+            // **고른 규약으로 실제로 만들어 본다.** 만들어지지 않는 파일을
+            // 확인만 받아 두면, 다음에 열 때 조용히 곡선이 없다.
+            CalibrationFile.load(source, reading).getOrElse {
+                return@withContext "이 파일을 「${reading.labelKo}」 로 읽지 못했습니다: ${it.message}"
+            }
+            runCatching {
+                context.curveDataStore.edit { p ->
+                    p[readShaKey(key)] = sha256Hex(source)
+                    p[readAsKey(key)] = reading.name
+                    p[readRulesKey(key)] = CURVE_READING_RULES_VERSION
+                    // 확인했으면 건다. 꺼 두고 싶으면 스위치로 끈다.
+                    p.remove(onKey(key))
+                }
+            }.exceptionOrNull()?.let { "확인을 저장하지 못했습니다: ${it.message}" }
+        }
 
     /**
      * 어느 마이크의 보정인지 적어 둔다. 빈 문자열이면 지운다.
@@ -263,6 +432,11 @@ class CurveStore(private val context: Context) {
                 p.remove(atKey(key))
                 p.remove(onKey(key))
                 p.remove(micNameKey(key))
+                // 확인 기록도 함께 지운다. 남겨 두면 같은 내용을 다시
+                // 넣었을 때 묻지 않고 지나간다.
+                p.remove(readShaKey(key))
+                p.remove(readAsKey(key))
+                p.remove(readRulesKey(key))
             }
         }
         Unit

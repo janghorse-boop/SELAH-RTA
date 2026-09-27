@@ -101,6 +101,8 @@ fun SettingsScreen(
     onPickCurveFile: () -> Unit,
     onClearCurve: () -> Unit,
     onToggleCurve: (Boolean) -> Unit,
+    /** 가져온 곡선의 읽는 법을 사람이 정해 준다(독립 재검토 CFRF-01). */
+    onConfirmCurveReading: (kr.joa.selahrta.dsp.CurveReading) -> Unit,
     onCurveMicName: (String) -> Unit,
     onDismissCurveNotice: () -> Unit,
     /** 교정 마법사를 연다(S23 지시서 6장). */
@@ -218,6 +220,7 @@ fun SettingsScreen(
             onPickFile = onPickCurveFile,
             onClear = onClearCurve,
             onToggleEnabled = onToggleCurve,
+            onConfirmReading = onConfirmCurveReading,
             onMicName = onCurveMicName,
             onDismissNotice = onDismissCurveNotice,
             modifier = Modifier.padding(top = 10.dp),

@@ -312,6 +312,20 @@ enum class ReadingStakes {
     ReferenceForCalibration,
 }
 
+/**
+ * **읽는 법을 가르는 규칙의 판**(독립 재검토 CFRF-01).
+ *
+ * 사람이 「이 파일은 보정값이다」라고 확인해 준 기록에 이 값을 함께
+ * 적는다. 규칙이 바뀌면 이 숫자를 올리고, 그러면 **옛 확인은 인정되지
+ * 않아 다시 묻는다.**
+ *
+ * 왜 필요한가 — 확인은 「이 파일을 이렇게 읽어라」가 아니라 **「앱이 이
+ * 파일을 이렇게 읽겠다고 한 것이 맞다」**는 대답이다. 앱이 묻는 말이
+ * 달라졌는데 옛 대답을 그대로 쓰면, 사람이 하지 않은 말을 한 것으로
+ * 친다.
+ */
+const val CURVE_READING_RULES_VERSION: Int = 1
+
 /** 읽는 법을 정했는가, 사람에게 물어야 하는가. */
 sealed interface ReadingDecision {
     val reading: CurveReading
