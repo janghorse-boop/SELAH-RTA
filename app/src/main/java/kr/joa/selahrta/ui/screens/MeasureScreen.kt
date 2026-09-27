@@ -356,7 +356,7 @@ fun MeasureScreen(
         if (running && !canJudge) {
             Text(
                 "지금은 ${weighting.labelKo} 라 범위와 견주지 않습니다. " +
-                    "설정에서 dBA 로 바꾸면 계기에 색이 들어옵니다.",
+                    "설정에서 dB(A) 로 바꾸면 계기에 색이 들어옵니다.",
                 color = SelahColors.Warn,
                 fontSize = 11.sp,
                 textAlign = TextAlign.Center,
@@ -1060,7 +1060,7 @@ private fun RangeCard(
                 } else {
                     Row(verticalAlignment = Alignment.Bottom) {
                         Text(
-                            "${range.avgLowDb.toInt()} ~ ${range.avgHighDb.toInt()} dBA",
+                            "${range.avgLowDb.toInt()} ~ ${range.avgHighDb.toInt()} dB(A)",
                             color = SelahColors.TextPrimary,
                             // 제목(「SELAH RTA」)과 같은 크기로 낮췄다
                             // (2026-09-26 담당자 지시). 22sp 일 때는 화면에서
