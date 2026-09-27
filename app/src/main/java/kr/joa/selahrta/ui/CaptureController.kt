@@ -674,6 +674,9 @@ class CaptureController(
                 clippedBlocks = session.clippedBlocks,
                 lastPeakAbs = stats.peakAbs,
                 lastRmsAbs = stats.rms,
+                // **여러 채널로 열렸을 때만 값이 있다.** 모노면 아예
+                // 재지 않으므로 null 이고, 화면도 그 줄을 그리지 않는다.
+                channelLevels = session.source.channelLevels(),
                 quietMs = session.silence.quietMs,
                 lastProcessMs = processMs,
                 blockDurationMs = blockMs,

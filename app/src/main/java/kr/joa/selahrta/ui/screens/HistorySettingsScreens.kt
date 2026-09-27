@@ -43,6 +43,10 @@ import kr.joa.selahrta.ui.components.SegmentRangeCard
 import kr.joa.selahrta.dsp.TimeWeight
 import kr.joa.selahrta.dsp.Weighting
 import kr.joa.selahrta.settings.KnownDevice
+import kr.joa.selahrta.dsp.ChannelLevelSnapshot
+import kr.joa.selahrta.dsp.SILENCE_FLOOR_DBFS
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import kr.joa.selahrta.settings.LeqWindow
 import kr.joa.selahrta.settings.FFT_SIZES
 import kr.joa.selahrta.ui.CaptureUiState
@@ -174,6 +178,12 @@ fun SettingsScreen(
                 { "Input ${it + 1}" },
                 { onInputChannel(chosenDevice.stableKey, it) },
             )
+
+            // **어느 입력에 소리가 들어오는가.**
+            //
+            // 이것이 없으면 채널을 하나씩 골라 가며 레벨이 움직이는지
+            // 봐야 했다. 마이크에 대고 말하면 여기서 바로 갈린다.
+            capture.diagnostics.channelLevels?.let { ChannelLevelBars(it, picked) }
         }
         // 「외부 기기 자동 사용」도 뺐다. 이제 고른 기기가 없거나 빠졌으면
         // 내장으로 연다 — 그것이 당연한 동작이라는 담당자 판단이다.
@@ -827,6 +837,92 @@ private fun WeightingRow(
             fontSize = 10.sp,
             lineHeight = 14.sp,
         )
+    }
+}
+
+/**
+ * 채널마다 지금 들어오는 소리의 크기(dBFS).
+ *
+ * ## 왜 있는가
+ *
+ * 4채널 인터페이스를 꽂으면 마이크가 몇 번에 꽂혀 있는지 앱이 알 수
+ * 없다. 이것이 없으면 채널을 하나씩 골라 가며 레벨이 움직이는지 봐야
+ * 했다 — 마이크에 대고 말하면 여기서 바로 갈린다(USB 오디오 지시서 6장).
+ *
+ * ## 측정값이 아니다
+ *
+ * dBFS 이고 보정을 걸지 않는다. 「어디에 꽂혀 있나」를 찾는 데만 쓴다.
+ *
+ * ## 막대 길이
+ *
+ * −60dBFS 를 왼쪽 끝, 0dBFS 를 오른쪽 끝으로 본다. 그 아래는 사실상
+ * 소리가 없는 자리라 더 늘여 봐야 읽을 것이 없다.
+ */
+@Composable
+private fun ChannelLevelBars(levels: ChannelLevelSnapshot, picked: Int) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(bottom = 8.dp)
+            .background(SelahColors.Surface, RoundedCornerShape(10.dp))
+            .border(1.dp, SelahColors.Outline, RoundedCornerShape(10.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text("입력마다 들어오는 소리", color = SelahColors.TextPrimary, fontSize = 13.sp)
+        Text(
+            "마이크에 대고 말해 보십시오. 움직이는 줄이 마이크가 꽂힌 입력입니다. " +
+                "음압이 아니라 신호 세기(dBFS)입니다.",
+            color = SelahColors.TextMuted,
+            fontSize = 10.sp,
+            lineHeight = 14.sp,
+        )
+        levels.peakDbfs.forEachIndexed { i, peak ->
+            val on = i == picked
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Input ${i + 1}",
+                    color = if (on) SelahColors.Accent else SelahColors.TextSecondary,
+                    fontSize = 11.sp,
+                    fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
+                    modifier = Modifier.width(62.dp),
+                )
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .height(10.dp)
+                        .background(SelahColors.SurfaceVariant, RoundedCornerShape(5.dp)),
+                ) {
+                    // −60dBFS 를 0, 0dBFS 를 1 로 본다.
+                    val f = ((peak + 60.0) / 60.0).coerceIn(0.0, 1.0).toFloat()
+                    if (f > 0f) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth(f)
+                                .height(10.dp)
+                                .background(
+                                    if (on) SelahColors.Accent else SelahColors.TextMuted,
+                                    RoundedCornerShape(5.dp),
+                                ),
+                        )
+                    }
+                }
+                Text(
+                    // **바닥이면 숫자를 적지 않는다.** −120 을 적어 두면
+                    // 「아주 조용하다」로 읽히는데, 실은 아무것도 안 들어온
+                    // 것이다.
+                    if (peak <= SILENCE_FLOOR_DBFS) "—" else "%.0f".format(peak),
+                    color = SelahColors.TextSecondary,
+                    fontSize = 11.sp,
+                    modifier = Modifier.width(38.dp),
+                    textAlign = TextAlign.End,
+                )
+            }
+        }
     }
 }
 

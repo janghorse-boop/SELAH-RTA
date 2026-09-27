@@ -46,6 +46,15 @@ interface AudioSource {
      */
     fun start(onBlock: (AudioBlock, BlockStats) -> Unit)
 
+    /**
+     * 채널마다의 레벨. **모노이거나 안 돌고 있으면 null.**
+     *
+     * 4채널 인터페이스에서 「마이크가 몇 번에 꽂혀 있나」를 찾는 데만
+     * 쓴다(USB 오디오 지시서 6장). 측정에 들어가는 것은 고른 채널
+     * 하나이고, 그쪽은 가중·보정을 다 거친다.
+     */
+    fun channelLevels(): kr.joa.selahrta.dsp.ChannelLevelSnapshot? = null
+
     /** 멈추고 자원을 놓는다. 여러 번 불러도 안전해야 한다. */
     fun close()
 }
@@ -124,6 +133,17 @@ data class CaptureDiagnostics(
      * (USB 오디오 지시서 6장).
      */
     val lastRmsAbs: Double = 0.0,
+    /**
+     * 채널마다의 레벨(dBFS). **여러 채널로 열렸을 때만** 있다.
+     *
+     * 4채널 인터페이스를 꽂으면 마이크가 몇 번에 꽂혀 있는지 앱이 알 수
+     * 없다. 채널마다 레벨을 함께 보여 주면 한 화면에서 갈린다
+     * (USB 오디오 지시서 6장).
+     *
+     * **측정값이 아니다.** 보정을 걸지 않은 dBFS 이고, 측정에 들어가는
+     * 것은 고른 채널 하나다.
+     */
+    val channelLevels: kr.joa.selahrta.dsp.ChannelLevelSnapshot? = null,
     /**
      * 입력이 문턱 아래로 **내내 조용했던** 시간(ms).
      *
