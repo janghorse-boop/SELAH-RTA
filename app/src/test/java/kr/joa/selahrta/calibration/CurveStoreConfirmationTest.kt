@@ -11,6 +11,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.After
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -35,7 +36,35 @@ class CurveStoreConfirmationTest {
     private val key = CalibrationKey("dev-a", CaptureSource.Unprocessed)
     private val otherKey = CalibrationKey("dev-b", CaptureSource.Unprocessed)
 
-    private fun store() = CurveStore(TestApplication(tmp.newFolder()))
+    /**
+     * **이 시험이 만든 scope 를 모두 들고 있다**(독립 재검토 CFRC-R02 후속).
+     *
+     * DataStore 는 scope 를 붙들고 돈다. 시험마다 새로 만들고 안 끊으면
+     * 스레드가 쌓인 채로 다음 시험이 돈다 — 실패 경로에서는 더 그렇다.
+     * 그래서 끝낼 자리를 [tearDown] 한 곳으로 모은다.
+     */
+    private val scopes = mutableListOf<kotlinx.coroutines.CoroutineScope>()
+
+    @After
+    fun tearDown() = runBlocking {
+        scopes.forEach { it.cancel() }
+        scopes.forEach { it.coroutineContext[kotlinx.coroutines.Job]?.join() }
+        scopes.clear()
+    }
+
+    private fun newScope(): kotlinx.coroutines.CoroutineScope =
+        kotlinx.coroutines.CoroutineScope(
+            kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO,
+        ).also { scopes += it }
+
+    /**
+     * 시험 하나가 쓸 저장소.
+     *
+     * **제 DataStore 를 갖는다.** 예전에는 `CurveStore(TestApplication(dir))`
+     * 만 불렀는데, 그러면 폴더가 달라도 `by preferencesDataStore` 가 **같은
+     * 설정 저장소**를 돌려준다 — 시험끼리 설정이 섞인다.
+     */
+    private fun store() = tmp.newFolder().let { storeOn(it) }
 
     /**
      * **디스크에서 다시 읽는 저장소를 연다**(독립 재검토 CFRC-R02).
@@ -59,7 +88,8 @@ class CurveStoreConfirmationTest {
 
     private fun storeOn(
         dir: java.io.File,
-        ds: androidx.datastore.core.DataStore<androidx.datastore.preferences.core.Preferences>,
+        ds: androidx.datastore.core.DataStore<androidx.datastore.preferences.core.Preferences> =
+            dataStoreOn(dir, newScope()),
     ) = CurveStore(TestApplication(dir), ds)
 
     /** 부호가 모호해 사람에게 묻게 되는 파일. 내용은 서로 다르다. */
@@ -165,9 +195,7 @@ class CurveStoreConfirmationTest {
     @Test
     fun `디스크에서 다시 읽어도 확인이 남는다`() = runBlocking {
         val dir = tmp.newFolder()
-        val writer = kotlinx.coroutines.CoroutineScope(
-            kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO,
-        )
+        val writer = newScope()
         val written = dataStoreOn(dir, writer)
         val a = storeOn(dir, written).let { s ->
             val c = s.save(key, "A.cal", conflicting("A")).getOrThrow()
@@ -192,18 +220,13 @@ class CurveStoreConfirmationTest {
         writer.cancel()
         writer.coroutineContext[kotlinx.coroutines.Job]!!.join()
 
-        val reader = kotlinx.coroutines.CoroutineScope(
-            kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO,
-        )
-        try {
-            val now = storeOn(dir, dataStoreOn(dir, reader)).watch(key).first()!!
-            assertTrue("디스크에서 읽으니 확인이 사라졌다", now.readingConfirmed)
-            assertTrue(now.enabled)
-            assertEquals(CurveReading.Correction, now.reading)
-            assertEquals(-3.0, now.curve.gainDbAt(1000.0), 1e-9)
-        } finally {
-            reader.cancel()
-        }
+        // **읽는 쪽은 tearDown 이 끝낸다.** 여기서 try/finally 로 감싸면
+        // 실패 경로마다 같은 말을 되풀이하게 된다.
+        val now = storeOn(dir, dataStoreOn(dir, newScope())).watch(key).first()!!
+        assertTrue("디스크에서 읽으니 확인이 사라졌다", now.readingConfirmed)
+        assertTrue(now.enabled)
+        assertEquals(CurveReading.Correction, now.reading)
+        assertEquals(-3.0, now.curve.gainDbAt(1000.0), 1e-9)
     }
 
     /**
@@ -216,22 +239,16 @@ class CurveStoreConfirmationTest {
      */
     @Test
     fun `넣어 준 저장소끼리 설정이 섞이지 않는다`() = runBlocking {
-        val one = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob())
-        val two = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob())
-        try {
-            val dirA = tmp.newFolder()
-            val dsA = dataStoreOn(dirA, one)
-            val dsB = dataStoreOn(tmp.newFolder(), two)
-            storeOn(dirA, dsA).save(key, "A.cal", plain).getOrThrow()
+        val dirA = tmp.newFolder()
+        val dsA = dataStoreOn(dirA, newScope())
+        val dsB = dataStoreOn(tmp.newFolder(), newScope())
+        storeOn(dirA, dsA).save(key, "A.cal", plain).getOrThrow()
 
-            assertTrue("쓴 쪽이 비어 있다", dsA.data.first().asMap().isNotEmpty())
-            assertTrue(
-                "안 쓴 쪽에 값이 들어갔다 — 설정이 섞였다",
-                dsB.data.first().asMap().isEmpty(),
-            )
-        } finally {
-            one.cancel(); two.cancel()
-        }
+        assertTrue("쓴 쪽이 비어 있다", dsA.data.first().asMap().isNotEmpty())
+        assertTrue(
+            "안 쓴 쪽에 값이 들어갔다 — 설정이 섞였다",
+            dsB.data.first().asMap().isEmpty(),
+        )
     }
 
     @Test
