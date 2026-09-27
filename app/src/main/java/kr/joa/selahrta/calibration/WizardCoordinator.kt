@@ -415,7 +415,7 @@ class WizardCoordinator(
             _noticeKo.value = ROUTE_UNCONFIRMED_KO
             return
         }
-        measureGateKo(step, st.referenceIdentity, startId)?.let {
+        measureGateKo(step, st.stepIdentities[MeasureStep.ReferenceBefore], startId)?.let {
             _noticeKo.value = it
             return
         }
@@ -486,6 +486,15 @@ class WizardCoordinator(
                                 else -> it
                             }
                         }
+                        // **단계마다 제 이름표를 적는다**(독립 재검토 CF2-01).
+                        // 마지막 기준은 이름표가 없어 첫 기준의 것을 빌려
+                        // 썼고, 그래서 첫 기준만 바꾸면 옛 채널 자료가 새
+                        // 이름표를 물려받았다.
+                        _state.update { it.copy(stepIdentities = it.stepIdentities + (step to startId)) }
+                        // **경로가 바뀐 첫 기준은 마지막 기준을 못 쓰게 한다.**
+                        // 전후 기준은 같은 마이크여야 뜻이 있다 — 다르면 그
+                        // 둘의 차이가 무엇 때문인지 말할 수 없다.
+                        if (step == MeasureStep.ReferenceBefore) dropStaleReferenceAfter(startId)
                         if (session.complete) finishMeasurement()
                     }
                 }
@@ -500,10 +509,37 @@ class WizardCoordinator(
     // 관문은 `CaptureIdentityGate.kt` 에 있다 — 기기 없이 돌려 볼 수 있어야
     // 「실제로 막는가」를 확인할 수 있기 때문이다(CAR-01·CAR-05).
 
+    /**
+     * 첫 기준을 **다른 경로로** 다시 쟀다 — 마지막 기준의 옛 장을 버린다.
+     *
+     * 같은 경로로 다시 잰 것이면 그대로 둔다. 「첫 기준이 잘 안 잡혀서
+     * 다시」는 흔한 일이고, 그때 멀쩡한 대상 120장까지 다시 재게 하면
+     * 사람이 화면을 믿지 않게 된다.
+     */
+    private fun dropStaleReferenceAfter(newBefore: CaptureIdentity) {
+        val after = _state.value.stepIdentities[MeasureStep.ReferenceAfter] ?: return
+        if (after.sameRouteAs(newBefore)) return
+        session.discard(MeasureStep.ReferenceAfter)
+        _state.update {
+            it.discardingStep(MeasureStep.ReferenceAfter)
+                .copy(stepIdentities = it.stepIdentities - MeasureStep.ReferenceAfter)
+        }
+        _noticeKo.value = "기준을 다른 입력(${newBefore.labelKo()})으로 다시 쟀습니다. " +
+            "마지막 기준은 앞의 입력으로 잰 것이라 함께 쓸 수 없어 버렸습니다 — 다시 재십시오."
+    }
+
     /** 세 번이 다 찼다. 셈해서 5단계에 올린다. */
     private fun finishMeasurement() {
         val result = session.result() ?: return
         val st = _state.value
+        // **셋이 한 벌인지 모아서 본다**(독립 재검토 CF2-01).
+        //
+        // 단계마다 관문을 지나도, 지나고 난 뒤에 다른 단계를 바꾸면 그
+        // 관문을 다시 지나지 않는다. 여기가 마지막 그물이다.
+        sessionIdentityMismatchKo(st.stepIdentities)?.let {
+            _noticeKo.value = it
+            return
+        }
         // **기준과 대상의 증거를 따로 꺼낸다**(독립 검토 CA-03). 없으면
         // 없는 채로 넘긴다 — 다른 입력의 값으로 채우면 묻힌 대상이
         // 「검증된 교정」으로 저장된다.
@@ -558,13 +594,28 @@ class WizardCoordinator(
     /** 다시 재려면 세션부터 비운다 — 이어 붙이면 다른 순간의 장이 섞인다. */
     fun restartMeasurement() {
         session.reset()
+        // **이름표·열쇠·증거 이름까지 함께 지운다**(독립 재검토 CF2-01 부류).
+        //
+        // 예전에는 기기 열쇠 둘과 결과만 지웠다. 장이 하나도 없는데
+        // `stepIdentities`·`targetCalKey`·`levelTransfer` 가 남아 있으면,
+        // 마지막 그물이 「이름표가 있으니 잰 것」으로 읽는다.
         _state.update {
             it.copy(
                 referenceDeviceKey = null,
                 targetDeviceKey = null,
+                referenceCalKey = null,
+                targetCalKey = null,
+                referenceIdentity = null,
+                targetIdentity = null,
+                referenceEvidenceKey = null,
+                targetEvidenceKey = null,
+                referenceOffsetDb = null,
+                stepIdentities = emptyMap(),
                 session = null,
                 outcome = null,
                 quality = null,
+                levelTransfer = null,
+                levelTransferBlockKo = null,
             )
         }
     }

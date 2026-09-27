@@ -1,6 +1,8 @@
 package kr.joa.selahrta.calibration
 
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
@@ -76,12 +78,43 @@ class WizardCoordinatorTest {
         override fun stopSignal() = Unit
     }
 
+    /** 대상 마이크 — 기준과 **다른 기기**여야 한다. */
+    private fun builtInIdentity() = CaptureIdentity(
+        calKey = CalibrationKey(
+            deviceKey = realStableKey(address = "bottom"),
+            source = CaptureSource.Unprocessed,
+        ),
+        routedAddress = "bottom",
+        sampleRate = rate,
+        routeConfirmed = true,
+        generation = 1L,
+    )
+
     private fun coordinator(scope: TestScope) =
         WizardCoordinator(scope, ProfileStore(temp.newFolder()))
 
     /** 기다릴 때마다 통로에 장을 밀어 넣는 가짜 시간. */
     private fun ticker(cap: FakeCapture, level: () -> Double): suspend () -> Unit = {
         cap.tap?.onSpectrum(DoubleArray(bins) { level() })
+    }
+
+    /**
+     * 그 입력의 **배경·DSP 증거**를 만든다.
+     *
+     * 측정 단계는 이것 없이 셈하지 않는다 — 「기준 마이크가 실제로 신호를
+     * 잡았는지 알 수 없어 보정을 만들지 않습니다」. 맞는 관문이라 시험도
+     * 실제 순서를 밟는다.
+     */
+    private fun TestScope.check(core: WizardCoordinator, cap: FakeCapture) {
+        var pushed = 0
+        core.runInputCheck(cap, fft, rate) {
+            pushed++
+            // 배경은 조용히, 그 뒤 신호는 크게 — 가청 상승이 잡혀야
+            // `verifiedBySignal` 이 선다.
+            val level = if (pushed <= 40) 1e-9 else 1e-3
+            cap.tap?.onSpectrum(DoubleArray(bins) { level })
+        }
+        testScheduler.advanceUntilIdle()
     }
 
     /** 밴드가 다 찬 평탄한 CAL. 측정 단계가 이것을 요구한다. */
@@ -95,31 +128,62 @@ class WizardCoordinatorTest {
     // ------------------------------------------------------------------
 
     /**
-     * **성공 → 재검사 → 취소** 뒤에 옛 성공이 남지 않는다.
+     * **성공 → 재검사 → 수집 도중 취소** 뒤에 옛 성공이 남지 않는다.
      *
      * 검토자가 실제 VM 으로 재현한 순서다. 실패 분기에서만 지우던 때에는
      * 취소가 그 분기로 들어가지 않아, 취소 전의 성공이 그대로 승인
      * 근거가 되었다(SNR 2dB 자료가 Pass).
+     *
+     * ## 시험이 실제로 취소하게 고쳤다 (독립 재검토 CF2-03)
+     *
+     * 처음에는 `UnconfinedTestDispatcher` 에 **일시중단하지 않는** tick 을
+     * 썼다. 그러면 `stopWork` 를 부르기 전에 흐름이 이미 끝나 있어
+     * **취소되는 것이 없었다** — 이름만 「취소」인 시험이었다.
+     *
+     * 이제 `StandardTestDispatcher` 와 실제로 `delay` 하는 tick 을 쓰고,
+     * 끊기 직전에 **돌고 있는지·통로가 붙어 있는지**를 먼저 단언한다.
+     * 그래야 끊을 것이 있었다는 말이 된다.
      */
     @Test
-    fun `재검사를 취소하면 옛 증거가 남지 않는다`() = runTest {
-        val scope = TestScope(UnconfinedTestDispatcher(testScheduler))
+    fun `재검사를 수집 도중에 취소하면 옛 증거가 남지 않는다`() = runTest {
+        val scope = TestScope(StandardTestDispatcher(testScheduler))
         val core = coordinator(scope)
         val cap = FakeCapture(identity(0, "card=1;device=0"))
         val key = cap.now!!.evidenceKey(fft)
 
-        // 한 번 끝까지 마친다.
-        core.runInputCheck(cap, fft, rate, ticker(cap) { 1e-9 })
+        // 한 번 끝까지 마친다 — **신호를 크게 주어** DSP 점검까지 통과시킨다.
+        var pushed = 0
+        core.runInputCheck(cap, fft, rate) {
+            pushed++
+            // 배경 40장은 조용히, 그 뒤 신호는 크게. 그래야 가청 상승이
+            // 잡혀 `verifiedBySignal` 이 선다.
+            val level = if (pushed <= 40) 1e-9 else 1e-3
+            cap.tap?.onSpectrum(DoubleArray(bins) { level })
+        }
         testScheduler.advanceUntilIdle()
         assertNotNull("전제 — 배경이 쌓여야 한다", core.state.value.noiseFloorByKey[key])
+        assertTrue(
+            "전제 — 신호로 확인된 DSP 점검이 있어야 한다",
+            core.state.value.dspByKey[key]?.verifiedBySignal == true,
+        )
 
-        // 다시 재기 시작만 하고 끊는다.
-        core.runInputCheck(cap, fft, rate) { /* 장을 넣지 않는다 */ }
+        // 다시 재기 시작한다. **실제로 기다리는** tick 이라 끊을 것이 남는다.
+        core.runInputCheck(cap, fft, rate) {
+            delay(10)
+            cap.tap?.onSpectrum(DoubleArray(bins) { 1e-9 })
+        }
+        testScheduler.advanceTimeBy(120)
+
+        assertNotNull("끊을 것이 없다 — 통로가 안 붙었다", cap.tap)
+        assertNotNull("끊을 것이 없다 — 돌고 있지 않다", core.busyKo.value)
+
         core.stopWork()
         testScheduler.advanceUntilIdle()
 
         assertNull("취소 뒤에도 옛 배경이 남았다", core.state.value.noiseFloorByKey[key])
         assertNull("취소 뒤에도 옛 판정이 남았다", core.state.value.dspByKey[key])
+        assertNull("끊었는데 통로가 남았다", cap.tap)
+        assertNull("끊었는데 「재는 중」이 남았다", core.busyKo.value)
     }
 
     /**
@@ -270,6 +334,88 @@ class WizardCoordinatorTest {
         assertEquals("버린 시도의 장이 남았다", 0, core.framesFor(MeasureStep.ReferenceBefore))
         assertNull(core.state.value.quality)
         assertNull(core.state.value.outcome)
+    }
+
+    /**
+     * **가장 중요한 시험**(독립 재검토 CF2-01) — 실제 흐름으로.
+     *
+     * 정상 순서에서 **마지막** 기준을 바꾸는 것은 막혀 있었는데, 완료 뒤
+     * **처음** 기준만 다른 채널로 다시 재는 역방향이 뚫려 있었다.
+     * 마지막 기준은 제 이름표가 없어 새 첫 기준의 것을 물려받았고,
+     * 세 단계가 차 있으니 곧바로 셈이 돌아 Pass 가 났다:
+     *
+     * ```
+     * REFERENCE_RETRY newBeforeChannel=1 retainedAfterChannel=0
+     * retainedAfterFrames=120 verdict=Pass
+     * ```
+     *
+     * **순수 함수 시험으로는 이것을 잡지 못했다.** 관문 함수는 맞게
+     * 판정하는데 흐름이 그것을 부르지 않는 자리였다 — 고치기 전 코드를
+     * 되살려 확인했다.
+     */
+    @Test
+    fun `완료 뒤 처음 기준만 다른 채널로 다시 재면 셈하지 않는다`() = runTest {
+        val scope = TestScope(UnconfinedTestDispatcher(testScheduler))
+        val core = coordinator(scope)
+        loadFlatCal(core)
+
+        val ref = FakeCapture(identity(0, "card=1;device=0"))
+        val tgt = FakeCapture(builtInIdentity())
+        check(core, ref)
+        check(core, tgt)
+
+        // 기준 ch0 → 대상 → 기준 ch0 을 정상 완료한다.
+        core.measureStep(MeasureStep.ReferenceBefore, ref, fft, rate, ticker(ref) { 1e-6 })
+        testScheduler.advanceUntilIdle()
+        core.measureStep(MeasureStep.Target, tgt, fft, rate, ticker(tgt) { 1e-6 })
+        testScheduler.advanceUntilIdle()
+        core.measureStep(MeasureStep.ReferenceAfter, ref, fft, rate, ticker(ref) { 1e-6 })
+        testScheduler.advanceUntilIdle()
+        assertNotNull("전제 — 정상 순서는 셈이 나와야 한다", core.state.value.outcome)
+
+        // 처음 기준만 **다른 채널**로 다시 잰다. 마지막 기준은 그대로 둔다.
+        val ref1 = FakeCapture(identity(1, "card=1;device=0"))
+        core.measureStep(MeasureStep.ReferenceBefore, ref1, fft, rate, ticker(ref1) { 1e-6 })
+        testScheduler.advanceUntilIdle()
+
+        assertNull("옛 채널의 마지막 기준으로 셈이 났다", core.state.value.outcome)
+        assertNull(core.state.value.quality)
+        assertNull("옮길 값까지 나왔다", core.state.value.levelTransfer)
+        assertEquals(
+            "옛 채널의 마지막 기준 장이 남았다",
+            0,
+            core.framesFor(MeasureStep.ReferenceAfter),
+        )
+        assertNotNull("사람에게 말해야 한다", core.noticeKo.value)
+    }
+
+    /** 대조군 — **같은 채널**로 다시 재면 멀쩡한 것을 다시 재게 하지 않는다. */
+    @Test
+    fun `같은 입력으로 처음 기준을 다시 재면 나머지는 남는다`() = runTest {
+        val scope = TestScope(UnconfinedTestDispatcher(testScheduler))
+        val core = coordinator(scope)
+        loadFlatCal(core)
+
+        val ref = FakeCapture(identity(0, "card=1;device=0"))
+        val tgt = FakeCapture(builtInIdentity())
+        check(core, ref)
+        check(core, tgt)
+        core.measureStep(MeasureStep.ReferenceBefore, ref, fft, rate, ticker(ref) { 1e-6 })
+        testScheduler.advanceUntilIdle()
+        core.measureStep(MeasureStep.Target, tgt, fft, rate, ticker(tgt) { 1e-6 })
+        testScheduler.advanceUntilIdle()
+        core.measureStep(MeasureStep.ReferenceAfter, ref, fft, rate, ticker(ref) { 1e-6 })
+        testScheduler.advanceUntilIdle()
+
+        core.measureStep(MeasureStep.ReferenceBefore, ref, fft, rate, ticker(ref) { 1e-6 })
+        testScheduler.advanceUntilIdle()
+
+        assertTrue(
+            "같은 입력인데 마지막 기준을 버렸다",
+            core.framesFor(MeasureStep.ReferenceAfter) > 0,
+        )
+        assertTrue("대상까지 버렸다", core.framesFor(MeasureStep.Target) > 0)
+        assertNotNull("다시 셈이 나야 한다", core.state.value.outcome)
     }
 
     /** 처음부터 다시 하면 **곡선까지** 버린다 — 남기면 다음이 물려받는다. */

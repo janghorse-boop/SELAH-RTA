@@ -137,6 +137,45 @@ fun environmentMismatchKo(
         "잰 적 없는 경로의 것으로 기록됩니다."
 }
 
+/**
+ * **세 단계가 서로 맞는가**(독립 재검토 CF2-01).
+ *
+ * 단계마다 관문을 지나도, **지나고 난 뒤에 다른 단계를 바꾸면** 그 관문을
+ * 다시 지나지 않는다. 검토자가 역방향을 뚫었다 — 정상 완료 뒤 **처음**
+ * 기준만 다른 채널로 다시 재면, 마지막 기준은 옛 채널 자료인데 세 단계가
+ * 차 있으므로 곧바로 셈이 돌아 Pass 가 났다.
+ *
+ * 그래서 셈하기 직전에 **한 번 더, 모아서** 본다. 관문은 「지금 이 단계를
+ * 재도 되는가」를 묻고 이것은 「모인 셋이 한 벌인가」를 묻는다.
+ *
+ * ## 무엇을 보는가
+ *
+ * - 전후 기준이 **같은 경로**인가. 다르면 그 둘의 차이는 마이크가 변한
+ *   것인지 방이 변한 것인지 말할 수 없다.
+ * - 대상이 기준과 **다른 기기**인가. 같으면 곡선이 평탄해져 「잘 맞았다」로
+ *   보인다.
+ * - 세 단계가 모두 **찍혀 있는가**. 이름표 없는 장은 어느 마이크의 것인지
+ *   말할 수 없다.
+ */
+fun sessionIdentityMismatchKo(stamps: Map<MeasureStep, CaptureIdentity>): String? {
+    val before = stamps[MeasureStep.ReferenceBefore]
+        ?: return "기준(처음)을 다시 재야 합니다 — 어느 입력으로 잰 것인지 남아 있지 않습니다."
+    val target = stamps[MeasureStep.Target]
+        ?: return "대상을 다시 재야 합니다 — 어느 입력으로 잰 것인지 남아 있지 않습니다."
+    val after = stamps[MeasureStep.ReferenceAfter]
+        ?: return "기준(마지막)을 다시 재야 합니다 — 어느 입력으로 잰 것인지 남아 있지 않습니다."
+
+    if (!before.sameRouteAs(after)) {
+        return "전후 기준이 서로 다른 입력입니다(${before.labelKo()} ↔ ${after.labelKo()}). " +
+            "그 둘의 차이는 마이크가 변한 것인지 방이 변한 것인지 말할 수 없습니다 — " +
+            "같은 기준 마이크로 다시 재십시오."
+    }
+    if (before.calKey.deviceKey == target.calKey.deviceKey) {
+        return SAME_DEVICE_KO
+    }
+    return null
+}
+
 // ----------------------------------------------------------------------
 // 증거의 일생 (CAR-02)
 // ----------------------------------------------------------------------
@@ -171,6 +210,9 @@ fun WizardState.discardingStep(step: MeasureStep): WizardState {
         outcome = null,
         levelTransfer = null,
         levelTransferBlockKo = null,
+        // 버린 단계의 이름표도 함께 간다 — 장이 없는데 이름표만 남으면
+        // 마지막 그물([sessionIdentityMismatchKo])이 있는 것으로 읽는다.
+        stepIdentities = stepIdentities - step,
     )
     // **버린 단계의 이름표만** 지운다. 장이 없는데 신원만 남으면 다음
     // 관문이 「이미 쟀다」로 읽는다. 남은 단계까지 지우면 멀쩡히 잰 것을

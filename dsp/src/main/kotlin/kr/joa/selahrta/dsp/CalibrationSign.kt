@@ -34,6 +34,15 @@ enum class SignEvidence {
 
     /** 단서가 없다. 대부분의 파일이 여기다. */
     Unknown,
+
+    /**
+     * **응답과 보정값 단서가 함께 있다.** 「없음」과 다른 일이다.
+     *
+     * 한 값으로 뭉개 두었더니 `decideReading` 이 이것을 「단서 없음」으로
+     * 읽고, 열 선언만 있으면 그대로 확정했다(독립 재검토 CF2-02). 모르는
+     * 것은 관례로 갈 수 있지만 **어긋나는 것은 물어야 한다.**
+     */
+    Conflicting,
 }
 
 /**
@@ -126,43 +135,56 @@ private fun declarationIn(line: String): ColumnDeclaration? {
     // 어긋난 축을 만든다(독립 재검토 CARF-05).
     val first = splitColumn(fields[0])
     if (first.name !in FREQ_COLUMNS) return null
-    if (first.unit.isNotEmpty() && first.unit !in FREQ_UNITS) {
+    // **괄호를 모두 본다**(독립 재검토 CF2-02). 하나만 보면 나머지의
+    // 모순이 사라진다 — 첫 괄호에 멀쩡한 단위를 두면 검사를 우회했다.
+    if (first.notes.any { it !in FREQ_UNITS }) {
         return ColumnDeclaration.Unsupported("${fields[0]} — 지원하지 않는 단위")
     }
 
     val second = splitColumn(fields[1])
-    // **단위도 dB 여야 한다.** `Amplitude (Pa)`·`Magnitude (linear)` 는
-    // 같은 수량이 아니다. 선형 크기 2 를 2dB 로 읽는 것은 잰 값이 아니다.
-    if (second.unit.isNotEmpty() && second.unit !in LEVEL_UNITS) {
-        return ColumnDeclaration.Unsupported("${fields[1]} — 지원하지 않는 단위")
-    }
-
     val byName = when (second.name) {
         in RESPONSE_COLUMNS -> CurveReading.Response
         in CORRECTION_COLUMNS -> CurveReading.Correction
         else -> return ColumnDeclaration.Unsupported(fields[1])
     }
-    // **괄호 안이 이름과 어긋나면 모르는 것이다.** `Response (correction)`
-    // 처럼 한 칸 안에서 서로 다른 말을 하는 파일이 있다 — 괄호를 통째로
-    // 지우던 때에는 그 모순이 소리 없이 사라졌다.
-    val byNote = readingOfWord(second.unit)
-    if (byNote != null && byNote != byName) {
-        return ColumnDeclaration.Unsupported("${fields[1]} — 이름과 설명이 어긋남")
+    for (note in second.notes) {
+        val says = readingOfWord(note)
+        // **단위는 dB 여야 한다.** `Amplitude (Pa)`·`Magnitude (linear)` 는
+        // 같은 수량이 아니다 — 선형 크기 2 를 2dB 로 읽는 것은 잰 값이 아니다.
+        if (says == null && note !in LEVEL_UNITS) {
+            return ColumnDeclaration.Unsupported("${fields[1]} — 지원하지 않는 단위")
+        }
+        // **괄호 안이 이름과 어긋나면 모르는 것이다.**
+        // `Response (dB) (correction)` 은 한 칸 안에서 서로 다른 말을 한다.
+        if (says != null && says != byName) {
+            return ColumnDeclaration.Unsupported("${fields[1]} — 이름과 설명이 어긋남")
+        }
     }
     return ColumnDeclaration.Second(byName)
 }
 
-/** 열 하나를 **이름과 괄호 안**으로 가른다. */
-private data class ColumnParts(val name: String, val unit: String)
+/**
+ * 열 하나를 **이름과 괄호 안**으로 가른다.
+ *
+ * 괄호는 여럿일 수 있다 — `Response (dB) (correction)`. 하나만 보면
+ * 나머지의 모순이 사라진다(독립 재검토 CF2-02).
+ */
+private data class ColumnParts(val name: String, val notes: List<String>)
 
 private fun splitColumn(raw: String): ColumnParts {
-    val note = Regex("""[(\[]([^)\]]*)[)\]]""").find(raw)?.groupValues?.get(1).orEmpty()
+    // **괄호를 모두 본다**(독립 재검토 CF2-02). 첫 괄호만 읽었더니
+    // `Response (dB) (correction)` 처럼 **뒤쪽 괄호의 모순이 사라졌다** —
+    // 첫 괄호에 멀쩡한 단위를 두면 검사를 우회할 수 있었다.
+    val notes = Regex("""[(\[]([^)\]]*)[)\]]""").findAll(raw)
+        .map { it.groupValues[1].lowercase().replace(Regex("""\s+"""), " ").trim() }
+        .filter { it.isNotEmpty() }
+        .toList()
     val name = raw
         .replace(Regex("""[(\[][^)\]]*[)\]]"""), " ")
         .lowercase()
         .replace(Regex("""\s+"""), " ")
         .trim()
-    return ColumnParts(name, note.lowercase().replace(Regex("""\s+"""), " ").trim())
+    return ColumnParts(name, notes)
 }
 
 /** 그 말이 어느 쪽을 가리키는가. 아무것도 안 가리키면 null. */
@@ -211,7 +233,8 @@ fun signEvidenceOf(headerLines: List<String>): SignEvidence {
     val response = RESPONSE_WORDS.any { text.contains(it) }
     val correction = CORRECTION_WORDS.any { text.contains(it) }
     return when {
-        response && correction -> SignEvidence.Unknown
+        // **어긋나는 것과 모르는 것을 가른다**(독립 재검토 CF2-02).
+        response && correction -> SignEvidence.Conflicting
         correction -> SignEvidence.LooksLikeCorrection
         response -> SignEvidence.LooksLikeResponse
         else -> SignEvidence.Unknown
@@ -226,6 +249,12 @@ fun signEvidenceOf(headerLines: List<String>): SignEvidence {
  */
 fun signNoticeKo(evidence: SignEvidence): String? = when (evidence) {
     SignEvidence.LooksLikeResponse, SignEvidence.Unknown -> null
+
+    // 어긋나는 것은 사람이 봐야 한다. 관례로 읽되 그 사실을 적는다.
+    SignEvidence.Conflicting ->
+        "이 파일의 머리글에 「응답」과 「보정값」이 함께 적혀 있습니다. " +
+            "어느 쪽인지 파일만으로는 정할 수 없어 관례대로 「응답」으로 " +
+            "읽었습니다 — 제조사 설명을 확인해 주십시오."
     // **화면에 그대로 나가는 문장이다.** 마크다운 강조(`**`)를 쓰지 않는다 —
     // 이 자리는 서식 없는 Text 라 별표가 글자 그대로 보인다. 기기에서
     // 확인하기 전에는 몰랐다(2026-09-22 실기기).
@@ -346,12 +375,31 @@ fun decideReading(
 ): ReadingDecision {
     // **둘째 열의 이름이 곧 답이다.** 설명문보다 세다 — 파서가 읽는
     // 바로 그 자리를 가리키기 때문이다.
+    // **머리글이 서로 어긋나면 선언이 있어도 묻는다**(독립 재검토 CF2-02).
+    //
+    // 예전에는 「응답」과 「보정값」이 함께 나오면 `Unknown` 으로 뭉갰고,
+    // 아래가 그것을 **단서 없음**으로 읽어 열 선언만으로 확정했다.
+    // `# Correction factors` + `Frequency (Hz),Response (dB)` 가 그렇게
+    // 통과했다. 모르는 것은 관례로 갈 수 있지만 **어긋나는 것은 물어야**
+    // 한다.
+    if (evidence == SignEvidence.Conflicting &&
+        stakes == ReadingStakes.ReferenceForCalibration
+    ) {
+        val suggest = (columns as? ColumnDeclaration.Second)?.reading ?: CurveReading.Response
+        return ReadingDecision.NeedsPerson(
+            suggest,
+            "머리글에 「응답」과 「보정값」이 함께 적혀 있습니다. 어느 쪽인지 " +
+                "이 파일만으로는 정할 수 없고, 이 파일은 교정의 기준이 되므로 " +
+                "확인이 필요합니다 — 잘못 읽으면 보정이 반대로 걸립니다.",
+        )
+    }
+
     if (columns is ColumnDeclaration.Second) {
         val named = columns.reading
         val text = when (evidence) {
             SignEvidence.LooksLikeResponse -> CurveReading.Response
             SignEvidence.LooksLikeCorrection -> CurveReading.Correction
-            SignEvidence.Unknown -> null
+            SignEvidence.Unknown, SignEvidence.Conflicting -> null
         }
         if (text != null && text != named && stakes == ReadingStakes.ReferenceForCalibration) {
             return ReadingDecision.NeedsPerson(
@@ -428,6 +476,13 @@ private fun decideFromProse(
                 "틀어집니다. 제조사 설명을 보고 정해 주십시오.",
         )
     }
+
+    // **어긋나는 것은 모르는 것과 다르다.** 표시용은 관례로 가되(틀려도
+    // 화면에서 드러나고 되돌리기 쉽다) 기준 CAL 은 위에서 이미 물었다.
+    SignEvidence.Conflicting -> ReadingDecision.Settled(
+        CurveReading.Response,
+        "머리글에 「응답」과 「보정값」이 함께 적혀 있어 관례대로 읽습니다.",
+    )
 }
 
 /**

@@ -385,6 +385,43 @@ class CodexUiAnalysisRegressionTest {
         }
     }
 
+    /**
+     * **CF2-02** — 괄호가 여럿일 때 뒤쪽 모순이 사라지면 안 된다.
+     *
+     * 첫 괄호만 읽었더니 **첫 괄호에 멀쩡한 단위를 두면** 검사를
+     * 우회했다. 그리고 설명문의 「응답+보정값」을 `Unknown` 으로 뭉개
+     * 두어, 그것을 「단서 없음」으로 읽고 열 선언만으로 확정했다.
+     */
+    @Test
+    fun `괄호가 여럿이어도 모순을 놓치지 않는다`() {
+        val cases = listOf(
+            listOf("# Correction factors", "Frequency (Hz),Response (dB)"),
+            listOf("Frequency (Hz),Response (dB) (correction)"),
+            listOf("Frequency (Hz) (kHz),Response (dB)"),
+        )
+        for (lines in cases) {
+            val d = decideReading(
+                signEvidenceOf(lines),
+                ReadingStakes.ReferenceForCalibration,
+                columnDeclarationOf(lines),
+            )
+            assertFalse("「$lines」 로 정해졌다: $d", d.settled)
+        }
+    }
+
+    /** 대조군 — 괄호가 하나이고 멀쩡하면 그대로 정해진다. */
+    @Test
+    fun `괄호가 멀쩡하면 정해진다`() {
+        val lines = listOf("Frequency (Hz),Response (dB)")
+        assertTrue(
+            decideReading(
+                signEvidenceOf(lines),
+                ReadingStakes.ReferenceForCalibration,
+                columnDeclarationOf(lines),
+            ).settled,
+        )
+    }
+
     /** 선언이 여럿이고 서로 어긋나면 **어느 쪽도 믿지 않는다.** */
     @Test
     fun `어긋나는 선언이 여럿이면 묻는다`() {

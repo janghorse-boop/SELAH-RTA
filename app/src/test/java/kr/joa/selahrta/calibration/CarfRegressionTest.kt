@@ -218,6 +218,98 @@ class CarfRegressionTest {
         assertNull(after.targetEvidenceKey)
     }
 
+    // ------------------------------------------------------------------
+    // CF2-01 — 세 단계가 한 벌인가
+    // ------------------------------------------------------------------
+
+    private fun stamps(
+        before: CaptureIdentity?,
+        target: CaptureIdentity?,
+        after: CaptureIdentity?,
+    ): Map<MeasureStep, CaptureIdentity> = buildMap {
+        before?.let { put(MeasureStep.ReferenceBefore, it) }
+        target?.let { put(MeasureStep.Target, it) }
+        after?.let { put(MeasureStep.ReferenceAfter, it) }
+    }
+
+    private fun usb(channel: Int) = CaptureIdentity(
+        calKey = CalibrationKey(
+            deviceKey = realStableKey(
+                kind = MicKind.Usb,
+                productName = "UMC404HD",
+                address = "card=1;device=0",
+            ),
+            source = CaptureSource.Unprocessed,
+            channelIndex = channel,
+        ),
+        routedAddress = "card=1;device=0",
+        sampleRate = 48_000,
+        routeConfirmed = true,
+        generation = 1L,
+    )
+
+    /**
+     * **가장 중요한 시험**(독립 재검토 CF2-01).
+     *
+     * 정상 순서에서 **마지막** 기준을 바꾸는 것은 막혀 있었는데,
+     * 완료 뒤 **처음** 기준만 바꾸는 역방향이 뚫려 있었다. 마지막 기준은
+     * 제 이름표가 없어 새 첫 기준의 것을 물려받았고, 세 단계가 차 있으니
+     * 곧바로 Pass 가 났다:
+     *
+     * ```
+     * REFERENCE_RETRY newBeforeChannel=1 retainedAfterChannel=0
+     * retainedAfterFrames=120 verdict=Pass
+     * ```
+     */
+    @Test
+    fun `전후 기준이 다른 입력이면 셈하지 않는다`() {
+        val why = sessionIdentityMismatchKo(
+            stamps(before = usb(1), target = builtIn("bottom"), after = usb(0)),
+        )
+        assertNotNull("전후 기준이 다른데 지나갔다", why)
+        assertTrue(why!!, why.contains("전후 기준"))
+    }
+
+    /** 대조군 — 전후 기준이 같으면 지나간다. */
+    @Test
+    fun `전후 기준이 같으면 셈한다`() {
+        assertNull(
+            sessionIdentityMismatchKo(
+                stamps(before = usb(0), target = builtIn("bottom"), after = usb(0)),
+            ),
+        )
+    }
+
+    /** 세대가 달라도 **같은 경로**면 한 벌이다 — 오가며 다시 여는 것이 정상이다. */
+    @Test
+    fun `다시 열었어도 같은 경로면 한 벌이다`() {
+        assertNull(
+            sessionIdentityMismatchKo(
+                stamps(
+                    before = usb(0),
+                    target = builtIn("bottom"),
+                    after = usb(0).copy(generation = 7L),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `대상이 기준과 같은 기기면 셈하지 않는다`() {
+        assertEquals(
+            SAME_DEVICE_KO,
+            sessionIdentityMismatchKo(stamps(usb(0), usb(1), usb(0))),
+        )
+    }
+
+    /** 이름표 없는 장은 **어느 마이크의 것인지 말할 수 없다.** */
+    @Test
+    fun `이름표가 빠지면 셈하지 않는다`() {
+        assertNotNull(sessionIdentityMismatchKo(stamps(null, builtIn("bottom"), usb(0))))
+        assertNotNull(sessionIdentityMismatchKo(stamps(usb(0), null, usb(0))))
+        assertNotNull(sessionIdentityMismatchKo(stamps(usb(0), builtIn("bottom"), null)))
+    }
+
     /** **버린 단계의 것만** 지운다. 멀쩡히 잰 것을 다시 재게 하면 안 된다. */
     @Test
     fun `대상을 버려도 기준은 남는다`() {
