@@ -5,7 +5,15 @@
 # 경고도 없어서 다 된 줄 알고 넘어간다. 2026-09-27 이 저장소에서 겪었다 — PR #10 병합 뒤
 # 그 가지에 세 커밋을 더 올렸고, 담당자가 묻고서야 알았다.
 #
+# **검사할 수 없으면 막지 않는다.** 이 훅이 들어오기 전에 딴 가지에는 스크립트가 없다.
+# 그때 밀기를 세우면 멀쩡한 일이 막혀 사람이 훅을 꺼 버린다 — 그러면 아무것도 막지 못한다.
+# 스크립트 자체가 이미 같은 원칙으로 적혀 있는데(gh 가 없으면 지나간다) 훅이 그 앞에서
+# 세우고 있었다.
+#
 # 켜는 방법(복제한 뒤 한 번): git config core.hooksPath .githooks
 # 급할 때 건너뛰기: git push --no-verify  (무엇을 건너뛰는지 알고 쓸 것)
+
+[ -f scripts/check-branch-open.mjs ] || exit 0
+command -v node >/dev/null 2>&1 || exit 0
 
 node scripts/check-branch-open.mjs || exit 1
