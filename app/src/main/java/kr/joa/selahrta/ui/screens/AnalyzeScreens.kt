@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kr.joa.selahrta.domain.MeasureState
 import kr.joa.selahrta.dsp.ThirdOctave
+import kr.joa.selahrta.dsp.Weighting
 import kr.joa.selahrta.dsp.FeedbackCandidate
 import kr.joa.selahrta.dsp.FeedbackEvent
 import kr.joa.selahrta.dsp.FeedbackState
@@ -106,6 +107,7 @@ fun RtaScreen(
             frozen = frozen,
             calibration = capture.calibration,
             onToggle = { frozen = !frozen },
+            analysisWeighting = capture.meterSettings.analysisWeighting,
             axisMode = axisMode,
             onAxisMode = onAxisTap,
         )
@@ -363,6 +365,7 @@ fun SpectrumScreen(
             frozen = frozen,
             calibration = capture.calibration,
             onToggle = { frozen = !frozen },
+            analysisWeighting = capture.meterSettings.analysisWeighting,
             axisMode = axisMode,
             onAxisMode = onAxisTap,
         )
@@ -458,6 +461,7 @@ fun SpectrogramScreen(
             frozen = frozen,
             calibration = capture.calibration,
             onToggle = feed::toggleFrozen,
+            analysisWeighting = capture.meterSettings.analysisWeighting,
         )
     }
 
@@ -835,6 +839,16 @@ internal fun ChartControls(
     frozen: Boolean,
     calibration: ActiveCalibration,
     onToggle: () -> Unit,
+    /**
+     * 이 그림에 걸린 가중.
+     *
+     * **알약으로 둔 까닭**: 분석 화면은 폰에서 늘 가로로 돈다
+     * ([kr.joa.selahrta.ui.LandscapeWhile]). 가로에서는 차트만 남기므로,
+     * 아래에 적는 긴 각주는 **폰에서 한 번도 보이지 않는다** — 실제로
+     * 그렇게 만들었다가 기기에서 알았다(2026-09-27). 잣대는 차트와 같은
+     * 자리에 있어야 한다.
+     */
+    analysisWeighting: Weighting? = null,
     /** 세로축 방식. null 이면 안 그린다(Spectrogram 은 세로가 주파수다). */
     axisMode: AxisMode? = null,
     onAxisMode: () -> Unit = {},
@@ -845,8 +859,28 @@ internal fun ChartControls(
     ) {
         HoldPill(frozen, onToggle)
         CalibrationPill(calibration)
+        analysisWeighting?.let { WeightingPill(it) }
         axisMode?.let { AxisModePill(it, onAxisMode) }
     }
+}
+
+/**
+ * 이 그림에 걸린 가중을 적는다.
+ *
+ * **누를 수 없다.** 가중은 설정에서 바꾼다 — 세 화면이 같은 잣대를
+ * 쓰므로 한 화면에서만 바꾸면 나머지와 어긋난 것처럼 보인다.
+ */
+@Composable
+private fun WeightingPill(w: Weighting) {
+    Text(
+        w.unitSuffix,
+        color = SelahColors.TextSecondary,
+        fontSize = 10.sp,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier
+            .background(SelahColors.SurfaceVariant, RoundedCornerShape(999.dp))
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+    )
 }
 
 @Composable
