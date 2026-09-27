@@ -102,39 +102,71 @@ fun SelahApp() {
     // ViewModel 은 Intent 를 띄울 수 없다(Context 가 Activity 여야 한다).
     // 그래서 상태로 올려 두고 화면이 띄운 뒤 지운다 — 안 지우면 화면을
     // 다시 그릴 때마다 공유 창이 또 뜬다.
-    val shareUri = capture.shareCsvUri
+    // **내보낸 파일을 건넬 자리.**
+    //
+    // ViewModel 은 Intent 를 띄울 수 없다(Context 가 Activity 여야 한다).
+    // 그래서 상태로 올려 두고 화면이 띄운 뒤 비운다 — 안 비우면 화면을
+    // 다시 그릴 때마다 공유 창이 또 뜬다.
+    val shareUris = capture.shareUris
     val ctx = androidx.compose.ui.platform.LocalContext.current
-    androidx.compose.runtime.LaunchedEffect(shareUri) {
-        val uri = shareUri ?: return@LaunchedEffect
-        val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-            // **`text/` 으로 보내지 않는다**(2026-09-27 실기기).
-            //
-            // 담당자가 카카오톡 「나에게 보내기」를 눌렀는데 파일이 안
-            // 갔다. 권한 문제가 아니었다 — 기기에 물어보니
-            // (`cmd package query-activities`) **카카오톡은 `text/csv` 를
-            // 아예 받지 않는다.** 그러면 `text/` 를 받는 다른 길로 가고,
-            // 그쪽은 글자(`EXTRA_TEXT`)만 보므로 **아무것도 안 간다.**
-            //
-            // 파일임을 분명히 한다. 이름이 `.csv` 로 끝나므로 받는 쪽에서
-            // 엑셀로 여는 데는 지장이 없다.
-            type = "application/octet-stream"
-            putExtra(android.content.Intent.EXTRA_STREAM, uri)
-            // **권한을 ClipData 로도 싣는다.** `EXTRA_STREAM` 하나만으로는
-            // 받는 앱에 읽기 권한이 따라가지 않는 경로가 있다.
-            clipData = android.content.ClipData.newRawUri(
-                uri.lastPathSegment ?: "measurement.csv",
-                uri,
-            )
-            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    androidx.compose.runtime.LaunchedEffect(shareUris) {
+        if (shareUris.isEmpty()) return@LaunchedEffect
+        // **`text/` 으로 보내지 않는다**(2026-09-27 실기기).
+        //
+        // 담당자가 카카오톡 「나에게 보내기」를 눌렀는데 파일이 안 갔다.
+        // 권한 문제가 아니었다 — 기기에 물어보니
+        // (`cmd package query-activities`) **카카오톡은 `text/csv` 를
+        // 아예 받지 않는다.** 그러면 `text/` 를 받는 다른 길로 가고,
+        // 그쪽은 글자만 보므로 아무것도 안 간다.
+        val send = if (shareUris.size == 1) {
+            android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                type = "application/octet-stream"
+                putExtra(android.content.Intent.EXTRA_STREAM, shareUris.first())
+                clipData = android.content.ClipData.newRawUri(
+                    shareUris.first().lastPathSegment ?: "selah-rta",
+                    shareUris.first(),
+                )
+            }
+        } else {
+            // **둘을 한 번에 보낸다.** 표와 소리가 따로 가면 받는 쪽에서
+            // 짝이 어긋난다.
+            android.content.Intent(android.content.Intent.ACTION_SEND_MULTIPLE).apply {
+                type = "application/octet-stream"
+                putParcelableArrayListExtra(
+                    android.content.Intent.EXTRA_STREAM,
+                    ArrayList(shareUris),
+                )
+                // 권한이 따라가게 모든 파일을 ClipData 에도 싣는다.
+                clipData = android.content.ClipData.newRawUri(
+                    "selah-rta",
+                    shareUris.first(),
+                ).also { cd ->
+                    shareUris.drop(1).forEach { cd.addItem(android.content.ClipData.Item(it)) }
+                }
+            }
         }
+        send.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
         runCatching {
             val chooser = android.content.Intent.createChooser(send, "측정 기록 보내기")
-            // 고르는 창 자체에도 권한을 붙인다 — 미리보기를 그리는 쪽이
-            // 따로 읽는 경우가 있다.
             chooser.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
             ctx.startActivity(chooser)
         }
         vm.clearShareUri()
+    }
+
+    // **소리도 담을지 묻는 창.**
+    //
+    // 예배 소리를 담는 일은 dB 숫자를 남기는 것과 성격이 다르다 —
+    // 설교와 성도들의 목소리가 그대로 들어간다. 그래서 기록을 시작할
+    // 때마다 묻는다(담당자 결정 2026-09-27).
+    if (capture.askAudioBeforeRecording) {
+        kr.joa.selahrta.ui.components.AudioAskDialog(
+            format = capture.audioFormat,
+            onFormat = vm::setAudioFormat,
+            onWithAudio = { vm.startRecording(withAudio = true) },
+            onWithoutAudio = { vm.startRecording(withAudio = false) },
+            onCancel = vm::dismissAudioAsk,
+        )
     }
 
     val profiles: ProfilesViewModel = viewModel()
@@ -468,7 +500,7 @@ fun SelahApp() {
                         },
                         onStart = beginMeasure,
                         onStop = vm::stop,
-                        onStartRecording = vm::startRecording,
+                        onStartRecording = vm::askBeforeRecording,
                         onStopRecording = vm::stopRecording,
                         onDismissDeviceNotice = vm::dismissDeviceNotice,
                     )
@@ -508,9 +540,12 @@ fun SelahApp() {
                             capture = capture,
                             onOpen = vm::openSession,
                             onClose = vm::closeSession,
-                            onExport = vm::exportSession,
+                            onExport = { vm.exportSession(it) },
                             onDelete = vm::deleteSession,
                             onDismissNotice = vm::dismissHistoryNotice,
+                            audioFileOf = { vm.audioFileOf(it) ?: java.io.File("") },
+                            onShareAudio = vm::shareAudioOnly,
+                            rows = capture.openedRows,
                         )
                     }
                     ViewMode.Signal -> ToolsScreen(

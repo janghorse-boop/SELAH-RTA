@@ -89,7 +89,10 @@ class CaptureController(
      * 맡고, 여기서는 손에 쥐어 건네기만 한다. 오디오 스레드에서 파일을
      * 쓰면 읽기가 밀려 측정이 끊기는 것과 같은 까닭이다(녹음 설계 §2).
      */
-    private val onRecordingFinished: (kr.joa.selahrta.recording.RecordedSession) -> Unit = {},
+    private val onRecordingFinished: (
+        kr.joa.selahrta.recording.RecordedSession,
+        kr.joa.selahrta.recording.AudioFileRecorder?,
+    ) -> Unit = { _, _ -> },
     /**
      * 측정 세션의 **최종** 상태가 바뀜다. 포그라운드 서비스가
      * 이것만 따라간다([CaptureLifecycle]).
@@ -204,8 +207,22 @@ class CaptureController(
      * 세션이 없으면 아무 일도 하지 않는다 — 측정 중에만 기록한다.
      * 마이크가 다시 열리면 세션이 바뀌고 기록도 거기서 끊긴다.
      */
-    fun startRecording(make: (CaptureSession) -> kr.joa.selahrta.recording.SessionRecorder) {
-        postToCapture { s -> if (s.recorder == null) s.recorder = make(s) }
+    fun startRecording(
+        make: (CaptureSession) -> kr.joa.selahrta.recording.SessionRecorder,
+        /**
+         * 소리도 파일로 담을 것인가. 담지 않으면 null 을 돌려준다.
+         *
+         * **기본은 담지 않는 것이다.** 사람이 기록을 시작할 때마다 묻고,
+         * 그렇다고 해야 여기가 채워진다.
+         */
+        makeAudio: (CaptureSession) -> kr.joa.selahrta.recording.AudioFileRecorder? = { null },
+    ) {
+        postToCapture { s ->
+            if (s.recorder == null) {
+                s.recorder = make(s)
+                s.audioFile = makeAudio(s)
+            }
+        }
     }
 
     /** 측정을 멈추지 않고 기록만 끝낸다. */
@@ -213,8 +230,12 @@ class CaptureController(
         postToCapture { s ->
             val r = s.recorder ?: return@postToCapture
             s.recorder = null
+            val audio = s.audioFile
+            s.audioFile = null
             // **여기서 파일을 쓰지 않는다.** 오디오 스레드다.
-            post { onRecordingFinished(r.finish()) }
+            // 소리 파일을 마무리하는 일도 마찬가지다 — 인코더를 멈추고
+            // 머리를 고치는 데 시간이 걸린다.
+            post { onRecordingFinished(r.finish(), audio) }
         }
     }
 
@@ -568,6 +589,12 @@ class CaptureController(
             // 쪼개어 넣어도 결과가 같다는 것은 `SliceOffsetTest` 가 오차 0
             // 으로 확인했다. **기록하지 않을 때는 예전 그대로**라, 쓰지 않는
             // 사람에게는 아무 일도 일어나지 않는다.
+            // **소리 파일에도 같은 덩어리를 넘긴다.**
+            //
+            // 여기서 파일을 쓰지 않는다 — 넣기만 하고 전용 스레드가
+            // 쓴다. 한 번이라도 멈추면 그 자리의 소리가 사라진다.
+            session.audioFile?.write(block.samples, block.frames)
+
             val rec = session.recorder
             if (rec != null) {
                 rec.onBlock(block.samples, block.frames, stats.clipped, session.engine, session.rta)
@@ -678,7 +705,11 @@ class CaptureController(
         onStoppedHook()
         // 파일 쓰기는 바깥에서 한다. 여기서 하면 멈추는 순간이 길어지고,
         // 이 클래스가 안드로이드를 알게 된다.
-        recorded?.let { onRecordingFinished(it) }
+        // **측정을 끝낼 때도 소리 파일을 마무리한다.** 안 하면 머리가
+        // 0 인 파일이 남아 플레이어가 못 연다.
+        val audio = active?.audioFile
+        active?.audioFile = null
+        recorded?.let { onRecordingFinished(it, audio) }
 
         _measurement.value = null
         _state.value = _state.value.copy(

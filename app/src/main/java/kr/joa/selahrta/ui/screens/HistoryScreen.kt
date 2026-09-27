@@ -62,6 +62,11 @@ fun HistoryScreen(
     onExport: (SessionMeta) -> Unit,
     onDelete: (SessionMeta) -> Unit,
     onDismissNotice: () -> Unit,
+    /** 그 기록의 소리 파일이 어디 있는지. 없으면 없는 파일을 준다. */
+    audioFileOf: (SessionMeta) -> java.io.File,
+    onShareAudio: (SessionMeta) -> Unit,
+    /** 열어 본 기록의 행들. 아직 못 읽었으면 비어 있다. */
+    rows: List<kr.joa.selahrta.recording.TimelineRow> = emptyList(),
 ) {
     val opened = capture.openedSession
     Column(
@@ -83,7 +88,15 @@ fun HistoryScreen(
         if (opened == null) {
             SessionList(capture, onOpen)
         } else {
-            SessionDetail(opened, onClose, onExport, onDelete)
+            SessionDetail(
+                m = opened,
+                onClose = onClose,
+                onExport = onExport,
+                onDelete = onDelete,
+                audioFileOf = audioFileOf,
+                onShareAudio = onShareAudio,
+                rows = rows,
+            )
         }
     }
 }
@@ -91,7 +104,10 @@ fun HistoryScreen(
 @Composable
 private fun SessionList(capture: CaptureUiState, onOpen: (SessionMeta) -> Unit) {
     InfoBar(
-        "기본 측정은 소리를 저장하지 않습니다. 음압·주파수 요약만 남습니다.",
+        // **약속을 정확히 적는다.** 예전에는 「저장하지 않습니다」였는데,
+        // 이제는 물어서 담을 수 있다 — 그 말을 그대로 두면 거짓이 된다.
+        "소리는 기본으로 담지 않습니다. 기록을 시작할 때마다 물어보고, " +
+            "「소리도 담기」를 고른 기록에만 소리가 남습니다.",
         modifier = Modifier.padding(top = 4.dp, bottom = 16.dp),
     )
 
@@ -190,8 +206,12 @@ private fun SessionDetail(
     onClose: () -> Unit,
     onExport: (SessionMeta) -> Unit,
     onDelete: (SessionMeta) -> Unit,
+    audioFileOf: (SessionMeta) -> java.io.File,
+    onShareAudio: (SessionMeta) -> Unit,
+    rows: List<kr.joa.selahrta.recording.TimelineRow>,
 ) {
     var confirmDelete by remember { mutableStateOf(false) }
+    var playMs by remember(m.id) { mutableStateOf(0) }
 
     TextButton(onClick = onClose) {
         Text("← 목록으로", color = SelahColors.Accent, fontSize = 13.sp)
@@ -200,6 +220,20 @@ private fun SessionDetail(
     // **경고가 맨 위에 온다.** 아래로 밀리면 숫자를 먼저 읽고 넘어간다.
     reportWarningsKo(m).forEach {
         InfoBar(it, tone = SelahColors.Warn, modifier = Modifier.padding(bottom = 8.dp))
+    }
+
+    // **소리를 위에 둔다.** 숫자를 보다가 「이때 무슨 소리였지」가
+    // 궁금해지는 것이라, 표 아래에 묻어 두면 안 찾는다.
+    m.audio?.let { a ->
+        kr.joa.selahrta.ui.components.AudioPlayerCard(
+            audio = a,
+            file = audioFileOf(m),
+            onShare = { onShareAudio(m) },
+            onPosition = { playMs = it },
+        )
+        // **듣는 자리의 값을 바로 아래 붙인다.** 숫자와 소리를 같은
+        // 시각으로 묶어야 「이 자리가 그 자리」라고 말할 수 있다.
+        PlaybackReadout(m, rows, playMs)
     }
 
     buildReport(m).forEach { section -> Section(section) }
@@ -216,7 +250,13 @@ private fun SessionDetail(
                 contentColor = Color(0xFF00201C),
             ),
         ) {
-            Text("CSV 로 내보내기", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            // **둘을 한 번에 보낸다.** 표와 소리가 따로 가면 받는 쪽에서
+            // 어느 소리가 어느 표의 것인지 알 수 없다.
+            Text(
+                if (m.audio != null) "CSV·소리 보내기" else "CSV 로 내보내기",
+                fontWeight = FontWeight.Bold,
+                fontSize = 13.sp,
+            )
         }
         TextButton(onClick = { confirmDelete = true }) {
             Text("삭제", color = SelahColors.TextSecondary, fontSize = 13.sp)
@@ -229,6 +269,86 @@ private fun SessionDetail(
             onConfirm = { confirmDelete = false; onDelete(m) },
             onCancel = { confirmDelete = false },
         )
+    }
+}
+
+/**
+ * **지금 듣는 자리의 값.**
+ *
+ * 행은 0.5초짜리다. 그 자리에 행이 없으면 **없다고 적는다** — 옆 행을
+ * 가져다 놓으면 소리와 숫자가 어긋난 채 그럴듯해 보인다.
+ */
+@Composable
+private fun PlaybackReadout(
+    m: SessionMeta,
+    rows: List<kr.joa.selahrta.recording.TimelineRow>,
+    atMs: Int,
+) {
+    if (rows.isEmpty()) {
+        Text(
+            "이 기록의 자세한 값은 아직 읽는 중입니다.",
+            color = SelahColors.TextMuted,
+            fontSize = 11.sp,
+            modifier = Modifier.padding(bottom = 10.dp),
+        )
+        return
+    }
+    val v = kr.joa.selahrta.recording.playbackValuesAt(m, rows, atMs.toLong())
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(bottom = 10.dp)
+            .background(SelahColors.SurfaceVariant, RoundedCornerShape(12.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            "듣는 자리의 값",
+            color = SelahColors.TextMuted,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 1.sp,
+        )
+        if (v == null) {
+            Text(
+                "이 자리에는 잰 값이 없습니다.",
+                color = SelahColors.TextSecondary,
+                fontSize = 12.sp,
+            )
+            return@Column
+        }
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            ReadoutValue("현재", v.currentDb, m)
+            ReadoutValue("최대", v.maxDb, m)
+            ReadoutValue("순간최고", v.peakDb, m)
+        }
+        // **찌그러진 자리는 값이 전부 하한이다.** 들으면서 알아야 한다.
+        if (v.clipped) {
+            Text(
+                "이 자리는 입력이 찌그러졌습니다 — 실제는 이보다 높습니다.",
+                color = SelahColors.Warn,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ReadoutValue(label: String, db: Double?, m: SessionMeta) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(label, color = SelahColors.TextMuted, fontSize = 10.sp)
+        Text(
+            // **없는 값을 0 으로 적지 않는다.** 놓친 자리다.
+            if (db != null && db.isFinite()) "%.1f".format(db) else "—",
+            color = SelahColors.TextPrimary,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold,
+        )
+        Text(m.weighting.unitSuffix, color = SelahColors.TextMuted, fontSize = 10.sp)
     }
 }
 

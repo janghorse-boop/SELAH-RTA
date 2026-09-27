@@ -166,9 +166,18 @@ private fun healthSection(m: SessionMeta) = ReportSection(
             "보정 바뀜",
             "${m.events.count { it.kind == SessionEventKind.CalibrationChange }}회",
         ),
+        // **소리를 담았는가.** 담는 것은 기본이 아니므로, 담긴 기록은
+        // 그렇다고 적어야 나중에 열어 보지 않고 안다.
+        ReportLine("담긴 소리", audioKo(m)),
         ReportLine("셈 판", "v${m.analysisVersion}"),
     ),
 )
+
+private fun audioKo(m: SessionMeta): String {
+    val a = m.audio ?: return "담지 않음"
+    val dropped = if (a.droppedBlocks > 0) " · 못 담은 조각 ${a.droppedBlocks}개" else ""
+    return "${a.format.labelKo} · ${a.sizeKo()}$dropped"
+}
 
 private fun clippedKo(m: SessionMeta): String = when (val n = m.clippedRows) {
     null -> NOT_RECORDED_KO

@@ -99,6 +99,15 @@ data class SessionMeta(
      */
     val clippedRows: Int? = null,
 
+    /**
+     * **소리도 파일로 담았는가.** 안 담았으면 null.
+     *
+     * 담는 것은 기본이 아니다 — 기록을 시작할 때마다 묻고, 사람이
+     * 그렇다고 해야 담긴다. 그 사실이 기록에 남아야 나중에 「이 예배는
+     * 소리가 있나」를 열어 보지 않고 알 수 있다.
+     */
+    val audio: RecordedAudio? = null,
+
     /** 어느 셈으로 만든 기록인가. 셈이 바뀌면 옛 기록과 견줄 수 없다. */
     val analysisVersion: Int = ANALYSIS_VERSION,
 
@@ -166,6 +175,27 @@ enum class SessionEventKind(val labelKo: String) {
 }
 
 /**
+ * 기록에 함께 담긴 소리 파일.
+ *
+ * **담는 것은 기본이 아니다.** 예배 소리를 담는 일은 dB 숫자를 남기는
+ * 것과 성격이 다르다 — 설교와 성도들의 목소리가 그대로 들어간다.
+ */
+data class RecordedAudio(
+    val format: AudioFileFormat,
+    val fileName: String,
+    val bytes: Long,
+    /** 밀려 버린 덩어리 수. **0 이 아니면 소리에 빈 자리가 있다.** */
+    val droppedBlocks: Int = 0,
+) {
+    /** 사람이 읽을 크기. */
+    fun sizeKo(): String = when {
+        bytes >= 1_000_000L -> "%.1fMB".format(bytes / 1_000_000.0)
+        bytes > 0L -> "%dKB".format(bytes / 1000)
+        else -> "0KB"
+    }
+}
+
+/**
  * 겉장 판 번호.
  *
  * 읽는 쪽은 **더 새 판을 만나면 읽지 않는다.** 모르는 칸을 0 으로 채워
@@ -221,6 +251,13 @@ fun encodeSessionMeta(m: SessionMeta): String = buildString {
     put("droppedPackets", m.droppedPackets)
     // **모르면 적지 않는다.** 0 과 「모름」은 다르다.
     m.clippedRows?.let { put("clippedRows", it) }
+
+    m.audio?.let { a ->
+        put("audio.format", a.format.name)
+        put("audio.fileName", a.fileName)
+        put("audio.bytes", a.bytes)
+        put("audio.droppedBlocks", a.droppedBlocks)
+    }
     put("analysisVersion", m.analysisVersion)
     put("memo", m.memo)
 
@@ -337,6 +374,15 @@ fun decodeSessionMeta(text: String): Result<SessionMeta> {
         events = events,
         droppedPackets = r.int("droppedPackets"),
         clippedRows = r.intOrNull("clippedRows"),
+        // **없어도 되는 칸이다.** 소리를 안 담은 기록이 훨씬 많다.
+        audio = r.enumOrNull<AudioFileFormat>("audio.format")?.let { fmt ->
+            RecordedAudio(
+                format = fmt,
+                fileName = r.strOrNull("audio.fileName").orEmpty(),
+                bytes = r.longOrNull("audio.bytes") ?: 0L,
+                droppedBlocks = r.intOrNull("audio.droppedBlocks") ?: 0,
+            )
+        },
         analysisVersion = r.int("analysisVersion"),
         memo = r.str("memo"),
         // **조건 칸은 없어도 된다**(판 2에서 생겼다).

@@ -136,12 +136,21 @@ object SessionExport {
         atMs: Long,
     ): ChurchSegment? = timeline.lastOrNull { it.first <= atMs }?.second
 
-    /** 내보낼 파일 이름. 시각으로 만들어 겹치지 않게 한다. */
-    fun fileName(meta: SessionMeta): String {
-        val t = java.time.Instant.ofEpochMilli(meta.startedAtEpochMs)
+    /**
+     * 내보낼 이름의 몸통. 시각으로 만들어 겹치지 않게 한다.
+     *
+     * **표와 소리가 같은 몸통을 쓴다.** 받는 쪽에는 파일 이름만 남는데,
+     * 소리가 `audio.m4a` 로 가면 표 여러 장 옆에서 **어느 기록의
+     * 소리인지 알 수 없다** — 카톡으로 받아 보고 알았다.
+     */
+    fun stem(startedAtEpochMs: Long): String {
+        val t = java.time.Instant.ofEpochMilli(startedAtEpochMs)
             .toString()
             .replace(':', '-')
             .substringBefore('.')
-        return "selah-rta-$t.csv"
+        return "selah-rta-$t"
     }
+
+    /** 내보낼 표 이름. */
+    fun fileName(meta: SessionMeta): String = "${stem(meta.startedAtEpochMs)}.csv"
 }

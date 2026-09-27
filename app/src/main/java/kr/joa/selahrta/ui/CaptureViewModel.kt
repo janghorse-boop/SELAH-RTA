@@ -166,10 +166,33 @@ data class CaptureUiState(
     val brokenSessions: Int = 0,
     /** 지금 열어 본 기록. 목록만 볼 때는 null. */
     val openedSession: kr.joa.selahrta.recording.SessionMeta? = null,
+    /**
+     * 열어 본 기록의 행들. 아직 못 읽었으면 비어 있다.
+     *
+     * **열 때만 읽는다.** 목록을 그리려고 전부 읽으면 화면이 멈춘다 —
+     * 2시간이면 1.4MB 다.
+     */
+    val openedRows: List<kr.joa.selahrta.recording.TimelineRow> = emptyList(),
     /** 내보내기·삭제 결과를 사람에게 한 줄로. */
     val historyNoticeKo: String? = null,
-    /** 공유 창을 띄울 파일. 띄운 뒤 화면이 지운다. */
-    val shareCsvUri: android.net.Uri? = null,
+    /**
+     * 공유 창을 띄울 파일들. 띄운 뒤 화면이 비운다.
+     *
+     * **CSV 와 소리를 함께 보낸다.** 따로 보내면 받는 쪽에서 짝이
+     * 어긋난다 — 어느 소리가 어느 표의 것인지 알 수 없다.
+     */
+    val shareUris: List<android.net.Uri> = emptyList(),
+    /**
+     * **소리도 담을지 묻는 중인가.**
+     *
+     * 예배 소리를 담는 일은 dB 숫자를 남기는 것과 성격이 다르다 —
+     * 설교와 성도들의 목소리가 그대로 들어간다. 그래서 기록을 시작할
+     * 때마다 묻는다.
+     */
+    val askAudioBeforeRecording: Boolean = false,
+    /** 소리를 담기로 했을 때 어느 꼴로 담을지. 설정에서 고른다. */
+    val audioFormat: kr.joa.selahrta.recording.AudioFileFormat =
+        kr.joa.selahrta.recording.AudioFileFormat.M4a,
     /** 하울링 후보(명세 9장). 센 것부터. 없으면 빈 목록이다. */
     val feedback: List<FeedbackCandidate> = emptyList(),
     /**
@@ -437,6 +460,14 @@ class CaptureSession(
      */
     var recorder: kr.joa.selahrta.recording.SessionRecorder? = null
 
+    /**
+     * 소리를 파일로 담는 쪽. **담지 않기로 했으면 null** 이다.
+     *
+     * 캡처 스레드가 덩어리를 넘기기만 하고, 쓰는 일은 전용 스레드가
+     * 한다. 기록기와 생명이 같다 — 함께 시작하고 함께 끝난다.
+     */
+    var audioFile: kr.joa.selahrta.recording.AudioFileRecorder? = null
+
     init {
         // FFT 한 장이 나올 때마다 탐지기에 넘긴다. 시각은 덩어리를 받은
         // 시각으로 쓴다 — 오디오 스레드에서만 건드리므로 안전하다.
@@ -553,7 +584,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             curveJob?.cancel()
             curveJob = null
         },
-        onRecordingFinished = { rec -> writeRecording(rec) },
+        onRecordingFinished = { rec, audio -> writeRecording(rec, audio) },
         // **서비스는 여기서만 내린다.** `onStoppedHook` 에 넣으면 기기를
         // 갈아타는 중의 `stop` 에도 내려가고, 백그라운드에서는 다시 띄울 수
         // 없어 거기서 마이크가 끊긴다(독립 검증 FS01).
@@ -718,6 +749,14 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         const val MIC_LOCATION_ASSET = "galaxy-mic-locations.json"
 
         /**
+         * 소리 파이프의 버퍼 한 칸 크기(프레임).
+         *
+         * 48kHz 에서 한 덩어리가 1024 프레임 남짓이다. 넉넉히 잡아 두면
+         * 큰 덩어리가 와도 잘리지 않는다 — 잘리면 그만큼 소리가 빠진다.
+         */
+        const val AUDIO_MAX_FRAMES = 8192
+
+        /**
          * 배경을 몇 장 모을 것인가. 48kHz·FFT4096·50% 겹침이면 초당 23장쯤이라
          * 3초쯤이다.
          *
@@ -776,7 +815,9 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 val old = controller.baseState.value.meterSettings
                 // **도착했다고 함께 적는다.** 그 전까지 화면은 이 값들을
                 // 그리지 않는다([CaptureUiState.settingsLoaded]).
-                controller.update { st -> st.copy(meterSettings = s, settingsLoaded = true) }
+                controller.update { st ->
+                    st.copy(meterSettings = s, settingsLoaded = true, audioFormat = s.audioFormat)
+                }
                 controller.onSettingsChanged(old, s)
             }
         }
@@ -1781,8 +1822,35 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     // ------------------------------------------------------------------
 
     /** 기록을 시작한다. 측정 중에만 된다. */
-    fun startRecording() {
+    /**
+     * 기록 단추를 눌렀다. **먼저 소리를 담을지 묻는다.**
+     *
+     * 담는 것은 기본이 아니다. 실수로 켜진 채 다음 예배까지 담기는
+     * 일이 없도록, 켜고 끄는 스위치가 아니라 **매번 묻는** 쪽으로
+     * 했다(담당자 결정 2026-09-27).
+     */
+    fun askBeforeRecording() {
         val st = controller.baseState.value
+        if (st.measure !is MeasureState.Running) {
+            controller.update { it.copy(errorKo = "먼저 측정을 시작하십시오.") }
+            return
+        }
+        controller.update { it.copy(askAudioBeforeRecording = true) }
+    }
+
+    fun dismissAudioAsk() {
+        controller.update { it.copy(askAudioBeforeRecording = false) }
+    }
+
+    /** 소리를 담을 꼴을 고른다. 설정에 남는다. */
+    fun setAudioFormat(f: kr.joa.selahrta.recording.AudioFileFormat) {
+        controller.update { it.copy(audioFormat = f) }
+        viewModelScope.launch { settingsStore.setAudioFormat(f) }
+    }
+
+    fun startRecording(withAudio: Boolean) {
+        val st = controller.baseState.value
+        controller.update { it.copy(askAudioBeforeRecording = false) }
         if (st.measure !is MeasureState.Running) {
             controller.update { it.copy(errorKo = "먼저 측정을 시작하십시오.") }
             return
@@ -1798,6 +1866,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         val cal = st.calibration
         val window = st.meterSettings.leqWindow.millis
         val weighting = st.meterSettings.weighting
+        val fmt = st.audioFormat
 
         // 자리를 먼저 만든다. 겉장은 끝낼 때 쓴다 — 그것이 「온전하다」는
         // 표시다.
@@ -1808,16 +1877,35 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                     controller.update { it.copy(errorKo = "기록할 자리를 만들지 못했습니다.") }
                     return@onMainThread
                 }
-                controller.startRecording { session ->
-                    kr.joa.selahrta.recording.SessionRecorder(
-                        id = id,
-                        nominalSampleRate = session.sampleRate,
-                        startOffsetDb = cal.offset.db,
-                        startReferenceOnly = cal.isReferenceOnly,
-                        startLeqWindowMs = window,
-                        weighting = weighting,
-                    )
-                }
+                controller.startRecording(
+                    make = { session ->
+                        kr.joa.selahrta.recording.SessionRecorder(
+                            id = id,
+                            nominalSampleRate = session.sampleRate,
+                            startOffsetDb = cal.offset.db,
+                            startReferenceOnly = cal.isReferenceOnly,
+                            startLeqWindowMs = window,
+                            weighting = weighting,
+                        )
+                    },
+                    makeAudio = { session ->
+                        if (!withAudio) {
+                            null
+                        } else {
+                            // **기록 폴더 안에 둔다.** 지울 때 함께 사라져야
+                            // 한다 — 따로 두면 기록을 지워도 소리가 남는다.
+                            kr.joa.selahrta.recording.AudioFileRecorder.create(
+                                format = fmt,
+                                file = java.io.File(
+                                    sessionStore.dirOf(id),
+                                    kr.joa.selahrta.recording.audioFileName(fmt, startedAt),
+                                ),
+                                sampleRate = session.sampleRate,
+                                maxFramesPerBlock = AUDIO_MAX_FRAMES,
+                            )
+                        }
+                    },
+                )
                 recordingStartedAt = startedAt
                 recordingOpened = opened
                 controller.update { it.copy(recordingId = id) }
@@ -1856,7 +1944,10 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      * 읽었더니 늘 비어 있었다 — [stopRecording] 이 곧바로 지우는데 이
      * 콜백은 캡처 스레드를 거쳐 그 뒤에 온다.
      */
-    private fun writeRecording(rec: kr.joa.selahrta.recording.RecordedSession) {
+    private fun writeRecording(
+        rec: kr.joa.selahrta.recording.RecordedSession,
+        audio: kr.joa.selahrta.recording.AudioFileRecorder?,
+    ) {
         val opened = recordingOpened
         val startedAt = recordingStartedAt
         val st = controller.baseState.value
@@ -1909,6 +2000,18 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                         // **찌그러짐은 행에 있다.** 여기서 한 번 세어 두지
                         // 않으면 목록과 리포트가 타임라인을 열어야 안다.
                         clippedRows = rec.rows.count { it.clipped },
+                        // **소리 파일을 마무리하고 그 결과를 적는다.**
+                        // 실패했거나 빈 파일이면 null 이 오고, 그때 파일은
+                        // 스스로 지워진다 — 반쯤 쓴 파일을 남기면 사람이
+                        // 「담겼다」고 여긴다.
+                        audio = audio?.finish()?.let { a ->
+                            kr.joa.selahrta.recording.RecordedAudio(
+                                format = a.format,
+                                fileName = a.fileName,
+                                bytes = a.bytes,
+                                droppedBlocks = a.droppedBlocks,
+                            )
+                        },
                         // **보정이 바뀐 자리를 남긴다.** 행은 epoch id 만
                         // 지니므로, 이 표가 없으면 다시 열었을 때 그 id 를
                         // 풀 길이 없다 — 한 가지 값으로 뭉뚱그려진다.
@@ -1971,11 +2074,31 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun openSession(meta: kr.joa.selahrta.recording.SessionMeta) {
-        controller.update { it.copy(openedSession = meta) }
+        controller.update { it.copy(openedSession = meta, openedRows = emptyList()) }
+        // **행은 열 때만 읽는다.** 소리를 들으며 그 자리의 값을 보여
+        // 주려면 있어야 하고, 목록에는 필요 없다.
+        viewModelScope.launch(Dispatchers.IO) {
+            val rows = runCatching {
+                val table = kr.joa.selahrta.recording.EpochTable(
+                    max = maxOf(1, meta.epochs.size),
+                ).also { t -> meta.epochs.forEach { t.add(it) } }
+                sessionStore.timelineFile(meta.id).inputStream().buffered().use { input ->
+                    kr.joa.selahrta.recording.TimelineReader(input, table).all()
+                }
+            }.getOrElse { emptyList() }
+            onMainThread {
+                // 그 사이에 다른 기록을 열었으면 버린다.
+                controller.update { st ->
+                    if (st.openedSession?.id == meta.id) st.copy(openedRows = rows) else st
+                }
+            }
+        }
     }
 
     fun closeSession() {
-        controller.update { it.copy(openedSession = null, historyNoticeKo = null) }
+        controller.update {
+            it.copy(openedSession = null, openedRows = emptyList(), historyNoticeKo = null)
+        }
     }
 
     fun dismissHistoryNotice() {
@@ -1988,28 +2111,40 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      * 파일은 캐시에 쓴다. 앱이 지워도 함께 사라지고, 받는 쪽은 이미
      * 제 앱으로 옮겨 간 뒤다.
      */
-    fun exportSession(meta: kr.joa.selahrta.recording.SessionMeta) {
+    /**
+     * 기록 하나를 **CSV 와 소리로 내보내 나눠 보낸다.**
+     *
+     * 둘을 **한 번에** 보낸다. 따로 보내면 받는 쪽에서 어느 소리가 어느
+     * 표의 것인지 알 수 없다.
+     *
+     * CSV 는 캐시에 새로 쓴다. 소리는 이미 기록 폴더에 있으므로 **옮겨
+     * 담지 않고 그 자리에서 건넨다** — 100MB 를 복사할 까닭이 없다.
+     */
+    fun exportSession(meta: kr.joa.selahrta.recording.SessionMeta, withAudio: Boolean = true) {
         viewModelScope.launch(Dispatchers.IO) {
             val app = getApplication<Application>()
             val r = runCatching {
+                val uris = ArrayList<android.net.Uri>(2)
                 val dir = java.io.File(app.cacheDir, "export").apply { mkdirs() }
-                val f = java.io.File(dir, kr.joa.selahrta.recording.SessionExport.fileName(meta))
+                val csv = java.io.File(dir, kr.joa.selahrta.recording.SessionExport.fileName(meta))
                 sessionStore.timelineFile(meta.id).inputStream().buffered().use { input ->
                     // **UTF-8 로 못박는다.** 기본값이 UTF-8 이지만,
                     // 여기서 인코딩이 달라지면 BOM 만 맞고 본문이 깨진다.
-                    f.bufferedWriter(Charsets.UTF_8).use { out ->
+                    csv.bufferedWriter(Charsets.UTF_8).use { out ->
                         kr.joa.selahrta.recording.SessionExport.writeCsv(meta, input, out)
                     }
                 }
-                androidx.core.content.FileProvider.getUriForFile(
-                    app,
-                    "${app.packageName}.files",
-                    f,
-                )
+                uris += uriFor(csv)
+
+                if (withAudio) {
+                    val audio = audioFileOf(meta)
+                    if (audio != null && audio.isFile && audio.length() > 0L) uris += uriFor(audio)
+                }
+                uris
             }
             onMainThread {
                 r.fold(
-                    onSuccess = { uri -> controller.update { it.copy(shareCsvUri = uri) } },
+                    onSuccess = { uris -> controller.update { it.copy(shareUris = uris) } },
                     onFailure = { e ->
                         controller.update {
                             it.copy(historyNoticeKo = "내보내지 못했습니다: ${e.message}")
@@ -2020,9 +2155,30 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** 공유 창을 띄운 뒤 지운다. 같은 파일을 두 번 띄우지 않는다. */
+    /** 소리 파일만 보낸다. 표 없이 들어 보라고 건넬 때. */
+    fun shareAudioOnly(meta: kr.joa.selahrta.recording.SessionMeta) {
+        val f = audioFileOf(meta)
+        if (f == null || !f.isFile || f.length() <= 0L) {
+            controller.update { it.copy(historyNoticeKo = "소리 파일을 찾지 못했습니다.") }
+            return
+        }
+        controller.update { it.copy(shareUris = listOf(uriFor(f))) }
+    }
+
+    /** 그 기록의 소리 파일. 담지 않았으면 null. */
+    fun audioFileOf(meta: kr.joa.selahrta.recording.SessionMeta): java.io.File? {
+        val a = meta.audio ?: return null
+        return java.io.File(sessionStore.dirOf(meta.id), a.fileName)
+    }
+
+    private fun uriFor(f: java.io.File): android.net.Uri {
+        val app = getApplication<Application>()
+        return androidx.core.content.FileProvider.getUriForFile(app, "${app.packageName}.files", f)
+    }
+
+    /** 공유 창을 띄운 뒤 비운다. 같은 파일을 두 번 띄우지 않는다. */
     fun clearShareUri() {
-        controller.update { it.copy(shareCsvUri = null) }
+        controller.update { it.copy(shareUris = emptyList()) }
     }
 
     /**

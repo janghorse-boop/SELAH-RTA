@@ -298,6 +298,33 @@ class SessionExportTest {
         assertTrue("BOM 이 주석이 아닌 줄에 있다", csv.substringAfter("﻿").none { it == '﻿' })
     }
 
+    // ── 이름 ────────────────────────────────────────────
+
+    /**
+     * **표와 소리가 같은 몸통을 쓴다.**
+     *
+     * 받는 쪽(카톡·메일)에는 파일 이름만 남는다. 소리가 `audio.m4a` 로
+     * 가면 표 여러 장 옆에서 어느 기록의 소리인지 알 수 없다 — 실제로
+     * 그랬다.
+     */
+    @Test
+    fun `표와 소리가 같은 이름 몸통을 쓴다`() {
+        val started = 1_759_000_000_000L
+        val stem = SessionExport.stem(started)
+        val csv = SessionExport.fileName(meta().copy(startedAtEpochMs = started))
+        assertEquals("$stem.csv", csv)
+        assertEquals("$stem.m4a", audioFileName(AudioFileFormat.M4a, started))
+        assertEquals("$stem.wav", audioFileName(AudioFileFormat.Wav, started))
+    }
+
+    /** 시각이 다르면 이름도 다르다 — 한 폴더에 모아도 겹치지 않는다. */
+    @Test
+    fun `시각이 다르면 소리 이름도 다르다`() {
+        val a = audioFileName(AudioFileFormat.M4a, 1_759_000_000_000L)
+        val b = audioFileName(AudioFileFormat.M4a, 1_759_000_060_000L)
+        assertFalse("$a 와 $b 가 같다", a == b)
+    }
+
     /** 한글이 그대로 왕복하는가. */
     @Test
     fun `한글이 UTF-8 로 왕복한다`() {
