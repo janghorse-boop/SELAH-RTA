@@ -32,6 +32,12 @@ private val Context.meterDataStore: DataStore<Preferences>
  */
 const val SESSION_MILLIS = -1L
 
+/** FFT 길이의 기본값(명세 7장의 출발점). */
+const val DEFAULT_FFT_SIZE = 4096
+
+/** 고를 수 있는 FFT 길이. 이 밖의 값이 저장돼 있으면 기본값으로 돌아간다. */
+val FFT_SIZES = listOf(2048, 4096, 8192)
+
 /** 화면에 보여줄 긴 Leq 의 길이(명세 14장). */
 enum class LeqWindow(val labelKo: String, val millis: Long) {
     TenSeconds("10초", 10_000),
@@ -96,6 +102,14 @@ data class MeterSettings(
      */
     val timeWeight: TimeWeight = TimeWeight.Slow,
     val leqWindow: LeqWindow = LeqWindow.OneMinute,
+    /**
+     * FFT 길이. 길수록 저역이 또렷하고 반응이 느려진다.
+     *
+     * **다음 측정부터 적용된다.** 측정 중에 바꾸면 분석 엔진을 통째로
+     * 새로 만들어야 하고, 그러면 하울링 탐지와 FR 수집이 붙어 있던
+     * 자리가 끊긴다 — FR 을 재는 도중이면 그 회차를 잃는다.
+     */
+    val fftSize: Int = DEFAULT_FFT_SIZE,
     /**
      * 소리를 담기로 했을 때 어느 꼴로 담을지.
      *
@@ -178,6 +192,7 @@ class MeterSettingsStore(private val context: Context) {
     private val peakWeightingKey = stringPreferencesKey("peakWeighting")
     private val analysisWeightingKey = stringPreferencesKey("analysisWeighting")
     private val timeWeightKey = stringPreferencesKey("timeWeight")
+    private val fftSizeKey = intPreferencesKey("fftSize")
     private val leqWindowKey = longPreferencesKey("leqWindowMs")
     private val audioFormatKey = stringPreferencesKey("audioFormat")
     private val preferredInputKey = stringPreferencesKey("preferredInput")
@@ -213,6 +228,9 @@ class MeterSettingsStore(private val context: Context) {
                 timeWeight = p[timeWeightKey]?.let { n ->
                     TimeWeight.entries.firstOrNull { it.name == n }
                 } ?: TimeWeight.Slow,
+                // **목록에 없는 값이면 기본값이다.** 손으로 건드렸거나
+                // 앱 판이 바뀐 경우다 — 임의의 길이로 돌리지 않는다.
+                fftSize = p[fftSizeKey]?.takeIf { it in FFT_SIZES } ?: DEFAULT_FFT_SIZE,
                 // **모르는 이름이면 기본값이다.** 임의로 고르지 않는다.
                 audioFormat = p[audioFormatKey]
                     ?.let { n ->
@@ -284,6 +302,12 @@ class MeterSettingsStore(private val context: Context) {
     suspend fun resetAnalysisWeighting() = write { it.remove(analysisWeightingKey) }
 
     suspend fun setTimeWeight(t: TimeWeight) = write { it[timeWeightKey] = t.name }
+
+    /** 목록에 없는 길이는 저장하지 않는다. */
+    suspend fun setFftSize(n: Int) {
+        if (n !in FFT_SIZES) return
+        write { it[fftSizeKey] = n }
+    }
     suspend fun setLeqWindow(w: LeqWindow) = write { it[leqWindowKey] = w.millis }
 
     /**

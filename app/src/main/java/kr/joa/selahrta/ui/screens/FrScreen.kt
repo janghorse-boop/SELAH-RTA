@@ -108,6 +108,18 @@ fun FrScreen(
                 modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
             )
 
+            // **FR 은 가중을 고를 수 없다.** 숨기지 않고 그 사실을 적는다 —
+            // 없는 것과 못 고르는 것은 다르고, 설정에서 찾다가 「빠졌나」
+            // 하는 것보다 여기서 까닭과 함께 보는 편이 낫다.
+            Text(
+                "dB(Z) 고정 — 예배당의 응답 자체를 재는 화면이라 가중을 걸지 " +
+                    "않습니다. 분석 화면의 가중을 바꿔도 이 곡선은 달라지지 않습니다.",
+                color = SelahColors.TextMuted,
+                fontSize = 10.sp,
+                lineHeight = 14.sp,
+                modifier = Modifier.padding(bottom = 12.dp),
+            )
+
             if (!running) {
                 InfoBar(
                     "먼저 「측정」 탭에서 마이크를 여십시오. 마이크가 열려 있어야 잽니다.",

@@ -52,6 +52,8 @@ import kr.joa.selahrta.domain.MeasureState
 import kr.joa.selahrta.domain.SegmentRange
 import kr.joa.selahrta.domain.focusKo
 import kr.joa.selahrta.dsp.Weighting
+import kr.joa.selahrta.dsp.leqLabel
+import kr.joa.selahrta.dsp.peakLabel
 import kr.joa.selahrta.ui.CaptureUiState
 import kr.joa.selahrta.audio.InputSignalState
 import kr.joa.selahrta.audio.NO_SIGNAL_HOLD_MS
@@ -109,6 +111,9 @@ fun MeasureScreen(
     val m = capture.meter
     // **음압 줄의 가중이다.** PEAK 은 제 가중을 따로 쓴다(지시서 §16).
     val weighting = capture.meterSettings.splWeighting
+    // PEAK 은 제 가중을 쓴다 — 킥·스네어의 저역이 A 가중에 깎여
+    // 순간 음압을 놓치는 일을 막자고 갈라 둔 것이다.
+    val peakWeighting = capture.meterSettings.peakWeighting
     val uncalibrated = capture.calibration.isReferenceOnly
 
     // **판정은 계기 바의 색 하나로 말한다.** 예전에는 「낮음/적정/높음」
@@ -380,7 +385,9 @@ fun MeasureScreen(
                 onClick = { shownMetric = Metric.Min },
             )
             ValueTile(
-                "Leq (${capture.meterSettings.leqWindow.labelKo})",
+                // **손으로 적지 않는다.** 가중에서 뽑아야 바꾼 뒤에도
+                // 어긋나지 않는다(지시서 §10).
+                weighting.leqLabel(capture.meterSettings.leqWindow.labelKo),
                 formatDb(m.leqLong),
                 // 창이 아직 안 찼으면 그 사실을 적는다 — 「1분 평균」이라고
                 // 적어 놓고 실제로는 10초치인 값을 보여 주면 안 된다.
@@ -454,6 +461,7 @@ fun MeasureScreen(
                 metric = metric,
                 meter = m,
                 weighting = weighting,
+                peakWeighting = capture.meterSettings.peakWeighting,
                 leqLabelKo = capture.meterSettings.leqWindow.labelKo,
                 timeWeightKo = capture.meterSettings.timeWeight.labelKo,
                 calState = capture.calibration.state,
@@ -615,6 +623,8 @@ private fun MetricDialog(
     metric: Metric,
     meter: kr.joa.selahrta.ui.MeterReading,
     weighting: Weighting,
+    /** PEAK 의 가중. **음압과 다를 수 있다**(지시서 §16). */
+    peakWeighting: Weighting,
     leqLabelKo: String,
     timeWeightKo: String,
     calState: kr.joa.selahrta.domain.CalibrationState,
@@ -628,12 +638,14 @@ private fun MetricDialog(
         Metric.Peak ->
             if (clipped && meter.peakSpl != null) "≥${formatDb(meter.peakSpl)}" else formatDb(meter.peakSpl)
     }
-    val unit = if (metric == Metric.Peak) "dB · 가중없음" else weighting.unitSuffix
+    // **PEAK 은 제 가중을 쓴다.** 음압 가중을 따라가면 「LZpeak 인데
+    // dB(A)」 같은 어긋남이 생긴다.
+    val unit = if (metric == Metric.Peak) peakWeighting.unitSuffix else weighting.unitSuffix
     val title = when (metric) {
         Metric.Min -> "MIN — 가장 조용했던 값"
-        Metric.Leq -> "Leq ($leqLabelKo) — 등가소음도"
+        Metric.Leq -> "${weighting.leqLabel(leqLabelKo)} — 등가소음도"
         Metric.Max -> "MAX — 가장 컸던 값"
-        Metric.Peak -> "PEAK — 순간 최고"
+        Metric.Peak -> "${peakWeighting.peakLabel()} — 순간 최고"
     }
     val body = when (metric) {
         Metric.Min ->

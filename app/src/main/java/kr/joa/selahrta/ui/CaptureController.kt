@@ -553,6 +553,9 @@ class CaptureController(
                 session.rta.setAnalysisWeighting(
                     _state.value.meterSettings.analysisWeighting,
                 )
+                // 화면이 「무슨 잣대로 그렸나」를 적을 때 쓴다. 엔진이
+                // 실제로 쓰는 값이라야 거짓말이 아니다.
+                _state.value = _state.value.copy(analysisFftSize = session.rta.fftSize)
                 active = session
                 // **이전 기기의 보정을 여기서 끊는다.** 남겨 두면 새 기기의
                 // 첫 덩어리들이 지난 마이크의 보정값으로 나간다

@@ -160,7 +160,8 @@ fun RtaScreen(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
     ) {
         InfoBar(
-            "1/3 옥타브 31밴드 · 20Hz ~ 20kHz · 가중 없음(원음 그대로)",
+            "1/3 옥타브 31밴드 · 20Hz ~ 20kHz · " +
+                capture.meterSettings.analysisWeighting.labelKo,
             modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
         )
 
@@ -179,6 +180,8 @@ fun RtaScreen(
             minSlotWidth = BAND_SLOT_WIDE,
             feedback = feedback,
         )
+
+        AnalysisFootnote(capture)
 
         FeedbackStrip(
             feedback.firstOrNull(),
@@ -228,7 +231,9 @@ fun RtaScreen(
                 top?.let { formatDb(rta.bandsSpl[it]) } ?: NO_VALUE,
                 // RTA 는 늘 가중 없이 본다. 위의 큰 숫자(dBA 등)와 다른 값이므로
                 // 단위에 그 사실을 적는다 — 안 적으면 두 숫자가 안 맞는다고 읽힌다.
-                "dB · 가중 없음",
+                // 위의 큰 숫자(음압)와 다른 잣대일 수 있으므로 단위에
+                // 그 사실을 적는다. 안 적으면 두 숫자가 안 맞는다고 읽힌다.
+                capture.meterSettings.analysisWeighting.unitSuffix,
                 Modifier.weight(1f),
             )
         }
@@ -346,7 +351,11 @@ fun SpectrumScreen(
     val spectrum = if (frozen) held else capture.spectrum
     val feedback = if (frozen) heldFeedback else capture.feedback
 
-    var axisMode by remember { mutableStateOf(AxisMode.Fixed) }
+    // **자동이 기본이다**(담당자 지시 2026-09-27). 봉우리가 몇 Hz 인지
+    // 찾는 화면이라 축이 값을 따라가야 보인다. RTA·SPL 은 권장 범위
+    // 띠와 견주는 화면이라 「고정」을 유지한다 — 축이 움직이면
+    // 판정 자체가 흔들린다.
+    var axisMode by remember { mutableStateOf(AxisMode.Auto) }
     val (floor, ceil) = rememberAxisRange(axisMode, spectrumTopSpl(spectrum))
     val onAxisTap = { axisMode = axisMode.next() }
     val controls: @Composable () -> Unit = {
@@ -399,6 +408,8 @@ fun SpectrumScreen(
             controls = controls,
             onAxisTap = onAxisTap,
         )
+
+        AnalysisFootnote(capture)
 
         FeedbackStrip(
             feedback.firstOrNull(),
@@ -477,6 +488,8 @@ fun SpectrogramScreen(
             modes = { AnalyzeModes(ViewMode.Spectrogram, onMode) },
             controls = controls,
         )
+
+        AnalysisFootnote(capture)
     }
 }
 
@@ -574,6 +587,30 @@ fun rememberSpectrogramFeed(capture: CaptureUiState, running: Boolean): Spectrog
  * 가로 폭이 좁아져 짧은 소리가 실선처럼 얇아진다.
  */
 private const val SPECTROGRAM_FRAMES = 720
+
+/**
+ * 차트 아래에 **늘** 적는 한 줄.
+ *
+ * 이 값들이 없으면 「이 그림이 무슨 잣대로 그려졌나」를 화면에서 알 수
+ * 없다 — 스크린샷을 남겨 놓고 나중에 보면 특히 그렇다.
+ *
+ * **FFT 길이는 엔진이 실제로 쓰는 값을 적는다**(설정값이 아니다).
+ * 설정은 다음 측정부터 적용되므로, 설정값을 적으면 측정 중에 바꾼 순간
+ * 화면이 거짓말을 하게 된다.
+ */
+@Composable
+private fun AnalysisFootnote(capture: CaptureUiState) {
+    Text(
+        // 측정 중이 아니면 엔진이 없다 — 그때는 다음 측정에 쓰일
+        // 설정값을 적는다. 둘 다 참이다.
+        "FFT ${capture.analysisFftSize ?: capture.meterSettings.fftSize} · Hann 창 · " +
+            "${capture.opened?.sampleRate ?: 48_000} Hz · " +
+            capture.meterSettings.analysisWeighting.unitSuffix,
+        color = SelahColors.TextMuted,
+        fontSize = 10.sp,
+        modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+    )
+}
 
 @Composable
 private fun FeedbackStrip(

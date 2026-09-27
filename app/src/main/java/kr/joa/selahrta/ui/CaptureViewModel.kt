@@ -152,6 +152,14 @@ data class CaptureUiState(
     val measure: MeasureState = MeasureState.Idle,
     val opened: OpenedFormat? = null,
     val diagnostics: CaptureDiagnostics = CaptureDiagnostics(),
+    /**
+     * 지금 도는 분석 엔진의 FFT 길이. 측정 중이 아니면 null.
+     *
+     * **설정값이 아니라 엔진이 실제로 쓰는 값이다.** 설정은 다음
+     * 측정부터 적용되므로, 설정값을 화면에 적으면 측정 중에 바꾼
+     * 순간 화면이 거짓말을 한다.
+     */
+    val analysisFftSize: Int? = null,
     val meter: MeterReading = MeterReading(),
     val calibration: ActiveCalibration = ActiveCalibration.assumed,
     /** 31밴드 RTA. 아직 첫 FFT 가 안 찼으면 null. */
@@ -437,7 +445,10 @@ class CaptureSession(
         leqLongMs = settings.leqWindow.engineMillis,
     )
 
-    val rta = RtaEngine(sampleRate)
+    // **FFT 길이는 여기서 못박힌다.** 측정 중에는 바꾸지 않는다 —
+    // 엔진을 새로 만들면 하울링 탐지와 FR 수집이 붙어 있던 자리가
+    // 끊긴다. 설정은 다음 측정부터 적용된다.
+    val rta = RtaEngine(sampleRate, fftSize = settings.fftSize)
 
     /**
      * 하울링 후보 탐지기(명세 9장).
@@ -1355,6 +1366,14 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     }
     fun setTimeWeight(t: TimeWeight) { viewModelScope.launch { settingsStore.setTimeWeight(t) } }
     fun setLeqWindow(w: LeqWindow) { viewModelScope.launch { settingsStore.setLeqWindow(w) } }
+
+    /**
+     * FFT 길이를 고른다. **다음 측정부터 적용된다.**
+     *
+     * 측정 중에 엔진을 새로 만들면 하울링 탐지와 FR 수집이 붙어 있던
+     * 자리가 끊긴다 — FR 을 재는 도중이면 그 회차를 잃는다.
+     */
+    fun setFftSize(n: Int) { viewModelScope.launch { settingsStore.setFftSize(n) } }
 
 
 

@@ -44,6 +44,7 @@ import kr.joa.selahrta.dsp.TimeWeight
 import kr.joa.selahrta.dsp.Weighting
 import kr.joa.selahrta.settings.KnownDevice
 import kr.joa.selahrta.settings.LeqWindow
+import kr.joa.selahrta.settings.FFT_SIZES
 import kr.joa.selahrta.ui.CaptureUiState
 import kr.joa.selahrta.ui.components.CalibrationCard
 import kr.joa.selahrta.ui.components.CurveCard
@@ -65,9 +66,19 @@ fun SettingsScreen(
     onDismissCalibrationNotice: () -> Unit,
     /** 「이 자리에서 잰 것이 맞다」고 사람이 확인해 준다(독립 재검토 CAR-03). */
     onConfirmCalibrationRoute: () -> Unit,
-    onWeighting: (Weighting) -> Unit,
+    /** 음압(SPL·Leq·MIN·MAX)의 가중. */
+    onSplWeighting: (Weighting) -> Unit,
+    /** 순간최고(PEAK)의 가중. 음압과 따로 둔다(지시서 §16). */
+    onPeakWeighting: (Weighting) -> Unit,
+    /** RTA·Spectrum·Spectrogram 의 가중. */
+    onAnalysisWeighting: (Weighting) -> Unit,
+    onResetSplWeighting: () -> Unit,
+    onResetPeakWeighting: () -> Unit,
+    onResetAnalysisWeighting: () -> Unit,
     onTimeWeight: (TimeWeight) -> Unit,
     onLeqWindow: (LeqWindow) -> Unit,
+    /** FFT 길이. **다음 측정부터 적용된다**(측정 중 바꾸면 싱크가 끊긴다). */
+    onFftSize: (Int) -> Unit,
     onPreferredInput: (String?) -> Unit,
     onForgetDevice: (String) -> Unit,
     /** 기기별로 재는 채널을 고른다. */
@@ -219,13 +230,37 @@ fun SettingsScreen(
         // 없었다(`ToolsScreen` 참고).
 
         SectionTitle("측정 설정")
-        ChoiceRow(
-            "가중치 (Weighting)",
-            "A 는 사람 귀에 맞춘 가중입니다. 권장 범위 판정은 A 에서만 합니다.",
-            Weighting.entries,
-            capture.meterSettings.splWeighting,
-            { it.unitSuffix },
-            onWeighting,
+        WeightingRow(
+            label = "음압 가중",
+            whereKo = "SPL 큰 숫자 · Leq · MIN · MAX",
+            selected = capture.meterSettings.splWeighting,
+            isCustom = capture.meterSettings.splWeighting != Weighting.A,
+            onPick = onSplWeighting,
+            onReset = onResetSplWeighting,
+        )
+        WeightingRow(
+            label = "순간최고(PEAK) 가중",
+            whereKo = "PEAK 타일",
+            selected = capture.meterSettings.peakWeighting,
+            isCustom = capture.meterSettings.peakWeighting != Weighting.Z,
+            onPick = onPeakWeighting,
+            onReset = onResetPeakWeighting,
+        )
+        WeightingRow(
+            label = "주파수 분석 가중",
+            whereKo = "RTA · Spectrum · Spectrogram",
+            selected = capture.meterSettings.analysisWeighting,
+            isCustom = capture.meterSettings.analysisWeighting != Weighting.Z,
+            onPick = onAnalysisWeighting,
+            onReset = onResetAnalysisWeighting,
+        )
+
+        // FR 은 고를 까닭이 없어 목록에 없다. **숨기지 않고 그 사실을
+        // 적는다** — 없는 것과 못 고르는 것은 다르다.
+        InfoBar(
+            "주파수 응답(FR)은 늘 dB(Z) 로 잽니다. 예배당의 응답 자체를 " +
+                "재는 화면이라, A 를 걸면 저역이 깎인 곡선이 나와 " +
+                "「이 공간은 저음이 부족하다」고 잘못 읽게 됩니다.",
         )
         ChoiceRow(
             "응답 속도",
@@ -237,11 +272,20 @@ fun SettingsScreen(
         )
         ChoiceRow(
             "Leq 시간",
-            "권장 범위와 견주는 평균 구간입니다.",
+            "권장 범위와 견주는 평균 구간입니다. 「전체」는 측정 시작부터 지금까지입니다.",
             LeqWindow.entries,
             capture.meterSettings.leqWindow,
             { it.labelKo },
             onLeqWindow,
+        )
+        ChoiceRow(
+            "FFT 크기",
+            "크면 저역이 또렷하고, 작으면 반응이 빠릅니다. " +
+                "다음 측정부터 적용됩니다.",
+            FFT_SIZES,
+            capture.meterSettings.fftSize,
+            { it.toString() },
+            onFftSize,
         )
 
         SectionTitle("구간별 권장 범위")
@@ -692,6 +736,101 @@ private fun <T> ChoiceRow(
                 }
             }
         }
+    }
+}
+
+/**
+ * 가중을 고를 때 그 자리에 나오는 설명.
+ *
+ * **세 줄이 같은 문구를 쓴다.** 줄마다 다른 설명을 적으면 「A 가 여기서는
+ * 이 뜻이고 저기서는 저 뜻인가」로 읽힌다.
+ *
+ * **평탄하다는 사실은 여기서 말한다.** 이름 자리에 「무가중」을 끼워
+ * 넣으면 같은 것을 두 가지로 부르게 된다 — 그래서 실제로 「고정된 Z 와
+ * 무가중이 다른 것인가」라는 물음이 나왔다(2026-09-27).
+ */
+private fun weightingHelpKo(w: Weighting): String = when (w) {
+    Weighting.A ->
+        "A-weighting — 사람 귀가 저음에 둔한 것을 흉내 냅니다. " +
+            "소음 규제·청력 기준이 쓰는 잣대이고, 권장 범위 판정은 A 에서만 합니다."
+    Weighting.C ->
+        "C-weighting — 저음을 거의 깎지 않습니다. 킥·베이스가 실제로 얼마나 " +
+            "센지 볼 때 씁니다. A 와의 차이가 크면 저음이 많다는 뜻입니다."
+    Weighting.Z ->
+        "Z-weighting — 깎지도 올리지도 않습니다. 들어온 소리 그대로라, " +
+            "어느 대역에 에너지가 몰렸는지 보는 화면에는 이것이 기본입니다."
+}
+
+/**
+ * 가중 한 줄. 고른 칸 **바로 아래** 설명이 바뀐다.
+ *
+ * 창을 띄우지 않는다 — 고르면서 읽어야 뜻이 있다. 창을 띄우면 읽고
+ * 닫은 뒤에 고르게 되어, 무엇을 고르는지와 그 뜻이 떨어진다.
+ */
+@Composable
+private fun WeightingRow(
+    label: String,
+    whereKo: String,
+    selected: Weighting,
+    isCustom: Boolean,
+    onPick: (Weighting) -> Unit,
+    onReset: () -> Unit,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(bottom = 8.dp)
+            .background(SelahColors.Surface, RoundedCornerShape(10.dp))
+            .border(1.dp, SelahColors.Outline, RoundedCornerShape(10.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(label, color = SelahColors.TextPrimary, fontSize = 13.sp)
+                Text(whereKo, color = SelahColors.TextMuted, fontSize = 10.sp)
+            }
+            // **고친 줄에만 띄운다.** 늘 띄우면 「기본값인데 되돌리기가
+            // 있네」로 읽혀 무엇이 바뀐 상태인지 흐려진다.
+            if (isCustom) {
+                TextButton(onClick = onReset) {
+                    Text("기본값으로", color = SelahColors.TextMuted, fontSize = 11.sp)
+                }
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Weighting.entries.forEach { w ->
+                val on = w == selected
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .background(
+                            if (on) SelahColors.Accent else SelahColors.SurfaceVariant,
+                            RoundedCornerShape(8.dp),
+                        )
+                        .clickable { onPick(w) }
+                        .padding(vertical = 8.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        w.unitSuffix,
+                        color = if (on) Color(0xFF00201C) else SelahColors.TextSecondary,
+                        fontSize = 12.sp,
+                        fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
+                    )
+                }
+            }
+        }
+        Text(
+            weightingHelpKo(selected),
+            color = SelahColors.TextMuted,
+            fontSize = 10.sp,
+            lineHeight = 14.sp,
+        )
     }
 }
 
