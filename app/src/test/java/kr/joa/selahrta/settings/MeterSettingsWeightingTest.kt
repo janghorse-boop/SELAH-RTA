@@ -93,15 +93,29 @@ class MeterSettingsWeightingTest {
     // ── 기본값 ──────────────────────────────────────────
 
     /**
-     * **응답 속도 기본은 Slow 다**(담당자 지시 2026-09-27).
+     * **응답 속도 기본은 Fast 다**(담당자 지시 2026-09-28).
      *
-     * 예배당에서 보는 것은 「지금 이 순간이 얼마나 센가」가 아니라
-     * 「이만한 크기로 얼마나 이어지나」다. Fast 는 말소리의 자음 하나에도
-     * 숫자가 튀어, 화면을 보는 사람이 그 튐을 쫓게 된다.
+     * 2026-09-27 에 Slow 로 바꿨다가 하루 만에 되돌렸다. 화면이 자리를
+     * 잡는 시간이 `τ×3` 이라 Fast 는 0.375초, Slow 는 **3초**다. 그
+     * 사이의 값은 0 에서 올라오는 중이라 실제보다 낮은데, Slow 에서는
+     * **예배를 시작할 때마다 3초** 동안 그랬다.
+     *
+     * 「이만한 크기로 얼마나 이어지나」는 Leq 가 이미 한다.
      */
     @Test
-    fun `응답 속도 기본이 Slow 다`() {
-        assertEquals(TimeWeight.Slow, MeterSettings().timeWeight)
+    fun `응답 속도 기본이 Fast 다`() {
+        assertEquals(TimeWeight.Fast, MeterSettings().timeWeight)
+    }
+
+    /**
+     * **자리 잡는 시간이 Fast 와 Slow 에서 8배 차이 난다.**
+     *
+     * 이 숫자가 기본값을 되돌린 까닭이다. 누가 다시 Slow 로 바꾸려 할 때
+     * 이 시험이 그 대가를 코드로 보여 준다.
+     */
+    @Test
+    fun `Slow 는 자리를 잡는 데 Fast 의 여덟 배가 걸린다`() {
+        assertEquals(8.0, TimeWeight.Slow.tauSeconds / TimeWeight.Fast.tauSeconds, 1e-9)
     }
 
     /** **이미 1분이다.** 바꾸지 않았다는 것을 못박아 둔다. */
