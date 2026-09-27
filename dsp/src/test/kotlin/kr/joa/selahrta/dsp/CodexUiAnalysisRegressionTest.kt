@@ -409,6 +409,44 @@ class CodexUiAnalysisRegressionTest {
         }
     }
 
+    /**
+     * **CFR-02** — 표시용 곡선도 모순이면 걸지 않는다.
+     *
+     * 「틀려도 화면에서 드러나고 되돌리기 쉽다」고 보았는데 **그 전제가
+     * 틀렸다.** 가져온 곡선은 미리보기가 아니라 `CurveStore` 가
+     * `enabled=true` 로 저장하고 `RtaEngine.setCurve` 까지 가서 실제 FFT
+     * 보정에 걸린다. 부호가 뒤집히면 +3dB 자리에 -3dB 가 걸려 6dB 가
+     * 어긋나고, **그 6dB 는 화면에서 드러나지 않는다.**
+     */
+    @Test
+    fun `표시용 곡선도 모순이면 묻는다`() {
+        val cases = listOf(
+            listOf("# Correction factors", "Frequency (Hz),Response (dB)"),
+            listOf("Frequency (Hz),Response (dB) (correction)"),
+        )
+        for (lines in cases) {
+            for (stakes in ReadingStakes.entries) {
+                val d = decideReading(
+                    signEvidenceOf(lines),
+                    stakes,
+                    columnDeclarationOf(lines),
+                )
+                assertFalse("「$lines」 가 $stakes 에서 정해졌다: $d", d.settled)
+            }
+        }
+    }
+
+    /** 대조군 — 단서가 **없는** 것은 표시용에서 예전처럼 관례로 간다. */
+    @Test
+    fun `단서가 없으면 표시용은 관례로 간다`() {
+        val d = decideReading(
+            SignEvidence.Unknown,
+            ReadingStakes.DisplayCurve,
+            ColumnDeclaration.None,
+        )
+        assertTrue("모르는 것까지 막으면 쓸 수 있는 파일이 없다", d.settled)
+    }
+
     /** 대조군 — 괄호가 하나이고 멀쩡하면 그대로 정해진다. */
     @Test
     fun `괄호가 멀쩡하면 정해진다`() {

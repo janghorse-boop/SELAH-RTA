@@ -382,9 +382,17 @@ fun decideReading(
     // `# Correction factors` + `Frequency (Hz),Response (dB)` 가 그렇게
     // 통과했다. 모르는 것은 관례로 갈 수 있지만 **어긋나는 것은 물어야**
     // 한다.
-    if (evidence == SignEvidence.Conflicting &&
-        stakes == ReadingStakes.ReferenceForCalibration
-    ) {
+    // **용도를 가리지 않는다**(독립 재검토 CFR-02).
+    //
+    // 처음에는 기준 CAL 만 물었다. 표시용은 「틀려도 화면에서 드러나고
+    // 되돌리기 쉽다」고 보았는데, **그 전제가 틀렸다** — 가져온 곡선은
+    // 미리보기가 아니라 `CurveStore` 가 `enabled=true` 로 저장하고
+    // `RtaEngine.setCurve` 까지 가서 **실제 FFT 보정에 걸린다.**
+    //
+    // 보정값을 응답으로 읽으면 부호가 뒤집혀, +3dB 여야 할 자리에
+    // -3dB 가 걸린다 — 6dB 차이다. 그리고 그 6dB 는 화면에서 드러나지
+    // 않는다. 곡선은 그대로 멀쩡해 보인다.
+    if (evidence == SignEvidence.Conflicting) {
         val suggest = (columns as? ColumnDeclaration.Second)?.reading ?: CurveReading.Response
         return ReadingDecision.NeedsPerson(
             suggest,
@@ -477,11 +485,14 @@ private fun decideFromProse(
         )
     }
 
-    // **어긋나는 것은 모르는 것과 다르다.** 표시용은 관례로 가되(틀려도
-    // 화면에서 드러나고 되돌리기 쉽다) 기준 CAL 은 위에서 이미 물었다.
-    SignEvidence.Conflicting -> ReadingDecision.Settled(
+    // **여기 닿지 않는다.** 어긋나는 것은 용도를 가리지 않고 위에서
+    // 물어 보내므로, 이 갈래는 `when` 을 빠짐없이 적기 위한 것이다.
+    // 그래도 관례로 때우지 않고 묻는 쪽으로 적어 둔다 — 나중에 위를
+    // 고치다 이 갈래가 살아나면, 그때 조용히 확정되면 안 된다.
+    SignEvidence.Conflicting -> ReadingDecision.NeedsPerson(
         CurveReading.Response,
-        "머리글에 「응답」과 「보정값」이 함께 적혀 있어 관례대로 읽습니다.",
+        "머리글에 「응답」과 「보정값」이 함께 적혀 있습니다. 읽는 법을 " +
+            "확인하기 전에는 보정을 걸지 않습니다.",
     )
 }
 
