@@ -91,6 +91,14 @@ data class SessionMeta(
 
     /** 사람이 적는 메모(명세 12장). */
     val memo: String = "",
+
+    /**
+     * **이 측정을 어떤 조건에서 쟀는가**(겉장 판 2).
+     *
+     * 판 1 로 적힌 옛 기록에는 없다 — 그때는 전부 비어 있고, 화면은
+     * 「기록 없음」이라 적는다.
+     */
+    val conditions: MeasurementConditions = MeasurementConditions(),
 ) {
     /** 목록에 적을 이름. 시작 시각과 구간으로 만든다. */
     val hasTimeline: Boolean get() = durationMs > 0
@@ -136,8 +144,12 @@ enum class SessionEventKind(val labelKo: String) {
  *
  * 읽는 쪽은 **더 새 판을 만나면 읽지 않는다.** 모르는 칸을 0 으로 채워
  * 읽으면 「보정 없음」이나 「길이 0」이 되어 조용히 틀린 기록이 된다.
+ *
+ * - **v1** — 첫 판.
+ * - **v2** — 잰 조건([MeasurementConditions])이 붙었다. v1 기록도 그대로
+ *   읽힌다. 없는 칸은 「기록 없음」이지 「가공이 없었다」가 아니다.
  */
-const val SESSION_SCHEMA_VERSION = 1
+const val SESSION_SCHEMA_VERSION = 2
 
 /**
  * 셈의 판 번호. DSP 가 바뀌면 올린다.
@@ -183,6 +195,23 @@ fun encodeSessionMeta(m: SessionMeta): String = buildString {
     put("droppedPackets", m.droppedPackets)
     put("analysisVersion", m.analysisVersion)
     put("memo", m.memo)
+
+    // ---- 잰 조건(판 2) ----
+    //
+    // **모르면 적지 않는다.** 빈 값으로 적어 두면 다음에 읽을 때
+    // 「확인했는데 비어 있었다」가 된다.
+    val c = m.conditions
+    c.audioSource?.let { put("cond.audioSource", it.name) }
+    c.unprocessedSupported?.let { put("cond.unprocessedSupported", it) }
+    c.agcDisabled?.let { put("cond.agcDisabled", it) }
+    c.nsDisabled?.let { put("cond.nsDisabled", it) }
+    c.aecDisabled?.let { put("cond.aecDisabled", it) }
+    if (c.routedAddress.isNotEmpty()) put("cond.routedAddress", c.routedAddress)
+    if (c.activeMicCombo.isNotEmpty()) put("cond.activeMicCombo", c.activeMicCombo)
+    c.calibrationState?.let { put("cond.calibrationState", it.name) }
+    c.calibrationSource?.let { put("cond.calibrationSource", it.name) }
+    c.curveReading?.let { put("cond.curveReading", it.name) }
+    put("cond.curveReadingConfirmed", c.curveReadingConfirmed)
 
     put("events.count", m.events.size)
     m.events.forEachIndexed { i, e ->
@@ -257,6 +286,26 @@ fun decodeSessionMeta(text: String): Result<SessionMeta> {
         droppedPackets = r.int("droppedPackets"),
         analysisVersion = r.int("analysisVersion"),
         memo = r.str("memo"),
+        // **조건 칸은 없어도 된다**(판 2에서 생겼다).
+        //
+        // 옛 기록에는 당연히 없고, 새 기록에도 「모르는 것은 적지
+        // 않는다」는 규칙 때문에 없을 수 있다. 그래서 `missing` 으로
+        // 세지 않는 읽기만 쓴다 — 세면 멀쩡한 기록이 통째로 안 읽힌다.
+        conditions = MeasurementConditions(
+            audioSource = r.enumOrNull<kr.joa.selahrta.audio.CaptureSource>("cond.audioSource"),
+            unprocessedSupported = r.boolOrNull("cond.unprocessedSupported"),
+            agcDisabled = r.boolOrNull("cond.agcDisabled"),
+            nsDisabled = r.boolOrNull("cond.nsDisabled"),
+            aecDisabled = r.boolOrNull("cond.aecDisabled"),
+            routedAddress = r.strOrNull("cond.routedAddress").orEmpty(),
+            activeMicCombo = r.strOrNull("cond.activeMicCombo").orEmpty(),
+            calibrationState =
+                r.enumOrNull<kr.joa.selahrta.domain.CalibrationState>("cond.calibrationState"),
+            calibrationSource =
+                r.enumOrNull<kr.joa.selahrta.calibration.CalibrationSource>("cond.calibrationSource"),
+            curveReading = r.enumOrNull<kr.joa.selahrta.dsp.CurveReading>("cond.curveReading"),
+            curveReadingConfirmed = r.boolOrNull("cond.curveReadingConfirmed") ?: false,
+        ),
     )
 
     // **빠진 칸이 있으면 읽지 않는다.** 반쯤 읽은 기록은 화면에서

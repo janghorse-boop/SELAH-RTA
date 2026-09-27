@@ -100,8 +100,12 @@ class SessionMetaTest {
      */
     @Test
     fun `더 새 판은 읽지 않는다`() {
+        // **판 번호를 박아 두지 않는다.** 판이 올라가면 이 치환이 조용히
+        // 아무 일도 안 하고, 그러면 이 시험은 「더 새 판을 막는가」가
+        // 아니라 **정상 기록을 읽고 통과**하게 된다(v2 에서 겪었다).
         val text = encodeSessionMeta(sample())
-            .replace("schemaVersion=1", "schemaVersion=99")
+            .replace("schemaVersion=$SESSION_SCHEMA_VERSION", "schemaVersion=99")
+        assertTrue("치환이 아무 일도 안 했다", text.contains("schemaVersion=99"))
         val r = decodeSessionMeta(text)
         assertTrue("더 새 판을 읽었다", r.isFailure)
     }

@@ -46,9 +46,16 @@ object SessionCsv {
         add("# 길이: ${meta.durationMs / 1000}초")
         add("# 입력: ${meta.deviceLabel} (${meta.sampleRate}Hz, ${meta.encoding})")
         add("# 보정: ${calibrationLabel(meta)}")
-        if (meta.referenceOnly) {
-            add("# 주의: 미보정입니다. 아래 dB 값은 참고용이며 실제 음압과 10dB 넘게 다를 수 있습니다.")
+        // **잰 조건을 함께 적는다**(담당자 지시 2026-09-27).
+        //
+        // 파일을 받는 사람은 화면을 못 본다. 숫자만 있으면 이 값이 어떤
+        // 입력으로, 어느 마이크로, 어떤 가공 상태에서 나온 것인지 알 수
+        // 없다 — 리포트와 **같은 문장**을 쓴다.
+        buildReport(meta).forEach { section ->
+            add("# [${section.titleKo}]")
+            section.lines.forEach { add("#   ${it.labelKo}: ${it.valueKo}") }
         }
+        reportWarningsKo(meta).forEach { add("# 주의: $it") }
         if (meta.droppedPackets > 0) {
             add("# 주의: 소리 조각 ${meta.droppedPackets}개를 놓쳤습니다. 그 구간은 빈 줄로 나옵니다.")
         }

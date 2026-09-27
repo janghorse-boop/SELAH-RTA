@@ -1896,6 +1896,32 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                         peakDb = rec.summary.peakDb ?: Double.NaN,
                         events = rec.events,
                         droppedPackets = rec.droppedPackets,
+                        // **잰 조건을 함께 남긴다**(담당자 지시 2026-09-27).
+                        //
+                        // 숫자만 남기면 나중에 그 숫자를 해석할 수 없다.
+                        // 이 폰만 해도 UNPROCESSED 를 못 열어 음성인식
+                        // 경로로 재고 활성 마이크가 하나다(S23 Ultra 실측).
+                        conditions = kr.joa.selahrta.recording.MeasurementConditions(
+                            audioSource = opened?.audioSource,
+                            unprocessedSupported = opened?.unprocessedSupported,
+                            agcDisabled = opened?.effects?.agc?.disabled,
+                            nsDisabled = opened?.effects?.ns?.disabled,
+                            aecDisabled = opened?.effects?.aec?.disabled,
+                            routedAddress = opened?.routedAddress.orEmpty(),
+                            activeMicCombo = kr.joa.selahrta.audio.activeMicComboKey(
+                                opened?.activeMics.orEmpty(),
+                            ),
+                            calibrationState = st.calibration.state,
+                            // **걸린 값의 출처만 적는다.** 자리를 확인하지
+                            // 못해 보류한 값은 이 측정에 걸리지 않았다.
+                            calibrationSource = st.calibration.saved
+                                ?.source
+                                ?.takeIf { !st.calibration.isReferenceOnly },
+                            // **걸린 곡선만 적는다.** 꺼 두었거나 확인
+                            // 전이면 이 측정에 안 들어갔다.
+                            curveReading = st.curve?.takeIf { it.enabled }?.reading,
+                            curveReadingConfirmed = st.curve?.readingConfirmed == true,
+                        ),
                     ),
                 ).getOrThrow()
             }.onFailure { e ->

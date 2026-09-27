@@ -123,6 +123,21 @@ internal class Reader(private val map: Map<String, String>) {
         return enumValues<E>().firstOrNull { it.name == v } ?: run { malformed += key; null }
     }
 
+    /**
+     * **없어도 되는** 항목. 빠졌다고 적지 않는다.
+     *
+     * 판이 올라가며 **나중에 생긴 칸**을 읽을 때 쓴다. 옛 기록에는
+     * 당연히 없고, 새 기록에도 「모르는 것은 적지 않는다」는 규칙 때문에
+     * 없을 수 있다. 그것을 「빠진 값」으로 세면 멀쩡한 기록이 통째로
+     * 안 읽힌다.
+     *
+     * **모르는 이름은 여전히 잘못된 값이다.** 그때는 malformed 로 센다.
+     */
+    inline fun <reified E : Enum<E>> enumOrNull(key: String): E? {
+        val v = map[key] ?: return null
+        return enumValues<E>().firstOrNull { it.name == v } ?: run { malformed += key; null }
+    }
+
     fun doubles(key: String): DoubleArray? {
         val v = map[key] ?: run { missing += key; return null }
         if (v.isEmpty()) return DoubleArray(0)
