@@ -1,0 +1,276 @@
+package kr.joa.selahrta.recording
+
+import kr.joa.selahrta.audio.CaptureSource
+import kr.joa.selahrta.calibration.CalibrationSource
+import kr.joa.selahrta.domain.CalibrationState
+import kr.joa.selahrta.domain.MicKind
+import kr.joa.selahrta.dsp.CurveReading
+import kr.joa.selahrta.dsp.TimeWeight
+import kr.joa.selahrta.dsp.Weighting
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * **리포트는 조건과 측정값을 함께 적는다**(담당자 지시 2026-09-27).
+ *
+ * 여기서 지키는 두 줄:
+ *
+ * 1. **없는 것을 있는 것처럼 적지 않는다.** 옛 기록의 빈 칸은
+ *    「기록 없음」이고, 안드로이드가 안 알려 준 것은 「확인 불가」다.
+ *    둘 다 「없었다」가 아니다.
+ * 2. **믿음 등급이 맨 앞에 온다.** 미보정·기종 기본값·찌그러짐은
+ *    숫자보다 먼저 읽혀야 한다.
+ */
+class MeasurementReportTest {
+
+    private fun meta(
+        conditions: MeasurementConditions = MeasurementConditions(),
+        referenceOnly: Boolean = false,
+        offset: Double = 118.0,
+        leq: Double = 72.3,
+        curveApplied: Boolean = false,
+        curveLabel: String = "",
+        events: List<SessionEvent> = emptyList(),
+        dropped: Int = 0,
+    ) = SessionMeta(
+        id = "s1",
+        startedAtEpochMs = 1_700_000_000_000L,
+        endedAtEpochMs = 1_700_000_060_000L,
+        durationMs = 60_000L,
+        deviceKey = "BuiltIn|SM-S918N",
+        deviceLabel = "SM-S918N",
+        micKind = MicKind.BuiltIn,
+        sampleRate = 48_000,
+        encoding = "Float",
+        channelCount = 1,
+        channelIndex = 0,
+        calibrationOffsetDb = offset,
+        referenceOnly = referenceOnly,
+        curveApplied = curveApplied,
+        curveLabel = curveLabel,
+        weighting = Weighting.A,
+        timeWeight = TimeWeight.Fast,
+        leqWindowMs = 10_000L,
+        leqDb = leq,
+        minDb = 55.0,
+        maxDb = 88.0,
+        peakDb = 96.0,
+        events = events,
+        droppedPackets = dropped,
+        conditions = conditions,
+    )
+
+    private fun value(m: SessionMeta, label: String): String =
+        buildReport(m).flatMap { it.lines }.first { it.labelKo == label }.valueKo
+
+    /** 실기기에서 실제로 나온 조건 그대로. */
+    private val s23 = MeasurementConditions(
+        audioSource = CaptureSource.VoiceRecognition,
+        unprocessedSupported = false,
+        agcDisabled = true,
+        nsDisabled = true,
+        aecDisabled = true,
+        routedAddress = "bottom",
+        activeMicCombo = "22",
+        calibrationState = CalibrationState.GlobalCalibrated,
+        calibrationSource = CalibrationSource.Calibrator,
+    )
+
+    // ── 조건을 적는가 ──────────────────────────────────────
+
+    @Test
+    fun `다섯 자리로 나눠 적는다`() {
+        val titles = buildReport(meta()).map { it.titleKo }
+        assertEquals(
+            listOf("언제 쟀나", "무엇으로 쟀나", "어떤 잣대로 쟀나", "잰 값", "재는 동안"),
+            titles,
+        )
+    }
+
+    @Test
+    fun `실기기 조건이 그대로 적힌다`() {
+        val m = meta(conditions = s23)
+        assertEquals("SM-S918N", value(m, "입력 기기"))
+        assertEquals("bottom", value(m, "마이크 자리"))
+        assertEquals("22", value(m, "활성 마이크"))
+        assertEquals(CaptureSource.VoiceRecognition.labelKo, value(m, "입력 경로"))
+        assertEquals("아니요", value(m, "가공 없는 입력 지원"))
+        assertEquals("48000 Hz · Float", value(m, "격자"))
+        assertEquals("1개(모노)", value(m, "채널"))
+    }
+
+    @Test
+    fun `가공이 모두 꺼졌으면 그렇게 적는다`() {
+        assertTrue(value(meta(conditions = s23), "신호 가공").contains("모두 꺼짐"))
+    }
+
+    @Test
+    fun `살아 있는 가공만 이름을 적는다`() {
+        val m = meta(
+            conditions = s23.copy(agcDisabled = false, nsDisabled = true, aecDisabled = true),
+        )
+        val v = value(m, "신호 가공")
+        assertTrue(v, v.contains("자동 게인"))
+        assertFalse(v, v.contains("잡음 억제"))
+    }
+
+    // ── 모르는 것을 지어내지 않는가 ───────────────────────
+
+    /**
+     * **옛 기록(판 1)에는 조건 칸이 없다.** 그것을 「가공이 없었다」나
+     * 「확인했다」로 읽으면, 잰 적 없는 것을 잰 것처럼 말하게 된다.
+     */
+    @Test
+    fun `옛 기록의 빈 칸은 기록 없음이다`() {
+        val m = meta()
+        assertEquals(NOT_RECORDED_KO, value(m, "입력 경로"))
+        assertEquals(NOT_RECORDED_KO, value(m, "가공 없는 입력 지원"))
+        assertEquals(NOT_RECORDED_KO, value(m, "신호 가공"))
+        assertEquals(NOT_RECORDED_KO, value(m, "무엇에 맞췄나"))
+    }
+
+    /** 안드로이드가 안 알려 준 것은 「없다」가 아니라 「확인 불가」다. */
+    @Test
+    fun `안드로이드가 말해 주지 않은 것은 확인 불가다`() {
+        val m = meta(conditions = s23.copy(routedAddress = "", activeMicCombo = ""))
+        assertEquals(UNKNOWN_KO, value(m, "마이크 자리"))
+        assertEquals(UNKNOWN_KO, value(m, "활성 마이크"))
+    }
+
+    /**
+     * 셋 중 하나라도 모르면 「깨끗하다」고 말할 수 없다.
+     */
+    @Test
+    fun `가공을 하나라도 모르면 기록 없음이다`() {
+        val m = meta(conditions = s23.copy(nsDisabled = null))
+        assertEquals(NOT_RECORDED_KO, value(m, "신호 가공"))
+    }
+
+    @Test
+    fun `없는 측정값을 0으로 적지 않는다`() {
+        val m = meta(leq = Double.NaN)
+        assertEquals(NOT_RECORDED_KO, value(m, "Leq"))
+        assertEquals("88.0 dB", value(m, "MAX"))
+    }
+
+    // ── 믿음 등급 ──────────────────────────────────────────
+
+    @Test
+    fun `미보정이면 맨 앞에 경고한다`() {
+        val m = meta(
+            conditions = s23.copy(calibrationState = CalibrationState.Uncalibrated),
+            referenceOnly = true,
+        )
+        assertTrue(reportWarningsKo(m).first().contains("미보정"))
+        assertEquals("보정 안 함", value(m, "절대 레벨"))
+    }
+
+    /** 기종 기본값은 미보정과도, 보정됨과도 다른 말을 해야 한다. */
+    @Test
+    fun `기종 기본값은 따로 말한다`() {
+        val m = meta(
+            conditions = s23.copy(calibrationState = CalibrationState.FactoryDefault),
+            referenceOnly = true,
+        )
+        val first = reportWarningsKo(m).first()
+        assertTrue(first, first.contains("기종의 기본값"))
+        assertTrue(first, first.contains("이 기기를 잰 값은 아닙니다"))
+        assertEquals("기종 기본값", value(m, "절대 레벨"))
+    }
+
+    @Test
+    fun `가공 없는 입력이 아니면 그 사실을 적는다`() {
+        val warn = reportWarningsKo(meta(conditions = s23))
+        assertTrue("$warn", warn.any { it.contains("가공 없는 입력을 지원하지 않아") })
+    }
+
+    @Test
+    fun `찌그러진 구간이 있으면 말한다`() {
+        val m = meta(events = listOf(SessionEvent(100, SessionEventKind.Clipped)))
+        assertTrue(reportWarningsKo(m).any { it.contains("찌그러진") })
+        assertEquals("1회", value(m, "찌그러짐"))
+    }
+
+    @Test
+    fun `놓친 조각이 있으면 말한다`() {
+        assertTrue(reportWarningsKo(meta(dropped = 3)).any { it.contains("3개") })
+    }
+
+    // ── 곡선 ───────────────────────────────────────────────
+
+    /** 사람이 확인한 것과 앱이 관례로 정한 것은 다르다. */
+    @Test
+    fun `곡선은 규약과 누가 정했는지를 함께 적는다`() {
+        val confirmed = meta(
+            conditions = s23.copy(
+                curveReading = CurveReading.Correction,
+                curveReadingConfirmed = true,
+            ),
+            curveApplied = true,
+            curveLabel = "umik.cal",
+        )
+        val v = value(confirmed, "주파수 곡선")
+        assertTrue(v, v.contains("umik.cal"))
+        assertTrue(v, v.contains(CurveReading.Correction.labelKo))
+        assertTrue(v, v.contains("사람이 확인"))
+
+        val auto = meta(
+            conditions = s23.copy(curveReading = CurveReading.Response),
+            curveApplied = true,
+            curveLabel = "emm6.cal",
+        )
+        assertTrue(value(auto, "주파수 곡선").contains("관례로 읽음"))
+    }
+
+    @Test
+    fun `곡선이 없으면 걸지 않았다고 적는다`() {
+        assertEquals("걸지 않음", value(meta(), "주파수 곡선"))
+    }
+
+    // ── 화면에 그대로 나가는 말 ───────────────────────────
+
+    @Test
+    fun `문구에 마크다운이 없다`() {
+        val m = meta(conditions = s23, events = listOf(SessionEvent(1, SessionEventKind.Clipped)))
+        buildReport(m).flatMap { it.lines }.forEach {
+            assertFalse(it.labelKo, it.labelKo.contains("**"))
+            assertFalse(it.valueKo, it.valueKo.contains("**"))
+        }
+        reportWarningsKo(m).forEach { assertFalse(it, it.contains("**")) }
+    }
+
+    // ── 겉장에 실제로 남는가 ──────────────────────────────
+
+    /**
+     * **적는 것과 남는 것은 다르다.** 겉장에 못 쓰면 리포트는 다음에 열
+     * 때 전부 「기록 없음」이 된다.
+     */
+    @Test
+    fun `조건이 겉장을 왕복한다`() {
+        val m = meta(
+            conditions = s23.copy(
+                curveReading = CurveReading.Correction,
+                curveReadingConfirmed = true,
+            ),
+        )
+        val back = decodeSessionMeta(encodeSessionMeta(m)).getOrThrow()
+        assertEquals(m.conditions, back.conditions)
+    }
+
+    /**
+     * **판 1 로 적힌 옛 기록도 그대로 읽힌다.** 조건 칸이 없을 뿐이다.
+     */
+    @Test
+    fun `옛 판 기록도 읽힌다`() {
+        val v2 = encodeSessionMeta(meta(conditions = s23))
+        val v1 = v2.lineSequence()
+            .filterNot { it.startsWith("cond.") }
+            .joinToString("\n") { if (it == "schemaVersion=2") "schemaVersion=1" else it }
+        val back = decodeSessionMeta(v1).getOrThrow()
+        assertEquals(1, back.schemaVersion)
+        assertFalse("옛 기록에 조건이 있다고 말한다", back.conditions.recorded)
+        assertEquals(NOT_RECORDED_KO, value(back, "입력 경로"))
+    }
+}
