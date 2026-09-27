@@ -147,10 +147,18 @@ fun columnDeclarationOf(headerLines: List<String>): ColumnDeclaration {
     val found = headerLines.mapNotNull { declarationIn(it) }.distinct()
     if (found.isEmpty()) return ColumnDeclaration.None
     if (found.size > 1) {
-        val bad = found.filterIsInstance<ColumnDeclaration.Unsupported>().firstOrNull()
+        // **부호로 못 푸는 사유가 하나라도 있으면 그것이 이긴다**
+        // (독립 재검토 CFRC-R01).
+        //
+        // 예전에는 **맨 앞의** Unsupported 를 골랐다. 그래서 부호 충돌
+        // 줄이 먼저 오면 뒤에 오는 kHz 축·Phase 열이 그 뒤에 숨었다 —
+        // 사람이 부호만 고르면 그 파일이 걸렸다. 줄 순서가 판정을
+        // 바꾸면 안 된다.
+        val bad = found.filterIsInstance<ColumnDeclaration.Unsupported>()
+            .firstOrNull { !it.reason.fixableBySign }
         return ColumnDeclaration.Unsupported(
-            // 읽을 수 없는 선언이 섞여 있으면 그 까닭이 더 구체적이다.
-            // 그런 것이 없으면 「어느 쪽도 믿을 수 없다」가 까닭이다.
+            // 못 푸는 사유가 없으면 남는 것은 「어느 쪽도 믿을 수 없다」다.
+            // 선언이 여럿이면 어느 것으로 읽을지 고를 길이 없다.
             reason = bad?.reason ?: UnsupportedColumn.Ambiguous,
             secondKo = bad?.secondKo ?: "서로 다른 선언이 여럿",
         )
@@ -189,6 +197,15 @@ private fun declarationIn(line: String): ColumnDeclaration? {
         in CORRECTION_COLUMNS -> CurveReading.Correction
         else -> return ColumnDeclaration.Unsupported(UnsupportedColumn.Quantity, fields[1])
     }
+    // **부호 충돌은 쌓아 두고 맨 뒤에 돌려준다**(독립 재검토 CFRC-R01).
+    //
+    // 발견하자마자 돌려주면 **그 뒤의 괄호를 아예 안 본다.**
+    // `Response (dB) (correction) (Pa)` 가 그렇게 「부호만 어긋남」이
+    // 되어, 사람이 부호를 고르면 파스칼 값이 dB 로 걸렸다.
+    //
+    // 「부호만 어긋남」은 **「나머지는 다 읽을 수 있는 꼴임을 확인했다」**
+    // 는 뜻이어야 한다. 「맨 처음 걸린 문제가 부호였다」가 아니다.
+    var conflictingSign = false
     for (note in second.notes) {
         val says = readingOfWord(note)
         // **단위는 dB 여야 한다.** `Amplitude (Pa)`·`Magnitude (linear)` 는
@@ -201,12 +218,14 @@ private fun declarationIn(line: String): ColumnDeclaration? {
         }
         // **괄호 안이 이름과 어긋나면 모르는 것이다.**
         // `Response (dB) (correction)` 은 한 칸 안에서 서로 다른 말을 한다.
-        if (says != null && says != byName) {
-            return ColumnDeclaration.Unsupported(
-                UnsupportedColumn.ConflictingSign,
-                "${fields[1]} — 이름과 설명이 어긋남",
-            )
-        }
+        if (says != null && says != byName) conflictingSign = true
+    }
+    // 단위를 모두 본 뒤라야 「부호만 어긋난다」고 말할 수 있다.
+    if (conflictingSign) {
+        return ColumnDeclaration.Unsupported(
+            UnsupportedColumn.ConflictingSign,
+            "${fields[1]} — 이름과 설명이 어긋남",
+        )
     }
     return ColumnDeclaration.Second(byName)
 }
@@ -238,10 +257,18 @@ private fun splitColumn(raw: String): ColumnParts {
 /** 그 말이 어느 쪽을 가리키는가. 아무것도 안 가리키면 null. */
 private fun readingOfWord(word: String): CurveReading? = when {
     word.isEmpty() -> null
-    CORRECTION_COLUMNS.any { word.contains(it) } -> CurveReading.Correction
+    // **정확히 맞아야 한다**(독립 재검토 CFRC-R01).
+    //
+    // 예전에는 포함만 보았다. 그래서 `(correction Pa)` 가 「보정값」으로
+    // 읽히고 **파스칼이라는 말은 그대로 사라졌다.** `(response Pa)` 는
+    // 아예 정상 선언으로 확정됐다.
+    //
+    // 모르는 말은 아래 단위 검사로 흘려보내 거절되게 둔다 — 반쯤
+    // 알아듣고 넘기는 것보다 모른다고 하는 편이 낫다.
+    word in CORRECTION_COLUMNS -> CurveReading.Correction
     // 단위(dB)는 어느 쪽도 가리키지 않는다. 이름 쪽 낱말만 본다.
     word in LEVEL_UNITS -> null
-    RESPONSE_COLUMNS.any { word.contains(it) } -> CurveReading.Response
+    word in RESPONSE_COLUMNS -> CurveReading.Response
     else -> null
 }
 

@@ -147,7 +147,22 @@ const val FREQUENCY_SCOPE_NOTE: String =
  * 설정 저장소에 문자열로 넣기에는 크고, 원본을 남겨 두면 나중에 다시
  * 해석하거나 내보낼 수 있다.
  */
-class CurveStore(private val context: Context) {
+/**
+ * @param store 설정을 담는 곳. 기본은 앱이 쓰는 그 하나다.
+ *
+ * **시험이 제 것을 넣을 수 있게 열어 두었다**(독립 재검토 CFRC-R02).
+ * 위의 `by preferencesDataStore` 는 **한 JVM 안에서 같은 인스턴스를
+ * 돌려준다** — `Context` 만 바꿔서는 새 DataStore 가 되지 않는다.
+ * 검토자가 그것을 재 보였다(`sharedAcrossContexts=true`).
+ *
+ * 그래서 「저장소를 새로 만들었으니 앱을 다시 켠 것과 같다」던 내 시험은
+ * **그 말을 증명하지 못하고 있었다.** 디스크에서 다시 읽는지를 보려면
+ * DataStore 자체가 새것이어야 한다.
+ */
+class CurveStore(
+    private val context: Context,
+    private val store: DataStore<Preferences> = context.curveDataStore,
+) {
 
     private fun nameKey(k: CalibrationKey) = stringPreferencesKey("${k.storageKey()}|curveFile")
     private fun countKey(k: CalibrationKey) = intPreferencesKey("${k.storageKey()}|curvePoints")
@@ -244,7 +259,7 @@ class CurveStore(private val context: Context) {
     ) = resolveCurveReading(headerLines, sha256Hex(source), recordOf(prefs, key))
 
     fun watch(key: CalibrationKey): Flow<ActiveCurve?> =
-        context.curveDataStore.data
+        store.data
             .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
             .map { prefs ->
                 val name = prefs[nameKey(key)] ?: return@map null
@@ -325,7 +340,7 @@ class CurveStore(private val context: Context) {
                 // 곡선에는 영향이 없고, 폴더만 봐도 어느 기기 것인지 알 수 있다.
                 val body = KEY_COMMENT_PREFIX + key.storageKey() + "\n" + text
                 writeAtomically(fileFor(key), body)
-                context.curveDataStore.edit { p ->
+                store.edit { p ->
                     p[nameKey(key)] = fileName
                     p[countKey(key)] = loaded.pointCount
                     p[atKey(key)] = System.currentTimeMillis()
@@ -401,14 +416,14 @@ class CurveStore(private val context: Context) {
                 ?: return@withContext "보정 파일을 찾지 못했습니다."
             val loaded = CalibrationFile.load(source).getOrNull()
                 ?: return@withContext "보정 파일을 읽지 못했습니다."
-            val prefs = context.curveDataStore.data
+            val prefs = store.data
                 .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
                 .first()
             curveEnableRefusalKo(resolve(loaded.headerLines, source, prefs, key))
                 ?.let { return@withContext it }
         }
         runCatching {
-            context.curveDataStore.edit { p -> p[onKey(key)] = on.toString() }
+            store.edit { p -> p[onKey(key)] = on.toString() }
         }.exceptionOrNull()?.let { "켜기를 저장하지 못했습니다: ${it.message}" }
     }
 
@@ -455,7 +470,7 @@ class CurveStore(private val context: Context) {
                 return@withContext "이 파일을 「${reading.labelKo}」 로 읽지 못했습니다: ${it.message}"
             }
             runCatching {
-                context.curveDataStore.edit { p ->
+                store.edit { p ->
                     p[readShaKey(key)] = sha256Hex(source)
                     p[readAsKey(key)] = reading.name
                     p[readRulesKey(key)] = CURVE_READING_RULES_VERSION
@@ -472,7 +487,7 @@ class CurveStore(private val context: Context) {
      */
     suspend fun setMicName(key: CalibrationKey, name: String) = withContext(Dispatchers.IO) {
         runCatching {
-            context.curveDataStore.edit { p -> p[micNameKey(key)] = name.trim() }
+            store.edit { p -> p[micNameKey(key)] = name.trim() }
         }
         Unit
     }
@@ -480,7 +495,7 @@ class CurveStore(private val context: Context) {
     suspend fun clear(key: CalibrationKey) = withContext(Dispatchers.IO) {
         runCatching {
             fileFor(key).delete()
-            context.curveDataStore.edit { p ->
+            store.edit { p ->
                 p.remove(nameKey(key))
                 p.remove(countKey(key))
                 p.remove(atKey(key))

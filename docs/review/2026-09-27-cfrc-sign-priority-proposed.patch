@@ -1,0 +1,56 @@
+diff --git a/dsp/src/main/kotlin/kr/joa/selahrta/dsp/CalibrationSign.kt b/dsp/src/main/kotlin/kr/joa/selahrta/dsp/CalibrationSign.kt
+index 4c750e3..9310566 100644
+--- a/dsp/src/main/kotlin/kr/joa/selahrta/dsp/CalibrationSign.kt
++++ b/dsp/src/main/kotlin/kr/joa/selahrta/dsp/CalibrationSign.kt
+@@ -147,7 +147,8 @@ fun columnDeclarationOf(headerLines: List<String>): ColumnDeclaration {
+     val found = headerLines.mapNotNull { declarationIn(it) }.distinct()
+     if (found.isEmpty()) return ColumnDeclaration.None
+     if (found.size > 1) {
+-        val bad = found.filterIsInstance<ColumnDeclaration.Unsupported>().firstOrNull()
++        val bad = found.filterIsInstance<ColumnDeclaration.Unsupported>()
++            .firstOrNull { !it.reason.fixableBySign }
+         return ColumnDeclaration.Unsupported(
+             // 읽을 수 없는 선언이 섞여 있으면 그 까닭이 더 구체적이다.
+             // 그런 것이 없으면 「어느 쪽도 믿을 수 없다」가 까닭이다.
+@@ -189,6 +190,7 @@ private fun declarationIn(line: String): ColumnDeclaration? {
+         in CORRECTION_COLUMNS -> CurveReading.Correction
+         else -> return ColumnDeclaration.Unsupported(UnsupportedColumn.Quantity, fields[1])
+     }
++    var conflictingSign = false
+     for (note in second.notes) {
+         val says = readingOfWord(note)
+         // **단위는 dB 여야 한다.** `Amplitude (Pa)`·`Magnitude (linear)` 는
+@@ -201,12 +203,14 @@ private fun declarationIn(line: String): ColumnDeclaration? {
+         }
+         // **괄호 안이 이름과 어긋나면 모르는 것이다.**
+         // `Response (dB) (correction)` 은 한 칸 안에서 서로 다른 말을 한다.
+-        if (says != null && says != byName) {
+-            return ColumnDeclaration.Unsupported(
+-                UnsupportedColumn.ConflictingSign,
+-                "${fields[1]} — 이름과 설명이 어긋남",
+-            )
+-        }
++        if (says != null && says != byName) conflictingSign = true
++    }
++    // 부호 충돌은 다른 모든 단위가 지원될 때만 사람이 풀 수 있다.
++    if (conflictingSign) {
++        return ColumnDeclaration.Unsupported(
++            UnsupportedColumn.ConflictingSign,
++            "${fields[1]} — 이름과 설명이 어긋남",
++        )
+     }
+     return ColumnDeclaration.Second(byName)
+ }
+@@ -238,10 +242,10 @@ private fun splitColumn(raw: String): ColumnParts {
+ /** 그 말이 어느 쪽을 가리키는가. 아무것도 안 가리키면 null. */
+ private fun readingOfWord(word: String): CurveReading? = when {
+     word.isEmpty() -> null
+-    CORRECTION_COLUMNS.any { word.contains(it) } -> CurveReading.Correction
++    word in CORRECTION_COLUMNS -> CurveReading.Correction
+     // 단위(dB)는 어느 쪽도 가리키지 않는다. 이름 쪽 낱말만 본다.
+     word in LEVEL_UNITS -> null
+-    RESPONSE_COLUMNS.any { word.contains(it) } -> CurveReading.Response
++    word in RESPONSE_COLUMNS -> CurveReading.Response
+     else -> null
+ }
+ 
