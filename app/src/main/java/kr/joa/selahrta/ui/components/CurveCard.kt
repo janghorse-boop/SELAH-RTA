@@ -539,7 +539,7 @@ private fun ReadingConfirmRow(
                 ),
             ) {
                 Text(
-                    "${r.labelKo} 으로 사용",
+                    "${r.labelKo}으로 사용",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
                 )
