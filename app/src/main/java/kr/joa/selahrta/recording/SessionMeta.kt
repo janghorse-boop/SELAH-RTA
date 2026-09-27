@@ -29,6 +29,15 @@ import kr.joa.selahrta.dsp.Weighting
  * 세션을 나중에 열어 보고 그 숫자를 음압이라 부르면 안 된다 — 화면은
  * 물론 CSV 에도 그 사실이 함께 나간다.
  */
+/**
+ * 메모로 받아 줄 길이.
+ *
+ * 겉장이 한없이 커지지 않게 막는다. 예배 한 번에 적을 말은 이 안에
+ * 들어간다 — 「찬양 2부 · 에어컨 켜짐 · 설교 중 마이크 교체」가
+ * 30자 남짓이다.
+ */
+const val MEMO_MAX = 500
+
 data class SessionMeta(
     val id: String,
     val schemaVersion: Int = SESSION_SCHEMA_VERSION,

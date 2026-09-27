@@ -15,6 +15,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.LocalTextStyle
+import kr.joa.selahrta.recording.MEMO_MAX
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -65,6 +69,8 @@ fun HistoryScreen(
     /** 그 기록의 소리 파일이 어디 있는지. 없으면 없는 파일을 준다. */
     audioFileOf: (SessionMeta) -> java.io.File,
     onShareAudio: (SessionMeta) -> Unit,
+    /** 기록에 메모를 적는다(명세 12장). */
+    onMemo: (String, String) -> Unit,
     /** 열어 본 기록의 행들. 아직 못 읽었으면 비어 있다. */
     rows: List<kr.joa.selahrta.recording.TimelineRow> = emptyList(),
 ) {
@@ -95,6 +101,7 @@ fun HistoryScreen(
                 onDelete = onDelete,
                 audioFileOf = audioFileOf,
                 onShareAudio = onShareAudio,
+                onMemo = onMemo,
                 rows = rows,
             )
         }
@@ -197,6 +204,20 @@ private fun SessionRow(m: SessionMeta, onOpen: (SessionMeta) -> Unit) {
             color = SelahColors.TextSecondary,
             fontSize = 12.sp,
         )
+        // **적어 둔 메모를 목록에서도 보인다.** 기록을 구별하는 데
+        // 숫자보다 이 한 줄이 낫다 — 「Leq 73.9」 가 셋이면 어느 것이
+        // 찬양이었는지 알 수 없다.
+        if (m.memo.isNotBlank()) {
+            Text(
+                m.memo,
+                color = SelahColors.TextMuted,
+                fontSize = 11.sp,
+                // 목록에서는 한 줄만. 여러 줄 메모가 칸을 밀어내면
+                // 아래 기록이 화면 밖으로 나간다.
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 
@@ -208,6 +229,7 @@ private fun SessionDetail(
     onDelete: (SessionMeta) -> Unit,
     audioFileOf: (SessionMeta) -> java.io.File,
     onShareAudio: (SessionMeta) -> Unit,
+    onMemo: (String, String) -> Unit,
     rows: List<kr.joa.selahrta.recording.TimelineRow>,
 ) {
     var confirmDelete by remember { mutableStateOf(false) }
@@ -235,6 +257,10 @@ private fun SessionDetail(
         // 시각으로 묶어야 「이 자리가 그 자리」라고 말할 수 있다.
         PlaybackReadout(m, rows, playMs)
     }
+
+    // **리포트 위에 둔다.** 적으려고 들어왔다가 표를 다 지나쳐야
+    // 나오면 안 적게 된다.
+    MemoCard(m, onMemo)
 
     buildReport(m).forEach { section -> Section(section) }
 
@@ -278,6 +304,89 @@ private fun SessionDetail(
  * 행은 0.5초짜리다. 그 자리에 행이 없으면 **없다고 적는다** — 옆 행을
  * 가져다 놓으면 소리와 숫자가 어긋난 채 그럴듯해 보인다.
  */
+/**
+ * 기록에 메모를 적는다(명세 12장).
+ *
+ * ## 왜 필요했나
+ *
+ * 겉장에는 `memo` 자리가 있었고 왕복 시험까지 있었는데 **적을 길이
+ * 없었다** — 리포트의 「메모」 줄이 늘 「없음」이었다.
+ *
+ * 숫자만으로는 두 달 뒤에 그 기록이 무엇이었는지 알 수 없다.
+ * 「찬양 2부 · 에어컨 켜짐」 한 줄이 그 자리를 메운다.
+ *
+ * ## 고치는 중에는 원래 값을 건드리지 않는다
+ *
+ * 적는 동안에는 화면 안에만 두고, **저장을 눌러야** 겉장에 쓴다.
+ * 쓰다 말고 나가면 아무 일도 없다.
+ */
+@Composable
+private fun MemoCard(m: SessionMeta, onMemo: (String, String) -> Unit) {
+    // **기록이 바뀌면 처음부터.** `remember(m.id)` 를 빼면 다른 기록을
+    // 열었을 때 앞 기록의 메모가 칸에 남는다.
+    var text by remember(m.id) { mutableStateOf(m.memo) }
+    val changed = text.trim() != m.memo
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(bottom = 10.dp)
+            .background(SelahColors.Surface, RoundedCornerShape(12.dp))
+            .border(1.dp, SelahColors.Outline, RoundedCornerShape(12.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            "메모",
+            color = SelahColors.TextMuted,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 1.sp,
+        )
+        OutlinedTextField(
+            value = text,
+            onValueChange = { if (it.length <= MEMO_MAX) text = it },
+            placeholder = {
+                Text(
+                    "무엇을 잰 자리인지 적어 두십시오. 예: 찬양 2부 · 에어컨 켜짐",
+                    color = SelahColors.TextMuted,
+                    fontSize = 12.sp,
+                )
+            },
+            textStyle = LocalTextStyle.current.copy(
+                color = SelahColors.TextPrimary,
+                fontSize = 13.sp,
+            ),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = SelahColors.Accent,
+                unfocusedBorderColor = SelahColors.Outline,
+                cursorColor = SelahColors.Accent,
+            ),
+            minLines = 2,
+            maxLines = 5,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "${text.length} / $MEMO_MAX",
+                color = SelahColors.TextMuted,
+                fontSize = 10.sp,
+            )
+            // **바뀐 것이 있을 때만 띄운다.** 늘 띄우면 눌러야 하는지
+            // 아닌지가 흐려진다.
+            if (changed) {
+                TextButton(onClick = { onMemo(m.id, text) }) {
+                    Text("저장", color = SelahColors.Accent, fontSize = 13.sp)
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun PlaybackReadout(
     m: SessionMeta,
