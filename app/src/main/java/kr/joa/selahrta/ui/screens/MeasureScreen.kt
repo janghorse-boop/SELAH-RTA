@@ -107,14 +107,15 @@ fun MeasureScreen(
 
     val running = capture.measure is MeasureState.Running
     val m = capture.meter
-    val weighting = capture.meterSettings.weighting
+    // **음압 줄의 가중이다.** PEAK 은 제 가중을 따로 쓴다(지시서 §16).
+    val weighting = capture.meterSettings.splWeighting
     val uncalibrated = capture.calibration.isReferenceOnly
 
     // **판정은 계기 바의 색 하나로 말한다.** 예전에는 「낮음/적정/높음」
     // 배지를 함께 띄웠는데, 바가 이미 같은 말을 하고 있어 지웠다.
     //
-    // **참고 범위는 dBA 기준이다.** A 가중일 때만 견준다 — C 나 Z 값을
-    // dBA 범위와 견주면 저음이 큰 찬양에서 늘 빨강이 된다. 그때는 색을
+    // **참고 범위는 dB(A) 기준이다.** 음압 가중이 A 일 때만 견준다 —
+    // C 나 Z 값을 dB(A) 범위와 견주면 저음이 큰 찬양에서 늘 빨강이 된다. 그때는 색을
     // 칠하지 않고 **그 까닭을 글자로 적는다**(명세 11장: 색만으로 알리지
     // 않는다).
     val canJudge = weighting == Weighting.A && range != null

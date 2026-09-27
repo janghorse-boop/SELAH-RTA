@@ -24,11 +24,37 @@ import java.io.IOException
 private val Context.meterDataStore: DataStore<Preferences>
     by preferencesDataStore(name = "meter")
 
+/**
+ * 측정 시작부터 지금까지를 뜻하는 표시값.
+ *
+ * **창 길이가 아니다.** 다른 창의 millis 와 겹치지 않게 음수를 쓴다 —
+ * 저장 코드가 millis 를 열쇠로 쓰기 때문이다.
+ */
+const val SESSION_MILLIS = -1L
+
 /** 화면에 보여줄 긴 Leq 의 길이(명세 14장). */
 enum class LeqWindow(val labelKo: String, val millis: Long) {
     TenSeconds("10초", 10_000),
     OneMinute("1분", 60_000),
     FiveMinutes("5분", 300_000),
+
+    /**
+     * 측정 시작부터 지금까지의 누적 Leq(지시서 §4).
+     *
+     * 값은 이미 `SplFrame.leqSessionDbfs` 로 나오고 있었다 — 받는 곳이
+     * 없었을 뿐이다.
+     */
+    Session("전체", SESSION_MILLIS),
+    ;
+
+    /**
+     * **엔진에 넘길 창 길이.** [millis] 와 다를 수 있다.
+     *
+     * Session 의 [millis] 는 -1 이라 그대로 넘기면 엔진이 상한다. 세션
+     * Leq 는 창이 아니라 누적 합계이므로 창 길이가 필요 없고, 엔진에는
+     * 기본 창을 준 뒤 화면에 적을 값만 세션 쪽에서 가져온다.
+     */
+    val engineMillis: Long get() = if (this == Session) OneMinute.millis else millis
 }
 
 /**
@@ -39,8 +65,36 @@ enum class LeqWindow(val labelKo: String, val millis: Long) {
  * 값이 두 설정의 중간쯤인 이상한 숫자가 된다.
  */
 data class MeterSettings(
-    val weighting: Weighting = Weighting.A,
-    val timeWeight: TimeWeight = TimeWeight.Fast,
+    /**
+     * 음압(SPL 큰 숫자·Leq·MIN·MAX)의 가중. 권장 범위 판정이 이 값을 본다.
+     */
+    val splWeighting: Weighting = Weighting.A,
+    /**
+     * PEAK 의 가중. **음압과 따로 둔다**(지시서 §16: 「Peak 를 SPL
+     * Weighting 에 무조건 종속시키지 않는다」).
+     *
+     * 킥·스네어의 저역이 A-weighting 에 깎여 순간 음압을 놓치는 일을
+     * 막자는 것이다.
+     */
+    val peakWeighting: Weighting = Weighting.Z,
+    /**
+     * RTA·Spectrum·Spectrogram 의 가중.
+     *
+     * **셋을 묶는 까닭**: 같은 FFT 장을 나눠 쓴다. 따로 두면 RTA 의 63Hz
+     * 막대와 Spectrum 의 63Hz 봉우리가 다른 값이 된다.
+     *
+     * FR 은 여기 없다. 예배당의 응답 자체를 재는 화면이라 가중을 걸면
+     * 뜻이 없어진다(지시서 §7).
+     */
+    val analysisWeighting: Weighting = Weighting.Z,
+    /**
+     * 시간가중. **기본은 Slow 다**(담당자 지시 2026-09-27).
+     *
+     * 예배당에서 보는 것은 「지금 이 순간이 얼마나 센가」가 아니라
+     * 「이만한 크기로 얼마나 이어지나」다. Fast 는 말소리의 자음 하나에도
+     * 숫자가 튀어, 화면을 보는 사람이 그 튐을 쫓게 된다.
+     */
+    val timeWeight: TimeWeight = TimeWeight.Slow,
     val leqWindow: LeqWindow = LeqWindow.OneMinute,
     /**
      * 소리를 담기로 했을 때 어느 꼴로 담을지.
@@ -118,7 +172,11 @@ const val SEGMENT_NAME_MAX = 8
 
 class MeterSettingsStore(private val context: Context) {
 
-    private val weightingKey = stringPreferencesKey("weighting")
+    // **음압 가중은 지금 쓰던 열쇠를 그대로 쓴다.** 쓰던 사람이 C 로
+    // 맞춰 뒀다면 그 설정이 남아야 한다. 나머지 둘은 새 열쇠다.
+    private val splWeightingKey = stringPreferencesKey(SPL_WEIGHTING_KEY_NAME)
+    private val peakWeightingKey = stringPreferencesKey("peakWeighting")
+    private val analysisWeightingKey = stringPreferencesKey("analysisWeighting")
     private val timeWeightKey = stringPreferencesKey("timeWeight")
     private val leqWindowKey = longPreferencesKey("leqWindowMs")
     private val audioFormatKey = stringPreferencesKey("audioFormat")
@@ -149,12 +207,12 @@ class MeterSettingsStore(private val context: Context) {
             MeterSettings(
                 // 저장된 값이 알 수 없는 것이면 기본값으로 돌아간다. 앱을
                 // 새로 깔거나 설정 이름이 바뀌어도 측정은 되어야 한다.
-                weighting = p[weightingKey]?.let { n ->
-                    Weighting.entries.firstOrNull { it.name == n }
-                } ?: Weighting.A,
+                splWeighting = p.weightingOr(splWeightingKey, Weighting.A),
+                peakWeighting = p.weightingOr(peakWeightingKey, Weighting.Z),
+                analysisWeighting = p.weightingOr(analysisWeightingKey, Weighting.Z),
                 timeWeight = p[timeWeightKey]?.let { n ->
                     TimeWeight.entries.firstOrNull { it.name == n }
-                } ?: TimeWeight.Fast,
+                } ?: TimeWeight.Slow,
                 // **모르는 이름이면 기본값이다.** 임의로 고르지 않는다.
                 audioFormat = p[audioFormatKey]
                     ?.let { n ->
@@ -207,7 +265,24 @@ class MeterSettingsStore(private val context: Context) {
             )
         }
 
-    suspend fun setWeighting(w: Weighting) = write { it[weightingKey] = w.name }
+    /** 저장된 이름이 알 수 없는 것이면 기본값으로 돌아간다. */
+    private fun Preferences.weightingOr(
+        key: Preferences.Key<String>,
+        fallback: Weighting,
+    ): Weighting = this[key]?.let { n ->
+        Weighting.entries.firstOrNull { it.name == n }
+    } ?: fallback
+
+    suspend fun setSplWeighting(w: Weighting) = write { it[splWeightingKey] = w.name }
+    suspend fun setPeakWeighting(w: Weighting) = write { it[peakWeightingKey] = w.name }
+    suspend fun setAnalysisWeighting(w: Weighting) =
+        write { it[analysisWeightingKey] = w.name }
+
+    /** 그 줄만 기본값으로 되돌린다. **옆 줄은 건드리지 않는다.** */
+    suspend fun resetSplWeighting() = write { it.remove(splWeightingKey) }
+    suspend fun resetPeakWeighting() = write { it.remove(peakWeightingKey) }
+    suspend fun resetAnalysisWeighting() = write { it.remove(analysisWeightingKey) }
+
     suspend fun setTimeWeight(t: TimeWeight) = write { it[timeWeightKey] = t.name }
     suspend fun setLeqWindow(w: LeqWindow) = write { it[leqWindowKey] = w.millis }
 
@@ -275,6 +350,17 @@ class MeterSettingsStore(private val context: Context) {
         // 저장이 막혀도 앱이 멈추면 안 된다. 이번 세션에는 적용되고
         // 다음에 열면 기본값으로 돌아간다 — 측정 자체는 계속된다.
         runCatching { context.meterDataStore.edit(block) }
+    }
+
+    companion object {
+        /**
+         * 음압 가중의 저장 열쇠.
+         *
+         * **바꾸면 쓰던 사람의 설정이 날아간다.** 가중이 셋으로 갈라지기
+         * 전부터 쓰던 이름이라 그대로 이어받는다. 시험이 이 이름을 직접
+         * 본다(`MeterSettingsWeightingTest`).
+         */
+        const val SPL_WEIGHTING_KEY_NAME = "weighting"
     }
 }
 

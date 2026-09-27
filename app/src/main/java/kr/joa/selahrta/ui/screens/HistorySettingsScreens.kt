@@ -223,7 +223,7 @@ fun SettingsScreen(
             "가중치 (Weighting)",
             "A 는 사람 귀에 맞춘 가중입니다. 권장 범위 판정은 A 에서만 합니다.",
             Weighting.entries,
-            capture.meterSettings.weighting,
+            capture.meterSettings.splWeighting,
             { it.unitSuffix },
             onWeighting,
         )

@@ -467,7 +467,7 @@ fun SelahApp() {
                         onClearCalibration = vm::clearCalibration,
                         onDismissCalibrationNotice = vm::dismissCalibrationNotice,
                         onConfirmCalibrationRoute = vm::confirmCalibrationRoute,
-                        onWeighting = vm::setWeighting,
+                        onWeighting = vm::setSplWeighting,
                         onTimeWeight = vm::setTimeWeight,
                         onLeqWindow = vm::setLeqWindow,
                         onPreferredInput = vm::setPreferredInput,
