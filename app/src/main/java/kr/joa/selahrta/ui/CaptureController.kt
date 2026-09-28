@@ -120,6 +120,32 @@ class CaptureController(
     val measurement: StateFlow<MeasurementSnapshot?> = _measurement.asStateFlow()
 
     /**
+     * **보정을 승인할 근거.** 덩어리마다 오디오 스레드가 갈아 끼운다.
+     *
+     * 화면 상태와 따로 두는 까닭은 [kr.joa.selahrta.calibration.CalibrationEvidence]
+     * 머리말에 있다 — 화면은 마지막 값을 계속 보여 줘도 되지만, 저장은
+     * **지금 들어오는 소리**에만 기대야 한다.
+     *
+     * **화면 방출(66ms)과 무관하게 덩어리마다 갱신한다.** 방출에 맞추면
+     * 그 간격만큼 나이가 부풀어, 신선도 문턱을 방출 주기가 정하게 된다.
+     */
+    @Volatile
+    private var evidence: kr.joa.selahrta.calibration.CalibrationEvidence? = null
+
+    /**
+     * 지금 보정해도 되는지 판단할 근거. 측정 중이 아니거나 아직 값이
+     * 없으면 null.
+     *
+     * **나이는 부르는 쪽이 잰다** — 같은 단조 시계를 쓰도록
+     * [kr.joa.selahrta.calibration.CalibrationEvidence.ageMs] 에 지금
+     * 시각을 넘긴다.
+     */
+    fun calibrationEvidence(): kr.joa.selahrta.calibration.CalibrationEvidence? = evidence
+
+    /** 근거의 나이를 재는 데 쓰는 시계. 주입된 것과 같은 것이어야 한다. */
+    fun monotonicNs(): Long = nowNs()
+
+    /**
      * 지금 **화면에 보이는** 값. 바탕 상태에 측정 결과를 합친 것이다.
      *
      * ViewModel 이 흘려보내는 것과 같은 합성이다 — 한 자리에서만 합치므로
@@ -649,6 +675,20 @@ class CaptureController(
             // 남기고 놓친 수를 센다.
             session.recorder?.onBlock(block.samples, 0, false, session.engine, session.rta)
             null
+        }
+
+        // **보정 근거는 방출 전에, 덩어리마다 갱신한다**(독립 재검증
+        // UISR-01·02). 방출(66ms)에 맞추면 그 간격만큼 나이가 부풀고,
+        // 무엇보다 **콜백이 멈추면 근거도 멈춰야** 한다 — 그래야 나이가
+        // 자라 신선도 검사에 걸린다.
+        if (stats.clipped) session.lastClipNs = block.monotonicNs
+        splFrame?.let { f ->
+            evidence = kr.joa.selahrta.calibration.CalibrationEvidence(
+                session = session.id,
+                atMonotonicNs = block.monotonicNs,
+                spl = f,
+                lastClipNs = session.lastClipNs,
+            )
         }
 
         val now = nowNs()

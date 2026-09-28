@@ -40,18 +40,18 @@ sealed interface CalibrationGate {
  * @param opened 입력이 열려 있는가(측정 중인가).
  * @param routeConfirmed 어느 마이크로 열렸는지 확인됐는가. 아니면 다른
  *   기기의 보정값으로 남을 수 있다.
- * @param measuredDbfs 지금 읽는 날 값. 없으면 셈할 수 없다.
- * @param clipped 파형이 풀스케일에 닿고 있는가.
- * @param settled 시간가중이 자리를 잡았는가.
+ * @param evidence 오디오 스레드가 덩어리마다 새로 만든 근거. **화면
+ *   상태가 아니다** — 그 까닭은 [CalibrationEvidence] 머리말에 있다.
+ * @param nowNs 나이를 재는 지금 시각. [evidence] 를 만든 것과 **같은
+ *   단조 시계**여야 한다.
  * @param toneOk 1kHz 순음이 보이는가. **모르면 null** — 첫 FFT 전이다.
  *   모르는 것을 「보인다」로 읽지 않는다.
  */
 fun calibrationGate(
     opened: Boolean,
     routeConfirmed: Boolean,
-    measuredDbfs: Double?,
-    clipped: Boolean,
-    settled: Boolean,
+    evidence: CalibrationEvidence?,
+    nowNs: Long,
     source: CalibrationSource,
     toneOk: Boolean?,
 ): CalibrationGate = when {
@@ -62,19 +62,33 @@ fun calibrationGate(
             "보정하십시오 — 지금 저장하면 다른 기기의 보정값으로 남을 수 있습니다.",
     )
 
-    measuredDbfs == null ->
+    evidence == null ->
         CalibrationGate.Reject("아직 읽은 값이 없습니다. 잠시 뒤에 다시 누르십시오.")
+
+    // **묵은 값으로 맞추지 않는다**(독립 재검증 UISR-01). 세션이 살아
+    // 있어도 콜백이 멈추면 마지막 값이 그대로 남는다. 교정기를 끼우고
+    // 레벨을 바꾼 직후라면 **바꾸기 전 값으로 덮어쓰게 된다.**
+    !evidence.fresh(nowNs) -> CalibrationGate.Reject(
+        "지금 들어오는 소리가 없습니다(마지막 값이 %.1f초 전). ".format(
+            evidence.ageMs(nowNs) / 1000.0,
+        ) + "연결을 확인하고 소리가 다시 들어온 뒤에 보정하십시오.",
+    )
 
     // **잘린 소리로 맞추지 않는다.** 풀스케일에 닿은 순간의 실제 음압은
     // 읽은 값보다 높고, 얼마나 높은지는 알 길이 없다.
-    clipped -> CalibrationGate.Reject(
-        "소리가 너무 커서 파형이 잘리고 있습니다. 입력 볼륨을 낮춘 뒤에 " +
-            "보정하십시오 — 지금 맞추면 잘린 만큼 틀립니다.",
+    //
+    // **「그 뒤로 조용했는가」를 묻는다**(독립 재검증 UISR-02). 예전에는
+    // 세션 누적 플래그를 봤는데, 그러면 시작할 때 충격음 한 번으로
+    // **입력을 낮춰도 영영 풀리지 않았다** — 안내는 낮추라고 하는데.
+    !evidence.cleanWindow(nowNs) -> CalibrationGate.Reject(
+        "소리가 너무 커서 파형이 잘렸습니다. 입력 볼륨을 낮추고 " +
+            "%.0f초쯤 기다린 뒤에 보정하십시오 — 잘린 값으로 맞추면 그만큼 틀립니다."
+                .format(CalibrationEvidence.CLEAN_WINDOW_MS / 1000.0),
     )
 
     // **바늘이 자리를 잡기 전에 맞추지 않는다.** 시작 직후 값은 0 에서
     // 올라오는 중이라 실제보다 낮다.
-    !settled ->
+    !evidence.settled ->
         CalibrationGate.Reject("값이 아직 자리를 잡는 중입니다. 잠시 뒤에 다시 누르십시오.")
 
     // **교정기 단추만 순음을 본다.** 기준 소음계에 맞추는 쪽은 사람이
