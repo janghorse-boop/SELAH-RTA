@@ -172,9 +172,12 @@ fun SettingsScreen(
             val picked = capture.meterSettings.inputChannels[chosenDevice.stableKey] ?: 0
             ChoiceRow(
                 "측정 입력 채널",
-                "여러 입력을 주는 기기입니다. 잴 채널 하나를 고르십시오. " +
-                    "섞지 않습니다 — 채널마다 다른 마이크가 꽂혀 있을 수 있고, " +
-                    "보정값은 마이크마다 다릅니다." +
+                // 담당자 문안(2026-09-28). **뒤에 붙는 한 줄은 그대로
+                // 둔다** — 「고른 것」과 「실제로 열린 것」이 다를 수 있어,
+                // 지금 몇 채널로 열려 몇 번을 재는지는 이 자리에서만 안다.
+                "측정에 사용할 입력 채널 하나를 선택하세요. " +
+                    "각 채널에 연결된 마이크와 보정값이 다를 수 있으므로 " +
+                    "여러 채널을 합쳐 측정하지 않습니다." +
                     if (capture.opened != null && capture.opened.channelCount > 1) {
                         " 지금은 ${capture.opened.channelCount}채널로 열려 " +
                             "${capture.opened.channelIndex + 1}번을 재고 있습니다."
@@ -698,7 +701,9 @@ private fun InputDevicePicker(
             )
         }
         Text(
-            "기기마다 보정값을 따로 둡니다. 바꾸면 그 기기의 보정이 적용됩니다.",
+            // 담당자 문안(2026-09-28).
+            "기기별로 보정값을 따로 저장합니다. " +
+                "기기를 변경하면 선택한 기기의 보정값이 적용됩니다.",
             color = SelahColors.TextMuted,
             fontSize = 10.sp,
             lineHeight = 14.sp,
