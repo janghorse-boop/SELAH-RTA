@@ -467,6 +467,8 @@ fun SelahApp() {
                         onClearCalibration = vm::clearCalibration,
                         onDismissCalibrationNotice = vm::dismissCalibrationNotice,
                         onConfirmCalibrationRoute = vm::confirmCalibrationRoute,
+                        onConfirmPendingCalibration = vm::confirmPendingCalibration,
+                        onDismissPendingCalibration = vm::dismissPendingCalibration,
                         onSplWeighting = vm::setSplWeighting,
                         onPeakWeighting = vm::setPeakWeighting,
                         onAnalysisWeighting = vm::setAnalysisWeighting,

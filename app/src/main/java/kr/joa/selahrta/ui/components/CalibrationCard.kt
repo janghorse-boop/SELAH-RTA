@@ -64,6 +64,10 @@ fun CalibrationCard(
     onDismissNotice: () -> Unit,
     /** 「이 자리에서 잰 것이 맞다」고 사람이 확인해 준다(독립 재검토 CAR-03). */
     onConfirmRoute: () -> Unit,
+    /** 「순음은 안 보이지만 교정기를 물렸다」고 답했다(독립 검토 UIS-02). */
+    onConfirmPending: () -> Unit,
+    /** 그 물음을 물렸다. 저장하지 않는다. */
+    onDismissPending: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var confirmClear by remember { mutableStateOf(false) }
@@ -213,10 +217,16 @@ fun CalibrationCard(
                     // 보정을 할 수가 없었다** — 눌러야 할 단추가 회색인
                     // 채로 있으니 사람은 무엇을 더 해야 하는지 모른다.
                     //
-                    // 확인을 버리지는 않는다. 아래 한 줄이 순음이 보이는지
-                    // 그대로 적고, 맞춘 결과는 바로 위 「지금 읽는 값」이
-                    // 음압으로 보여 준다 — **틀리게 맞췄으면 그 숫자가
-                    // 곧바로 이상하다.** 막는 대신 보이게 한다.
+                    // **「틀리면 화면이 곧바로 이상해진다」고 적어 두었는데
+                    // 그 말이 틀렸다**(독립 검토 UIS-02, 2026-09-28).
+                    // 오프셋은 `기준값 − 지금 읽는 값`이라, 무엇에 대고
+                    // 맞추든 **맞춘 직후 화면은 반드시 기준값(94)을
+                    // 가리킨다.** 교정기를 안 끼우고 주변 소리에 맞춰도
+                    // 그렇다 — 틀릴수록 오히려 멀쩡해 보인다.
+                    //
+                    // 그래서 단추는 그대로 열어 두되, 순음이 안 보이면
+                    // **저장 직전에 한 번 묻는다**(`CaptureViewModel`).
+                    // 쉬움은 그대로 두고 조용히 틀리는 길만 막는다.
                     enabled = measured != null,
                     highlight = tone?.ok == true,
                     onClick = { onSave(level.db, CalibrationSource.Calibrator) },
@@ -234,8 +244,12 @@ fun CalibrationCard(
         Text(
             when {
                 tone == null -> "소리를 읽기 시작하면 순음을 확인합니다."
+                // **들리는 것까지만 말한다**(독립 검토 2026-09-28).
+                // 예전에는 「교정기가 제대로 물렸습니다」라고 적었는데,
+                // 순음이 보인다고 교정기가 마이크에 **꼭 끼워졌다**는
+                // 뜻은 아니다 — 헐겁게 물려 새고 있어도 순음은 보인다.
                 tone.ok ->
-                    "1kHz 순음이 다른 대역보다 %.0fdB 솟아 있습니다 — 교정기가 제대로 물렸습니다."
+                    "1kHz 순음이 다른 대역보다 %.0fdB 솟아 있습니다."
                         .format(tone.prominenceDb)
                 else -> tone.reasonKo ?: ""
             },
@@ -302,6 +316,62 @@ fun CalibrationCard(
                     fontSize = 13.sp,
                 )
             }
+        }
+
+        // **순음이 안 보이는데 교정기 단추를 눌렀다**(독립 검토 UIS-02).
+        //
+        // 막지 않는다 — 교정기가 헐겁거나 방이 시끄러워 판정이 오락가락할
+        // 수 있고, 그때 잠가 버리면 아예 보정을 못 한다. 대신 **한 번
+        // 묻는다.** 사람이 「물렸다」고 하면 그대로 저장한다.
+        capture.pendingCalibration?.let { pending ->
+            AlertDialog(
+                onDismissRequest = onDismissPending,
+                containerColor = SelahColors.DialogSurface,
+                tonalElevation = 0.dp,
+                shape = RoundedCornerShape(20.dp),
+                title = {
+                    Text(
+                        "1kHz 교정 신호를 찾지 못했습니다",
+                        color = SelahColors.TextPrimary,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                },
+                text = {
+                    Text(
+                        buildString {
+                            pending.reasonKo?.takeIf { it.isNotBlank() }?.let {
+                                append(it)
+                                appendLine()
+                                appendLine()
+                            }
+                            append("교정기를 마이크에 끼웠고, 교정기 레벨이 ")
+                            append("%.0f dB 로 맞춰져 있습니까?".format(pending.referenceDb))
+                            appendLine()
+                            appendLine()
+                            // **이것이 물어야 하는 진짜 까닭이다.** 사람이
+                            // 「저장하면 이상해 보이겠지」라고 믿고 누르지
+                            // 않도록, 그렇지 않다는 것을 여기서 말한다.
+                            append("교정기 없이 저장하면 주변 소리를 ")
+                            append("%.0f dB 로 삼습니다. ".format(pending.referenceDb))
+                            append("그 뒤로는 화면이 멀쩡해 보여도 모든 값이 ")
+                            append("그만큼 틀립니다.")
+                        },
+                        color = SelahColors.TextSecondary,
+                        fontSize = 13.sp,
+                        lineHeight = 19.sp,
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = onConfirmPending) {
+                        Text("교정기를 물렸습니다 — 저장", color = SelahColors.Accent)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = onDismissPending) {
+                        Text("취소", color = SelahColors.TextMuted)
+                    }
+                },
+            )
         }
 
         if (confirmClear) {
