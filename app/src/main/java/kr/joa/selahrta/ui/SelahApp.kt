@@ -824,7 +824,7 @@ private fun ModeChips(
                 modifier = Modifier
                     .weight(1f)
                     .background(
-                        if (on) SelahColors.Accent else SelahColors.SurfaceVariant,
+                        if (on) SelahColors.ChipOn else SelahColors.SurfaceVariant,
                         RoundedCornerShape(10.dp),
                     )
                     .clickable { onSelect(m) }
@@ -833,7 +833,7 @@ private fun ModeChips(
             ) {
                 Text(
                     m.labelKo,
-                    color = if (on) Color(0xFF00201C) else SelahColors.TextSecondary,
+                    color = if (on) SelahColors.OnChipOn else SelahColors.TextSecondary,
                     fontSize = 13.sp,
                     fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
                     textAlign = TextAlign.Center,

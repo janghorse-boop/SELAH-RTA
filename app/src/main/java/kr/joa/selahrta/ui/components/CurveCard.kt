@@ -251,7 +251,7 @@ fun CurveCard(
                 modifier = Modifier.weight(1f),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = SelahColors.Accent,
-                    contentColor = Color(0xFF00201C),
+                    contentColor = SelahColors.OnAccent,
                     disabledContainerColor = SelahColors.SurfaceVariant,
                     disabledContentColor = SelahColors.TextMuted,
                 ),

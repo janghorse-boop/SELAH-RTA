@@ -174,7 +174,7 @@ fun MicProbeCard(
             modifier = Modifier.fillMaxWidth(),
             colors = ButtonDefaults.buttonColors(
                 containerColor = SelahColors.Accent,
-                contentColor = Color(0xFF00201C),
+                contentColor = SelahColors.OnAccent,
                 disabledContainerColor = SelahColors.SurfaceVariant,
                 disabledContentColor = SelahColors.TextMuted,
             ),

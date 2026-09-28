@@ -895,7 +895,7 @@ internal fun HoldPill(frozen: Boolean, onToggle: () -> Unit) {
     val tone = if (frozen) SelahColors.Warn else SelahColors.Accent
     Text(
         if (frozen) "이어보기" else "멈춤",
-        color = if (frozen) Color(0xFF00201C) else tone,
+        color = if (frozen) SelahColors.OnAccent else tone,
         fontSize = 11.sp,
         fontWeight = FontWeight.Bold,
         softWrap = false,
@@ -944,13 +944,13 @@ internal fun AnalyzeModes(
             val on = m == current
             Text(
                 m.labelKo,
-                color = if (on) Color(0xFF00201C) else SelahColors.TextSecondary,
+                color = if (on) SelahColors.OnChipOn else SelahColors.TextSecondary,
                 fontSize = 10.sp,
                 fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
                 softWrap = false,
                 modifier = Modifier
                     .background(
-                        if (on) SelahColors.Accent else SelahColors.SurfaceVariant,
+                        if (on) SelahColors.ChipOn else SelahColors.SurfaceVariant,
                         RoundedCornerShape(999.dp),
                     )
                     .clickable { onPick(m) }

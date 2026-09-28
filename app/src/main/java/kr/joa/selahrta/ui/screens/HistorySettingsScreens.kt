@@ -893,7 +893,7 @@ private fun WeightingRow(
                     Modifier
                         .weight(1f)
                         .background(
-                            if (on) SelahColors.Accent else SelahColors.SurfaceVariant,
+                            if (on) SelahColors.ChipOn else SelahColors.SurfaceVariant,
                             RoundedCornerShape(8.dp),
                         )
                         .clickable { onPick(w) }
@@ -902,7 +902,7 @@ private fun WeightingRow(
                 ) {
                     Text(
                         w.unitSuffix,
-                        color = if (on) Color(0xFF00201C) else SelahColors.TextSecondary,
+                        color = if (on) SelahColors.OnChipOn else SelahColors.TextSecondary,
                         fontSize = 12.sp,
                         fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
                     )

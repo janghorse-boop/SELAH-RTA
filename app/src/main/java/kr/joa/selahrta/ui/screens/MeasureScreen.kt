@@ -580,7 +580,7 @@ fun MeasureScreen(
             modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = if (running) SelahColors.SurfaceVariant else SelahColors.Accent,
-                contentColor = if (running) SelahColors.TextPrimary else Color(0xFF00201C),
+                contentColor = if (running) SelahColors.TextPrimary else SelahColors.OnAccent,
             ),
         ) {
             Text(

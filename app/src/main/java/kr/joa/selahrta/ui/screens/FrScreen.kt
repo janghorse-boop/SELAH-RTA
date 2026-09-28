@@ -249,7 +249,7 @@ fun FrScreen(
                     modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = SelahColors.Accent,
-                        contentColor = Color(0xFF00201C),
+                        contentColor = SelahColors.OnAccent,
                     ),
                 ) {
                     Text("재기", fontWeight = FontWeight.Bold)
@@ -277,7 +277,7 @@ fun FrScreen(
                             contentColor = if (capture.responseQuietReady) {
                                 SelahColors.TextPrimary
                             } else {
-                                Color(0xFF00201C)
+                                SelahColors.OnAccent
                             },
                         ),
                     ) {
@@ -293,7 +293,7 @@ fun FrScreen(
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = SelahColors.Accent,
-                            contentColor = Color(0xFF00201C),
+                            contentColor = SelahColors.OnAccent,
                             disabledContainerColor = SelahColors.SurfaceVariant,
                             disabledContentColor = SelahColors.TextMuted,
                         ),
