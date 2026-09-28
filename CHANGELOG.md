@@ -24,6 +24,25 @@ SELAH RTA 의 변경 이력.
 
 ### 2026-09-28
 
+**만든 곳을 JOAWORKS 로고 하나로 적는다**
+
+- 표지(SplashScreen)에서 **`JANGHUN` 과 `조아웍스 | JOA Works` 를 빼고**
+  그 자리에 JOAWORKS 로고를 넣었다(담당자 지시). 설정 「앱 정보」도
+  같은 표기로 맞췄다 — `개발 장훈 (JANGHUN) · 조아웍스 | JOA Works` →
+  `JOAWORKS`.
+- 영문 확장명에서 **`Worship` 을 뺐다**: `Real-Time Worship Audio
+  Analyzer` → **`Real-Time Audio Analyzer`**. 표지·첫 화면 머리글
+  (`app_subtitle`)·설정이 함께 바뀐다. 명세 23장도 고쳤다 — 거기를
+  안 고치면 다음 세션이 옛 이름으로 되돌린다.
+- **받은 로고는 흰 바탕에 얹힌 그림이었다.** 그대로 넣으면 어두운
+  표지에 흰 상자가 뜨고, 배경만 지우면 짙은 「JOA」 가 어둠에 묻힌다.
+  그래서 바탕을 지우고 회색 계열 글자를 밝은 색으로 바꾼 판을 만들어
+  넣었다(`drawable-nodpi/joaworks_logo.png`).
+- 로고 높이는 **38dp**. 30dp 로 넣었더니 아래 한 줄(IDEAS FOR A BETTER
+  TOMORROW)이 회색 얼룩으로 뭉개져 폰에서 확인하고 키웠다.
+- 표지가 머무는 시간을 **0.7초 → 0.9초**로 늘렸다(담당자 지시).
+  화면을 건드리면 곧바로 넘어가는 것은 그대로다.
+
 **백업을 끈다 — 앱이 한 약속이 거짓이었다**
 
 - `allowBackup` 이 기본값 `true` 였다. 안드로이드 자동 백업이 앱 전용
