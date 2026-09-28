@@ -56,6 +56,7 @@ import kr.joa.selahrta.ui.components.CurveCard
 import kr.joa.selahrta.ui.components.InfoBar
 import kr.joa.selahrta.ui.components.NotYet
 import kr.joa.selahrta.ui.theme.SelahColors
+import kr.joa.selahrta.ui.theme.ThemeMode
 
 /**
  * 컨셉 화면 5·6·8 을 한 자리에 모은 설정.
@@ -82,6 +83,8 @@ fun SettingsScreen(
     onResetAnalysisWeighting: () -> Unit,
     onTimeWeight: (TimeWeight) -> Unit,
     onLeqWindow: (LeqWindow) -> Unit,
+    /** 화면 밝기 한 벌. **기기 설정이 아니라 여기서 고른 것을 쓴다.** */
+    onThemeMode: (ThemeMode) -> Unit,
     /** FFT 길이. **다음 측정부터 적용된다**(측정 중 바꾸면 싱크가 끊긴다). */
     onFftSize: (Int) -> Unit,
     onPreferredInput: (String?) -> Unit,
@@ -373,6 +376,20 @@ fun SettingsScreen(
 
         // **참고값 경고 상자를 뺐다**(담당자 지시 2026-09-27).
         // 바로 아래 「주의사항」이 같은 말을 하고 있어 두 번 적혀 있었다.
+
+        SectionTitle("화면")
+        ChoiceRow(
+            "밝기",
+            // **기기 설정을 따라가지 않는다는 것을 적어 둔다.** 안 적으면
+            // 「폰을 다크로 바꿨는데 앱이 그대로」를 고장으로 읽는다.
+            "폰 설정을 따라가지 않고 여기서 고른 것을 씁니다. " +
+                "어두운 예배당에서는 다크가 눈에 편하고, 밝은 곳에서는 " +
+                "라이트가 잘 보입니다.",
+            ThemeMode.entries,
+            capture.meterSettings.themeMode,
+            { it.labelKo },
+            onThemeMode,
+        )
 
         SectionTitle("주의사항")
         Column(
@@ -783,7 +800,11 @@ private fun <T> ChoiceRow(
                     Modifier
                         .weight(1f)
                         .background(
-                            if (on) SelahColors.Accent else SelahColors.SurfaceVariant,
+                            // **테마가 고른 색을 쓴다.** 예전에는 강조색을
+                            // 그대로 깔고 글자색을 여기 박아 두었는데,
+                            // 밝은 바탕에서는 그 진한 파랑 면이 화면에서
+                            // 혼자 튀었다(담당자 지적 2026-09-28).
+                            if (on) SelahColors.ChipOn else SelahColors.SurfaceVariant,
                             RoundedCornerShape(8.dp),
                         )
                         .clickable { onPick(o) }
@@ -792,7 +813,7 @@ private fun <T> ChoiceRow(
                 ) {
                     Text(
                         labelOf(o),
-                        color = if (on) Color(0xFF00201C) else SelahColors.TextSecondary,
+                        color = if (on) SelahColors.OnChipOn else SelahColors.TextSecondary,
                         fontSize = 12.sp,
                         fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
                     )

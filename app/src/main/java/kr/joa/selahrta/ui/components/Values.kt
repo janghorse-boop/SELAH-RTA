@@ -166,21 +166,25 @@ fun ValueTile(
  *
  * 부르는 쪽이 **A 가중일 때만** 넘겨야 한다. Z·C 값을 dBA 범위와
  * 견주면 저음이 큰 찬양에서 늘 빨강이 된다.
+ *
+ * **이 색은 계기 바에만 쓴다**(`liveColor`). 그래서 글자용이 아니라
+ * 바용 판정색([SelahColors.LowBar] 등)을 쓴다 — 밝은 화면에서 바는
+ * 원색에 가깝게, 글자는 읽히게 따로 둔다(담당자 지시 2026-09-28).
  */
 fun levelColor(db: Double?, low: Double?, high: Double?): Color? {
     if (db == null || low == null || high == null) return null
     return when {
         db < low -> lerp(
-            SelahColors.Low,
-            SelahColors.InRange,
+            SelahColors.LowBar,
+            SelahColors.InRangeBar,
             (((db - (low - FADE_DB)) / FADE_DB).coerceIn(0.0, 1.0)).toFloat(),
         )
         db > high -> lerp(
-            SelahColors.InRange,
-            SelahColors.High,
+            SelahColors.InRangeBar,
+            SelahColors.HighBar,
             (((db - high) / FADE_DB).coerceIn(0.0, 1.0)).toFloat(),
         )
-        else -> SelahColors.InRange
+        else -> SelahColors.InRangeBar
     }
 }
 

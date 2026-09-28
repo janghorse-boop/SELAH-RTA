@@ -1377,6 +1377,11 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     fun setTimeWeight(t: TimeWeight) { viewModelScope.launch { settingsStore.setTimeWeight(t) } }
     fun setLeqWindow(w: LeqWindow) { viewModelScope.launch { settingsStore.setLeqWindow(w) } }
 
+    /** 화면 밝기 한 벌. 재는 것과 무관하므로 엔진을 건드리지 않는다. */
+    fun setThemeMode(m: kr.joa.selahrta.ui.theme.ThemeMode) {
+        viewModelScope.launch { settingsStore.setThemeMode(m) }
+    }
+
     /**
      * FFT 길이를 고른다. **다음 측정부터 적용된다.**
      *

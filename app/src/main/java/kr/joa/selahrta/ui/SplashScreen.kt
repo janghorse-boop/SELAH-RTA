@@ -184,7 +184,16 @@ fun SplashScreen(onDone: () -> Unit) {
             // 표지에 흰 상자가 뜬다. 배경을 지우고 짙은 「JOA」 를 밝은
             // 색으로 바꾼 판을 쓴다(`drawable-nodpi/joaworks_logo.png`).
             Image(
-                painter = painterResource(R.drawable.joaworks_logo),
+                // **바탕 밝기에 따라 아예 다른 파일을 쓴다.** 어두운 판은
+                // 「JOA」가 밝은 회색이라 라이트 모드에서 사라졌다 —
+                // 실제로 표지에서 그렇게 나왔다(2026-09-28).
+                painter = painterResource(
+                    if (SelahColors.IsLight) {
+                        R.drawable.joaworks_logo_light
+                    } else {
+                        R.drawable.joaworks_logo
+                    },
+                ),
                 // 화면 낭독기는 그림 대신 이 말을 읽는다.
                 contentDescription = "JOAWORKS",
                 contentScale = ContentScale.Fit,

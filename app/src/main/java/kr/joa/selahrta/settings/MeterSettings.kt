@@ -18,6 +18,7 @@ import kr.joa.selahrta.domain.DefaultSegmentRanges
 import kr.joa.selahrta.domain.SegmentRange
 import kr.joa.selahrta.dsp.TimeWeight
 import kr.joa.selahrta.dsp.Weighting
+import kr.joa.selahrta.ui.theme.ThemeMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
@@ -119,6 +120,15 @@ data class MeterSettings(
      */
     val timeWeight: TimeWeight = TimeWeight.Fast,
     val leqWindow: LeqWindow = LeqWindow.OneMinute,
+    /**
+     * 화면 밝기 한 벌(담당자 지시 2026-09-28).
+     *
+     * **기본은 다크다.** 어두운 예배당·방송실에서 쓰는 도구라 흰 화면
+     * 하나가 앞자리까지 밝힌다. **기기 설정을 따라가지 않는다** — 폰이
+     * 라이트로 넘어갔다는 이유로 예배 중에 화면이 하얘지는 것은
+     * 사용자가 고른 적 없는 일이다.
+     */
+    val themeMode: ThemeMode = ThemeMode.Dark,
     /**
      * FFT 길이. 길수록 저역이 또렷하고 반응이 느려진다.
      *
@@ -243,6 +253,7 @@ class MeterSettingsStore(private val context: Context) {
     private val peakWeightingKey = stringPreferencesKey("peakWeighting")
     private val analysisWeightingKey = stringPreferencesKey("analysisWeighting")
     private val timeWeightKey = stringPreferencesKey("timeWeight")
+    private val themeModeKey = stringPreferencesKey("themeMode")
     private val fftSizeKey = intPreferencesKey("fftSize")
     private val leqWindowKey = longPreferencesKey("leqWindowMs")
     private val audioFormatKey = stringPreferencesKey("audioFormat")
@@ -287,6 +298,11 @@ class MeterSettingsStore(private val context: Context) {
                 timeWeight = p[timeWeightKey]?.let { n ->
                     TimeWeight.entries.firstOrNull { it.name == n }
                 } ?: TimeWeight.Fast,
+                // **모르는 이름이면 다크다.** 저장된 것이 상했을 때
+                // 흰 화면으로 떨어지지 않게 한다.
+                themeMode = p[themeModeKey]?.let { n ->
+                    ThemeMode.entries.firstOrNull { it.name == n }
+                } ?: ThemeMode.Dark,
                 // **목록에 없는 값이면 기본값이다.** 손으로 건드렸거나
                 // 앱 판이 바뀐 경우다 — 임의의 길이로 돌리지 않는다.
                 fftSize = p[fftSizeKey]?.takeIf { it in FFT_SIZES } ?: DEFAULT_FFT_SIZE,
@@ -374,6 +390,7 @@ class MeterSettingsStore(private val context: Context) {
     suspend fun resetAnalysisWeighting() = write { it.remove(analysisWeightingKey) }
 
     suspend fun setTimeWeight(t: TimeWeight) = write { it[timeWeightKey] = t.name }
+    suspend fun setThemeMode(m: ThemeMode) = write { it[themeModeKey] = m.name }
 
     /** 목록에 없는 길이는 저장하지 않는다. */
     suspend fun setFftSize(n: Int) {

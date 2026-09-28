@@ -476,6 +476,7 @@ fun SelahApp() {
                         onFftSize = vm::setFftSize,
                         onTimeWeight = vm::setTimeWeight,
                         onLeqWindow = vm::setLeqWindow,
+                        onThemeMode = vm::setThemeMode,
                         onPreferredInput = vm::setPreferredInput,
                         onForgetDevice = vm::forgetDevice,
                         onInputChannel = vm::setInputChannel,

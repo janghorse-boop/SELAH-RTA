@@ -329,7 +329,8 @@ fun MeasureScreen(
             GaugeArc(
                 fraction = m.currentSpl?.let { gaugeFraction(it) },
                 modifier = Modifier.size(248.dp, 132.dp),
-                color = liveColor ?: SelahColors.InRange,
+                // 바에 칠하는 색이라 **바용 판정색**을 쓴다(글자용과 다르다).
+                color = liveColor ?: SelahColors.InRangeBar,
                 // **견줄 수 없으면 띠도 없다.** C·Z 가중에서 dBA 범위를
                 // 눈금에 그려 두면, 색을 안 칠하는 것과 달리 「이 안에
                 // 들어오라」는 말로 읽힌다.
@@ -1004,7 +1005,8 @@ private fun GaugeArc(
             val hi = it.endInclusive.coerceIn(0f, 1f)
             if (hi > lo) {
                 drawArc(
-                    color = SelahColors.InRange.copy(alpha = 0.30f),
+                    // 띠도 바 위에 깔리는 것이라 바용 색을 쓴다.
+                    color = SelahColors.InRangeBar.copy(alpha = 0.30f),
                     startAngle = 180f + 180f * lo,
                     sweepAngle = 180f * (hi - lo),
                     useCenter = false,
