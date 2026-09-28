@@ -97,28 +97,34 @@ data class MeterSettings(
      */
     val analysisWeighting: Weighting = Weighting.Z,
     /**
-     * 시간가중. **기본은 Fast 다.**
+     * 시간가중. **기본은 Slow 다**(담당자 지시 2026-09-28: 「Fast 는
+     * 너무 빠릅니다」).
      *
-     * 2026-09-27 에 Slow 로 바꿨다가 **하루 만에 되돌렸다**(담당자 지시
-     * 2026-09-28). 까닭은 화면이 자리를 잡는 시간이다 —
+     * ## 이 값은 하루 사이에 세 번 바뀌었다 — 그 까닭을 남긴다
+     *
+     * 2026-09-27 Fast→Slow, 2026-09-28 오전 Slow→Fast, 같은 날 저녁
+     * 다시 Fast→Slow 다. 오전에 되돌린 까닭은 **자리 잡는 시간**이었다 —
      * `settleSamples = 샘플레이트 × τ × 3` 이라:
      *
      * | | τ | 자리 잡는 시간 |
      * |---|---|---|
-     * | Fast | 125ms | **0.375초** |
+     * | Fast | 125ms | 0.375초 |
+     * | 중간 | 350ms | 1.05초 |
      * | Slow | 1초 | **3초** |
      *
-     * 그 사이의 값은 0 에서 올라오는 중이라 실제보다 낮다. Fast 에서는
-     * 눈 깜짝할 새라 아무도 몰랐는데, Slow 로 바꾸니 **예배를 시작할
-     * 때마다 3초**가 되었다.
+     * 그 사이의 값은 0 에서 올라오는 중이라 실제보다 낮다. Slow 면
+     * **예배를 시작할 때마다 3초**가 그렇다.
      *
-     * 「이만한 크기로 얼마나 이어지나」를 보려는 뜻은 **Leq 가 이미
-     * 하고 있다.** 시간가중까지 느리게 할 까닭이 없었다.
+     * 그 대가를 알고도 Slow 를 고르신 것이다 — 바늘이 덜 튀는 쪽이 보기
+     * 낫다는 판단이고, 고르는 자리(설정 「응답 속도」)에 그 3초를 적어
+     * 두었으므로 놀랄 일은 없다. **여기를 다시 Fast 로 되돌리지 말 것.**
+     *
+     * 더 급하면 [TimeWeight.Medium] 이 있다 — 다만 **규격 밖의 값**이다.
      *
      * 사람이 고른 값은 그대로 남는다 — 이 기본값은 저장된 것이 없을
      * 때만 쓰인다.
      */
-    val timeWeight: TimeWeight = TimeWeight.Fast,
+    val timeWeight: TimeWeight = TimeWeight.Slow,
     val leqWindow: LeqWindow = LeqWindow.OneMinute,
     /**
      * 화면 밝기 한 벌(담당자 지시 2026-09-28).
@@ -297,7 +303,7 @@ class MeterSettingsStore(private val context: Context) {
                 analysisWeighting = p.weightingOr(analysisWeightingKey, Weighting.Z),
                 timeWeight = p[timeWeightKey]?.let { n ->
                     TimeWeight.entries.firstOrNull { it.name == n }
-                } ?: TimeWeight.Fast,
+                } ?: TimeWeight.Slow,
                 // **모르는 이름이면 다크다.** 저장된 것이 상했을 때
                 // 흰 화면으로 떨어지지 않게 한다.
                 themeMode = p[themeModeKey]?.let { n ->

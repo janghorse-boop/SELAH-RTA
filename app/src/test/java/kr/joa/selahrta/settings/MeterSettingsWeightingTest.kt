@@ -93,29 +93,59 @@ class MeterSettingsWeightingTest {
     // ── 기본값 ──────────────────────────────────────────
 
     /**
-     * **응답 속도 기본은 Fast 다**(담당자 지시 2026-09-28).
+     * **응답 속도 기본은 Slow 다**(담당자 지시 2026-09-28 저녁:
+     * 「Fast 는 너무 빠릅니다」).
      *
-     * 2026-09-27 에 Slow 로 바꿨다가 하루 만에 되돌렸다. 화면이 자리를
-     * 잡는 시간이 `τ×3` 이라 Fast 는 0.375초, Slow 는 **3초**다. 그
-     * 사이의 값은 0 에서 올라오는 중이라 실제보다 낮은데, Slow 에서는
-     * **예배를 시작할 때마다 3초** 동안 그랬다.
+     * ## 하루에 세 번 바뀐 값이라 이력을 적어 둔다
      *
-     * 「이만한 크기로 얼마나 이어지나」는 Leq 가 이미 한다.
+     * 09-27 Fast→Slow, 09-28 오전 Slow→Fast, 09-28 저녁 Fast→Slow.
+     * 오전에 되돌린 까닭은 자리 잡는 시간(`τ×3`)이었다 — Slow 는 3초다.
+     * 그 사이의 값은 0 에서 올라오는 중이라 실제보다 낮다.
+     *
+     * **그 대가를 알고도 고르신 것이다.** 바늘이 덜 튀는 쪽이 보기 낫다는
+     * 판단이고, 고르는 자리에 그 3초를 적어 두었다. 아래
+     * [Slow 는 자리를 잡는 데 Fast 의 여덟 배가 걸린다] 가 그 대가를
+     * 숫자로 지키고 있으니, **이 시험이 깨졌다고 기본값을 Fast 로
+     * 되돌리지 말 것** — 사람이 고른 값이다.
      */
     @Test
-    fun `응답 속도 기본이 Fast 다`() {
-        assertEquals(TimeWeight.Fast, MeterSettings().timeWeight)
+    fun `응답 속도 기본이 Slow 다`() {
+        assertEquals(TimeWeight.Slow, MeterSettings().timeWeight)
     }
 
     /**
      * **자리 잡는 시간이 Fast 와 Slow 에서 8배 차이 난다.**
      *
-     * 이 숫자가 기본값을 되돌린 까닭이다. 누가 다시 Slow 로 바꾸려 할 때
-     * 이 시험이 그 대가를 코드로 보여 준다.
+     * 기본값이 Slow 로 간 지금은 이 숫자가 **치르는 대가**다. 고르는
+     * 자리의 설명(「Slow 3초」)이 이 값과 어긋나지 않게 지킨다.
      */
     @Test
     fun `Slow 는 자리를 잡는 데 Fast 의 여덟 배가 걸린다`() {
         assertEquals(8.0, TimeWeight.Slow.tauSeconds / TimeWeight.Fast.tauSeconds, 1e-9)
+    }
+
+    /**
+     * **「중간」은 규격 밖이라는 것을 이름이 말한다.**
+     *
+     * IEC 61672-1 이 정한 시간가중은 F(125ms)·S(1s) 뿐이다. 그 사이 값으로
+     * 잰 것은 LAF 도 LAS 도 아니라 다른 계측기와 곧바로 견줄 수 없다 —
+     * 화면에 그 사실이 드러나야 한다. 이름에서 「비표준」을 빼면 이
+     * 시험이 막는다.
+     */
+    @Test
+    fun `중간 응답은 이름에 비표준이라고 적혀 있다`() {
+        assertTrue(
+            "중간 응답의 이름에 「비표준」이 없다: ${TimeWeight.Medium.labelKo}",
+            TimeWeight.Medium.labelKo.contains("비표준"),
+        )
+    }
+
+    /** 중간은 **Fast 와 Slow 사이**다. 순서도 그렇게 놓인다. */
+    @Test
+    fun `중간 응답이 Fast 와 Slow 사이에 있다`() {
+        assertTrue(TimeWeight.Medium.tauSeconds > TimeWeight.Fast.tauSeconds)
+        assertTrue(TimeWeight.Medium.tauSeconds < TimeWeight.Slow.tauSeconds)
+        assertEquals(1, TimeWeight.entries.indexOf(TimeWeight.Medium))
     }
 
     /** **이미 1분이다.** 바꾸지 않았다는 것을 못박아 둔다. */

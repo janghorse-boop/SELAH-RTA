@@ -66,16 +66,8 @@ fun CalibrationCard(
     onConfirmRoute: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var input by remember { mutableStateOf("") }
     var confirmClear by remember { mutableStateOf(false) }
     val measured = capture.meter.currentDbfs
-    val reference = input.trim().toDoubleOrNull()
-    val offset = if (measured != null && reference != null) {
-        computeOffset(reference, measured)
-    } else {
-        null
-    }
-    val referenceLooksOk = reference != null && reference in PLAUSIBLE_REFERENCE_RANGE
 
     // **교정기 순음이 실제로 들어오는가.** 밴드 레벨의 모양만 보므로
     // 보정값이 걸렸든 아니든 결과는 같다(솟은 정도는 차이라서 오프셋이
@@ -157,23 +149,20 @@ fun CalibrationCard(
             return@Column
         }
 
+        // **교정기로만 맞춘다**(담당자 지시 2026-09-28: 「94 dB 와 114dB 만
+        // 사용해서 교정을 진행합니다」). 기준 소음계 값을 손으로 적어 넣던
+        // 자리는 아래에서 걷어냈다.
+        //
+        // 잃는 것이 없지는 않다 — 교정기가 없는 사람은 이 카드로 맞출 길이
+        // 없어진다. 다만 손으로 적는 쪽은 **그 소음계가 맞다는 가정** 위에
+        // 서고 두 기기의 가중이 다르면 그 차이까지 섞여 들어간다. 1kHz
+        // 순음은 A·C·Z 가 모두 0dB 이라 그 문제가 없다.
         Text(
-            "기준 소음계를 이 폰 마이크 바로 옆에 두고, 소리가 안정된 상태에서 " +
-                "소음계가 가리키는 값을 적으십시오.",
+            "음압 교정기를 폰 마이크에 끼우고 켠 뒤, 기구에 적힌 값을 " +
+                "아래에서 고르십시오. 1kHz 순음이라 가중치와 무관합니다.",
             color = SelahColors.TextMuted,
             fontSize = 11.sp,
             lineHeight = 16.sp,
-        )
-
-        // **가중치가 맞아야 한다.** 여기서 읽는 값에는 지금 고른 가중이
-        // 이미 걸려 있다. 소음계가 dBC 인데 앱이 dBA 면, 그 소리의
-        // A-C 차이가 보정값에 통째로 섞여 들어가 이후 모든 값이 그만큼
-        // 틀어진다. 1kHz 순음이면 세 가중이 모두 0dB 이라 안전하다.
-        InfoBar(
-            "소음계를 ${capture.meterSettings.splWeighting.unitSuffix} 로 맞추고 재십시오. " +
-                "가중치가 다르면 그 차이가 보정값에 섞여 들어갑니다. " +
-                "1kHz 순음(교정기)으로 하면 가중치와 무관합니다.",
-            tone = SelahColors.Warn,
         )
 
         Row(
@@ -181,7 +170,26 @@ fun CalibrationCard(
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Text("지금 읽는 값", color = SelahColors.TextMuted, fontSize = 11.sp)
-            Text("%.1f dBFS".format(measured), color = SelahColors.TextSecondary, fontSize = 11.sp)
+            // **음압을 앞에 적는다**(담당자 물음 2026-09-28: 「94 dB 를
+            // 누르고 지금 읽는 값이 94 dB 와 같아지면 교정이 완료되는 게
+            // 아닌지?」).
+            //
+            // 맞다 — 보정은 `94 − 지금 dBFS` 를 오프셋으로 걸어 두는 일이라,
+            // 걸고 나면 같은 소리를 94 로 읽는다. 그런데 이 줄은 **dBFS**
+            // 만 적고 있어서 **그 완료를 눈으로 볼 수가 없었다.**
+            // 보정된 음압을 함께 적어, 누른 뒤 이 숫자가 94 가 되는 것으로
+            // 확인하게 한다.
+            Text(
+                buildString {
+                    capture.meter.currentSpl?.let {
+                        append("%.1f %s".format(it, capture.meterSettings.splWeighting.unitSuffix))
+                        append("  ·  ")
+                    }
+                    append("%.1f dBFS".format(measured))
+                },
+                color = SelahColors.TextSecondary,
+                fontSize = 11.sp,
+            )
         }
 
         // **음압 교정기가 있으면 그쪽이 낫다.**
@@ -190,14 +198,6 @@ fun CalibrationCard(
         // 맞추는 것은 그 소음계가 맞다는 가정 위에 서고, 두 기기의 가중이
         // 다르면 그 차이까지 섞여 들어간다. 게다가 1kHz 에서는 A·C 가중이
         // 0dB 이라 교정기로 맞춘 값은 가중치와 무관하다.
-        Text(
-            "음압 교정기가 있으면 아래에서 고르십시오. 마이크에 끼우고 켠 뒤 " +
-                "누르면 됩니다 — 기구에 적힌 값(보통 94 또는 114dB)을 고르십시오.",
-            color = SelahColors.TextMuted,
-            fontSize = 11.sp,
-            lineHeight = 16.sp,
-        )
-
         Row(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -205,43 +205,44 @@ fun CalibrationCard(
             CalibratorLevel.entries.forEach { level ->
                 CalibratorButton(
                     level = level,
-                    tone = tone,
+                    // **소리를 읽고 있으면 누를 수 있다**(담당자 지시
+                    // 2026-09-28: 「음압에 대한 간편교정은 쉬워야 합니다」).
+                    //
+                    // 예전에는 순음 확인을 통과해야만 열렸다. 그런데 그
+                    // 확인이 재는 내내 오락가락하는 자리에서는 **아예
+                    // 보정을 할 수가 없었다** — 눌러야 할 단추가 회색인
+                    // 채로 있으니 사람은 무엇을 더 해야 하는지 모른다.
+                    //
+                    // 확인을 버리지는 않는다. 아래 한 줄이 순음이 보이는지
+                    // 그대로 적고, 맞춘 결과는 바로 위 「지금 읽는 값」이
+                    // 음압으로 보여 준다 — **틀리게 맞췄으면 그 숫자가
+                    // 곧바로 이상하다.** 막는 대신 보이게 한다.
+                    enabled = measured != null,
+                    highlight = tone?.ok == true,
                     onClick = { onSave(level.db, CalibrationSource.Calibrator) },
                 )
             }
         }
 
-        when {
-            tone == null -> Text(
-                "소리를 읽기 시작하면 교정기 버튼이 열립니다.",
-                color = SelahColors.TextMuted,
-                fontSize = 11.sp,
-            )
-
-            // **순음이 없을 때는 경고로 띄우지 않는다**(2026-09-25 담당자
-            // 지적: 「가장 큰 소리가 … 텍스트가 계속 변경됩니다」).
-            //
-            // 교정기를 안 끼운 상태는 **잘못된 상태가 아니라 아직 시작하지
-            // 않은 상태**다. 그것을 주황 경고 상자로 띄우면 뭔가 고장 난
-            // 것처럼 보이고, 예전에는 그때그때 가장 큰 잡음 대역 이름까지
-            // 적어 화면이 쉴 새 없이 흔들렸다.
-            !tone.hasTone -> Text(
-                tone.reasonKo ?: "",
-                color = SelahColors.TextMuted,
-                fontSize = 11.sp,
-                lineHeight = 16.sp,
-            )
-
-            !tone.ok -> InfoBar(tone.reasonKo ?: "", tone = SelahColors.Warn)
-
-            else -> Text(
-                "1kHz 순음이 다른 대역보다 %.0fdB 솟아 있습니다 — 교정기가 제대로 물렸습니다."
-                    .format(tone.prominenceDb),
-                color = SelahColors.InRange,
-                fontSize = 11.sp,
-                lineHeight = 16.sp,
-            )
-        }
+        // **한 줄로 고정한다**(담당자 지적 2026-09-28: 「박스가 계속
+        // 나왔다 들어갔다 합니다」).
+        //
+        // 예전에는 순음이 안 잡히면 글자 한 줄, 잡혔는데 1kHz 가 아니면
+        // **주황 상자**였다. 재는 동안 그 둘을 오가니 상자가 떴다 사라졌다
+        // 하며 카드 높이가 계속 들썩였다. 셋 다 같은 꼴의 한 줄로 적는다 —
+        // 알릴 내용은 그대로 두되 **화면이 흔들리지 않게** 한다.
+        Text(
+            when {
+                tone == null -> "소리를 읽기 시작하면 순음을 확인합니다."
+                tone.ok ->
+                    "1kHz 순음이 다른 대역보다 %.0fdB 솟아 있습니다 — 교정기가 제대로 물렸습니다."
+                        .format(tone.prominenceDb)
+                else -> tone.reasonKo ?: ""
+            },
+            color = if (tone?.ok == true) SelahColors.InRange else SelahColors.TextMuted,
+            fontSize = 11.sp,
+            lineHeight = 16.sp,
+        )
 
         // **교정기만으로는 절반이다.**
         //
@@ -269,68 +270,17 @@ fun CalibrationCard(
             tone = if (curveOn) SelahColors.InRange else SelahColors.TextMuted,
         )
 
-        Text(
-            "또는 다른 소음계에 맞추기",
-            color = SelahColors.TextMuted,
-            fontSize = 11.sp,
-        )
-
-        OutlinedTextField(
-            value = input,
-            onValueChange = { input = it },
-            label = { Text("기준 소음계 값 (dB)", fontSize = 12.sp) },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedTextColor = SelahColors.TextPrimary,
-                unfocusedTextColor = SelahColors.TextPrimary,
-                focusedBorderColor = SelahColors.Accent,
-                unfocusedBorderColor = SelahColors.Outline,
-                focusedLabelColor = SelahColors.Accent,
-                unfocusedLabelColor = SelahColors.TextMuted,
-                cursorColor = SelahColors.Accent,
-            ),
-            modifier = Modifier.fillMaxWidth(),
-        )
-
-        // 저장하기 **전에** 계산 결과를 보여 준다. 숫자를 보고 나서
-        // 저장할지 정하는 것과, 저장한 뒤에 확인하는 것은 다르다.
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Text("계산된 보정값", color = SelahColors.TextMuted, fontSize = 11.sp)
-            Text(
-                offset?.let { "%+.1f dB".format(it) } ?: NO_VALUE,
-                color = if (offset != null) SelahColors.Accent else SelahColors.TextMuted,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold,
-            )
-        }
-
-        if (input.isNotBlank() && !referenceLooksOk) {
-            Text(
-                "${PLAUSIBLE_REFERENCE_RANGE.start.toInt()} ~ " +
-                    "${PLAUSIBLE_REFERENCE_RANGE.endInclusive.toInt()} dB 사이의 숫자를 적으십시오.",
-                color = SelahColors.Warn,
-                fontSize = 11.sp,
-            )
-        }
+        // **「또는 다른 소음계에 맞추기」를 걷어냈다**(담당자 지시
+        // 2026-09-28: 「94 dB 와 114dB 만 사용해서 교정을 진행합니다」).
+        //
+        // 기준 소음계 값을 손으로 적어 넣고 저장하던 자리다. 교정기로만
+        // 맞추기로 했으므로 입력칸·계산값·저장 단추가 함께 빠졌다 —
+        // 교정기 단추가 누르는 즉시 저장하기 때문에 따로 저장할 것이 없다.
+        //
+        // `CalibrationSource.Meter` 와 `computeOffset` 은 교정 마법사가
+        // 그대로 쓰므로 지우지 않았다.
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(
-                onClick = { reference?.let { onSave(it, CalibrationSource.Meter) } },
-                enabled = referenceLooksOk,
-                modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = SelahColors.Accent,
-                    contentColor = Color(0xFF00201C),
-                    disabledContainerColor = SelahColors.SurfaceVariant,
-                    disabledContentColor = SelahColors.TextMuted,
-                ),
-            ) {
-                Text("보정값 저장", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-            }
             // **묻고 나서 지운다**(2026-09-25 담당자 지적: 「보정값 초기화를
             // 눌렀더니 물어보지도 않고 그냥 지워지네요」).
             //
@@ -360,7 +310,7 @@ fun CalibrationCard(
                     saved = saved,
                     deviceLabel = capture.inputForDisplay?.deviceLabel ?: "이 기기",
                     factory = capture.calibration.factory,
-                    onConfirm = { input = ""; onClear(); confirmClear = false },
+                    onConfirm = { onClear(); confirmClear = false },
                     onCancel = { confirmClear = false },
                 )
             } ?: run { confirmClear = false }
@@ -498,16 +448,21 @@ private fun FactorySnippet(capture: CaptureUiState) {
 @Composable
 private fun RowScope.CalibratorButton(
     level: CalibratorLevel,
-    tone: CalibratorToneCheck?,
+    /** 누를 수 있는가. **소리를 읽고 있으면 누를 수 있다**(2026-09-28). */
+    enabled: Boolean,
+    /** 순음까지 확인된 상태인가. 막지는 않고 **테두리로만** 알린다. */
+    highlight: Boolean,
     onClick: () -> Unit,
 ) {
-    val ready = tone?.ok == true
     OutlinedButton(
         onClick = onClick,
-        enabled = ready,
+        enabled = enabled,
         modifier = Modifier.weight(1f),
         shape = RoundedCornerShape(10.dp),
-        border = BorderStroke(1.dp, if (ready) SelahColors.Accent else SelahColors.Outline),
+        border = BorderStroke(
+            if (highlight) 2.dp else 1.dp,
+            if (highlight) SelahColors.InRange else SelahColors.Outline,
+        ),
         colors = ButtonDefaults.outlinedButtonColors(
             contentColor = SelahColors.Accent,
             disabledContentColor = SelahColors.TextMuted,

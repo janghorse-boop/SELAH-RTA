@@ -451,9 +451,18 @@ fun MeasureScreen(
                 // 어긋나지 않는다(지시서 §10).
                 weighting.leqLabel(capture.meterSettings.leqWindow.labelKo),
                 formatDb(m.leqLong, decimals = 1),
-                // 창이 아직 안 찼으면 그 사실을 적는다 — 「1분 평균」이라고
-                // 적어 놓고 실제로는 10초치인 값을 보여 주면 안 된다.
-                if (m.leqLong != null && !m.leqLongFull) "모으는 중" else weighting.unitSuffix,
+                // **단위를 늘 적는다**(담당자 지시 2026-09-28). 예전에는
+                // 「모으는 중」이 단위 자리를 통째로 차지해, 옆 두 칸은
+                // dB(A) 인데 이 칸만 단위가 없었다.
+                //
+                // **「모으는 중」은 지우지 않는다.** 창이 아직 안 찼다는
+                // 사실이라 — 「1분 평균」이라고 적어 놓고 실제로는 10초치인
+                // 값을 보여 주면 안 된다. 단위 뒤에 붙인다.
+                if (m.leqLong != null && !m.leqLongFull) {
+                    "${weighting.unitSuffix} · 모으는 중"
+                } else {
+                    weighting.unitSuffix
+                },
                 Modifier.weight(1f),
                 // **권장 범위와 견줄 수 있는 것은 이 값이다.**
                 //
@@ -659,8 +668,17 @@ fun MeasureScreen(
             Modifier.padding(top = 16.dp),
         )
 
-        capture.inputForDisplay?.let {
-            DiagnosticsPanel(it, capture.diagnostics, Modifier.padding(top = 16.dp, bottom = 24.dp))
+        // **캡처 진단 상자를 뺐다**(담당자 지시 2026-09-28). 입력 기기·
+        // 마이크 자리·활성 마이크·입력 경로가 측정 화면 맨 아래에 늘
+        // 펼쳐져 있었는데, 예배 중에 볼 것은 아니다. 상자를 그리던
+        // `DiagnosticsPanel` 은 그대로 두었다 — 지우지 않았으니 필요하면
+        // 이 한 줄을 되살리면 된다.
+        //
+        // **다만 마이크 조합이 바뀌었다는 말은 남긴다.** 그 상자 안에만
+        // 있던 경고인데, 그 구간의 숫자에는 **옛 조합으로 맞춘 보정값**이
+        // 걸려 있다. 화면은 멀쩡해 보이므로 소리 없이 사라지면 안 된다.
+        capture.inputForDisplay?.activeMicChangeKo?.let {
+            InfoBar(it, Modifier.padding(top = 12.dp), tone = SelahColors.Warn)
         }
     }
 }

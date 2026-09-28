@@ -309,11 +309,21 @@ fun SettingsScreen(
             // **나왔다 사라져 눈에 거슬렸다**(담당자 지시 2026-09-28).
             // 깜빡이는 알림 대신 고르는 자리에 늘 적어 둔다.
             "Fast 는 짧은 봉우리를 그대로, Slow 는 뭉개서 보여 줍니다. " +
-                "Slow 는 측정을 시작한 뒤 약 3초 동안 값이 올라오는 중이라 " +
-                "실제보다 낮게 나옵니다(Fast 는 0.4초).",
+                "측정을 시작한 뒤 값이 올라오는 동안은 실제보다 낮게 " +
+                "나옵니다 — Fast 0.4초 · 중간 1초 · Slow 3초. " +
+                "「중간」은 규격(IEC 61672)에 없는 값이라 다른 계측기와 " +
+                "곧바로 견줄 수 없습니다.",
             TimeWeight.entries,
             capture.meterSettings.timeWeight,
-            { if (it == TimeWeight.Fast) "Fast" else "Slow" },
+            // 칸이 좁아 괄호 안(125ms 같은 것)까지는 못 적는다. 자세한
+            // 것은 바로 위 설명이 말한다.
+            {
+                when (it) {
+                    TimeWeight.Fast -> "Fast"
+                    TimeWeight.Medium -> "중간"
+                    TimeWeight.Slow -> "Slow"
+                }
+            },
             onTimeWeight,
         )
         ChoiceRow(
@@ -391,22 +401,12 @@ fun SettingsScreen(
             onThemeMode,
         )
 
-        SectionTitle("주의사항")
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .background(SelahColors.Surface, RoundedCornerShape(10.dp))
-                .border(1.dp, SelahColors.Outline, RoundedCornerShape(10.dp))
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            SEGMENT_CAUTIONS.forEach {
-                Row {
-                    Text("· ", color = SelahColors.Warn, fontSize = 12.sp)
-                    Text(it, color = SelahColors.TextSecondary, fontSize = 12.sp, lineHeight = 17.sp)
-                }
-            }
-        }
+        // **주의사항 상자를 뺐다**(담당자 지시 2026-09-28). 한 번 읽으면
+        // 그만인 글 셋이 설정 아래에 늘 펼쳐져 있었다. 앞서 같은 자리의
+        // 참고값 경고 상자를 뺀 것과 같은 까닭이다(2026-09-27).
+        //
+        // 문구 자체는 `SEGMENT_CAUTIONS` 에 그대로 있다 — 지우지 않았으니
+        // 다시 보이고 싶으면 되살리면 된다.
 
         SectionTitle("앱 정보")
         SettingRow("SELAH RTA", "v0.1.0 (Phase 8)")
