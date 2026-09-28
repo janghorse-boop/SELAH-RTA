@@ -172,9 +172,12 @@ fun SettingsScreen(
             val picked = capture.meterSettings.inputChannels[chosenDevice.stableKey] ?: 0
             ChoiceRow(
                 "측정 입력 채널",
-                "여러 입력을 주는 기기입니다. 잴 채널 하나를 고르십시오. " +
-                    "섞지 않습니다 — 채널마다 다른 마이크가 꽂혀 있을 수 있고, " +
-                    "보정값은 마이크마다 다릅니다." +
+                // 담당자 문안(2026-09-28). **뒤에 붙는 한 줄은 그대로
+                // 둔다** — 「고른 것」과 「실제로 열린 것」이 다를 수 있어,
+                // 지금 몇 채널로 열려 몇 번을 재는지는 이 자리에서만 안다.
+                "측정에 사용할 입력 채널 하나를 선택하세요. " +
+                    "각 채널에 연결된 마이크와 보정값이 다를 수 있으므로 " +
+                    "여러 채널을 합쳐 측정하지 않습니다." +
                     if (capture.opened != null && capture.opened.channelCount > 1) {
                         " 지금은 ${capture.opened.channelCount}채널로 열려 " +
                             "${capture.opened.channelIndex + 1}번을 재고 있습니다."
@@ -270,7 +273,8 @@ fun SettingsScreen(
         SectionTitle("측정 설정")
         WeightingRow(
             label = "음압 가중",
-            whereKo = "SPL 큰 숫자 · Leq · MIN · MAX",
+            whereKo = "적용 대상: 현재 SPL · Leq · 최소값(MIN) · 최대값(MAX)",
+            helpKo = ::splWeightingHelpKo,
             selected = capture.meterSettings.splWeighting,
             isCustom = capture.meterSettings.splWeighting != Weighting.A,
             onPick = onSplWeighting,
@@ -278,7 +282,10 @@ fun SettingsScreen(
         )
         WeightingRow(
             label = "순간최고(PEAK) 가중",
-            whereKo = "PEAK 타일",
+            whereKo = "PEAK 값에 적용할 주파수 가중 방식을 선택합니다.",
+            // **PEAK 은 제 설명을 쓴다.** 순간 최대값이라 같은 가중이라도
+            // 보는 뜻이 음압 때와 다르다(담당자 문안 2026-09-28).
+            helpKo = ::peakWeightingHelpKo,
             selected = capture.meterSettings.peakWeighting,
             isCustom = capture.meterSettings.peakWeighting != Weighting.Z,
             onPick = onPeakWeighting,
@@ -286,7 +293,8 @@ fun SettingsScreen(
         )
         WeightingRow(
             label = "주파수 분석 가중",
-            whereKo = "RTA · Spectrum · Spectrogram",
+            whereKo = "적용 대상: RTA · Spectrum · Spectrogram",
+            helpKo = ::analysisWeightingHelpKo,
             selected = capture.meterSettings.analysisWeighting,
             isCustom = capture.meterSettings.analysisWeighting != Weighting.Z,
             onPick = onAnalysisWeighting,
@@ -296,9 +304,9 @@ fun SettingsScreen(
         // FR 은 고를 까닭이 없어 목록에 없다. **숨기지 않고 그 사실을
         // 적는다** — 없는 것과 못 고르는 것은 다르다.
         InfoBar(
-            "주파수 응답(FR)은 늘 dB(Z) 로 잽니다. 공간의 응답 자체를 " +
-                "재는 화면이라, A 를 걸면 저역이 깎인 곡선이 나와 " +
-                "「이 공간은 저음이 부족하다」고 잘못 읽게 됩니다.",
+            "주파수 응답(FR)은 항상 dB(Z)로 표시됩니다. " +
+                "공간과 시스템의 주파수별 특성을 왜곡 없이 확인하기 위한 " +
+                "것으로, 위 가중치 설정은 FR에 적용되지 않습니다.",
         )
         ChoiceRow(
             "응답 속도",
@@ -693,7 +701,9 @@ private fun InputDevicePicker(
             )
         }
         Text(
-            "기기마다 보정값을 따로 둡니다. 바꾸면 그 기기의 보정이 적용됩니다.",
+            // 담당자 문안(2026-09-28).
+            "기기별로 보정값을 따로 저장합니다. " +
+                "기기를 변경하면 선택한 기기의 보정값이 적용됩니다.",
             color = SelahColors.TextMuted,
             fontSize = 10.sp,
             lineHeight = 14.sp,
@@ -850,25 +860,78 @@ private fun <T> ChoiceRow(
 }
 
 /**
- * 가중을 고를 때 그 자리에 나오는 설명.
+ * 가중을 고를 때 그 자리에 나오는 설명 — **줄마다 다르다.**
  *
- * **세 줄이 같은 문구를 쓴다.** 줄마다 다른 설명을 적으면 「A 가 여기서는
- * 이 뜻이고 저기서는 저 뜻인가」로 읽힌다.
+ * 2026-09-27 까지는 셋이 같은 문구를 돌려 썼다. 「A 가 여기서는 이 뜻이고
+ * 저기서는 저 뜻인가」로 읽히지 않게 하려던 것이었다. **2026-09-28 에
+ * 갈랐다**(담당자 문안) — 같은 A 라도 보는 것이 실제로 다르기 때문이다:
+ *
+ * | 줄 | A 가 하는 일 |
+ * |---|---|
+ * | 음압 | 청취 레벨의 잣대. **권장 범위 판정이 이 값을 본다** |
+ * | PEAK | 순간 최대 레벨을 참고하는 값 |
+ * | 분석 | 대역별 분포를 청감에 맞춰 보는 것 |
  *
  * **평탄하다는 사실은 여기서 말한다.** 이름 자리에 「무가중」을 끼워
  * 넣으면 같은 것을 두 가지로 부르게 된다 — 그래서 실제로 「고정된 Z 와
  * 무가중이 다른 것인가」라는 물음이 나왔다(2026-09-27).
  */
-private fun weightingHelpKo(w: Weighting): String = when (w) {
+private fun analysisWeightingHelpKo(w: Weighting): String = when (w) {
+    // 담당자 문안(2026-09-28). 음압·PEAK 과 또 다르다 — 여기는 값 하나가
+    // 아니라 **대역별 분포**를 보는 화면이다.
+    //
+    // 「권장 범위 판정은 A 에서만」은 여기 없다. 그 판정은 **음압 가중**을
+    // 보므로(`canJudge = splWeighting == A`) 이 줄에 적으면 틀린 말이
+    // 된다 — 셋이 같은 글을 쓰던 동안에는 실제로 여기에도 떠 있었다.
     Weighting.A ->
-        "A-weighting — 사람 귀가 저음에 둔한 것을 흉내 냅니다. " +
-            "소음 규제·청력 기준이 쓰는 잣대이고, 권장 범위 판정은 A 에서만 합니다."
+        "사람의 청감 특성을 반영해 저주파와 매우 높은 주파수를 줄여 " +
+            "표시합니다. 일반적인 소음과 사람이 느끼는 청취 레벨을 " +
+            "확인할 때 적합합니다."
     Weighting.C ->
-        "C-weighting — 저음을 거의 깎지 않습니다. 킥·베이스가 실제로 얼마나 " +
-            "센지 볼 때 씁니다. A 와의 차이가 크면 저음이 많다는 뜻입니다."
+        "저주파를 A보다 덜 줄여 넓은 대역의 소리를 표시합니다. " +
+            "음악·PA 시스템이나 킥·베이스처럼 저음 에너지가 많은 소리를 " +
+            "확인할 때 유용합니다."
     Weighting.Z ->
-        "Z-weighting — 깎지도 올리지도 않습니다. 들어온 소리 그대로라, " +
-            "어느 대역에 에너지가 몰렸는지 보는 화면에는 이것이 기본입니다."
+        "주파수 가중을 적용하지 않고 입력된 소리를 평탄하게 표시합니다. " +
+            "전체 대역의 주파수 분포와 각 대역의 에너지를 그대로 확인할 " +
+            "때 적합합니다."
+}
+
+private fun peakWeightingHelpKo(w: Weighting): String = when (w) {
+    // 담당자 문안(2026-09-28). 음압 쪽과 **일부러 다르다** — PEAK 은
+    // 순간 최대값이라 같은 가중이라도 보는 뜻이 다르다.
+    Weighting.A ->
+        "사람의 청감 특성을 반영해 저주파와 매우 높은 주파수를 줄인 " +
+            "PEAK 값입니다. 일반적인 소음의 순간 최대 레벨을 참고할 때 " +
+            "사용합니다."
+    Weighting.C ->
+        "저주파를 A보다 덜 줄여 순간적인 큰 소리를 측정합니다. " +
+            "킥·베이스·충격음처럼 저음 에너지가 큰 PEAK를 확인할 때 " +
+            "유용합니다."
+    Weighting.Z ->
+        "주파수 가중을 적용하지 않고 넓은 대역의 순간 최대 음압을 그대로 " +
+            "측정합니다. 신호 자체의 PEAK를 확인할 때 적합합니다."
+}
+
+private fun splWeightingHelpKo(w: Weighting): String = when (w) {
+    // 담당자 문안(2026-09-28).
+    //
+    // **A 의 마지막 문장은 남겼다.** 권장 범위 판정은 `canJudge =
+    // splWeighting == A` 라, C·Z 로 바꾸면 **계기의 색과 범위 띠가 조용히
+    // 사라진다.** 그 까닭을 말하는 자리가 화면에 여기 하나뿐이다 —
+    // 없으면 「색이 왜 안 뜨지」가 된다.
+    Weighting.A ->
+        "사람의 청감 특성을 반영해 저주파와 매우 높은 주파수를 줄여 " +
+            "평가합니다. 일반적인 소음과 청취 레벨을 확인할 때 가장 널리 " +
+            "사용됩니다. 권장 범위 판정은 A 에서만 합니다."
+    Weighting.C ->
+        "저주파를 A보다 덜 줄여 넓은 대역의 소리를 평가합니다. " +
+            "저음이 많은 소리, 피크 레벨, 음악·PA 시스템을 확인할 때 " +
+            "유용합니다."
+    Weighting.Z ->
+        "주파수 가중을 적용하지 않은 평탄한 특성으로 측정합니다. " +
+            "입력된 소리의 전체 에너지와 주파수 특성을 그대로 확인할 때 " +
+            "적합합니다."
 }
 
 /**
@@ -881,6 +944,16 @@ private fun weightingHelpKo(w: Weighting): String = when (w) {
 private fun WeightingRow(
     label: String,
     whereKo: String,
+    /**
+     * 고른 칸 아래에 적을 설명. **줄마다 다르다**(담당자 지시
+     * 2026-09-28).
+     *
+     * 예전에는 셋이 같은 문구를 썼다 — 「A 가 여기서는 이 뜻이고
+     * 저기서는 저 뜻인가」로 읽히지 않게 하려던 것이었다. 그런데 PEAK 은
+     * **순간 최대값**이라 A·C·Z 가 하는 일이 음압 때와 실제로 다르다.
+     * 같은 글을 돌려 쓰면 그 다름이 가려진다.
+     */
+    helpKo: (Weighting) -> String,
     selected: Weighting,
     isCustom: Boolean,
     onPick: (Weighting) -> Unit,
@@ -936,7 +1009,7 @@ private fun WeightingRow(
             }
         }
         Text(
-            weightingHelpKo(selected),
+            helpKo(selected),
             color = SelahColors.TextMuted,
             fontSize = 10.sp,
             lineHeight = 14.sp,
