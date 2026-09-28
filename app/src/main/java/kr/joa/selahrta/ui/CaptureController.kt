@@ -275,9 +275,7 @@ class CaptureController(
      * 갈아 끼우므로 측정이 끊기지는 않는다.
      */
     private fun restartEngine(s: MeterSettings) {
-        // **엔진에는 engineMillis 를 준다.** leqWindow.millis 를 그대로
-        // 넘기면 「전체」의 -1 이 창 길이로 들어가 측정이 통째로 망가진다.
-        val ms = s.leqWindow.engineMillis
+        val ms = s.leqWindow.millis
         postToCapture { session ->
             session.engine = MultiWeightEngine(
                 sampleRate = session.sampleRate,
@@ -317,8 +315,7 @@ class CaptureController(
      */
     private fun needsEngineRestart(old: MeterSettings, new: MeterSettings): Boolean {
         if (old.timeWeight != new.timeWeight) return true
-        if (new.leqWindow == LeqWindow.Session) return false
-        return engineLeqLongMs != new.leqWindow.engineMillis
+        return engineLeqLongMs != new.leqWindow.millis
     }
 
     /**
@@ -543,9 +540,9 @@ class CaptureController(
                     settings = _state.value.meterSettings,
                 )
                 session.startedNs = nowNs()
-                // 엔진에 실제로 들어간 창을 기억한다. 「전체」에서 돌아올 때
+                // 엔진에 실제로 들어간 창을 기억한다. 설정이 바뀌었을 때
                 // 새로 만들지 말지를 이 값으로 가른다([needsEngineRestart]).
-                engineLeqLongMs = _state.value.meterSettings.leqWindow.engineMillis
+                engineLeqLongMs = _state.value.meterSettings.leqWindow.millis
                 // 새 엔진에 지금 화면 상태를 그대로 물려준다.
                 session.rta.spectrumEnabled = spectrumEnabled
                 // 분석 가중도 물려준다. 안 걸면 엔진은 Z 인데 화면은 A 라고

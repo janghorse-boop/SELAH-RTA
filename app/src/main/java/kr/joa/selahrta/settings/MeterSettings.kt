@@ -27,43 +27,33 @@ import java.io.IOException
 private val Context.meterDataStore: DataStore<Preferences>
     by preferencesDataStore(name = "meter")
 
-/**
- * 측정 시작부터 지금까지를 뜻하는 표시값.
- *
- * **창 길이가 아니다.** 다른 창의 millis 와 겹치지 않게 음수를 쓴다 —
- * 저장 코드가 millis 를 열쇠로 쓰기 때문이다.
- */
-const val SESSION_MILLIS = -1L
-
 /** FFT 길이의 기본값(명세 7장의 출발점). */
 const val DEFAULT_FFT_SIZE = 4096
 
 /** 고를 수 있는 FFT 길이. 이 밖의 값이 저장돼 있으면 기본값으로 돌아간다. */
 val FFT_SIZES = listOf(2048, 4096, 8192)
 
-/** 화면에 보여줄 긴 Leq 의 길이(명세 14장). */
+/**
+ * 화면에 보여줄 긴 Leq 의 길이(명세 14장).
+ *
+ * **네 칸이다**(담당자 지시 2026-09-28): 10초 · 30초 · 1분 · 3분.
+ *
+ * ## 「전체」를 뺐다
+ *
+ * 측정 시작부터 지금까지의 누적 Leq 였다(2026-09-27 에 더했다). 담당자가
+ * 정한 목록에 없어 걷어냈다.
+ *
+ * **엔진은 그 값을 그대로 낸다**(`SplFrame.leqSessionDbfs`) — 받는 곳만
+ * 없어졌다. 다시 쓰고 싶으면 칸 하나를 더하고 화면에서 그 값을 집으면
+ * 된다. 그때 **창 길이가 아니라는 것**을 잊지 말 것: 엔진에는 창을
+ * 따로 줘야 하고(예전 `engineMillis`), 창이 바뀔 때 엔진을 새로 만들면
+ * 누적이 지워진다.
+ */
 enum class LeqWindow(val labelKo: String, val millis: Long) {
     TenSeconds("10초", 10_000),
+    ThirtySeconds("30초", 30_000),
     OneMinute("1분", 60_000),
-    FiveMinutes("5분", 300_000),
-
-    /**
-     * 측정 시작부터 지금까지의 누적 Leq(지시서 §4).
-     *
-     * 값은 이미 `SplFrame.leqSessionDbfs` 로 나오고 있었다 — 받는 곳이
-     * 없었을 뿐이다.
-     */
-    Session("전체", SESSION_MILLIS),
-    ;
-
-    /**
-     * **엔진에 넘길 창 길이.** [millis] 와 다를 수 있다.
-     *
-     * Session 의 [millis] 는 -1 이라 그대로 넘기면 엔진이 상한다. 세션
-     * Leq 는 창이 아니라 누적 합계이므로 창 길이가 필요 없고, 엔진에는
-     * 기본 창을 준 뒤 화면에 적을 값만 세션 쪽에서 가져온다.
-     */
-    val engineMillis: Long get() = if (this == Session) OneMinute.millis else millis
+    ThreeMinutes("3분", 180_000),
 }
 
 /**
@@ -125,7 +115,14 @@ data class MeterSettings(
      * 때만 쓰인다.
      */
     val timeWeight: TimeWeight = TimeWeight.Medium,
-    val leqWindow: LeqWindow = LeqWindow.OneMinute,
+    /**
+     * 화면에 적을 긴 Leq 의 길이. **기본은 30초**(담당자 지시
+     * 2026-09-28).
+     *
+     * 1분이던 것을 줄였다. 권장 범위와 견주는 값이라 너무 길면 방금
+     * 올린 음량이 한참 뒤에야 색으로 드러난다.
+     */
+    val leqWindow: LeqWindow = LeqWindow.ThirtySeconds,
     /**
      * 화면 밝기 한 벌(담당자 지시 2026-09-28).
      *
@@ -321,7 +318,7 @@ class MeterSettingsStore(private val context: Context) {
                     ?: kr.joa.selahrta.recording.AudioFileFormat.M4a,
                 leqWindow = p[leqWindowKey]?.let { ms ->
                     LeqWindow.entries.firstOrNull { it.millis == ms }
-                } ?: LeqWindow.OneMinute,
+                } ?: LeqWindow.ThirtySeconds,
                 // 빈 문자열은 「자동」을 뜻한다. DataStore 에 null 을 넣을 수 없어서다.
                 preferredInputKey = p[preferredInputKey]?.takeIf { it.isNotEmpty() },
                 inputChannels = p.asMap().mapNotNull { (k, v) ->
