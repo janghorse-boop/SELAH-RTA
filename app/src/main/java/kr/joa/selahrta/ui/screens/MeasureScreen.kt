@@ -282,7 +282,9 @@ fun MeasureScreen(
         if (segment == null || range == null) {
             EmptyRangeCard(
                 onAdd = { capture.meterSettings.nextFreeSegment?.let(onAddSegment) },
-                modifier = Modifier.padding(top = 4.dp, bottom = 18.dp),
+                // 위 RangeCard 와 같은 간격이다 — 둘은 같은 자리를 번갈아
+                // 쓰므로 어긋나면 화면이 들썩인다.
+                modifier = Modifier.padding(top = 4.dp, bottom = 28.dp),
             )
         } else {
         RangeCard(
@@ -296,7 +298,10 @@ fun MeasureScreen(
             // **아래를 넉넉히 띄운다**(2026-09-25 담당자 지시: 「간격이 너무
             // 좁아서 답답해 보입니다」). 상자와 계기가 붙어 있으면 둘이 한
             // 덩어리로 보여, 눈이 어디서 끊어 읽어야 할지 모른다.
-            modifier = Modifier.padding(top = 4.dp, bottom = 18.dp),
+            //
+            // 18 → 28dp(담당자 지시 2026-09-28). 범위 상자가 한 줄로
+            // 낮아지면서 계기와 다시 가까워 보였다.
+            modifier = Modifier.padding(top = 4.dp, bottom = 28.dp),
         )
         }
 
@@ -423,7 +428,9 @@ fun MeasureScreen(
         // 화면에 늘 펼쳐 두면 정작 숫자가 밀린다.
         var shownMetric by rememberSaveable { mutableStateOf<Metric?>(null) }
         Row(
-            Modifier.fillMaxWidth().padding(top = 14.dp),
+            // 14 → 24dp(담당자 지시 2026-09-28). 계기와 타일이 붙어 있으면
+            // 큰 숫자와 작은 숫자 셋이 한 덩어리로 보인다.
+            Modifier.fillMaxWidth().padding(top = 24.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             ValueTile(
@@ -501,10 +508,18 @@ fun MeasureScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                // 「PEAK 순간최고」를 「최대값」으로 바꿨다(2026-09-26 담당자
-                // 지시). 영문 약어와 한글 뜻풀이를 나란히 적어 한 자리에
-                // 이름이 둘이었다.
-                if (m.peakClipped) "최대값 — 클리핑 · 눌러서 보기" else "최대값 보기",
+                // 「최대값」을 규격 이름으로 되돌렸다(담당자 지시
+                // 2026-09-28). MAX 타일도 「가장 컸던 값」이라 한글로만
+                // 적으니 둘이 같은 것으로 읽혔는데, 이 둘은 다른 값이다 —
+                // MAX 는 시간가중 레벨의 최대, 이쪽은 가중 없이 파형에서
+                // 바로 잡은 순간 최고다.
+                //
+                // **손으로 적지 않는다**(지시서 §10). 이름은 PEAK 의
+                // 가중에서 뽑는다 — 설정에서 Z 를 A 로 바꾸면 여기도
+                // 「LApeak」 이 된다. 적어 두면 그때 어긋난다.
+                capture.meterSettings.peakWeighting.peakLabel().let {
+                    if (m.peakClipped) "$it — 클리핑 · 눌러서 보기" else "$it 보기"
+                },
                 color = if (m.peakClipped) SelahColors.High else SelahColors.TextMuted,
                 fontSize = 11.sp,
                 fontWeight = if (m.peakClipped) FontWeight.SemiBold else FontWeight.Normal,
@@ -1218,6 +1233,10 @@ private fun RangeCard(
                 // 전에는 값이 17sp Bold 로 라벨 **아래 줄**에 있었다. 두
                 // 상자가 위아래로 붙어 있는데 같은 자리의 값이 서로 다른
                 // 크기·다른 줄이라, 눈이 두 번 자리를 잡아야 했다.
+                //
+                // **한 줄이다.** 견주는 값의 이름까지 이 줄에 들어간다 —
+                // 둘째 줄로 내려 보았더니 상자만 높아지고 얻는 것이
+                // 없었다(담당자 지시 2026-09-28).
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -1245,17 +1264,29 @@ private fun RangeCard(
                             fontWeight = FontWeight.SemiBold,
                             softWrap = false,
                         )
+                        Text(
+                            // **견주는 값의 이름을 그대로 적는다**(담당자
+                            // 지시 2026-09-28). 「Leq(1분)」이라고 풀어
+                            // 쓰던 것을 아래 타일에 적힌 이름과 똑같이
+                            // 맞췄다 — 견줄 값을 눈으로 찾을 때 같은
+                            // 낱말이어야 이어진다.
+                            //
+                            // **「기준」은 남긴다.** 이름만 적으면 그 숫자가
+                            // 지금 LAeq 값인 줄로 읽힌다 — 이것은 견주는
+                            // 잣대이지 잰 값이 아니다.
+                            //
+                            // **가중은 A 로 못박는다.** 화면을 C·Z 로
+                            // 바꿔도 이 범위는 dB(A) 로 정해진 값이라
+                            // (`SegmentRange`), 지금 가중을 따라 적으면
+                            // 「LCeq 1분」 옆에 dB(A) 범위가 놓이는
+                            // 거짓이 된다.
+                            "${Weighting.A.leqLabel(leqLabelKo)} 기준",
+                            color = SelahColors.TextMuted,
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            softWrap = false,
+                        )
                     }
-                }
-                // **어떤 값과 견주는 범위인지는 둘째 줄로 내린다**(담당자
-                // 지시 2026-09-28). 늘 같은 말이라 숫자 옆자리를 쓸 까닭이
-                // 없는데, 옆에 붙어 있어 정작 숫자를 밀고 있었다.
-                if (range != null) {
-                    Text(
-                        "Leq($leqLabelKo) 기준",
-                        color = SelahColors.TextMuted,
-                        fontSize = 11.sp,
-                    )
                 }
             }
             SegmentPills(segment, nameOf, onSegment, segmentOptions)
