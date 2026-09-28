@@ -296,7 +296,7 @@ fun SettingsScreen(
         // FR 은 고를 까닭이 없어 목록에 없다. **숨기지 않고 그 사실을
         // 적는다** — 없는 것과 못 고르는 것은 다르다.
         InfoBar(
-            "주파수 응답(FR)은 늘 dB(Z) 로 잽니다. 예배당의 응답 자체를 " +
+            "주파수 응답(FR)은 늘 dB(Z) 로 잽니다. 공간의 응답 자체를 " +
                 "재는 화면이라, A 를 걸면 저역이 깎인 곡선이 나와 " +
                 "「이 공간은 저음이 부족하다」고 잘못 읽게 됩니다.",
         )
@@ -310,8 +310,8 @@ fun SettingsScreen(
             // 깜빡이는 알림 대신 고르는 자리에 늘 적어 둔다.
             "Fast 는 짧은 봉우리를 그대로, Slow 는 뭉개서 보여 줍니다. " +
                 "측정을 시작한 뒤 값이 올라오는 동안은 실제보다 낮게 " +
-                "나옵니다 — Fast 0.4초 · 중간 1초 · Slow 3초. " +
-                "「중간」은 규격(IEC 61672)에 없는 값이라 다른 계측기와 " +
+                "나옵니다 — Fast 0.4초 · Medium 1초 · Slow 3초. " +
+                "Medium 은 규격(IEC 61672)에 없는 값이라 다른 계측기와 " +
                 "곧바로 견줄 수 없습니다.",
             TimeWeight.entries,
             capture.meterSettings.timeWeight,
@@ -320,7 +320,7 @@ fun SettingsScreen(
             {
                 when (it) {
                     TimeWeight.Fast -> "Fast"
-                    TimeWeight.Medium -> "중간"
+                    TimeWeight.Medium -> "Medium"
                     TimeWeight.Slow -> "Slow"
                 }
             },
@@ -370,7 +370,7 @@ fun SettingsScreen(
         if (capture.meterSettings.segments.isEmpty()) {
             InfoBar(
                 "구간이 없습니다. 더하면 측정 화면의 큰 숫자를 그 범위와 " +
-                    "견주어 색으로 알려 줍니다. 예배당마다 알맞은 값이 " +
+                    "견주어 색으로 알려 줍니다. 공간마다 알맞은 값이 " +
                     "다르므로, 더한 뒤 「범위」에서 고쳐 쓰십시오.",
             )
         }
@@ -393,7 +393,7 @@ fun SettingsScreen(
             // **기기 설정을 따라가지 않는다는 것을 적어 둔다.** 안 적으면
             // 「폰을 다크로 바꿨는데 앱이 그대로」를 고장으로 읽는다.
             "폰 설정을 따라가지 않고 여기서 고른 것을 씁니다. " +
-                "어두운 예배당에서는 다크가 눈에 편하고, 밝은 곳에서는 " +
+                "어두운 공간에서는 다크가 눈에 편하고, 밝은 곳에서는 " +
                 "라이트가 잘 보입니다.",
             ThemeMode.entries,
             capture.meterSettings.themeMode,

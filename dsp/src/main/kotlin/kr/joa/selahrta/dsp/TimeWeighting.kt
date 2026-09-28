@@ -25,8 +25,13 @@ import kotlin.math.exp
 enum class TimeWeight(val labelKo: String, val tauSeconds: Double) {
     Fast("Fast (125ms)", 0.125),
 
-    /** **규격 밖이다.** 윗글 참고. */
-    Medium("중간 (350ms · 비표준)", 0.35),
+    /**
+     * **규격 밖이다.** 윗글 참고.
+     *
+     * 이름은 Fast·Slow 와 같은 결로 영문이다(담당자 지시 2026-09-28) —
+     * 셋이 한 줄에 나란히 서는 자리라 하나만 한글이면 겉돈다.
+     */
+    Medium("Medium (350ms · 비표준)", 0.35),
 
     Slow("Slow (1s)", 1.0),
 }

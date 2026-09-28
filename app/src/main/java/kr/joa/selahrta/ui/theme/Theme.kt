@@ -28,7 +28,7 @@ import kr.joa.selahrta.domain.CalibrationState
  * 앱이라 배경화면에 따라 팔레트가 바뀌면 그 뜻이 흔들린다.
  */
 enum class ThemeMode(val labelKo: String, val noteKo: String) {
-    Dark("다크", "어두운 예배당·방송실용. 기본값입니다."),
+    Dark("다크", "어두운 공간·방송실용. 기본값입니다."),
     Light("라이트", "밝은 곳에서 화면이 잘 안 보일 때."),
 }
 

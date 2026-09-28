@@ -806,8 +806,8 @@ private fun MetricDialog(
                     Metric.Min -> Text(
                         "시간가중이 자리를 잡은 뒤부터 셉니다. 시작 직후의 " +
                             "값은 0 에서 올라오는 중이라, 그것까지 세면 MIN 이 " +
-                            "늘 시작 구간으로 굳어 버립니다. 예배당에서는 대개 " +
-                            "방의 배경 소음 수준으로 내려가 머뭅니다.",
+                            "늘 시작 구간으로 굳어 버립니다. 대개 그 공간의 " +
+                            "배경 소음 수준으로 내려가 머뭅니다.",
                         color = SelahColors.TextMuted,
                         fontSize = 11.sp,
                         lineHeight = 16.sp,
