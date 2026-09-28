@@ -94,7 +94,9 @@ class MeasurementReportTest {
     @Test
     fun `실기기 조건이 그대로 적힌다`() {
         val m = meta(conditions = s23)
-        assertEquals("SM-S918N", value(m, "입력 기기"))
+        // 이름표가 「입력 기기」 → 「측정 기기」 로 바뀌었다(담당자 지시
+        // 2026-09-28). 리포트를 읽는 사람이 보는 글자라 시험도 같이 옮긴다.
+        assertEquals("SM-S918N", value(m, "측정 기기"))
         assertEquals("bottom", value(m, "마이크 자리"))
         assertEquals("22", value(m, "활성 마이크"))
         assertEquals(CaptureSource.VoiceRecognition.labelKo, value(m, "입력 경로"))
@@ -166,7 +168,7 @@ class MeasurementReportTest {
             referenceOnly = true,
         )
         assertTrue(reportWarningsKo(m).first().contains("미보정"))
-        assertEquals("보정 안 함", value(m, "절대 레벨"))
+        assertEquals("보정 안 함", value(m, "SPL 보정"))
     }
 
     /** 기종 기본값은 미보정과도, 보정됨과도 다른 말을 해야 한다. */
@@ -179,7 +181,7 @@ class MeasurementReportTest {
         val first = reportWarningsKo(m).first()
         assertTrue(first, first.contains("기종의 기본값"))
         assertTrue(first, first.contains("이 기기를 잰 값은 아닙니다"))
-        assertEquals("기종 기본값", value(m, "절대 레벨"))
+        assertEquals("기종 기본값", value(m, "SPL 보정"))
     }
 
     @Test
@@ -236,7 +238,7 @@ class MeasurementReportTest {
             curveApplied = true,
             curveLabel = "umik.cal",
         )
-        val v = value(confirmed, "주파수 곡선")
+        val v = value(confirmed, "주파수 응답 보정")
         assertTrue(v, v.contains("umik.cal"))
         assertTrue(v, v.contains(CurveReading.Correction.labelKo))
         assertTrue(v, v.contains("사람이 확인"))
@@ -246,12 +248,12 @@ class MeasurementReportTest {
             curveApplied = true,
             curveLabel = "emm6.cal",
         )
-        assertTrue(value(auto, "주파수 곡선").contains("관례로 읽음"))
+        assertTrue(value(auto, "주파수 응답 보정").contains("관례로 읽음"))
     }
 
     @Test
     fun `곡선이 없으면 걸지 않았다고 적는다`() {
-        assertEquals("걸지 않음", value(meta(), "주파수 곡선"))
+        assertEquals("걸지 않음", value(meta(), "주파수 응답 보정"))
     }
 
     // ── 화면에 그대로 나가는 말 ───────────────────────────

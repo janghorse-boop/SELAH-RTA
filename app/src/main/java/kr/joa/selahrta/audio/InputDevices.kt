@@ -182,7 +182,7 @@ enum class ChoiceReason {
             "골라 두신 마이크가 지금 연결돼 있지 않아 " +
                 "${chosen?.productName ?: "다른 마이크"}로 잽니다. " +
                 "보정값도 그 마이크의 것으로 바뀝니다."
-        NoDevice -> "쓸 수 있는 입력 기기가 없습니다."
+        NoDevice -> "쓸 수 있는 측정 기기가 없습니다."
         else -> null
     }
 }

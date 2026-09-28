@@ -117,7 +117,7 @@ fun SettingsScreen(
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
     ) {
-        SectionTitle("입력 기기")
+        SectionTitle("측정 기기")
         InputDevicePicker(
             inputs = capture.inputs,
             selectedKey = capture.meterSettings.preferredInputKey,
@@ -470,7 +470,7 @@ private fun DeviceCalibration(
             fontSize = 10.sp,
         )
         CalibRow(
-            "절대 레벨",
+            "SPL 보정",
             calibration.state.labelKo,
             tone = kr.joa.selahrta.ui.theme.calibrationTone(calibration.state),
         )
@@ -493,7 +493,7 @@ private fun DeviceCalibration(
             )
         }
         CalibRow(
-            "주파수 곡선",
+            "주파수 응답 보정",
             when {
                 curve == null -> "없음"
                 // **파일이 있는 것과 걸려 있는 것은 다르다.** 꺼 두었으면
@@ -556,11 +556,13 @@ private fun InputDevicePicker(
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text("입력 기기", color = SelahColors.TextPrimary, fontSize = 13.sp)
+        // **상자 안의 「측정 기기」 제목을 뺐다**(담당자 지시 2026-09-28).
+        // 바로 위 구역 머리글이 같은 말을 하고 있어 한 화면에 두 번
+        // 나왔다.
 
         if (inputs.isEmpty()) {
             Text(
-                "쓸 수 있는 입력 기기를 찾지 못했습니다. 마이크 권한을 허용하면 목록이 나타납니다.",
+                "쓸 수 있는 측정 기기를 찾지 못했습니다. 마이크 권한을 허용하면 목록이 나타납니다.",
                 color = SelahColors.Warn,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
@@ -592,12 +594,15 @@ private fun InputDevicePicker(
                     ?: "고른 기기 없음",
                 key = selectedKey,
                 selected = true,
-                subtitle = when {
-                    picked != null && openedKey == picked.stableKey -> "사용 중 · 눌러서 바꾸기"
-                    pickedAbsent != null -> "연결 안 됨 · 눌러서 바꾸기"
-                    selectedKey == null -> "고른 것이 없어 내장으로 잽니다 · 눌러서 바꾸기"
-                    else -> "눌러서 바꾸기"
-                },
+                // **평소에는 아무 말도 붙이지 않는다**(담당자 지시
+                // 2026-09-28). 「고른 것이 없어 내장으로 잽니다 · 눌러서
+                // 바꾸기」가 늘 붙어 있었는데, 누를 수 있다는 것은 오른쪽
+                // 「선택함」과 상자 모양이 이미 말한다.
+                //
+                // **「연결 안 됨」만 남긴다.** 그건 평소에 안 뜨는 말이고,
+                // 안 뜨면 **고른 USB 마이크가 빠진 줄 모른 채** 내장으로
+                // 재게 된다 — 그 세션의 숫자가 전부 다른 잣대가 된다.
+                subtitle = if (pickedAbsent != null) "연결 안 됨" else null,
                 onPick = { open = true },
                 inUse = picked != null && openedKey == picked.stableKey,
                 nextStart = running && picked != null && openedKey != picked.stableKey,
@@ -632,16 +637,14 @@ private fun InputDevicePicker(
         }
 
         if (openedLabel != null || lastLabel != null) {
-            Text(
-                if (openedLabel != null) {
-                    "지금 열려 있는 기기: $openedLabel"
-                } else {
-                    "마지막으로 쓴 기기: $lastLabel (지금은 열려 있지 않습니다)"
-                },
-                color = SelahColors.TextMuted,
-                fontSize = 10.sp,
-                modifier = Modifier.padding(top = 4.dp),
-            )
+            // **「지금 열려 있는 기기」 줄을 뺐다**(담당자 지시 2026-09-28).
+            //
+            // 고른 것과 열린 것이 다를 수 있어 여기에 적어 두었는데,
+            // 이제 **측정 화면의 「측정 기기」 칸이 재는 동안 실제로 열린
+            // 것을 적는다.** 같은 말이 두 군데가 됐다.
+            //
+            // 열려 있지 않을 때의 줄도 함께 뺐다 — 바로 위 기기 줄이
+            // 「연결 안 됨」으로 이미 말한다.
             // **보정 상태를 기기 카드 안에서 말한다**(2026-09-25 담당자 지시).
             //
             // 보정은 **기기마다** 따로 있는데, 상태는 저 아래 「보정」 구역에
@@ -683,7 +686,8 @@ private fun DeviceRow(
     title: String,
     key: String?,
     selected: Boolean,
-    subtitle: String,
+    /** 이름 아래 한 줄. **null 이면 아무 말도 붙이지 않는다.** */
+    subtitle: String?,
     onPick: (String?) -> Unit,
     /**
      * 지금 **실제로 이 기기로 열려 있는가.**
@@ -738,7 +742,9 @@ private fun DeviceRow(
                 fontSize = 12.sp,
                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
             )
-            Text(subtitle, color = SelahColors.TextMuted, fontSize = 10.sp)
+            // 붙일 말이 없으면 줄 자체를 두지 않는다 — 빈 줄이 남으면
+            // 상자 높이만 먹는다.
+            subtitle?.let { Text(it, color = SelahColors.TextMuted, fontSize = 10.sp) }
         }
         if (onForget != null) {
             TextButton(onClick = onForget) {

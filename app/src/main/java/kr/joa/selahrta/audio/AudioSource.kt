@@ -104,7 +104,7 @@ enum class CaptureEnd(val messageKo: String, val reason: kr.joa.selahrta.domain.
 /** 열지 못한 까닭. 담당자가 할 수 있는 일이 저마다 다르다. */
 enum class OpenFailure(val messageKo: String) {
     PermissionDenied("마이크 권한이 없습니다. 설정에서 허용해 주십시오."),
-    NoDevice("쓸 수 있는 입력 기기가 없습니다."),
+    NoDevice("쓸 수 있는 측정 기기가 없습니다."),
     Busy("다른 앱이 마이크를 쓰고 있습니다. 통화 중이거나 녹음 앱이 켜져 있는지 보십시오."),
     Unsupported("이 기기에서 열 수 있는 형식을 찾지 못했습니다."),
     Unknown("마이크를 열지 못했습니다."),

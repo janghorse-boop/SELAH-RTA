@@ -66,7 +66,7 @@ private fun inputSection(m: SessionMeta): ReportSection {
     return ReportSection(
         "무엇으로 쟀나",
         buildList {
-            add(ReportLine("입력 기기", m.deviceLabel.ifBlank { NOT_RECORDED_KO }))
+            add(ReportLine("측정 기기", m.deviceLabel.ifBlank { NOT_RECORDED_KO }))
             // **자리는 이름표일 뿐 물리 위치가 아니다.** 그래도 보정이
             // 여기 매이므로 적는다.
             add(ReportLine("마이크 자리", c.routedAddress.ifEmpty { UNKNOWN_KO }))
@@ -111,7 +111,7 @@ private fun calibrationSection(m: SessionMeta): ReportSection {
         buildList {
             // **셋을 가려 적는다.** 「미보정」과 「기종 기본값」과 「보정됨」은
             // 믿음 등급이 다르다 — 한 칸으로 뭉치면 그 차이가 사라진다.
-            add(ReportLine("절대 레벨", calibrationStateKo(m)))
+            add(ReportLine("SPL 보정", calibrationStateKo(m)))
             add(
                 ReportLine(
                     "보정값",
@@ -123,7 +123,7 @@ private fun calibrationSection(m: SessionMeta): ReportSection {
                 ),
             )
             add(ReportLine("무엇에 맞췄나", c.calibrationSource?.labelKo ?: NOT_RECORDED_KO))
-            add(ReportLine("주파수 곡선", curveKo(m)))
+            add(ReportLine("주파수 응답 보정", curveKo(m)))
             // **셋을 다 적는다.** 가중이 갈라진 뒤로는 하나만 적어서는
             // PEAK 이 어느 잣대인지 알 수 없다.
             add(ReportLine("음압 가중", m.weighting.labelKo))
