@@ -273,6 +273,16 @@ data class CaptureUiState(
      */
     val pendingCalibration: PendingCalibration? = null,
     /**
+     * 마지막으로 소리가 들어온 뒤 흐른 시간(ms). 측정 중이 아니거나 아직
+     * 한 덩어리도 안 왔으면 null.
+     *
+     * **덩어리가 아니라 시계가 이 값을 키운다**(독립 재검증 UISR-03).
+     * 콜백이 멈추면 진단도 함께 멈춰서, 누적값만 보던 경고는 **입력이
+     * 끊겨도 아무 말도 하지 않았다.** 화면은 마지막 숫자를 들고 멀쩡히
+     * 서 있었다.
+     */
+    val lastInputAgeMs: Double? = null,
+    /**
      * 지금 입력 세션의 번호. 기기를 열 때마다 올라간다.
      *
      * 오디오 스레드가 낸 값에도 같은 번호가 붙는다. 번호가 다르면 **지난
@@ -555,6 +565,10 @@ class CaptureSession(
      * 잃은 양이다.
      */
     var minLagMs = Double.MAX_VALUE
+
+    /** 마지막으로 파형이 잘린 때(단조 시계). 없으면 0. */
+    var lastClipNs = 0L
+
 }
 
 class CaptureViewModel(app: Application) : AndroidViewModel(app) {
@@ -816,6 +830,15 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         const val AUDIO_MAX_FRAMES = 8192
 
         /**
+         * 입력이 살아 있는지 시계로 확인하는 간격(ms).
+         *
+         * 「멈췄다」를 1초 문턱으로 판정하므로 이 간격이면 늦어야 반
+         * 박자다. 화면 갱신(66ms)보다 훨씬 성기게 두어 쓸데없이 깨우지
+         * 않는다.
+         */
+        const val INPUT_AGE_TICK_MS = 400L
+
+        /**
          * 배경을 몇 장 모을 것인가. 48kHz·FFT4096·50% 겹침이면 초당 23장쯤이라
          * 3초쯤이다.
          *
@@ -849,6 +872,27 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         // 붙들어 두기에 실패했다는 소식. **멈추지 않고 알리기만 한다.**
         viewModelScope.launch {
             CaptureServiceBridge.unavailable.collect { noteServiceUnavailable() }
+        }
+
+        // **콜백이 없어도 도는 점검**(독립 재검증 UISR-03).
+        //
+        // 진단은 덩어리가 와야 갱신된다. 그래서 입력이 아주 멈추면 진단도
+        // 멈추고, 누적값만 보던 경고는 **아무 말도 하지 않았다** — 화면은
+        // 마지막 숫자를 들고 멀쩡히 서 있었다. 시계로 나이를 재는 일은
+        // 소리와 무관하게 돌아야 한다.
+        //
+        // 화면 갱신(66ms)보다 훨씬 성기게 돈다. 「멈췄다」를 1초 문턱으로
+        // 판정하므로 이 간격이면 늦어야 반 박자다.
+        viewModelScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(INPUT_AGE_TICK_MS)
+                val age = controller.calibrationEvidence()
+                    ?.takeIf { controller.running }
+                    ?.let { (controller.monotonicNs() - it.atMonotonicNs) / 1e6 }
+                if (controller.baseState.value.lastInputAgeMs != age) {
+                    controller.update { st -> st.copy(lastInputAgeMs = age) }
+                }
+            }
         }
 
         // 기기 목록은 늘 지켜본다. 측정 중이 아닐 때도 설정 화면이 최신
@@ -1767,13 +1811,21 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      * 저장한다(쉬움은 그대로다). 안 보이면 「정말 교정기를 물렸습니까」를
      * 한 번 묻고, 사람이 그렇다고 하면 저장한다. 회색으로 잠가 두던 옛
      * 방식으로 돌아가지 않는다 — 그때는 아예 보정을 할 수 없었다.
+     *
+     * ## 판정한 값으로 저장한다 (독립 재검증 UISR-01)
+     *
+     * 판정과 저장이 **각자 값을 읽으면** 그 사이에 다른 값이 들어온다.
+     * 그래서 근거([CalibrationEvidence])를 한 번 집어 그것으로 판정하고,
+     * **그 근거가 들고 있는 값으로** 저장한다.
      */
     fun saveSimpleCalibration(
         referenceDb: Double,
         source: kr.joa.selahrta.calibration.CalibrationSource =
             kr.joa.selahrta.calibration.CalibrationSource.Meter,
     ) {
-        when (val gate = currentGate(source)) {
+        // **한 번만 집는다.** 아래 판정과 저장이 같은 근거를 본다.
+        val evidence = controller.calibrationEvidence()
+        when (val gate = gateFor(source, evidence)) {
             is CalibrationGate.Reject ->
                 controller.update { st -> st.copy(calibrationNoticeKo = gate.reasonKo) }
 
@@ -1787,7 +1839,8 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                     ),
                 ) }
 
-            CalibrationGate.Save -> performCalibrationSave(referenceDb, source)
+            CalibrationGate.Save ->
+                performCalibrationSave(referenceDb, source, requireNotNull(evidence))
         }
     }
 
@@ -1802,21 +1855,27 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         val pending = state.value.pendingCalibration ?: return
         controller.update { st -> st.copy(pendingCalibration = null) }
 
-        // **다시 검사한다.** 묻는 동안 소리가 잘리기 시작했을 수도 있다.
-        // 순음은 이미 사람이 답했으므로 여기서 또 묻지 않는다.
-        val gate = currentGate(pending.source)
+        // **근거를 새로 집는다**(독립 재검증 UISR-01). 묻는 동안 소리가
+        // 끊겼거나 잘리기 시작했을 수 있다. 순음은 이미 사람이 답했으므로
+        // 여기서 또 묻지 않는다 — 나머지 조건만 다시 본다.
+        val evidence = controller.calibrationEvidence()
+        val gate = gateFor(pending.source, evidence)
         if (gate is CalibrationGate.Reject) {
             controller.update { st -> st.copy(calibrationNoticeKo = gate.reasonKo) }
             return
         }
-        if (state.value.session != pending.session) {
+        // **묻기 전과 같은 세션인가.** 근거 쪽 세션도 함께 본다 — 화면
+        // 상태만 보면 오디오 쪽이 이미 갈렸는데도 통과할 수 있다.
+        if (state.value.session != pending.session ||
+            evidence?.session != pending.session
+        ) {
             controller.update { st -> st.copy(
                 calibrationNoticeKo = "묻는 사이에 측정이 다시 시작됐습니다. " +
                     "보정하지 않았습니다 — 다시 누르십시오.",
             ) }
             return
         }
-        performCalibrationSave(pending.referenceDb, pending.source)
+        performCalibrationSave(pending.referenceDb, pending.source, requireNotNull(evidence))
     }
 
     fun dismissPendingCalibration() {
@@ -1828,30 +1887,35 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         state.value.rta?.let { kr.joa.selahrta.dsp.checkCalibratorTone(it.bandsSpl) }
 
     /**
-     * 지금 이 순간의 판단. 규칙 자체는 [calibrationGate] 에 있다 —
+     * 건네받은 근거로 판단한다. 규칙 자체는 [calibrationGate] 에 있다 —
      * 안드로이드 없이 시험할 수 있어야 하기 때문이다.
+     *
+     * **근거를 밖에서 받는다**(독립 재검증 UISR-01). 여기서 직접 읽으면
+     * 판정과 저장이 서로 다른 값을 볼 수 있다.
      */
-    private fun currentGate(
+    private fun gateFor(
         source: kr.joa.selahrta.calibration.CalibrationSource,
-    ): CalibrationGate {
-        val st = state.value
-        return calibrationGate(
-            opened = controller.baseState.value.opened != null,
-            routeConfirmed = controller.confirmedFormat() != null,
-            measuredDbfs = st.meter.currentDbfs,
-            clipped = st.meter.peakClipped,
-            settled = st.meter.settled,
-            source = source,
-            toneOk = currentToneCheck()?.ok,
-        )
-    }
+        evidence: kr.joa.selahrta.calibration.CalibrationEvidence?,
+    ): CalibrationGate = calibrationGate(
+        opened = controller.baseState.value.opened != null,
+        routeConfirmed = controller.confirmedFormat() != null,
+        evidence = evidence,
+        nowNs = controller.monotonicNs(),
+        source = source,
+        toneOk = currentToneCheck()?.ok,
+    )
 
+    /**
+     * **판정에 쓴 근거의 값으로 저장한다**(독립 재검증 UISR-01).
+     * 여기서 다시 읽으면 그 사이에 들어온 다른 값이 저장된다.
+     */
     private fun performCalibrationSave(
         referenceDb: Double,
         source: kr.joa.selahrta.calibration.CalibrationSource,
+        evidence: kr.joa.selahrta.calibration.CalibrationEvidence,
     ) {
         val format = controller.confirmedFormat() ?: return
-        val measured = state.value.meter.currentDbfs ?: return
+        val measured = evidence.measuredDbfs(state.value.meterSettings.splWeighting)
         val cal = GlobalCalibration(
             offsetDb = computeOffset(referenceDb, measured),
             savedAtEpochMs = System.currentTimeMillis(),
@@ -2079,6 +2143,13 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                     controller.update { it.copy(errorKo = "기록할 자리를 만들지 못했습니다.") }
                     return@onMainThread
                 }
+                // **여기서 다시 읽는다**(독립 재검증 UISR-04).
+                //
+                // 위의 `st` 는 이 함수에 **들어올 때** 잡은 상태다. 그 뒤로
+                // 폴더를 만드는 IO 가 끼어 있어, 그 사이에 사람이 구간을
+                // 바꿀 수 있다. 옛 `st` 로 첫 사건을 적으면 **화면은 찬양인데
+                // 기록은 설교**가 된다(검토자가 그 순서를 재현했다).
+                val initial = controller.baseState.value.meterSettings
                 controller.startRecording(
                     make = { session ->
                         kr.joa.selahrta.recording.SessionRecorder(
@@ -2088,7 +2159,18 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                             startReferenceOnly = cal.isReferenceOnly,
                             startLeqWindowMs = window,
                             weighting = weighting,
-                        )
+                        ).also { recorder ->
+                            // **만들면서 곧바로 적는다.** 따로
+                            // `postToCapture` 로 보내면 그 명령이 닿기 전에
+                            // 첫 PCM 이 들어와, 사건 없는 앞구간이 생긴다.
+                            // 여기서 적으면 반드시 0ms 다.
+                            val segment = initial.activeSegment
+                            recorder.note(
+                                kr.joa.selahrta.recording.SessionEventKind.SegmentChange,
+                                segment?.let { initial.nameFor(it) } ?: "구간 없음",
+                                segment,
+                            )
+                        }
                     },
                     makeAudio = { session ->
                         if (!withAudio) {
@@ -2111,15 +2193,6 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 recordingStartedAt = startedAt
                 recordingOpened = opened
                 controller.update { it.copy(recordingId = id) }
-                // **시작할 때의 구간을 첫 사건으로 남긴다**(독립 검토 UIS-04).
-                //
-                // 구간은 「바뀔 때」만 적히므로, 처음 고른 그대로 끝까지 가면
-                // 사건이 하나도 없다. 그러면 표의 구간 칸이 통째로 비어,
-                // 화면에서 분명히 고르고 잰 것이 **적지 않은 것처럼** 보인다.
-                noteSegmentToRecording(
-                    st.meterSettings.activeSegment,
-                    st.meterSettings,
-                )
             }
         }
     }

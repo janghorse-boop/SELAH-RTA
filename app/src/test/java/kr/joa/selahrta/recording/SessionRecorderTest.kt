@@ -271,4 +271,26 @@ class SessionRecorderTest {
         assertEquals(600L, r.elapsedMs)
         assertNotNull(r.finish())
     }
+
+    /**
+     * **시작 구간은 첫 PCM 보다 먼저, 0ms 에 적힌다**(독립 재검증 UISR-04).
+     *
+     * 기록기를 만든 뒤 따로 `postToCapture` 로 사건을 보내면, 그 명령이
+     * 닿기 전에 첫 덩어리가 들어와 **사건 없는 앞구간**이 생긴다. 그
+     * 구간의 행은 구간 칸이 빈 채로 남는다.
+     *
+     * 만들면서 곧바로 적으면 반드시 0ms 다 — 아직 한 프레임도 안 넣었으니
+     * `elapsedMs` 가 0 이다.
+     */
+    @Test
+    fun `만들자마자 적은 사건은 0ms 다`() {
+        val r = recorder()
+        r.note(SessionEventKind.SegmentChange, "설교", ChurchSegment.Sermon)
+        feed(r, 10)
+        val done = r.finish()
+        val first = done.events.first { it.kind == SessionEventKind.SegmentChange }
+        assertEquals(0L, first.atMs)
+        assertEquals(ChurchSegment.Sermon, first.segment)
+        assertEquals("설교", first.detailKo)
+    }
 }
