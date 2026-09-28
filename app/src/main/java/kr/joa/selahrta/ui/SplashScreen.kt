@@ -4,6 +4,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.clickable
@@ -25,10 +26,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kr.joa.selahrta.R
 import kr.joa.selahrta.ui.theme.SelahColors
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -68,8 +71,9 @@ fun SplashScreen(onDone: () -> Unit) {
         }
         wordmark.animateTo(1f, tween(360, easing = LinearEasing))
         credit.animateTo(1f, tween(420, easing = LinearEasing))
-        // 이름을 읽을 만큼만 머문다.
-        delay(700)
+        // 이름을 읽을 만큼만 머문다. 로고가 다 뜬 뒤 눈이 한 번 머물도록
+        // 0.2초 늘렸다(2026-09-28 담당자 지시).
+        delay(900)
         onDone()
     }
 
@@ -125,7 +129,7 @@ fun SplashScreen(onDone: () -> Unit) {
             )
             Spacer(Modifier.height(6.dp))
             Text(
-                "Real-Time Worship Audio Analyzer",
+                "Real-Time Audio Analyzer",
                 color = SelahColors.TextSecondary,
                 fontSize = 12.sp,
                 letterSpacing = 0.5.sp,
@@ -153,27 +157,25 @@ fun SplashScreen(onDone: () -> Unit) {
                 letterSpacing = 4.sp,
                 modifier = Modifier.alpha(credit.value),
             )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "JANGHUN",
-                color = SelahColors.TextPrimary,
-                fontSize = 19.sp,
-                fontWeight = FontWeight.SemiBold,
-                letterSpacing = 3.sp,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.alpha(credit.value),
-            )
-            Spacer(Modifier.height(6.dp))
-            Text(
-                // 회사 이름이다(2026-09-25 담당자 지시로 「Jesus On Air (JOA)」
-                // 에서 바꿨다). 한글과 영문을 함께 적는다 — 스토어·문서에서
-                // 둘 다 쓰이므로 한쪽만 적으면 같은 곳인지 알기 어렵다.
-                "조아웍스 | JOA Works",
-                // 회사 이름이라 한 단계 밝힌다 — TextMuted 로는 거의 안 보였다.
-                color = SelahColors.TextSecondary,
-                fontSize = 12.sp,
-                letterSpacing = 1.sp,
-                modifier = Modifier.alpha(credit.value),
+            Spacer(Modifier.height(14.dp))
+
+            // 만든 곳은 **로고 하나로** 말한다(2026-09-28 담당자 지시로
+            // 사람 이름과 한글 상호를 뺐다).
+            //
+            // 원본 로고는 **흰 바탕에 얹힌 그림**이라 그대로 쓰면 이 어두운
+            // 표지에 흰 상자가 뜬다. 배경을 지우고 짙은 「JOA」 를 밝은
+            // 색으로 바꾼 판을 쓴다(`drawable-nodpi/joaworks_logo.png`).
+            Image(
+                painter = painterResource(R.drawable.joaworks_logo),
+                // 화면 낭독기는 그림 대신 이 말을 읽는다.
+                contentDescription = "JOAWORKS",
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    // 30dp 로 넣어 봤더니 아래 한 줄(IDEAS FOR A BETTER
+                    // TOMORROW)이 회색 얼룩으로 뭉갰다. 로고 높이의 1/8 밖에
+                    // 안 되는 글줄이라 이만큼은 있어야 글자로 보인다.
+                    .height(38.dp)
+                    .alpha(credit.value),
             )
         }
     }

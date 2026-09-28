@@ -394,10 +394,9 @@ fun SettingsScreen(
         SectionTitle("앱 정보")
         SettingRow("SELAH RTA", "v0.1.0 (Phase 8)")
         Text(
-            // 만든 사람과 회사는 다른 것이다. 회사만 적으면 누가 만들었는지가
-            // 사라진다.
-            "Real-Time Worship Audio Analyzer\n" +
-                "개발 장훈 (JANGHUN) · 조아웍스 | JOA Works",
+            // 만든 곳은 상호 하나로 적는다(2026-09-28 담당자 지시로 사람
+            // 이름과 한글 상호를 뺐다). 표지(SplashScreen)와 같은 표기다.
+            "Real-Time Audio Analyzer\nJOAWORKS",
             color = SelahColors.TextMuted,
             fontSize = 11.sp,
             modifier = Modifier.padding(top = 4.dp, bottom = 24.dp),
