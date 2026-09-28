@@ -93,7 +93,12 @@ fun SplashScreen(onDone: () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally,
             // 화면 한가운데에 두면 아래가 허전하다. 눈이 머무는 자리는
             // 가운데보다 조금 위다.
-            modifier = Modifier.offset(y = (-26).dp),
+            //
+            // **-26 → -4dp.** 아래 「만든 곳」을 내리느라 기둥이 44dp
+            // 길어졌는데, 가운데정렬이라 그대로 두면 위쪽 SELAH RTA 가
+            // 그 절반만큼 딸려 올라간다. 절반을 도로 내려 **위 덩어리는
+            // 있던 자리에 둔다** — 내리려던 것은 아래쪽뿐이다.
+            modifier = Modifier.offset(y = (-4).dp),
         ) {
 
             // ---- 막대 다섯 ----
@@ -136,9 +141,15 @@ fun SplashScreen(onDone: () -> Unit) {
                 modifier = Modifier.alpha(wordmark.value),
             )
 
-            Spacer(Modifier.height(30.dp))
+            // **만든 곳은 아래로 내려 둔다**(담당자 지시 2026-09-28:
+            // 「너무 가운데에 있는 것 같습니다」). 30 → 80dp.
+            //
+            // 표지의 주인공은 위의 SELAH RTA 다. 만든 곳이 그 바로 밑에
+            // 붙어 화면 한가운데를 함께 차지하고 있으면 둘이 한 덩어리로
+            // 읽혀, 눈이 어느 쪽을 먼저 봐야 할지 모른다.
+            Spacer(Modifier.height(80.dp))
 
-            // ---- 만든 사람 ----
+            // ---- 만든 곳 ----
             Box(
                 modifier = Modifier
                     .width(44.dp)
@@ -157,7 +168,10 @@ fun SplashScreen(onDone: () -> Unit) {
                 letterSpacing = 4.sp,
                 modifier = Modifier.alpha(credit.value),
             )
-            Spacer(Modifier.height(14.dp))
+            // 14 → 8dp(담당자 지시 2026-09-28). 「DEVELOPED BY」 와
+            // 로고는 **한 덩어리**라, 떨어져 있으면 둘이 따로 놓인 것으로
+            // 보인다.
+            Spacer(Modifier.height(8.dp))
 
             // 만든 곳은 **로고 하나로** 말한다(2026-09-28 담당자 지시로
             // 사람 이름과 한글 상호를 뺐다).
