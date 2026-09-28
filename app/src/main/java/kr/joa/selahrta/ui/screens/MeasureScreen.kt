@@ -69,7 +69,7 @@ import kr.joa.selahrta.audio.inputSignalState
 import kr.joa.selahrta.dsp.CLIP_THRESHOLD
 import kr.joa.selahrta.audio.externalReadiness
 import kr.joa.selahrta.ui.components.ReadinessCard
-import kr.joa.selahrta.ui.components.DiagnosticsPanel
+import kr.joa.selahrta.audio.captureWarningKo
 import kr.joa.selahrta.ui.components.InfoBar
 import kr.joa.selahrta.ui.components.InputLevelBar
 import kr.joa.selahrta.ui.components.NO_VALUE
@@ -684,6 +684,19 @@ fun MeasureScreen(
         // 있던 경고인데, 그 구간의 숫자에는 **옛 조합으로 맞춘 보정값**이
         // 걸려 있다. 화면은 멀쩡해 보이므로 소리 없이 사라지면 안 된다.
         capture.inputForDisplay?.activeMicChangeKo?.let {
+            InfoBar(it, Modifier.padding(top = 12.dp), tone = SelahColors.Warn)
+        }
+
+        // **소리를 잃고 있으면 말한다**(독립 검토 UIS-03, 2026-09-28).
+        //
+        // 상자를 걷어내면서 `audioLagMs`·`readErrors` 의 표시 경로가 함께
+        // 사라졌다. 지워야 했던 것은 **늘 떠 있는 숫자판**이지 「소리를
+        // 잃고 있다」는 알림이 아니다 — 그것 없이는 사람이 **지나간
+        // 소리를 지금 값으로 읽는다.**
+        //
+        // 평상시에는 아무것도 안 그리고 문제가 있을 때만 한 줄이 뜬다.
+        // 기록을 켜지 않은 측정에서도 필요한 말이다.
+        captureWarningKo(capture.diagnostics)?.let {
             InfoBar(it, Modifier.padding(top = 12.dp), tone = SelahColors.Warn)
         }
     }
