@@ -659,6 +659,11 @@ class CaptureController(
         val blockMs = block.frames * 1000.0 / block.sampleRate
         val audioMs = session.frames * 1000.0 / block.sampleRate
         val lagMs = (now - session.startedNs) / 1e6 - audioMs
+        // **출발선을 잡아 둔다.** 기기를 여는 데 걸린 시간이 [lagMs] 에
+        // 그대로 들어 있고 그 몫은 영영 따라잡히지 않는다. 가장 작았던
+        // 값이 그 몫이고, 거기서 늘어난 만큼이 실제로 잃은 소리다
+        // (`CaptureSessionState.minLagMs` 의 머리말 참고).
+        if (lagMs < session.minLagMs) session.minLagMs = lagMs
 
         // **여기서 화면 상태를 읽지도 쓰지도 않는다.** 잰 것만 내놓고,
         // 보정·설정을 입히는 일은 주 스레드가 한다.
@@ -678,6 +683,7 @@ class CaptureController(
                 lastProcessMs = processMs,
                 blockDurationMs = blockMs,
                 audioLagMs = lagMs,
+                lagBaselineMs = session.minLagMs,
             ),
             spl = splFrame,
             rta = session.rta.frame(),

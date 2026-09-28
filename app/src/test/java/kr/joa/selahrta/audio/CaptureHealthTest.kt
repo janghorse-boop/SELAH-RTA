@@ -16,13 +16,17 @@ import org.junit.Test
  */
 class CaptureHealthTest {
 
-    private fun diag(lagMs: Double = 0.0, readErrors: Long = 0L) =
-        CaptureDiagnostics(
-            audioLagMs = lagMs,
-            readErrors = readErrors,
-            blockDurationMs = 21.0,
-            lastProcessMs = 3.0,
-        )
+    private fun diag(
+        lagMs: Double = 0.0,
+        readErrors: Long = 0L,
+        baselineMs: Double = 0.0,
+    ) = CaptureDiagnostics(
+        audioLagMs = lagMs,
+        lagBaselineMs = baselineMs,
+        readErrors = readErrors,
+        blockDurationMs = 21.0,
+        lastProcessMs = 3.0,
+    )
 
     @Test
     fun `멀쩡할 때는 아무 말도 하지 않는다`() {
@@ -31,12 +35,40 @@ class CaptureHealthTest {
         assertNull(captureWarningKo(diag(lagMs = 400.0)))
     }
 
+    /**
+     * **기기를 여는 데 걸린 시간은 잃은 것이 아니다**(실기기 확인
+     * 2026-09-29).
+     *
+     * UMC404HD 를 붙여 재 보니 측정을 시작하자마자 경고가 떴고, 90초를
+     * 재도 그대로 「1초」였다. 그 1초는 처음부터 늦게 출발한 몫이라
+     * 영영 따라잡히지 않는다 — 그것으로 경고하면 **측정할 때마다 늘
+     * 떠 있는 경고**가 되고, 그건 없느니만 못하다.
+     */
     @Test
-    fun `소리가 밀리면 지난 소리라고 말한다`() {
-        val w = captureWarningKo(diag(lagMs = 1_000.0))
+    fun `시작 지연만으로는 말하지 않는다`() {
+        // 1초 늦게 출발했고 그대로 유지된다
+        assertNull(captureWarningKo(diag(lagMs = 1_000.0, baselineMs = 1_000.0)))
+        // 그 위에서 조금 흔들리는 것도 마찬가지
+        assertNull(captureWarningKo(diag(lagMs = 1_300.0, baselineMs = 1_000.0)))
+        // 2초 늦게 출발해도 늘지 않으면 아무 말 안 한다
+        assertNull(captureWarningKo(diag(lagMs = 2_000.0, baselineMs = 2_000.0)))
+    }
+
+    @Test
+    fun `출발선에서 늘어나면 끊겼다고 말한다`() {
+        val w = captureWarningKo(diag(lagMs = 2_000.0, baselineMs = 1_000.0))
         assertTrue("아무 말도 안 한다", w != null)
-        assertTrue("밀린다는 말이 없다: $w", w!!.contains("밀리고"))
+        assertTrue("끊겼다는 말이 없다: $w", w!!.contains("끊겼"))
         assertTrue("지난 소리라는 말이 없다: $w", w.contains("지난 소리"))
+        // **늘어난 만큼만 적는다.** 2초가 아니라 1초다.
+        assertTrue("잃은 양이 아니라 절대값을 적는다: $w", w.contains("1초"))
+    }
+
+    @Test
+    fun `출발선이 없어도 늘어난 것은 잡는다`() {
+        // 첫 덩어리부터 잃기 시작하면 출발선이 0 에 가깝다
+        val w = captureWarningKo(diag(lagMs = 1_000.0, baselineMs = 0.0))
+        assertTrue("아무 말도 안 한다", w != null)
     }
 
     @Test
