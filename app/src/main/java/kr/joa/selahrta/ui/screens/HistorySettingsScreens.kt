@@ -287,7 +287,7 @@ fun SettingsScreen(
             // 보는 뜻이 음압 때와 다르다(담당자 문안 2026-09-28).
             helpKo = ::peakWeightingHelpKo,
             selected = capture.meterSettings.peakWeighting,
-            isCustom = capture.meterSettings.peakWeighting != Weighting.Z,
+            isCustom = capture.meterSettings.peakWeighting != Weighting.C,
             onPick = onPeakWeighting,
             onReset = onResetPeakWeighting,
         )
