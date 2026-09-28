@@ -352,7 +352,19 @@ fun SettingsScreen(
             onFftSize,
         )
 
-        SectionTitle("구간별 권장 범위")
+        SectionTitle("구간별 권장 범위") {
+            // **다 찼으면 눌리지 않는다.** 숨기면 왜 못 더하는지 알 길이
+            // 없어, 회색으로 남겨 둔다.
+            val next = capture.meterSettings.nextFreeSegment
+            TextButton(onClick = { next?.let(onAddSegment) }, enabled = next != null) {
+                Text(
+                    "추가",
+                    color = if (next != null) SelahColors.Accent else SelahColors.TextMuted,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
         // **쓰는 구간만 그린다**(담당자 지시 2026-09-28: 최대 5개).
         // enum 차례를 따르므로 더한 차례와 무관하게 늘 같은 줄에 온다.
         capture.meterSettings.orderedSegments.forEach { seg ->
@@ -382,15 +394,9 @@ fun SettingsScreen(
                     "다르므로, 더한 뒤 「범위」에서 고쳐 쓰십시오.",
             )
         }
-        capture.meterSettings.nextFreeSegment?.let { next ->
-            TextButton(onClick = { onAddSegment(next) }) {
-                Text(
-                    "구간 더하기 (${capture.meterSettings.segments.size} / $MAX_SEGMENTS)",
-                    color = SelahColors.Accent,
-                    fontSize = 13.sp,
-                )
-            }
-        }
+        // **「구간 더하기」 링크를 뺐다**(담당자 지시 2026-09-28).
+        // 같은 일을 위 머리글의 「추가」가 한다 — 목록이 길어져도 자리가
+        // 밀리지 않는 쪽만 남겼다.
 
         // **참고값 경고 상자를 뺐다**(담당자 지시 2026-09-27).
         // 바로 아래 「주의사항」이 같은 말을 하고 있어 두 번 적혀 있었다.
@@ -1025,15 +1031,26 @@ private fun ChannelLevelBars(levels: ChannelLevelSnapshot, picked: Int) {
 }
 
 @Composable
-private fun SectionTitle(text: String) {
-    Text(
-        text,
-        color = SelahColors.TextMuted,
-        fontSize = 10.sp,
-        fontWeight = FontWeight.SemiBold,
-        letterSpacing = 1.sp,
-        modifier = Modifier.padding(top = 20.dp, bottom = 8.dp),
-    )
+private fun SectionTitle(text: String, trailing: (@Composable () -> Unit)? = null) {
+    // **오른쪽 끝에 단추를 하나 달 수 있다**(담당자 지시 2026-09-28).
+    //
+    // 구역에 거는 일(구간 더하기 같은 것)을 목록 **아래**에 두면, 목록이
+    // 길어질수록 그 단추가 화면 밖으로 밀린다. 머리글 옆이면 늘 같은
+    // 자리다.
+    Row(
+        Modifier.fillMaxWidth().padding(top = 20.dp, bottom = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text,
+            color = SelahColors.TextMuted,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 1.sp,
+        )
+        trailing?.invoke()
+    }
 }
 
 @Composable
