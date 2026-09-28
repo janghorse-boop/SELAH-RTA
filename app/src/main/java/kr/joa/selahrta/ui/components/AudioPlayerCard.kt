@@ -177,7 +177,7 @@ private fun Player(file: File, onPosition: (Int) -> Unit) {
             },
             colors = ButtonDefaults.buttonColors(
                 containerColor = SelahColors.Accent,
-                contentColor = Color(0xFF00201C),
+                contentColor = SelahColors.OnAccent,
             ),
         ) {
             Text(if (playing) "멈춤" else "재생", fontWeight = FontWeight.Bold, fontSize = 13.sp)

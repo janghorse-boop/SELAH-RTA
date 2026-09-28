@@ -112,7 +112,7 @@ fun FrScreen(
             // 없는 것과 못 고르는 것은 다르고, 설정에서 찾다가 「빠졌나」
             // 하는 것보다 여기서 까닭과 함께 보는 편이 낫다.
             Text(
-                "dB(Z) 고정 — 예배당의 응답 자체를 재는 화면이라 가중을 걸지 " +
+                "dB(Z) 고정 — 공간의 응답 자체를 재는 화면이라 가중을 걸지 " +
                     "않습니다. 분석 화면의 가중을 바꿔도 이 곡선은 달라지지 않습니다.",
                 color = SelahColors.TextMuted,
                 fontSize = 10.sp,
@@ -249,7 +249,7 @@ fun FrScreen(
                     modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = SelahColors.Accent,
-                        contentColor = Color(0xFF00201C),
+                        contentColor = SelahColors.OnAccent,
                     ),
                 ) {
                     Text("재기", fontWeight = FontWeight.Bold)
@@ -277,7 +277,7 @@ fun FrScreen(
                             contentColor = if (capture.responseQuietReady) {
                                 SelahColors.TextPrimary
                             } else {
-                                Color(0xFF00201C)
+                                SelahColors.OnAccent
                             },
                         ),
                     ) {
@@ -293,7 +293,7 @@ fun FrScreen(
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = SelahColors.Accent,
-                            contentColor = Color(0xFF00201C),
+                            contentColor = SelahColors.OnAccent,
                             disabledContainerColor = SelahColors.SurfaceVariant,
                             disabledContentColor = SelahColors.TextMuted,
                         ),

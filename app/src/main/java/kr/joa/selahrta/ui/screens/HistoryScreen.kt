@@ -273,7 +273,7 @@ private fun SessionDetail(
             modifier = Modifier.weight(1f),
             colors = ButtonDefaults.buttonColors(
                 containerColor = SelahColors.Accent,
-                contentColor = Color(0xFF00201C),
+                contentColor = SelahColors.OnAccent,
             ),
         ) {
             // **둘을 한 번에 보낸다.** 표와 소리가 따로 가면 받는 쪽에서

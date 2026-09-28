@@ -97,28 +97,34 @@ data class MeterSettings(
      */
     val analysisWeighting: Weighting = Weighting.Z,
     /**
-     * 시간가중. **기본은 Fast 다.**
+     * 시간가중. **기본은 「중간」이다**(담당자 지시 2026-09-28).
      *
-     * 2026-09-27 에 Slow 로 바꿨다가 **하루 만에 되돌렸다**(담당자 지시
-     * 2026-09-28). 까닭은 화면이 자리를 잡는 시간이다 —
+     * ## 이 값은 하루 사이에 네 번 바뀌었다 — 그 까닭을 남긴다
+     *
+     * 09-27 Fast→Slow · 09-28 오전 Slow→Fast · 같은 날 저녁 Fast→Slow ·
+     * 곧이어 **Slow→중간**. 오간 축은 하나다 — **바늘이 튀는 정도**와
+     * **자리 잡는 시간**의 맞바꿈이다.
      * `settleSamples = 샘플레이트 × τ × 3` 이라:
      *
-     * | | τ | 자리 잡는 시간 |
-     * |---|---|---|
-     * | Fast | 125ms | **0.375초** |
-     * | Slow | 1초 | **3초** |
+     * | | τ | 자리 잡는 시간 | 담당자 평 |
+     * |---|---|---|---|
+     * | Fast | 125ms | 0.375초 | 「너무 빠릅니다」 |
+     * | **중간** | 350ms | **1.05초** | 여기로 정했다 |
+     * | Slow | 1초 | 3초 | 예배마다 3초가 길다 |
      *
-     * 그 사이의 값은 0 에서 올라오는 중이라 실제보다 낮다. Fast 에서는
-     * 눈 깜짝할 새라 아무도 몰랐는데, Slow 로 바꾸니 **예배를 시작할
-     * 때마다 3초**가 되었다.
+     * 자리 잡는 동안의 값은 0 에서 올라오는 중이라 실제보다 낮다.
+     * 중간은 그 시간이 1초 남짓이라 Slow 의 3분의 1 이면서, Fast 처럼
+     * 바늘이 튀지는 않는다.
      *
-     * 「이만한 크기로 얼마나 이어지나」를 보려는 뜻은 **Leq 가 이미
-     * 하고 있다.** 시간가중까지 느리게 할 까닭이 없었다.
+     * **다만 [TimeWeight.Medium] 은 규격 밖의 값이다**(IEC 61672-1 은
+     * F·S 뿐). 이 설정으로 잰 값은 LAF 도 LAS 도 아니라 다른 계측기와
+     * 곧바로 견줄 수 없다 — 이름과 설정 화면이 그 사실을 적고 있고,
+     * 기록에도 그대로 남는다. **「비표준」 표기를 지우지 말 것.**
      *
      * 사람이 고른 값은 그대로 남는다 — 이 기본값은 저장된 것이 없을
      * 때만 쓰인다.
      */
-    val timeWeight: TimeWeight = TimeWeight.Fast,
+    val timeWeight: TimeWeight = TimeWeight.Medium,
     val leqWindow: LeqWindow = LeqWindow.OneMinute,
     /**
      * 화면 밝기 한 벌(담당자 지시 2026-09-28).
@@ -297,7 +303,7 @@ class MeterSettingsStore(private val context: Context) {
                 analysisWeighting = p.weightingOr(analysisWeightingKey, Weighting.Z),
                 timeWeight = p[timeWeightKey]?.let { n ->
                     TimeWeight.entries.firstOrNull { it.name == n }
-                } ?: TimeWeight.Fast,
+                } ?: TimeWeight.Medium,
                 // **모르는 이름이면 다크다.** 저장된 것이 상했을 때
                 // 흰 화면으로 떨어지지 않게 한다.
                 themeMode = p[themeModeKey]?.let { n ->
