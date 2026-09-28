@@ -856,6 +856,20 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 controller.update { st ->
                     st.copy(meterSettings = s, settingsLoaded = true, audioFormat = s.audioFormat)
                 }
+                // **구간 사건은 여기 한 곳에서만 남긴다**(독립 검토 UIS-04).
+                //
+                // 예전에는 `setSegment` 만 기록에 남겼다. 그런데 화면이 보는
+                // 것은 `activeSegment` 라서, **구간을 지우기만 해도** 화면은
+                // 다음 구간으로(마지막이면 구간 없음으로) 넘어갔다. 그 길에는
+                // 사건이 없어 기록과 CSV 는 계속 지워진 구간으로 분류했다 —
+                // 화면에서 견준 구간과 표에 적힌 구간이 달라진다.
+                //
+                // 단추마다 적지 않고 **설정을 받아들이는 경계**에서 앞뒤를
+                // 견준다. 더하기·빼기·고르기가 모두 여기를 지나므로 새 길이
+                // 생겨도 저절로 따라온다.
+                if (old.activeSegment != s.activeSegment) {
+                    noteSegmentToRecording(s.activeSegment, s)
+                }
                 controller.onSettingsChanged(old, s)
             }
         }
@@ -1343,11 +1357,15 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { settingsStore.removeSegment(s) }
     }
 
+    /**
+     * 구간을 고른다.
+     *
+     * **여기서 기록에 남기지 않는다**(독립 검토 UIS-04). 예전에는 이
+     * 함수만 사건을 남겼는데, 그러면 더하기·빼기로 바뀌는 구간이 빠진다.
+     * 설정을 받아들이는 경계 한 곳에서 앞뒤를 견주므로 여기는 저장만 한다.
+     */
     fun setSegment(s: ChurchSegment) {
         viewModelScope.launch { settingsStore.setSegment(s) }
-        // **기록에도 남긴다**(Phase 10). 구간은 행에 넣지 않고 사건으로
-        // 적으므로, 바뀌는 순간을 여기서 잡아야 한다.
-        noteSegmentToRecording(s)
     }
 
     /** 구간 범위를 고친다. 말이 안 되는 값은 저장하지 않고 그 사실을 알린다. */
@@ -2072,6 +2090,15 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 recordingStartedAt = startedAt
                 recordingOpened = opened
                 controller.update { it.copy(recordingId = id) }
+                // **시작할 때의 구간을 첫 사건으로 남긴다**(독립 검토 UIS-04).
+                //
+                // 구간은 「바뀔 때」만 적히므로, 처음 고른 그대로 끝까지 가면
+                // 사건이 하나도 없다. 그러면 표의 구간 칸이 통째로 비어,
+                // 화면에서 분명히 고르고 잰 것이 **적지 않은 것처럼** 보인다.
+                noteSegmentToRecording(
+                    st.meterSettings.activeSegment,
+                    st.meterSettings,
+                )
             }
         }
     }
@@ -2083,11 +2110,24 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** 구간(설교/찬양)이 바뀌었다고 기록에 적는다. */
-    private fun noteSegmentToRecording(segment: ChurchSegment) {
+    /**
+     * 구간이 바뀐 순간을 기록에 남긴다. 구간은 행에 넣지 않고 사건으로 적는다.
+     *
+     * **「구간 없음」도 사건이다**(독립 검토 UIS-04). 마지막 구간을 지우면
+     * 화면은 구간 없이 돌아가는데, 그때 사건을 안 남기면 표는 **지워진
+     * 구간으로 끝까지 분류한다.** 비어 있는 것과 틀린 것은 다른 일이다.
+     *
+     * 이름은 **그때 화면에 적혀 있던 이름**으로 박아 둔다. 나중에 이름을
+     * 바꿔도 옛 기록의 글자가 따라 바뀌지 않는다.
+     */
+    private fun noteSegmentToRecording(
+        segment: ChurchSegment?,
+        settings: kr.joa.selahrta.settings.MeterSettings,
+    ) {
         controller.postToCapture { s ->
             s.recorder?.note(
                 kr.joa.selahrta.recording.SessionEventKind.SegmentChange,
-                segment.shortKo,
+                segment?.let { settings.nameFor(it) } ?: "구간 없음",
                 segment,
             )
         }

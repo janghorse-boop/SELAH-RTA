@@ -123,16 +123,23 @@ object SessionExport {
      */
     private fun zeroOffset(meta: SessionMeta) = meta.copy(calibrationOffsetDb = 0.0)
 
-    /** 구간 바뀜 사건만 뽑아 시각순으로. */
-    private fun segmentTimeline(meta: SessionMeta): List<Pair<Long, ChurchSegment>> =
+    /**
+     * 구간 바뀜 사건을 시각순으로.
+     *
+     * **구간 없음(null)도 남긴다**(독립 검토 UIS-04). 예전에는
+     * `segment != null` 로 걸렀는데, 그러면 마지막 구간을 지운 뒤의
+     * 「구간 없음」 사건이 사라져 **표가 그 뒤로도 지워진 구간으로
+     * 분류했다.** 걸러 내는 것과 끝났다고 적는 것은 다른 일이다.
+     */
+    private fun segmentTimeline(meta: SessionMeta): List<Pair<Long, ChurchSegment?>> =
         meta.events
-            .filter { it.kind == SessionEventKind.SegmentChange && it.segment != null }
+            .filter { it.kind == SessionEventKind.SegmentChange }
             .sortedBy { it.atMs }
-            .map { it.atMs to it.segment!! }
+            .map { it.atMs to it.segment }
 
-    /** 그 시각에 걸린 구간. 첫 사건 전이면 null. */
+    /** 그 시각에 걸린 구간. 첫 사건 전이거나 구간 없음 사건 뒤면 null. */
     private fun segmentAt(
-        timeline: List<Pair<Long, ChurchSegment>>,
+        timeline: List<Pair<Long, ChurchSegment?>>,
         atMs: Long,
     ): ChurchSegment? = timeline.lastOrNull { it.first <= atMs }?.second
 

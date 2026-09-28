@@ -230,6 +230,26 @@ class SessionExportTest {
         assertEquals(ChurchSegment.Worship.shortKo, lines[2].split(',')[2])
     }
 
+    /**
+     * **구간을 지운 뒤부터는 빈칸이어야 한다**(독립 검토 UIS-04).
+     *
+     * 마지막 구간을 지우면 화면은 구간 없이 돌아간다. 예전에는 그
+     * 「구간 없음」 사건을 `segment != null` 로 걸러 내, 표가 **그 뒤로도
+     * 지워진 구간으로 계속 분류했다.** 화면에서 견준 구간과 표에 적힌
+     * 구간이 달라지는 것이다 — 비어 있는 것과 틀린 것은 다른 일이다.
+     */
+    @Test
+    fun `구간이 없어진 뒤로는 구간 칸이 빈다`() {
+        val events = listOf(
+            SessionEvent(0L, SessionEventKind.SegmentChange, segment = ChurchSegment.Worship),
+            SessionEvent(1_000L, SessionEventKind.SegmentChange, "구간 없음", segment = null),
+        )
+        val csv = export(meta(events = events), List(3) { row(it, 0, -40.0) })
+        val lines = dataLines(csv)
+        assertEquals(ChurchSegment.Worship.shortKo, lines[0].split(',')[2])
+        assertEquals("", lines[2].split(',')[2])
+    }
+
     @Test
     fun `사건은 표 뒤에 주석으로 붙는다`() {
         val events = listOf(SessionEvent(1_000L, SessionEventKind.Clipped))

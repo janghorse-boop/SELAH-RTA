@@ -70,6 +70,45 @@ class SegmentSlotsTest {
         assertEquals(ChurchSegment.Sermon, s.activeSegment)
     }
 
+    /**
+     * **구간을 지우는 것만으로 화면이 보는 구간이 바뀐다**(독립 검토 UIS-04).
+     *
+     * 검토자가 저장소를 직접 돌려 재현한 전이가 이것이다:
+     * `Worship → Sermon → null`. 여기에 사건 기록이 따라붙지 않으면
+     * 표는 계속 지워진 구간으로 분류한다.
+     *
+     * 이 시험은 **그 전이가 실제로 일어난다**는 것을 못박는다 —
+     * `CaptureViewModel` 이 설정 경계에서 앞뒤를 견주는 것이 여기에
+     * 기대고 있다.
+     */
+    @Test
+    fun `쓰던 구간을 지우면 고른 구간이 따라 바뀐다`() {
+        val two = MeterSettings(
+            segment = ChurchSegment.Worship,
+            segments = setOf(ChurchSegment.Sermon, ChurchSegment.Worship),
+        )
+        assertEquals(ChurchSegment.Worship, two.activeSegment)
+
+        // 쓰던 찬양을 뺀다 → 남은 설교로 넘어간다
+        val one = two.copy(segments = setOf(ChurchSegment.Sermon))
+        assertEquals(ChurchSegment.Sermon, one.activeSegment)
+
+        // 마지막 하나까지 빼면 고른 구간이 없다
+        val none = one.copy(segments = emptySet())
+        assertEquals(null, none.activeSegment)
+    }
+
+    /** 반대 방향도 사건이다 — 없다가 처음 생기는 자리. */
+    @Test
+    fun `첫 구간을 더하면 없던 고른 구간이 생긴다`() {
+        val none = MeterSettings(segments = emptySet())
+        assertEquals(null, none.activeSegment)
+        assertEquals(
+            ChurchSegment.Sermon,
+            none.copy(segments = setOf(ChurchSegment.Sermon)).activeSegment,
+        )
+    }
+
     @Test
     fun `고른 구간이 목록에 있으면 그대로다`() {
         val s = MeterSettings(
