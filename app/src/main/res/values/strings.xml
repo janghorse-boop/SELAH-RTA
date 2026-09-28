@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">SELAH RTA</string>
-    <string name="app_subtitle">Real-Time Worship Audio Analyzer</string>
+    <string name="app_subtitle">Real-Time Audio Analyzer</string>
 
     <!-- 화면이 뒤로 가도 측정을 이어 갈 때 뜨는 알림. -->
     <string name="capture_channel_name">측정 중</string>

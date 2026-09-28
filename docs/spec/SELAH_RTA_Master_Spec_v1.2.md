@@ -166,9 +166,10 @@ README에 설치, 권한, 내장/USB 마이크, Calibration, 한계, 테스트 �
 첨부된 SELAH RTA 마스터 명세서를 먼저 전체 읽고 요구사항과 Phase 0~17을 작업 계획으로 정리하라. 현재 repository를 분석한 뒤 Phase 0부터 시작하라. 특히 휴대폰 내장 마이크는 USB 마이크의 단순 fallback이 아니라 정식 입력 소스이며, 외부 마이크가 없어도 모든 핵심 기능이 동작해야 한다. 각 Phase 종료 시 명세서의 완료 보고 형식으로 결과를 보고하고 build/test 실패가 있으면 다음 Phase로 넘어가지 말라. 측정값을 Mock으로 위장하지 말고 DSP 정확성을 UI보다 우선하라.
 # 23. 제품명 및 브랜드 컨셉
 앱 공식 명칭: SELAH RTA
-영문 확장명: Real-Time Worship Audio Analyzer
+영문 확장명: **Real-Time Audio Analyzer** (2026-09-28 담당자 지시로 'Worship' 을 뺐다 — 교회 밖에서도 쓰는 도구이므로 이름이 용도를 좁히지 않게 한다. 그 전 표기는 Real-Time Worship Audio Analyzer 였다.)
 브랜드 의미: 시편에 반복해서 등장하는 'Selah(셀라)'의 음악적·예배적 맥락을 살리면서, RTA(Real-Time Analyzer)를 결합해 교회 음향 도구라는 정체성과 전문 오디오 소프트웨어의 인상을 함께 전달한다.
-UI 표기 원칙: 앱 아이콘/상단 브랜드는 SELAH RTA를 우선하고, 온보딩·About·스토어 설명에서는 Real-Time Worship Audio Analyzer를 병기한다.
+UI 표기 원칙: 앱 아이콘/상단 브랜드는 SELAH RTA를 우선하고, 온보딩·About·스토어 설명에서는 Real-Time Audio Analyzer를 병기한다.
+만든 곳 표기: **JOAWORKS** 한 가지로 적는다. 표지(SplashScreen)는 로고 그림으로, 설정 「앱 정보」는 글자로 적는다. **사람 이름(JANGHUN)과 한글 상호(조아웍스), 「JOA Works」 표기는 쓰지 않는다**(2026-09-28 담당자 지시).
 # 24. AI 개발 운영 모델 — Claude Code 개발 / Codex 검증
 본 프로젝트의 공식 역할 분담은 Claude Code를 Lead Developer, Codex를 Independent Reviewer & Verification Engineer로 정의한다.
 Claude Code: 마스터 명세 이해, Android/Kotlin 구현, repository 구조 관리, build/test 실행, 실제 Galaxy 테스트 결과 반영, Phase 0~17의 주 개발 책임.
