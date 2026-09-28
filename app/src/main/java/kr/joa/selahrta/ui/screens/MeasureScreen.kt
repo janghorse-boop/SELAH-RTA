@@ -508,10 +508,18 @@ fun MeasureScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                // 「PEAK 순간최고」를 「최대값」으로 바꿨다(2026-09-26 담당자
-                // 지시). 영문 약어와 한글 뜻풀이를 나란히 적어 한 자리에
-                // 이름이 둘이었다.
-                if (m.peakClipped) "최대값 — 클리핑 · 눌러서 보기" else "최대값 보기",
+                // 「최대값」을 규격 이름으로 되돌렸다(담당자 지시
+                // 2026-09-28). MAX 타일도 「가장 컸던 값」이라 한글로만
+                // 적으니 둘이 같은 것으로 읽혔는데, 이 둘은 다른 값이다 —
+                // MAX 는 시간가중 레벨의 최대, 이쪽은 가중 없이 파형에서
+                // 바로 잡은 순간 최고다.
+                //
+                // **손으로 적지 않는다**(지시서 §10). 이름은 PEAK 의
+                // 가중에서 뽑는다 — 설정에서 Z 를 A 로 바꾸면 여기도
+                // 「LApeak」 이 된다. 적어 두면 그때 어긋난다.
+                capture.meterSettings.peakWeighting.peakLabel().let {
+                    if (m.peakClipped) "$it — 클리핑 · 눌러서 보기" else "$it 보기"
+                },
                 color = if (m.peakClipped) SelahColors.High else SelahColors.TextMuted,
                 fontSize = 11.sp,
                 fontWeight = if (m.peakClipped) FontWeight.SemiBold else FontWeight.Normal,
@@ -1258,17 +1266,21 @@ private fun RangeCard(
                         )
                         Text(
                             // **견주는 값의 이름을 그대로 적는다**(담당자
-                            // 지시 2026-09-28). 「Leq(1분) 기준」이라고
-                            // 풀어 쓰던 것을 아래 타일에 적힌 이름과 똑같이
+                            // 지시 2026-09-28). 「Leq(1분)」이라고 풀어
+                            // 쓰던 것을 아래 타일에 적힌 이름과 똑같이
                             // 맞췄다 — 견줄 값을 눈으로 찾을 때 같은
                             // 낱말이어야 이어진다.
+                            //
+                            // **「기준」은 남긴다.** 이름만 적으면 그 숫자가
+                            // 지금 LAeq 값인 줄로 읽힌다 — 이것은 견주는
+                            // 잣대이지 잰 값이 아니다.
                             //
                             // **가중은 A 로 못박는다.** 화면을 C·Z 로
                             // 바꿔도 이 범위는 dB(A) 로 정해진 값이라
                             // (`SegmentRange`), 지금 가중을 따라 적으면
                             // 「LCeq 1분」 옆에 dB(A) 범위가 놓이는
                             // 거짓이 된다.
-                            Weighting.A.leqLabel(leqLabelKo),
+                            "${Weighting.A.leqLabel(leqLabelKo)} 기준",
                             color = SelahColors.TextMuted,
                             fontSize = 11.sp,
                             maxLines = 1,
