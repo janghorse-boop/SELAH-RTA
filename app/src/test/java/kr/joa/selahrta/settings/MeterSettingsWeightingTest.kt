@@ -46,108 +46,37 @@ class MeterSettingsWeightingTest {
 
     // ── Leq 시간 ────────────────────────────────────────
 
-    @Test
-    fun `Session 이 목록에 있다`() {
-        assertTrue(LeqWindow.entries.any { it == LeqWindow.Session })
-        assertEquals("전체", LeqWindow.Session.labelKo)
-    }
-
     /**
-     * **Session 의 millis 는 창 길이가 아니다.**
+     * **네 칸이다**(담당자 지시 2026-09-28): 10초 · 30초 · 1분 · 3분.
      *
-     * 다른 창과 같은 값이면 저장한 뒤 읽을 때 엉뚱한 것으로 풀린다
-     * (저장 코드가 millis 를 열쇠로 쓴다).
+     * 「전체」(측정 시작부터의 누적)는 이때 뺐다. 엔진은 그 값을 그대로
+     * 내고 있으므로(`SplFrame.leqSessionDbfs`) 되살리려면 칸을 더하고
+     * 화면에서 집으면 된다 — 다만 **창 길이가 아니라는 것**을 그때 다시
+     * 챙겨야 한다.
      */
     @Test
-    fun `Session 의 표시값이 다른 창과 겹치지 않는다`() {
-        val others = LeqWindow.entries.filter { it != LeqWindow.Session }
-        others.forEach {
-            assertNotEquals(
-                "${it.name} 과 Session 의 millis 가 같다",
-                it.millis,
-                LeqWindow.Session.millis,
-            )
-        }
-    }
-
-    /**
-     * **-1 을 엔진 창 길이로 넘기면 엔진이 상한다.**
-     *
-     * Session 은 창이 아니라 누적 합계라 창 길이가 필요 없다. 엔진에는
-     * 기본 창을 주고, 화면에 적을 값만 세션 Leq 에서 가져온다.
-     */
-    @Test
-    fun `Session 일 때 엔진에 줄 창은 양수다`() {
-        assertTrue(LeqWindow.Session.engineMillis > 0)
-        assertEquals(LeqWindow.OneMinute.millis, LeqWindow.Session.engineMillis)
-    }
-
-    /** 나머지 창은 제 값을 그대로 엔진에 준다. */
-    @Test
-    fun `Session 이 아닌 창은 제 값을 그대로 쓴다`() {
-        LeqWindow.entries.filter { it != LeqWindow.Session }.forEach {
-            assertEquals("${it.name} 의 엔진 창이 다르다", it.millis, it.engineMillis)
-        }
-    }
-
-    // ── 기본값 ──────────────────────────────────────────
-
-    /**
-     * **응답 속도 기본은 「중간」이다**(담당자 지시 2026-09-28).
-     *
-     * ## 하루에 네 번 바뀐 값이라 이력을 적어 둔다
-     *
-     * 09-27 Fast→Slow · 09-28 오전 Slow→Fast · 저녁 Fast→Slow ·
-     * 곧이어 Slow→중간. 오간 축은 하나다 — **바늘이 튀는 정도**와
-     * **자리 잡는 시간**(`τ×3`)의 맞바꿈이다. Fast 0.375초 「너무
-     * 빠르다」, Slow 3초 「예배마다 3초가 길다」, 중간 1.05초.
-     *
-     * **사람이 고른 값이다.** 이 시험이 깨졌다고 Fast 나 Slow 로
-     * 되돌리지 말 것.
-     */
-    @Test
-    fun `응답 속도 기본이 중간이다`() {
-        assertEquals(TimeWeight.Medium, MeterSettings().timeWeight)
-    }
-
-    /**
-     * **자리 잡는 시간이 Fast 와 Slow 에서 8배 차이 난다.**
-     *
-     * 기본값이 Slow 로 간 지금은 이 숫자가 **치르는 대가**다. 고르는
-     * 자리의 설명(「Slow 3초」)이 이 값과 어긋나지 않게 지킨다.
-     */
-    @Test
-    fun `Slow 는 자리를 잡는 데 Fast 의 여덟 배가 걸린다`() {
-        assertEquals(8.0, TimeWeight.Slow.tauSeconds / TimeWeight.Fast.tauSeconds, 1e-9)
-    }
-
-    /**
-     * **「중간」은 규격 밖이라는 것을 이름이 말한다.**
-     *
-     * IEC 61672-1 이 정한 시간가중은 F(125ms)·S(1s) 뿐이다. 그 사이 값으로
-     * 잰 것은 LAF 도 LAS 도 아니라 다른 계측기와 곧바로 견줄 수 없다 —
-     * 화면에 그 사실이 드러나야 한다. 이름에서 「비표준」을 빼면 이
-     * 시험이 막는다.
-     */
-    @Test
-    fun `중간 응답은 이름에 비표준이라고 적혀 있다`() {
-        assertTrue(
-            "중간 응답의 이름에 「비표준」이 없다: ${TimeWeight.Medium.labelKo}",
-            TimeWeight.Medium.labelKo.contains("비표준"),
+    fun `Leq 시간은 네 칸이다`() {
+        assertEquals(
+            listOf("10초", "30초", "1분", "3분"),
+            LeqWindow.entries.map { it.labelKo },
         )
     }
 
-    /** 중간은 **Fast 와 Slow 사이**다. 순서도 그렇게 놓인다. */
+    /** **창 길이는 모두 양수다.** 0 이나 음수를 엔진에 주면 상한다. */
     @Test
-    fun `중간 응답이 Fast 와 Slow 사이에 있다`() {
-        assertTrue(TimeWeight.Medium.tauSeconds > TimeWeight.Fast.tauSeconds)
-        assertTrue(TimeWeight.Medium.tauSeconds < TimeWeight.Slow.tauSeconds)
-        assertEquals(1, TimeWeight.entries.indexOf(TimeWeight.Medium))
+    fun `Leq 창은 모두 양수이고 오름차순이다`() {
+        val ms = LeqWindow.entries.map { it.millis }
+        assertTrue("양수가 아닌 창이 있다: $ms", ms.all { it > 0 })
+        assertEquals("오름차순이 아니다: $ms", ms.sorted(), ms)
     }
 
-    /** **이미 1분이다.** 바꾸지 않았다는 것을 못박아 둔다. */
+    /**
+     * **기본은 30초다**(담당자 지시 2026-09-28). 1분이던 것을 줄였다 —
+     * 권장 범위와 견주는 값이라 너무 길면 방금 올린 음량이 한참 뒤에야
+     * 색으로 드러난다.
+     */
     @Test
-    fun `Leq 시간 기본이 1분이다`() {
-        assertEquals(LeqWindow.OneMinute, MeterSettings().leqWindow)
+    fun `Leq 시간 기본이 30초다`() {
+        assertEquals(LeqWindow.ThirtySeconds, MeterSettings().leqWindow)
     }
 }

@@ -328,7 +328,7 @@ fun SettingsScreen(
         )
         ChoiceRow(
             "Leq 시간",
-            "권장 범위와 견주는 평균 구간입니다. 「전체」는 측정 시작부터 지금까지입니다.",
+            "선택한 시간 동안 측정된 음압의 평균 레벨(Leq)을 표시합니다.",
             LeqWindow.entries,
             capture.meterSettings.leqWindow,
             { it.labelKo },

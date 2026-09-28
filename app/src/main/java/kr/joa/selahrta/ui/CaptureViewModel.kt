@@ -440,9 +440,10 @@ class CaptureSession(
     var engine: MultiWeightEngine = MultiWeightEngine(
         sampleRate = sampleRate,
         timeWeight = settings.timeWeight,
-        // **engineMillis 다.** millis 를 넘기면 「전체」의 -1 이 창 길이로
+        // 창 길이 그대로다. 「전체」(누적)를 뺀 뒤로는 갈라 줄 것이 없다.
+        // 아래 한 줄은 그 뒤에 남은 설명이라 지운다.
         // 들어가 측정이 통째로 망가진다.
-        leqLongMs = settings.leqWindow.engineMillis,
+        leqLongMs = settings.leqWindow.millis,
     )
 
     // **FFT 길이는 여기서 못박힌다.** 측정 중에는 바꾸지 않는다 —
@@ -2350,20 +2351,11 @@ internal fun CaptureUiState.withMeasurement(m: MeasurementSnapshot?): CaptureUiS
             // 킥·스네어의 저역이 A 가중에 깎여 순간 음압을 놓치는 일을
             // 막자고 갈라 둔 것이다(지시서 §16).
             val pf = w.of(meterSettings.peakWeighting)
-            // **Session 은 창이 아니라 누적이다.** 엔진에는 기본 창을 주고
-            // (engineMillis) 화면에 적을 값만 여기서 갈아 낀다.
-            val session = meterSettings.leqWindow == LeqWindow.Session
             MeterReading(
                 currentSpl = f.currentDbfs.toSpl(offset).value,
                 leqShort = f.leqShortDbfs?.toSpl(offset)?.value,
-                leqLong = if (session) {
-                    f.leqSessionDbfs?.toSpl(offset)?.value
-                } else {
-                    f.leqLongDbfs?.toSpl(offset)?.value
-                },
-                // 세션 Leq 는 「가득 찬다」는 개념이 없다 — 값이 있으면
-                // 그것이 처음부터 지금까지의 평균이다.
-                leqLongFull = if (session) f.leqSessionDbfs != null else f.leqLongFull,
+                leqLong = f.leqLongDbfs?.toSpl(offset)?.value,
+                leqLongFull = f.leqLongFull,
                 maxSpl = f.maxDbfs.toSpl(offset).value,
                 minSpl = f.minDbfs?.toSpl(offset)?.value,
                 // **가중 뒤 값이다.** 클리핑 판정(peakClipped)은 가중 전

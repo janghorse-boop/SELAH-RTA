@@ -233,12 +233,12 @@ fun reportWarningsKo(m: SessionMeta): List<String> = buildList {
 /**
  * Leq 구간을 읽을 수 있게 적는다.
  *
- * **「전체」는 초로 적을 수 없다.** 표시값이 -1 이라 그대로 나누면
- * 「0초」가 되어, 창이 없다는 뜻이 「아주 짧다」로 읽힌다.
- * 알 수 없는 값도 짐작하지 않는다.
+ * **알 수 없는 값은 짐작하지 않는다.** 0 이나 음수가 들어오면 「기록
+ * 없음」이다 — 창이 없다는 뜻을 「아주 짧다」로 읽게 두지 않는다.
+ * 2026-09-28 까지는 -1 이 「전체(측정 시작부터)」였다. 그 칸을 뺐으므로
+ * 옛 기록의 -1 도 여기서 「기록 없음」이 된다.
  */
 private fun leqWindowKo(ms: Long): String = when {
-    ms == kr.joa.selahrta.settings.SESSION_MILLIS -> "전체(측정 시작부터)"
     ms > 0 -> "${ms / 1000}초"
     else -> NOT_RECORDED_KO
 }

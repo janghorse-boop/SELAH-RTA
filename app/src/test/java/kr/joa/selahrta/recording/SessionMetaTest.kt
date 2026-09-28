@@ -193,11 +193,4 @@ class SessionMetaTest {
         assertEquals(sample().id, back.id)
     }
 
-    /** 「전체」(-1)가 그대로 왕복해야 리포트가 그 뜻으로 읽는다. */
-    @Test
-    fun `전체 Leq 구간이 그대로 왕복한다`() {
-        val m = sample().copy(leqWindowMs = kr.joa.selahrta.settings.SESSION_MILLIS)
-        val back = decodeSessionMeta(encodeSessionMeta(m)).getOrThrow()
-        assertEquals(kr.joa.selahrta.settings.SESSION_MILLIS, back.leqWindowMs)
-    }
 }
