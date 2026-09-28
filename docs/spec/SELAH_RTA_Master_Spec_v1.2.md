@@ -2,7 +2,7 @@
 > 원본과 어긋나면 .docx 가 기준이다.
 
 SELAH RTAClaude Code 전체 개발 마스터 명세서
-Real-Time Worship Audio Analyzer교회 예배당용 Android 실시간 음향 분석 · RTA · Feedback · Calibration · 기록/리포트
+Real-Time Audio Analyzer교회 음향을 주 쓰임으로 하는 Android 실시간 음향 분석 · RTA · Feedback · Calibration · 기록/리포트
 | 항목 | 정의 |
 |---|---|
 | 플랫폼 | Android Native / Kotlin / Jetpack Compose |
