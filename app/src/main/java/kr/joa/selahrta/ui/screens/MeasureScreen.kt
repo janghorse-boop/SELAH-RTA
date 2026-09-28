@@ -428,7 +428,9 @@ fun MeasureScreen(
         ) {
             ValueTile(
                 "MIN",
-                formatDb(m.minSpl),
+                // 셋 다 소수 첫째 자리까지(담당자 지시 2026-09-28).
+                // 위의 큰 현재 값과 자릿수를 맞춘다.
+                formatDb(m.minSpl, decimals = 1),
                 // 자리를 잡기 전에는 값이 없다. 「모르는 값」을 0 으로 적지
                 // 않는다(`SplFrame.minDbfs`).
                 if (running && m.minSpl == null) "자리 잡는 중" else weighting.unitSuffix,
@@ -440,7 +442,7 @@ fun MeasureScreen(
                 // **손으로 적지 않는다.** 가중에서 뽑아야 바꾼 뒤에도
                 // 어긋나지 않는다(지시서 §10).
                 weighting.leqLabel(capture.meterSettings.leqWindow.labelKo),
-                formatDb(m.leqLong),
+                formatDb(m.leqLong, decimals = 1),
                 // 창이 아직 안 찼으면 그 사실을 적는다 — 「1분 평균」이라고
                 // 적어 놓고 실제로는 10초치인 값을 보여 주면 안 된다.
                 if (m.leqLong != null && !m.leqLongFull) "모으는 중" else weighting.unitSuffix,
@@ -473,7 +475,7 @@ fun MeasureScreen(
             )
             ValueTile(
                 "MAX",
-                formatDb(m.maxSpl),
+                formatDb(m.maxSpl, decimals = 1),
                 weighting.unitSuffix,
                 Modifier.weight(1f),
                 dim = uncalibrated,
@@ -683,12 +685,19 @@ private fun MetricDialog(
     onClose: () -> Unit,
 ) {
     val clipped = metric == Metric.Peak && meter.peakClipped
+    // **타일과 같은 자릿수로 적는다.** 타일에서 눌러 여는 창이라, 여기서
+    // 자릿수가 달라지면 같은 값이 두 가지로 보인다. PEAK 은 타일이 없지만
+    // 같은 창에 섞여 나오므로 함께 맞춘다.
     val value = when (metric) {
-        Metric.Min -> formatDb(meter.minSpl)
-        Metric.Leq -> formatDb(meter.leqLong)
-        Metric.Max -> formatDb(meter.maxSpl)
+        Metric.Min -> formatDb(meter.minSpl, decimals = 1)
+        Metric.Leq -> formatDb(meter.leqLong, decimals = 1)
+        Metric.Max -> formatDb(meter.maxSpl, decimals = 1)
         Metric.Peak ->
-            if (clipped && meter.peakSpl != null) "≥${formatDb(meter.peakSpl)}" else formatDb(meter.peakSpl)
+            if (clipped && meter.peakSpl != null) {
+                "≥${formatDb(meter.peakSpl, decimals = 1)}"
+            } else {
+                formatDb(meter.peakSpl, decimals = 1)
+            }
     }
     // **PEAK 은 제 가중을 쓴다.** 음압 가중을 따라가면 「LZpeak 인데
     // dB(A)」 같은 어긋남이 생긴다.
@@ -1202,41 +1211,51 @@ private fun RangeCard(
                 Modifier.weight(1f).padding(end = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                Text(
-                    // **「(고친 값)」을 붙이지 않는다**(담당자 지시
-                    // 2026-09-28). 고쳤다는 사실이 예배 내내 화면에
-                    // 붙어 있을 까닭이 없다 — 고친 값이 곧 그 사람의
-                    // 값이다. 되돌릴 길은 설정의 「기본값으로」가 맡는다.
-                    "권장 범위",
-                    color = SelahColors.TextMuted,
-                    fontSize = 11.sp,
-                )
-                if (range == null) {
+                // **바로 위 「입력 기기」 칸과 같은 꼴로 맞춘다**(담당자
+                // 지시 2026-09-28) — 작은 라벨 왼쪽, 값이 그 옆에
+                // 나란히, 크기도 기기 이름과 같은 14sp.
+                //
+                // 전에는 값이 17sp Bold 로 라벨 **아래 줄**에 있었다. 두
+                // 상자가 위아래로 붙어 있는데 같은 자리의 값이 서로 다른
+                // 크기·다른 줄이라, 눈이 두 번 자리를 잡아야 했다.
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
                     Text(
-                        "이 구간에는 권장 범위가 없습니다.",
-                        color = SelahColors.TextSecondary,
-                        fontSize = 13.sp,
+                        // **「(고친 값)」을 붙이지 않는다**(담당자 지시
+                        // 2026-09-28). 고쳤다는 사실이 예배 내내 화면에
+                        // 붙어 있을 까닭이 없다 — 고친 값이 곧 그 사람의
+                        // 값이다. 되돌릴 길은 설정의 「기본값으로」가 맡는다.
+                        "권장 범위",
+                        color = SelahColors.TextMuted,
+                        fontSize = 11.sp,
                     )
-                } else {
-                    Row(verticalAlignment = Alignment.Bottom) {
+                    if (range == null) {
+                        Text(
+                            "이 구간에는 권장 범위가 없습니다.",
+                            color = SelahColors.TextSecondary,
+                            fontSize = 13.sp,
+                        )
+                    } else {
                         Text(
                             "${range.avgLowDb.toInt()} ~ ${range.avgHighDb.toInt()} dB(A)",
                             color = SelahColors.TextPrimary,
-                            // 제목(「SELAH RTA」)과 같은 크기로 낮췄다
-                            // (2026-09-26 담당자 지시). 22sp 일 때는 화면에서
-                            // 가장 큰 글자가 **권장 범위**여서, 정작 큰 숫자여야
-                            // 할 지금 값보다 먼저 눈에 들어왔다.
-                            fontSize = 17.sp,
-                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
                             softWrap = false,
                         )
-                        Text(
-                            "  Leq($leqLabelKo) 기준",
-                            color = SelahColors.TextMuted,
-                            fontSize = 11.sp,
-                            modifier = Modifier.padding(bottom = 3.dp),
-                        )
                     }
+                }
+                // **어떤 값과 견주는 범위인지는 둘째 줄로 내린다**(담당자
+                // 지시 2026-09-28). 늘 같은 말이라 숫자 옆자리를 쓸 까닭이
+                // 없는데, 옆에 붙어 있어 정작 숫자를 밀고 있었다.
+                if (range != null) {
+                    Text(
+                        "Leq($leqLabelKo) 기준",
+                        color = SelahColors.TextMuted,
+                        fontSize = 11.sp,
+                    )
                 }
             }
             SegmentPills(segment, nameOf, onSegment, segmentOptions)
