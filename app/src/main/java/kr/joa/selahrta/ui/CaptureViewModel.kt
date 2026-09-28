@@ -119,6 +119,16 @@ data class MeterReading(
     /** 보정에 쓰는 날 값. 화면의 SPL 과 달리 보정과 무관하다. */
     val currentDbfs: Double? = null,
     /**
+     * **보정을 누르면 실제로 저장에 쓰일 값**(dBFS). 아직 못 미더우면 null.
+     *
+     * [currentDbfs] 와 다른 계산이다(독립 재검증 UISRF-01) — 이쪽은
+     * 깨끗한 구간의 유한 창 평균이다. 카드가 이것을 적어야 사람이
+     * 무엇에 맞추는지 안다.
+     */
+    val calibrationDbfs: Double? = null,
+    /** 이어서 센 깨끗한 시간(ms). 화면이 「얼마나 더」를 적는다. */
+    val calibrationCleanMs: Long = 0L,
+    /**
      * C 가중과 A 가중의 차(dB). 저음이 얼마나 많은지를 말한다(명세 10장).
      *
      * 보정값은 두 쪽에 똑같이 더해지므로 **차이에는 영향이 없다** —
@@ -378,6 +388,14 @@ data class MeasurementSnapshot(
     val diagnostics: CaptureDiagnostics,
     /** A·C·Z 를 함께 담는다. 가중치 선택은 주 스레드의 설정이다. */
     val spl: MultiWeightFrame?,
+    /**
+     * 그때의 보정 근거. **화면의 계기와 다른 계산**이다(UISRF-01).
+     *
+     * 카드가 「저장에 쓸 값」을 적는 데 쓴다 — 화면의 현재값을 적어
+     * 두면 사람이 그 값으로 맞춰진다고 읽는데, 실제로 저장되는 것은
+     * 깨끗한 구간의 평균이다.
+     */
+    val calibration: kr.joa.selahrta.calibration.CalibrationEvidence? = null,
     val rta: RtaFrame?,
     /** 연속 스펙트럼. 화면이 꺼져 있으면 null 이다. */
     val spectrum: SpectrumFrame?,
@@ -497,6 +515,15 @@ class CaptureSession(
     val commands = java.util.concurrent.ConcurrentLinkedQueue<() -> Unit>()
 
     /**
+     * 이 세션의 마지막 보정 근거(독립 재검증 UISRF-03).
+     *
+     * **세션이 들고 있어야 한다.** 컨트롤러 전역으로 두었더니 멈춘 뒤에도
+     * 남아, 새 세션이 첫 덩어리를 받기 전에 옛 근거가 나갔다.
+     */
+    @Volatile
+    var calibrationEvidence: kr.joa.selahrta.calibration.CalibrationEvidence? = null
+
+    /**
      * 기록을 남기는 중이면 그 기록기(Phase 10). 아니면 null.
      *
      * **세션이 소유한다.** 마이크가 다시 열리면 세션이 바뀌고, 그때
@@ -566,8 +593,13 @@ class CaptureSession(
      */
     var minLagMs = Double.MAX_VALUE
 
-    /** 마지막으로 파형이 잘린 때(단조 시계). 없으면 0. */
-    var lastClipNs = 0L
+    /**
+     * 보정에 쓸 값을 따로 재는 창(독립 재검증 UISRF-01).
+     *
+     * 화면의 계기와 **다른 계산**이다 — 화면은 지수 시간가중이고 이쪽은
+     * 깨끗한 구간의 유한 창 평균이다. 세션마다 새로 만든다.
+     */
+    val cleanWindow = kr.joa.selahrta.dsp.CleanWindow(sampleRate)
 
 }
 
@@ -886,9 +918,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             while (true) {
                 kotlinx.coroutines.delay(INPUT_AGE_TICK_MS)
-                val age = controller.calibrationEvidence()
-                    ?.takeIf { controller.running }
-                    ?.let { (controller.monotonicNs() - it.atMonotonicNs) / 1e6 }
+                val age = controller.inputWaitAgeMs()
                 if (controller.baseState.value.lastInputAgeMs != age) {
                     controller.update { st -> st.copy(lastInputAgeMs = age) }
                 }
@@ -1896,14 +1926,21 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     private fun gateFor(
         source: kr.joa.selahrta.calibration.CalibrationSource,
         evidence: kr.joa.selahrta.calibration.CalibrationEvidence?,
-    ): CalibrationGate = calibrationGate(
+    ): CalibrationGate {
+        // **직접 저장에도 세션 검사를 둔다**(독립 재검증 UISRF-03).
+        // 예전에는 확인 대화상자 쪽에만 있었다.
+        if (evidence != null && evidence.session != controller.baseState.value.session) {
+            return CalibrationGate.Reject("측정 세션이 바뀌었습니다. 새 입력을 받은 뒤 다시 보정하십시오.")
+        }
+        return calibrationGate(
         opened = controller.baseState.value.opened != null,
         routeConfirmed = controller.confirmedFormat() != null,
         evidence = evidence,
         nowNs = controller.monotonicNs(),
         source = source,
         toneOk = currentToneCheck()?.ok,
-    )
+        )
+    }
 
     /**
      * **판정에 쓴 근거의 값으로 저장한다**(독립 재검증 UISR-01).
@@ -1915,7 +1952,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         evidence: kr.joa.selahrta.calibration.CalibrationEvidence,
     ) {
         val format = controller.confirmedFormat() ?: return
-        val measured = evidence.measuredDbfs(state.value.meterSettings.splWeighting)
+        val measured = evidence.measuredDbfs(state.value.meterSettings.splWeighting) ?: return
         val cal = GlobalCalibration(
             offsetDb = computeOffset(referenceDb, measured),
             savedAtEpochMs = System.currentTimeMillis(),
@@ -2602,6 +2639,8 @@ internal fun CaptureUiState.withMeasurement(m: MeasurementSnapshot?): CaptureUiS
                 peakClipped = pf.peakClipped,
                 anyClipping = m.anyClipping,
                 currentDbfs = f.currentDbfs.value,
+                calibrationDbfs = m.calibration?.measuredDbfs(meterSettings.splWeighting),
+                calibrationCleanMs = m.calibration?.cleanMs ?: 0L,
                 // 차이는 보정과 무관하다 — 두 쪽에 같은 값이 더해진다.
                 cMinusA = w.cMinusALeq ?: w.cMinusA,
                 lowEnergyHint = LowEnergyHint.of(w.cMinusALeq ?: w.cMinusA),
