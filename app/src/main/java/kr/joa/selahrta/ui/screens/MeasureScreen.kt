@@ -696,7 +696,7 @@ fun MeasureScreen(
         //
         // 평상시에는 아무것도 안 그리고 문제가 있을 때만 한 줄이 뜬다.
         // 기록을 켜지 않은 측정에서도 필요한 말이다.
-        captureWarningKo(capture.diagnostics)?.let {
+        captureWarningKo(capture.diagnostics, capture.lastInputAgeMs)?.let {
             InfoBar(it, Modifier.padding(top = 12.dp), tone = SelahColors.Warn)
         }
     }

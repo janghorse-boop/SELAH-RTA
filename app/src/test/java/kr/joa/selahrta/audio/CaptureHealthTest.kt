@@ -54,14 +54,61 @@ class CaptureHealthTest {
         assertNull(captureWarningKo(diag(lagMs = 2_000.0, baselineMs = 2_000.0)))
     }
 
+    /**
+     * **관측한 것만 말한다**(독립 재검증 UISR-03).
+     *
+     * 예전에는 「지금 보이는 값은 그만큼 지난 소리입니다」라고 적었다.
+     * 그런데 이 차이는 **늦게 오는 소리와 아주 사라진 소리를 구별하지
+     * 못한다** — 잃었다가 다시 이어져도 차이는 남는다. 그때 「지난
+     * 소리」라고 하면 멀쩡한 지금 값을 과거로 안내하게 된다.
+     */
     @Test
-    fun `출발선에서 늘어나면 끊겼다고 말한다`() {
+    fun `모자란 만큼만 적고 뜻은 단정하지 않는다`() {
         val w = captureWarningKo(diag(lagMs = 2_000.0, baselineMs = 1_000.0))
         assertTrue("아무 말도 안 한다", w != null)
-        assertTrue("끊겼다는 말이 없다: $w", w!!.contains("끊겼"))
-        assertTrue("지난 소리라는 말이 없다: $w", w.contains("지난 소리"))
+        assertTrue("모자란다는 말이 없다: $w", w!!.contains("적습니다"))
         // **늘어난 만큼만 적는다.** 2초가 아니라 1초다.
         assertTrue("잃은 양이 아니라 절대값을 적는다: $w", w.contains("1초"))
+        assertTrue(
+            "관측할 수 없는 것을 단정한다: $w",
+            !w.contains("지난 소리"),
+        )
+    }
+
+    /**
+     * **잃었다가 이어져도 누적 차이는 남는다**(독립 재검증 UISR-03 반례).
+     *
+     * 검토자가 통제한 순서: 정상 5초 → 누락 1초 → **현재 시각의** 정상
+     * 5초. 마지막 블록은 새것인데 누적 차이는 1초로 남는다. 이때
+     * 「지금 값이 1초 지난 소리」라고 하면 틀린 안내다.
+     */
+    @Test
+    fun `회복한 뒤에도 멈췄다고는 말하지 않는다`() {
+        val w = captureWarningKo(diag(lagMs = 1_000.0, baselineMs = 0.0), lastInputAgeMs = 20.0)!!
+        assertTrue("모자란다는 말이 없다: $w", w.contains("적습니다"))
+        assertTrue("들어오는데 안 들어온다고 한다: $w", !w.contains("들어오지 않습니다"))
+    }
+
+    /**
+     * **콜백이 멈추면 진단도 멈춘다**(독립 재검증 UISR-03).
+     *
+     * 그래서 누적값만 보던 경고는 입력이 끊겨도 **아무 말도 하지
+     * 않았다** — 화면은 마지막 숫자를 들고 멀쩡히 서 있었다. 시계로 잰
+     * 나이가 그 침묵을 깬다.
+     */
+    @Test
+    fun `소리가 아예 안 들어오면 그것부터 말한다`() {
+        // 진단은 멀쩡하다(마지막으로 받은 시점 기준). 시계만 10초 갔다.
+        val w = captureWarningKo(diag(), lastInputAgeMs = 10_040.0)
+        assertTrue("아무 말도 안 한다", w != null)
+        assertTrue("멈췄다는 말이 없다: $w", w!!.contains("들어오지 않습니다"))
+        assertTrue("언제 것인지 안 적는다: $w", w.contains("그때 잰 것"))
+    }
+
+    @Test
+    fun `잠깐의 끊김으로는 멈췄다고 하지 않는다`() {
+        assertNull(captureWarningKo(diag(), lastInputAgeMs = 300.0))
+        assertNull(captureWarningKo(diag(), lastInputAgeMs = 900.0))
     }
 
     @Test
@@ -83,15 +130,19 @@ class CaptureHealthTest {
      * 회복했는데도 「지금 고장 났다」로 읽고, 지금만 적으면 잃은 구간이
      * 있었다는 사실이 사라진다.
      */
+    /**
+     * **누적 오류는 지나간 사실로만 적는다**(독립 재검증 UISR-03).
+     *
+     * 예전에는 「지금은 이어지고 있습니다」를 `readErrors>0 && keepingUp`
+     * 으로 판정했는데, 그 둘은 **마지막 유효 입력을 확인한 것이 아니다.**
+     * 지금 들어오는지는 나이가 말한다.
+     */
     @Test
-    fun `회복했으면 회복했다고 적되 잃은 것은 남긴다`() {
-        val recovered = captureWarningKo(diag(lagMs = 0.0, readErrors = 2L))!!
-        assertTrue("회복을 안 적는다: $recovered", recovered.contains("지금은 이어지고"))
-        assertTrue("잃은 것을 안 적는다: $recovered", recovered.contains("남지 않았습니다"))
-
-        val stillBad = captureWarningKo(diag(lagMs = 2_000.0, readErrors = 2L))!!
-        assertTrue("회복하지도 않았는데 회복했다고 적는다: $stillBad",
-            !stillBad.contains("지금은 이어지고"))
+    fun `읽기 오류는 지나간 사실로 적는다`() {
+        val w = captureWarningKo(diag(readErrors = 2L))!!
+        assertTrue("횟수가 없다: $w", w.contains("2번"))
+        assertTrue("잃은 것을 안 적는다: $w", w.contains("남지 않았습니다"))
+        assertTrue("지금 상태를 단정한다: $w", !w.contains("지금은 이어지고"))
     }
 
     /**

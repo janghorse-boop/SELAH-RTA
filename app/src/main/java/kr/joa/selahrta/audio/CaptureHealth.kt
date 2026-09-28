@@ -38,29 +38,54 @@ package kr.joa.selahrta.audio
  * 곧 「지속되는 처리 지연」을 보는 것이고, 따로 히스테리시스를 둘
  * 까닭이 없다. 순간의 튐은 여기 오지 않는다.
  */
-fun captureWarningKo(diag: CaptureDiagnostics): String? {
-    val losing = !diag.keepingUp
+/**
+ * @param lastInputAgeMs 마지막으로 소리가 들어온 뒤 흐른 시간(ms).
+ *   모르면 null(아직 한 덩어리도 안 왔거나 측정 중이 아니다).
+ *   **덩어리가 와야 갱신되는 [diag] 와 달리 이 값은 시계만으로 자란다** —
+ *   콜백이 아예 멈춘 것을 알아채려면 그래야 한다.
+ */
+fun captureWarningKo(diag: CaptureDiagnostics, lastInputAgeMs: Double? = null): String? {
+    val stalled = lastInputAgeMs != null && lastInputAgeMs >= INPUT_STALL_MS
+    val shortfall = !diag.keepingUp
     val hadErrors = diag.readErrors > 0
-    if (!losing && !hadErrors) return null
+    if (!stalled && !shortfall && !hadErrors) return null
 
     return buildString {
-        if (losing) {
-            // **늘어난 만큼만 말한다.** 기기를 여는 데 걸린 시간은 잃은
-            // 것이 아니다(`CaptureDiagnostics.lagGrowthMs`).
-            append("소리가 %.0f초쯤 끊겼습니다 — ".format(diag.lagGrowthMs / 1000.0))
-            append("지금 보이는 값은 그만큼 지난 소리입니다.")
+        // **지금 안 들어오는 것이 가장 급하다**(독립 재검증 UISR-03).
+        //
+        // 콜백이 멈추면 [diag] 도 멈춘다 — 그래서 누적값만 보던 예전
+        // 경고는 입력이 끊겨도 **아무 말도 하지 않았다.** 화면은 마지막
+        // 숫자를 그대로 들고 멀쩡히 서 있었다.
+        if (stalled) {
+            append("소리가 들어오지 않습니다(마지막 %.0f초 전). ".format(lastInputAgeMs!! / 1000.0))
+            append("화면의 값은 그때 잰 것입니다 — 연결을 확인하십시오.")
         }
+
+        if (shortfall) {
+            if (isNotEmpty()) append(" ")
+            // **관측한 것만 말한다**(독립 재검증 UISR-03).
+            //
+            // 예전에는 「지금 보이는 값은 그만큼 지난 소리입니다」라고
+            // 적었다. 그런데 이 차이는 **늦게 오는 소리와 아주 사라진
+            // 소리를 구별하지 못한다** — 잃었다가 다시 이어져도 차이는
+            // 남는다. 그때 「지난 소리」라고 하면 멀쩡한 지금 값을 과거로
+            // 안내하게 된다. 그래서 잰 것만 적고 뜻은 단정하지 않는다.
+            append("받은 소리가 흐른 시간보다 %.0f초쯤 적습니다 — ".format(diag.lagGrowthMs / 1000.0))
+            append("늦게 오거나 빠진 구간이 있습니다.")
+        }
+
         if (hadErrors) {
-            if (losing) append(" ")
-            append("읽기 오류 ${diag.readErrors}번. ")
-            // **지나간 일과 지금 상태를 가른다**(독립 검토 UIS-03).
-            // 누적 횟수만 적으면 이미 회복했는데도 「지금 고장 났다」로
-            // 읽는다. 반대로 지금만 적으면 잃은 구간이 있었다는 사실이
-            // 사라진다. 둘 다 적는다.
-            append(
-                if (losing) "그 사이의 소리는 남지 않았습니다."
-                else "지금은 이어지고 있지만, 그 자리의 소리는 남지 않았습니다.",
-            )
+            if (isNotEmpty()) append(" ")
+            append("읽기 오류 ${diag.readErrors}번 — 그 자리의 소리는 남지 않았습니다.")
         }
     }
 }
+
+/**
+ * 이보다 오래 소리가 안 들어오면 「멈췄다」고 말한다(ms).
+ *
+ * 화면 갱신 간격(66ms)의 열 배가 넘는다. USB 기기를 다시 무는 정도의
+ * 짧은 끊김으로 상자가 깜빡이지 않을 만큼은 길고, 사람이 「멈췄네」라고
+ * 느끼기 전에는 뜬다.
+ */
+const val INPUT_STALL_MS = 1_000.0
