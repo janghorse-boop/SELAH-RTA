@@ -270,7 +270,7 @@ fun SettingsScreen(
         SectionTitle("측정 설정")
         WeightingRow(
             label = "음압 가중",
-            whereKo = "SPL 큰 숫자 · Leq · MIN · MAX",
+            whereKo = "적용 대상: 현재 SPL · Leq · 최소값(MIN) · 최대값(MAX)",
             selected = capture.meterSettings.splWeighting,
             isCustom = capture.meterSettings.splWeighting != Weighting.A,
             onPick = onSplWeighting,
@@ -278,7 +278,7 @@ fun SettingsScreen(
         )
         WeightingRow(
             label = "순간최고(PEAK) 가중",
-            whereKo = "PEAK 타일",
+            whereKo = "적용 대상: 순간최고(PEAK)",
             selected = capture.meterSettings.peakWeighting,
             isCustom = capture.meterSettings.peakWeighting != Weighting.Z,
             onPick = onPeakWeighting,
@@ -286,7 +286,7 @@ fun SettingsScreen(
         )
         WeightingRow(
             label = "주파수 분석 가중",
-            whereKo = "RTA · Spectrum · Spectrogram",
+            whereKo = "적용 대상: RTA · Spectrum · Spectrogram",
             selected = capture.meterSettings.analysisWeighting,
             isCustom = capture.meterSettings.analysisWeighting != Weighting.Z,
             onPick = onAnalysisWeighting,
@@ -860,15 +860,24 @@ private fun <T> ChoiceRow(
  * 무가중이 다른 것인가」라는 물음이 나왔다(2026-09-27).
  */
 private fun weightingHelpKo(w: Weighting): String = when (w) {
+    // 셋 다 담당자 문안이다(2026-09-28).
+    //
+    // **A 의 마지막 문장은 남겼다.** 권장 범위 판정은 `canJudge =
+    // weighting == A` 라, C·Z 로 바꾸면 **계기의 색과 범위 띠가 조용히
+    // 사라진다.** 그 까닭을 말하는 자리가 화면에 여기 하나뿐이다 —
+    // 없으면 「색이 왜 안 뜨지」가 된다.
     Weighting.A ->
-        "A-weighting — 사람 귀가 저음에 둔한 것을 흉내 냅니다. " +
-            "소음 규제·청력 기준이 쓰는 잣대이고, 권장 범위 판정은 A 에서만 합니다."
+        "사람의 청감 특성을 반영해 저주파와 매우 높은 주파수를 줄여 " +
+            "평가합니다. 일반적인 소음과 청취 레벨을 확인할 때 가장 널리 " +
+            "사용됩니다. 권장 범위 판정은 A 에서만 합니다."
     Weighting.C ->
-        "C-weighting — 저음을 거의 깎지 않습니다. 킥·베이스가 실제로 얼마나 " +
-            "센지 볼 때 씁니다. A 와의 차이가 크면 저음이 많다는 뜻입니다."
+        "저주파를 A보다 덜 줄여 넓은 대역의 소리를 평가합니다. " +
+            "저음이 많은 소리, 피크 레벨, 음악·PA 시스템을 확인할 때 " +
+            "유용합니다."
     Weighting.Z ->
-        "Z-weighting — 깎지도 올리지도 않습니다. 들어온 소리 그대로라, " +
-            "어느 대역에 에너지가 몰렸는지 보는 화면에는 이것이 기본입니다."
+        "주파수 가중을 적용하지 않은 평탄한 특성으로 측정합니다. " +
+            "입력된 소리의 전체 에너지와 주파수 특성을 그대로 확인할 때 " +
+            "적합합니다."
 }
 
 /**
