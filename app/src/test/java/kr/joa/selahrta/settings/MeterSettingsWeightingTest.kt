@@ -16,11 +16,18 @@ import org.junit.Test
  */
 class MeterSettingsWeightingTest {
 
+    /**
+     * **PEAK 은 C 다**(담당자 지시 2026-09-28로 Z 에서 바꿨다).
+     *
+     * 순간 최고값을 C 로 재는 것이 널리 쓰이는 방식이다 — 청력 보호
+     * 기준이 말하는 peak 가 그것이고, A 만큼 저역을 깎지 않으면서
+     * 기준과도 견줄 수 있다.
+     */
     @Test
-    fun `기본값이 음압 A · PEAK Z · 분석 Z 다`() {
+    fun `기본값이 음압 A · PEAK C · 분석 Z 다`() {
         val s = MeterSettings()
         assertEquals(Weighting.A, s.splWeighting)
-        assertEquals(Weighting.Z, s.peakWeighting)
+        assertEquals(Weighting.C, s.peakWeighting)
         assertEquals(Weighting.Z, s.analysisWeighting)
     }
 
@@ -30,7 +37,7 @@ class MeterSettingsWeightingTest {
         val s = MeterSettings().copy(analysisWeighting = Weighting.A)
         assertEquals(Weighting.A, s.analysisWeighting)
         assertEquals(Weighting.A, s.splWeighting)
-        assertEquals(Weighting.Z, s.peakWeighting)
+        assertEquals(Weighting.C, s.peakWeighting)
     }
 
     /**

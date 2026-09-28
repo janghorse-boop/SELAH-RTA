@@ -74,8 +74,15 @@ data class MeterSettings(
      *
      * 킥·스네어의 저역이 A-weighting 에 깎여 순간 음압을 놓치는 일을
      * 막자는 것이다.
+     *
+     * **기본은 C 다**(담당자 지시 2026-09-28). 처음에는 Z 였다 — 「깎지
+     * 않는다」는 뜻으로는 그쪽이 곧았지만, **순간 최고값을 C 로 재는 것이
+     * 널리 쓰이는 방식**이다(청력 보호 기준이 말하는 peak 가 그것이다).
+     * A 만큼 저역을 깎지 않으면서 기준과도 견줄 수 있다.
+     *
+     * 고른 값은 그대로 남는다 — 이 기본값은 저장된 것이 없을 때만 쓰인다.
      */
-    val peakWeighting: Weighting = Weighting.Z,
+    val peakWeighting: Weighting = Weighting.C,
     /**
      * RTA·Spectrum·Spectrogram 의 가중.
      *
@@ -291,7 +298,7 @@ class MeterSettingsStore(private val context: Context) {
                 // 저장된 값이 알 수 없는 것이면 기본값으로 돌아간다. 앱을
                 // 새로 깔거나 설정 이름이 바뀌어도 측정은 되어야 한다.
                 splWeighting = p.weightingOr(splWeightingKey, Weighting.A),
-                peakWeighting = p.weightingOr(peakWeightingKey, Weighting.Z),
+                peakWeighting = p.weightingOr(peakWeightingKey, Weighting.C),
                 analysisWeighting = p.weightingOr(analysisWeightingKey, Weighting.Z),
                 timeWeight = p[timeWeightKey]?.let { n ->
                     TimeWeight.entries.firstOrNull { it.name == n }
