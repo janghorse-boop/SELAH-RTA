@@ -194,6 +194,15 @@ object SelahColors {
         if (palette != next) palette = next
     }
 
+    /**
+     * 지금이 밝은 한 벌인가.
+     *
+     * **색이 아니라 그림을 고를 때 쓴다.** 로고처럼 밝기에 따라 아예 다른
+     * 파일을 써야 하는 것이 있다 — 어두운 배경용 판은 「JOA」가 밝은
+     * 회색이라 흰 바탕에서는 사라진다(실제로 그렇게 나왔다).
+     */
+    val IsLight: Boolean get() = palette === LightPalette
+
     val Background: Color get() = palette.background
     val Surface: Color get() = palette.surface
     val SurfaceVariant: Color get() = palette.surfaceVariant
