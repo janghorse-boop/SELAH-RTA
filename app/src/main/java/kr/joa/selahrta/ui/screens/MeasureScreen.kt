@@ -344,7 +344,11 @@ fun MeasureScreen(
                 modifier = Modifier.padding(top = 40.dp),
             ) {
                 Text(
-                    formatDb(m.currentSpl),
+                    // **지금 값만 소수 첫째 자리까지**(담당자 지시
+                    // 2026-09-28). 아래 MIN·Leq·MAX 타일은 정수 그대로다 —
+                    // 거기는 나란히 견주는 자리라 자릿수가 들쭉날쭉하면
+                    // 오히려 읽기 나쁘다.
+                    formatDb(m.currentSpl, decimals = 1),
                     fontSize = 52.sp,
                     fontWeight = FontWeight.Bold,
                     // 미보정 값은 흐리게 그린다. 보정된 값과 같은 밝기로 띄우면
@@ -1087,6 +1091,17 @@ private const val GAUGE_GLIDE_MS = 90
  * 그때는 캡처 진단이 **실제로 열린 값**(요청이 아니라)을 적고 있고,
  * 그쪽이 더 정확하다. 두 줄이 같은 말을 하면 어느 쪽을 믿을지가
  * 흐려진다.
+ *
+ * ## 한 줄이다 (담당자 지시 2026-09-28)
+ *
+ * 처음에는 석 줄이었다 — 「이 마이크로 잽니다」 / 기기 이름 / 「내장
+ * 마이크 · 고른 것이 없어 이것으로」. **평소에는 기기 이름만 알면
+ * 되는데** 화면 위쪽을 석 줄이나 먹었다. `입력 기기  SM-S918N` 한 줄로
+ * 줄였다.
+ *
+ * **다만 「고르신 기기가 없다」는 남긴다.** 그건 평소에 안 뜨는 말이고,
+ * 안 뜨면 USB 마이크를 고라 놓고 내장으로 재면서도 모른다 — 그 세션의
+ * 숫자가 전부 다른 잣대가 된다.
  */
 @Composable
 private fun InputBeforeStart(capture: CaptureUiState, modifier: Modifier = Modifier) {
@@ -1102,40 +1117,28 @@ private fun InputBeforeStart(capture: CaptureUiState, modifier: Modifier = Modif
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Column(Modifier.weight(1f)) {
-            Text("이 마이크로 잽니다", color = SelahColors.TextMuted, fontSize = 10.sp)
+        Text("입력 기기", color = SelahColors.TextMuted, fontSize = 11.sp)
+        Text(
+            device?.productName ?: "쓸 수 있는 입력이 없습니다",
+            color = if (device == null) SelahColors.Warn else SelahColors.TextPrimary,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            // **남는 자리를 이름이 먹는다.** Row 는 무게 없는 칸을 먼저
+            // 재므로, 아래 경고가 제 폭을 가져간 뒤 나머지가 이름에 간다 —
+            // 긴 USB 기기 이름이 경고를 밀어내지 않는다.
+            modifier = Modifier.weight(1f),
+        )
+        // 고른 기기가 사라졌을 때만 뜬다. 평소에는 아무 말도 없다.
+        if (choice.reason == ChoiceReason.PreferredMissing) {
             Text(
-                device?.productName ?: "쓸 수 있는 입력이 없습니다",
-                color = if (device == null) SelahColors.Warn else SelahColors.TextPrimary,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.SemiBold,
+                "고르신 기기가 없습니다",
+                color = SelahColors.Warn,
+                fontSize = 11.sp,
                 maxLines = 1,
                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
             )
-            device?.let {
-                Text(
-                    // **고른 것인지 앱이 정한 것인지 가른다.** 둘을
-                    // 뭉뚱그리면 「내가 고른 줄 알았는데 아니었다」가 된다.
-                    buildString {
-                        append(it.typeKo)
-                        when (choice.reason) {
-                            ChoiceReason.UserPicked -> append(" · 고르신 기기")
-                            ChoiceReason.Auto -> append(" · 고른 것이 없어 이것으로")
-                            ChoiceReason.PreferredMissing ->
-                                append(" · 고르신 기기가 없어 이것으로")
-                            ChoiceReason.NoDevice -> Unit
-                        }
-                    },
-                    color = if (choice.reason == ChoiceReason.PreferredMissing) {
-                        SelahColors.Warn
-                    } else {
-                        SelahColors.TextMuted
-                    },
-                    fontSize = 11.sp,
-                    maxLines = 2,
-                    lineHeight = 15.sp,
-                )
-            }
         }
     }
 }

@@ -394,9 +394,10 @@ fun SettingsScreen(
         SectionTitle("앱 정보")
         SettingRow("SELAH RTA", "v0.1.0 (Phase 8)")
         Text(
-            // 만든 곳은 상호 하나로 적는다(2026-09-28 담당자 지시로 사람
-            // 이름과 한글 상호를 뺐다). 표지(SplashScreen)와 같은 표기다.
-            "Real-Time Audio Analyzer\nJOAWORKS",
+            // 만든 곳만 적는다(담당자 지시 2026-09-28). 영문 확장명
+            // (Real-Time Audio Analyzer)은 **바로 위 머리글에 이미 있어**
+            // 같은 말이 한 화면에 두 번 나왔다.
+            "조아웍스 | JOAWORKS",
             color = SelahColors.TextMuted,
             fontSize = 11.sp,
             modifier = Modifier.padding(top = 4.dp, bottom = 24.dp),
