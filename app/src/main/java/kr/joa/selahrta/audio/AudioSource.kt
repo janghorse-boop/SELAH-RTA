@@ -166,17 +166,42 @@ data class CaptureDiagnostics(
      * 안 나타난다. 시간이 갈수록 이 값이 커지면 잃고 있는 것이다.
      */
     val audioLagMs: Double = 0.0,
+    /**
+     * 이 측정에서 본 **가장 작은** [audioLagMs]. 출발선이다.
+     *
+     * 기기를 열고 첫 소리가 오기까지 걸린 시간이 [audioLagMs] 에 그대로
+     * 들어 있고, **그 몫은 영영 따라잡히지 않는다.** 그것을 잃은 것으로
+     * 세면 안 된다.
+     */
+    val lagBaselineMs: Double = 0.0,
 ) {
     /** 처리 시간이 덩어리 길이의 절반을 넘으면 아슬아슬하다. */
     val processingHeadroom: Boolean
         get() = blockDurationMs <= 0.0 || lastProcessMs < blockDurationMs * 0.5
 
     /**
+     * 출발선을 걷어낸 지연(ms) — **실제로 잃은 소리의 양**이다.
+     *
+     * 지연은 소리를 잃을 때만 늘어난다(줄지는 않는다). 그러니 가장
+     * 작았던 값이 출발선이고, 거기서 늘어난 만큼이 잃은 양이다.
+     */
+    val lagGrowthMs: Double
+        get() = (audioLagMs - lagBaselineMs).coerceAtLeast(0.0)
+
+    /**
      * 오디오를 잃지 않고 있는가.
+     *
+     * **절대값이 아니라 늘어난 양을 본다**(실기기 확인 2026-09-29).
+     * 예전에는 `audioLagMs < 500` 이었는데, UMC404HD 는 기기를 여는 데만
+     * 1초쯤 걸려 **측정 내내 경고가 떠 있었다.** 90초를 재도 그 값은
+     * 1초 그대로였다 — 잃는 중이 아니라 늦게 출발한 것이다.
+     *
+     * 늘 떠 있는 경고는 없느니만 못하다. 사람이 무시하는 법을 배우고,
+     * 정작 진짜로 잃을 때도 안 읽는다.
      *
      * 한 덩어리 길이(약 21ms)의 몇 배까지는 버퍼 사정으로 흔들릴 수 있다.
      * 500ms 를 넘으면 설명이 필요한 양이다.
      */
     val keepingUp: Boolean
-        get() = audioLagMs < 500.0
+        get() = lagGrowthMs < 500.0
 }

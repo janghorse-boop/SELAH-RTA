@@ -15,6 +15,19 @@ package kr.joa.selahrta.audio
  * 멀쩡히 움직이는데 그 숫자가 몇 초 전 것이고, 아무것도 그 사실을
  * 말하지 않는다.
  *
+ * ## 「밀렸다」가 아니라 「끊겼다」를 본다 (실기기 확인 2026-09-29)
+ *
+ * 처음에는 [CaptureDiagnostics.audioLagMs] 를 그대로 보고 500ms 를
+ * 넘으면 알렸다. 그런데 UMC404HD 를 붙여 재 보니 **측정을 시작하자마자
+ * 경고가 떴고, 90초를 재도 그대로 「1초」였다.**
+ *
+ * 그 1초는 잃은 소리가 아니라 **기기를 여는 데 걸린 시간**이다. 그 몫은
+ * 처음부터 늦게 출발한 것이라 영영 따라잡히지 않는다. 그것으로 경고하면
+ * **측정할 때마다 늘 떠 있는 경고**가 되는데, 그건 없느니만 못하다 —
+ * 사람이 무시하는 법을 배우고 정작 진짜로 잃을 때도 안 읽는다.
+ *
+ * 그래서 출발선을 걷어낸 [CaptureDiagnostics.lagGrowthMs] 를 본다.
+ *
  * ## 처리 시간을 따로 보지 않는 까닭
  *
  * `lastProcessMs` 는 한 덩어리를 처리한 시간이라 **순간적으로 튄다.**
@@ -32,7 +45,9 @@ fun captureWarningKo(diag: CaptureDiagnostics): String? {
 
     return buildString {
         if (losing) {
-            append("소리가 %.0f초쯤 밀리고 있습니다 — ".format(diag.audioLagMs / 1000.0))
+            // **늘어난 만큼만 말한다.** 기기를 여는 데 걸린 시간은 잃은
+            // 것이 아니다(`CaptureDiagnostics.lagGrowthMs`).
+            append("소리가 %.0f초쯤 끊겼습니다 — ".format(diag.lagGrowthMs / 1000.0))
             append("지금 보이는 값은 그만큼 지난 소리입니다.")
         }
         if (hadErrors) {
