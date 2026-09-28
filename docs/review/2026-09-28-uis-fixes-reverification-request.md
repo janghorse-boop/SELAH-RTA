@@ -1,0 +1,228 @@
+# 독립 재검증 요청 — UIS-01~07 수정본
+
+요청일: 2026-09-28 · 요청자: 구현자(Claude) · 대상 검토자: Codex
+
+앞선 회신
+`reviews/2026-09-28/2026-09-28-ui-settings-privacy-independent-review.md`
+(판정: **승인 보류**, High 1 / Medium 3 / Low 3)에 대한 수정본입니다.
+일곱 가지를 모두 재현해 확인한 뒤 고쳤습니다.
+
+---
+
+## 1. 범위
+
+| | |
+|---|---|
+| 기준(before) | `30835b0` (= 앞선 검토의 로컬 HEAD) |
+| 대상(after) | 브랜치 `fix/independent-review-2026-09-28` · PR [#51](https://github.com/janghorse-boop/SELAH-RTA/pull/51) |
+| 커밋 | 9개 — **지적 하나에 커밋 하나** + 문구 + CHANGELOG |
+| 함께 볼 것 | `joaworks-website` PR #4 (방침 1.2 · 검증 문서) |
+
+커밋 목록:
+
+```
+46656fc fix(개인정보): 기기 간 이전에서도 앱 데이터를 뺀다        UIS-01
+9d4e7ce test(매니페스트): 문자열이 아니라 요소의 속성을 본다        UIS-07
+7a46186 fix(기록): 옛 기록의 Leq 「전체」를 그대로 읽는다           UIS-06
+fc69cdf fix(보정): 교정기 순음이 안 보이면 저장 전에 묻는다        UIS-02
+d4ba301 fix(기록): 구간을 더하고 빼는 것도 기록에 남긴다           UIS-04
+8f51782 fix(측정): 소리를 잃고 있으면 다시 말한다                  UIS-03
+c1fe642 fix(테마): 밝은 화면에서 흐렸던 글자와 계기 바를 고친다     UIS-05
+65e6e6a docs(앱): 지울 수 있는 것과 없는 것을 가른다                UIS-01 문구
+9c33e8d docs: CHANGELOG
+```
+
+---
+
+## 2. 지적별 대응과 **확인한 방법**
+
+### UIS-01 (High) — 기기 간 이전
+
+지적을 받아들입니다. 제외 규칙을 보고도 「실기기로 확인해야 한다」며
+미룬 것이 잘못이었습니다 — 확인할 문제가 아니라 문서에 적힌 계약입니다.
+
+- `app/src/main/res/xml/data_extraction_rules.xml` 신규.
+  `<cloud-backup>`·`<device-transfer>` 각각에 아홉 영역
+  (`root`/`file`/`database`/`sharedpref`/`external` + `device_*` 넷)을
+  `path="."` 로 제외.
+- `allowBackup="false"` 는 유지(Android 11 이하용).
+- **release 병합 매니페스트를 파싱해 확인**했습니다:
+
+```
+allowBackup        = false
+dataExtractionRules= @xml/data_extraction_rules
+service kr.joa.selahrta.audio.CaptureService exported=false fgType=microphone
+권한: FOREGROUND_SERVICE / FOREGROUND_SERVICE_MICROPHONE /
+      POST_NOTIFICATIONS / RECORD_AUDIO /
+      kr.joa.selahrta.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
+```
+
+- 공개 문구도 지적대로 갈랐습니다. 앱 녹음 동의 문구에
+  「따로 내보내거나 보낸 사본은 받는 쪽에 남습니다」를 넣었고,
+  홈페이지 방침 6장을 1.2 로 고치며 **틀렸던 사실을 지우지 않고
+  남겼습니다**.
+- `docs/implementation-verification.md` C13 을 「미확인」에서
+  **「틀렸음 → 고침」**으로 바꿨습니다. 확인하지 못한 것이 아니라
+  틀리게 알고 있었습니다.
+
+**여전히 미확인**: 제조사 이전 도구(Smart Switch 등)의 실제 동작.
+
+> 검토 요청: 아홉 영역으로 충분한지, `device_*` 영역명이 맞는지,
+> 그리고 **패키징된 APK 안의 XML** 까지 봐야 하는지 봐 주십시오.
+> 저는 병합 매니페스트까지만 확인했습니다.
+
+### UIS-02 (Med) — 순음 미확인 교정
+
+지적이 맞습니다. 「틀리게 맞추면 화면이 곧바로 이상해진다」고 주석에
+적고 단추를 열어 두었는데, **그 문장 자체가 틀렸습니다** — 오프셋이
+`기준값 − 지금 읽는 값`이라 맞춘 직후 화면은 반드시 기준값입니다.
+
+권고하신 `when` 구조를 순수 함수로 옮겼습니다
+(`calibration/CalibrationGate.kt`):
+
+```kotlin
+!opened / !routeConfirmed / measuredDbfs == null / clipped / !settled
+                                                       -> Reject   // 사람이 확인해도 못 넘어감
+source != Calibrator                                   -> Save
+toneOk == true                                         -> Save
+else                                                   -> AskConfirmation
+```
+
+- `toneOk == null`(첫 FFT 전)도 **묻습니다** — 모르는 것을 「보인다」로
+  읽지 않습니다.
+- 확인 대화상자에서 「예」를 받으면 **다시 검사**하고, 그 사이 세션이
+  바뀌었으면 취소합니다.
+- 「교정기가 제대로 물렸습니다」 문구를 「1kHz 순음이 솟아 있습니다」로
+  고쳤습니다(순음 감지 ≠ 밀폐·장착 증명).
+
+> 검토 요청: **`Reject` 가 `AskConfirmation` 보다 앞선다**는 순서가
+> 맞는지 봐 주십시오. 잘렸는데 묻고 「예」를 받으면 잘린 값으로
+> 저장하게 되므로 그렇게 두었습니다.
+>
+> 또한 「신선도(fresh reading)」는 별도 조건으로 두지 않고
+> `settled`+`currentDbfs != null` 로 갈음했습니다. 이것이 부족한지
+> 판단해 주십시오.
+
+### UIS-03 (Med) — 사라진 상태 경고
+
+`audio/CaptureHealth.kt` 의 `captureWarningKo(diag)` 가 문제가 있을
+때만 한 줄을 돌려주고, 측정 화면이 그립니다.
+
+- 누적(읽기 오류 횟수)과 현재(지금 이어지는가)를 **갈라서** 적습니다.
+- **처리 시간으로는 경고하지 않습니다.** 근거: `lastProcessMs` 는
+  순간적으로 튀는데, 처리가 *계속* 느리면 그 결과는 반드시
+  `audioLagMs` 로 쌓입니다. 그러니 지연을 보는 것이 곧 「지속되는 처리
+  지연」을 보는 것이고, 별도 히스테리시스가 필요 없다고 판단했습니다.
+- 아무도 부르지 않게 된 `DiagnosticsPanel`(180줄)과 `DiagRow` 를
+  지웠습니다.
+
+> 검토 요청: **위 판단이 맞습니까?** 처리가 느린데도 지연이 안 쌓이는
+> 경로(예: 버퍼가 아주 큰 기기)가 있다면 지적해 주십시오. 그 경우
+> 지속 카운터를 따로 두어야 합니다.
+>
+> 또한 진단 상세를 설정 뒤로 접어 넣으라는 권고는 **따르지
+> 않았습니다** — 담당자가 그 상자를 지우라고 했고, 되살릴 것은 git 에
+> 있습니다. 이 판단이 과한지 봐 주십시오.
+
+### UIS-04 (Med) — 구간 사건
+
+권고대로 **설정 수용 경계 한 곳**으로 옮겼습니다.
+
+```kotlin
+if (old.activeSegment != s.activeSegment) noteSegmentToRecording(s.activeSegment, s)
+```
+
+- `setSegment` 의 직접 기록은 제거(중복 방지).
+- `noteSegmentToRecording` 이 nullable 을 받아 「구간 없음」도 사건으로
+  남깁니다.
+- `SessionExport.segmentTimeline` 의 `segment != null` 필터를 제거해
+  null 사건이 **그 뒤 셀을 빈칸으로** 만들도록 했습니다.
+- 기록 시작 시 현재 구간을 첫 사건으로 남깁니다.
+- 구간 이름은 **사건 당시 표시 이름**으로 스냅샷합니다.
+
+> 검토 요청: 설정 flow 의 **첫 방출**에서 `old`(기본값)와 `s`(저장값)가
+> 달라 사건이 한 번 생길 수 있습니다. 그때는 기록 중이 아니므로
+> `recorder == null` 이라 아무 일도 없다고 보았는데, 기록 중에 설정
+> 프로세스가 되살아나는 경로가 있다면 지적해 주십시오.
+
+### UIS-05 (Low) — 대비
+
+- `textMuted` `#8493A3` → `#5F6E7E` (흰 카드 5.23:1 / 배경 4.91:1).
+- 계기 바는 **색조를 바꾸지 않았습니다** — 원색에 가깝게는 담당자
+  지시입니다. 대신 `SelahColors.barOutline()`(0.62배)로 테두리를 둘러
+  트랙과 가릅니다: 노랑 3.70 · 초록 6.10 · 빨강 7.51.
+- `ui/theme/PaletteContrastTest.kt` 가 팔레트를 재어 하한을 지킵니다.
+  「채움색만으로는 3:1 이 안 된다」는 것도 시험으로 남겼습니다 —
+  나중에 테두리를 빼도 되는지 물을 때의 근거입니다.
+
+**검토서에 없던 것 하나**: 이 시험을 붙이고 나서 판정 글자색 `low`
+(`#B07D00`)가 흰 바탕에서 **3.63:1** 인 것이 나왔습니다. `#8F6600`
+(5.16:1)로 고쳤습니다.
+
+> 검토 요청: 「읽어야 하는 보조 설명을 TextSecondary 로 옮기라」는
+> 권고는 **따르지 않고** `textMuted` 자체를 올렸습니다. 한 색이
+> 비활성 표시와 보조 설명에 겸용되는 구조는 그대로입니다. 이것이
+> 남는 문제인지 판단해 주십시오.
+
+### UIS-06 (Low) — 옛 기록의 -1
+
+`leqWindowKo` 에 `ms == -1L -> "전체(측정 시작부터)"` 를 넣었습니다.
+0 과 그 밖의 음수는 그대로 「기록 없음」입니다. 함께 지웠던 겉장 왕복
+시험도 되살렸습니다.
+
+### UIS-07 (Low) — 매니페스트 시험
+
+이름공간을 인식하는 DOM 으로 다시 썼습니다. `application`·`service`
+요소를 찾아 **그 요소의 속성**을 읽고, 권한은 `uses-permission`
+요소에서만 셉니다. 「사람이 허락하는 네 권한」이라는 부정확한 주석도
+고쳤습니다(넷 중 묻는 것은 둘).
+
+---
+
+## 3. 변이로 확인한 것
+
+고친 것마다 **되돌려 보고 시험이 실제로 실패하는지** 확인했습니다.
+
+| 변이 | 결과 |
+|---|---|
+| `CaptureService` 만 `exported="true"`(FileProvider 는 false 유지) | 「밖으로 열려 있지 않다」 **실패** |
+| `<device-transfer>` 에서 `file` 영역 한 줄 제거 | 「이전에서도 빠져 있다」 **실패** |
+| 보정 게이트 `else -> AskConfirmation` → `Save` | 시험 **3개 실패** |
+| `segmentTimeline` 필터를 `segment != null` 로 되돌림 | 「구간 칸이 빈다」 **실패** |
+| `textMuted` 를 `#8493A3` 로 되돌림 | 「흐린 글자도 읽을 수 있다」 **실패** |
+
+모두 사본에서 되돌렸습니다(`git checkout --` 로 되돌리다 의도한 편집을
+함께 지운 적이 있어 그 방식을 버렸습니다).
+
+---
+
+## 4. 확인하지 못한 것 — **실기기 없음**
+
+담당자가 핸드폰을 빼고 퇴근해, 이번 수정은 **에뮬레이터·실기기 어느
+쪽에서도 화면을 보지 못했습니다.** 다음 셋은 코드와 시험으로만
+확인했습니다:
+
+1. 보정 확인 대화상자가 실제로 뜨고, 「예」가 저장까지 가는지
+2. 지연 경고 한 줄이 실제로 뜨는지(상태 주입 없이)
+3. 계기 바 테두리가 눈으로 구별되는지
+
+그 밖에: 교정기 94/114 dB 음향 정확도, 제조사 이전 도구 실측,
+Play Console 대조, UMC404HD 다채널.
+
+---
+
+## 5. 가장 보고 싶은 것
+
+1. **UIS-02 의 게이트 순서와 누락 조건.** 저장 경계를 한 곳으로 모았다고
+   믿고 있는데, 우회로가 남아 있는지(`saveOffsetDirect`·프로파일 마법사
+   등 다른 저장 경로) 봐 주십시오.
+2. **UIS-03 의 「지연만 보면 된다」는 판단**이 성립하는지.
+3. **제가 고치면서 새로 만든 조용한 결함.** 앞선 검토에서 두 번 겪은
+   유형입니다 — 부르는 자리가 없어진 기능, 지워진 시험. 이번에
+   `DiagnosticsPanel` 을 지우고 `setSegment` 의 기록을 떼어 냈는데,
+   그 자리에 같은 일이 생기지 않았는지 봐 주십시오.
+4. **시험이 실제로 무엇을 지키는지.** UIS-07 은 「시험이 있다」와
+   「시험이 잡는다」가 다르다는 것을 보여 줬습니다. 이번에 새로 쓴
+   시험들(`CalibrationGateTest`·`CaptureHealthTest`·
+   `PaletteContrastTest`·`ManifestPromisesTest`)에도 같은 구멍이
+   있는지 변이로 봐 주시면 좋겠습니다.
