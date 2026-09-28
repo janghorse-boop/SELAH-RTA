@@ -103,6 +103,17 @@ fun SegmentRangeCard(
                         fontSize = 12.sp,
                     )
                 }
+                // **삭제 단추가 아예 없었다**(담당자 지적 2026-09-28).
+                //
+                // 아래 확인 대화상자도, 부르는 쪽의 `onRemove` 배선도
+                // 멀쩡히 있는데 **그것을 여는 단추만 없었다** — 그래서
+                // 한 번 더한 구간을 뺄 길이 화면에 없었다. 지우는 코드가
+                // 아니라 **부르는 자리**가 빠지면 이렇게 조용히 사라진다.
+                if (onRemove != null) {
+                    TextButton(onClick = { confirmRemove = true }) {
+                        Text("삭제", color = SelahColors.Warn, fontSize = 12.sp)
+                    }
+                }
             }
         }
 
