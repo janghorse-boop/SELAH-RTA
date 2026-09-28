@@ -271,6 +271,7 @@ fun SettingsScreen(
         WeightingRow(
             label = "음압 가중",
             whereKo = "적용 대상: 현재 SPL · Leq · 최소값(MIN) · 최대값(MAX)",
+            helpKo = ::weightingHelpKo,
             selected = capture.meterSettings.splWeighting,
             isCustom = capture.meterSettings.splWeighting != Weighting.A,
             onPick = onSplWeighting,
@@ -278,7 +279,10 @@ fun SettingsScreen(
         )
         WeightingRow(
             label = "순간최고(PEAK) 가중",
-            whereKo = "적용 대상: 순간최고(PEAK)",
+            whereKo = "PEAK 값에 적용할 주파수 가중 방식을 선택합니다.",
+            // **PEAK 은 제 설명을 쓴다.** 순간 최대값이라 같은 가중이라도
+            // 보는 뜻이 음압 때와 다르다(담당자 문안 2026-09-28).
+            helpKo = ::peakWeightingHelpKo,
             selected = capture.meterSettings.peakWeighting,
             isCustom = capture.meterSettings.peakWeighting != Weighting.Z,
             onPick = onPeakWeighting,
@@ -287,6 +291,7 @@ fun SettingsScreen(
         WeightingRow(
             label = "주파수 분석 가중",
             whereKo = "적용 대상: RTA · Spectrum · Spectrogram",
+            helpKo = ::weightingHelpKo,
             selected = capture.meterSettings.analysisWeighting,
             isCustom = capture.meterSettings.analysisWeighting != Weighting.Z,
             onPick = onAnalysisWeighting,
@@ -859,6 +864,22 @@ private fun <T> ChoiceRow(
  * 넣으면 같은 것을 두 가지로 부르게 된다 — 그래서 실제로 「고정된 Z 와
  * 무가중이 다른 것인가」라는 물음이 나왔다(2026-09-27).
  */
+private fun peakWeightingHelpKo(w: Weighting): String = when (w) {
+    // 담당자 문안(2026-09-28). 음압 쪽과 **일부러 다르다** — PEAK 은
+    // 순간 최대값이라 같은 가중이라도 보는 뜻이 다르다.
+    Weighting.A ->
+        "사람의 청감 특성을 반영해 저주파와 매우 높은 주파수를 줄인 " +
+            "PEAK 값입니다. 일반적인 소음의 순간 최대 레벨을 참고할 때 " +
+            "사용합니다."
+    Weighting.C ->
+        "저주파를 A보다 덜 줄여 순간적인 큰 소리를 측정합니다. " +
+            "킥·베이스·충격음처럼 저음 에너지가 큰 PEAK를 확인할 때 " +
+            "유용합니다."
+    Weighting.Z ->
+        "주파수 가중을 적용하지 않고 넓은 대역의 순간 최대 음압을 그대로 " +
+            "측정합니다. 신호 자체의 PEAK를 확인할 때 적합합니다."
+}
+
 private fun weightingHelpKo(w: Weighting): String = when (w) {
     // 셋 다 담당자 문안이다(2026-09-28).
     //
@@ -890,6 +911,16 @@ private fun weightingHelpKo(w: Weighting): String = when (w) {
 private fun WeightingRow(
     label: String,
     whereKo: String,
+    /**
+     * 고른 칸 아래에 적을 설명. **줄마다 다르다**(담당자 지시
+     * 2026-09-28).
+     *
+     * 예전에는 셋이 같은 문구를 썼다 — 「A 가 여기서는 이 뜻이고
+     * 저기서는 저 뜻인가」로 읽히지 않게 하려던 것이었다. 그런데 PEAK 은
+     * **순간 최대값**이라 A·C·Z 가 하는 일이 음압 때와 실제로 다르다.
+     * 같은 글을 돌려 쓰면 그 다름이 가려진다.
+     */
+    helpKo: (Weighting) -> String,
     selected: Weighting,
     isCustom: Boolean,
     onPick: (Weighting) -> Unit,
@@ -945,7 +976,7 @@ private fun WeightingRow(
             }
         }
         Text(
-            weightingHelpKo(selected),
+            helpKo(selected),
             color = SelahColors.TextMuted,
             fontSize = 10.sp,
             lineHeight = 14.sp,
