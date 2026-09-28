@@ -267,14 +267,20 @@ fun MeasureScreen(
         // 한 줄을 통째로 쓸 까닭이 없었다. 상자 안에 넣으니 「무엇을
         // 고르면 이 숫자가 바뀐다」가 붙어 읽히고, 그만큼 아래가 올라와
         // **세로 화면에서 측정 버튼이 보인다.**
-        // **무엇으로 잴지 먼저 보인다**(담당자 지시 2026-09-28).
+        // **무엇으로 재는지 늘 보인다**(담당자 지시 2026-09-28).
         //
-        // 재는 동안에는 캡처 진단이 **실제로 열린 값**을 적고 있으므로
-        // 뜨지 않는다 — 요청과 결과가 다를 수 있는데 두 줄이 같은 말을
-        // 하면 어느 쪽을 믿을지가 흐려진다.
-        if (!running) {
-            InputBeforeStart(capture, Modifier.padding(bottom = 12.dp))
-        }
+        // 처음에는 시작 전에만 띄웠다. 재는 동안에는 캡처 진단이 **실제로
+        // 열린 값**을 적고 있었고, 요청과 결과가 다를 수 있는데 두 줄이
+        // 같은 말을 하면 어느 쪽을 믿을지가 흐려지기 때문이었다.
+        //
+        // **그런데 그 캡처 진단을 같은 날 걷어냈다.** 그러자 재는 동안
+        // 입력 기기를 볼 곳이 한 군데도 없어졌다 — 숨기던 까닭이 함께
+        // 사라진 것이다.
+        //
+        // 그래서 늘 띄우되, **재는 중에는 실제로 열린 기기**를 적는다.
+        // 「요청한 것」과 「열린 것」을 한 상자가 때에 따라 갈아 적는 셈이라
+        // 둘이 엇갈릴 일이 없다.
+        InputCard(capture, running, Modifier.padding(bottom = 12.dp))
 
         // **구간이 하나도 없으면 여기서 바로 더한다**(담당자 지시
         // 2026-09-28). 설정까지 찾아 들어가게 하면, 견줄 것이 없다는
@@ -1130,11 +1136,23 @@ private const val GAUGE_GLIDE_MS = 90
  * 때 쓰는 [chooseInput] 을 **그대로 불러** 그 답을 적는다 — 그래야
  * 여기 적힌 것과 실제로 열리는 것이 어긋날 수 없다.
  *
- * ## 재는 동안에는 뜨지 않는다
+ * ## 재는 동안에는 **열린 것**을 적는다 (담당자 지시 2026-09-28)
  *
- * 그때는 캡처 진단이 **실제로 열린 값**(요청이 아니라)을 적고 있고,
- * 그쪽이 더 정확하다. 두 줄이 같은 말을 하면 어느 쪽을 믿을지가
- * 흐려진다.
+ * 처음에는 시작 전에만 띄웠다. 그때는 캡처 진단이 실제로 열린 값을 적고
+ * 있었고, 두 줄이 같은 말을 하면 어느 쪽을 믿을지가 흐려지기 때문이었다.
+ *
+ * **그 캡처 진단을 같은 날 걷어냈다.** 그러자 재는 동안 무엇으로 재고
+ * 있는지 볼 곳이 한 군데도 없어졌다 — 숨기던 까닭이 사라진 것이다.
+ *
+ * 그래서 늘 띄우되 **때에 따라 다른 것을 적는다**:
+ *
+ * | | 적는 값 | 뜻 |
+ * |---|---|---|
+ * | 시작 전 | [chooseInput] 의 답 | 「이걸로 열 것이다」 |
+ * | 재는 중 | `opened.deviceLabel` | 「이걸로 열려 있다」 |
+ *
+ * 한 상자가 갈아 적으므로 **둘이 엇갈려 보일 일이 없다.** 요청과 결과가
+ * 다르면 시작하는 순간 글자가 바뀌어 그 사실이 드러난다.
  *
  * ## 한 줄이다 (담당자 지시 2026-09-28)
  *
@@ -1148,9 +1166,19 @@ private const val GAUGE_GLIDE_MS = 90
  * 숫자가 전부 다른 잣대가 된다.
  */
 @Composable
-private fun InputBeforeStart(capture: CaptureUiState, modifier: Modifier = Modifier) {
+private fun InputCard(
+    capture: CaptureUiState,
+    running: Boolean,
+    modifier: Modifier = Modifier,
+) {
     val choice = chooseInput(capture.inputs, capture.meterSettings.preferredInputKey)
-    val device = choice.device
+
+    // **재는 중에는 열린 것을, 아니면 열 것을 적는다.**
+    //
+    // 열린 이름이 비어 있을 수 있다(기기가 이름을 안 준 경우). 그때는
+    // 고를 때 쓰던 이름으로 내려간다 — 빈칸보다 낫다.
+    val opened = capture.opened?.deviceLabel?.takeIf { it.isNotBlank() }
+    val name = if (running) opened ?: choice.device?.productName else choice.device?.productName
 
     Row(
         modifier
@@ -1161,10 +1189,10 @@ private fun InputBeforeStart(capture: CaptureUiState, modifier: Modifier = Modif
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Text("입력 기기", color = SelahColors.TextMuted, fontSize = 11.sp)
+        Text("측정 기기", color = SelahColors.TextMuted, fontSize = 11.sp)
         Text(
-            device?.productName ?: "쓸 수 있는 입력이 없습니다",
-            color = if (device == null) SelahColors.Warn else SelahColors.TextPrimary,
+            name ?: "쓸 수 있는 측정 기기가 없습니다",
+            color = if (name == null) SelahColors.Warn else SelahColors.TextPrimary,
             fontSize = 14.sp,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
@@ -1174,8 +1202,11 @@ private fun InputBeforeStart(capture: CaptureUiState, modifier: Modifier = Modif
             // 긴 USB 기기 이름이 경고를 밀어내지 않는다.
             modifier = Modifier.weight(1f),
         )
-        // 고른 기기가 사라졌을 때만 뜬다. 평소에는 아무 말도 없다.
-        if (choice.reason == ChoiceReason.PreferredMissing) {
+        // **고른 기기가 사라졌을 때만** 뜬다. 평소에는 아무 말도 없다.
+        //
+        // 재는 중에는 적지 않는다 — 그때 화면이 적는 것은 이미 「실제로
+        // 열린 것」이라, 고른 것이 없었다는 말은 시작 전에 할 말이다.
+        if (!running && choice.reason == ChoiceReason.PreferredMissing) {
             Text(
                 "고르신 기기가 없습니다",
                 color = SelahColors.Warn,

@@ -147,7 +147,7 @@ fun DiagnosticsPanel(
         // 화면은 멀쩡해 보이므로, 아래로 밀려 내려가면 안 되는 말이다.
         opened.activeMicChangeKo?.let { InfoBar(it, tone = SelahColors.Warn) }
 
-        DiagRow("입력 기기", opened.deviceLabel, helpKo = "지금 소리를 받고 있는 마이크·오디오 인터페이스의 이름입니다. 안드로이드가 알려 준 그대로 적습니다.")
+        DiagRow("측정 기기", opened.deviceLabel, helpKo = "지금 소리를 받고 있는 마이크·오디오 인터페이스의 이름입니다. 안드로이드가 알려 준 그대로 적습니다.")
         // **어느 자리로 열렸는가.** 내장 마이크의 저장 열쇠에는 자리가
         // 없어(2026-09-23 결정) 이 줄이 없으면 하단인지 후면인지 화면
         // 어디에도 남지 않는다. 보정이 그 자리에 매인다(CAR-03).

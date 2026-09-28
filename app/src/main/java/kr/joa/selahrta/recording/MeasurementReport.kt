@@ -66,7 +66,7 @@ private fun inputSection(m: SessionMeta): ReportSection {
     return ReportSection(
         "무엇으로 쟀나",
         buildList {
-            add(ReportLine("입력 기기", m.deviceLabel.ifBlank { NOT_RECORDED_KO }))
+            add(ReportLine("측정 기기", m.deviceLabel.ifBlank { NOT_RECORDED_KO }))
             // **자리는 이름표일 뿐 물리 위치가 아니다.** 그래도 보정이
             // 여기 매이므로 적는다.
             add(ReportLine("마이크 자리", c.routedAddress.ifEmpty { UNKNOWN_KO }))

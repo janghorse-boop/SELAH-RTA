@@ -117,7 +117,7 @@ fun SettingsScreen(
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
     ) {
-        SectionTitle("입력 기기")
+        SectionTitle("측정 기기")
         InputDevicePicker(
             inputs = capture.inputs,
             selectedKey = capture.meterSettings.preferredInputKey,
@@ -556,11 +556,11 @@ private fun InputDevicePicker(
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text("입력 기기", color = SelahColors.TextPrimary, fontSize = 13.sp)
+        Text("측정 기기", color = SelahColors.TextPrimary, fontSize = 13.sp)
 
         if (inputs.isEmpty()) {
             Text(
-                "쓸 수 있는 입력 기기를 찾지 못했습니다. 마이크 권한을 허용하면 목록이 나타납니다.",
+                "쓸 수 있는 측정 기기를 찾지 못했습니다. 마이크 권한을 허용하면 목록이 나타납니다.",
                 color = SelahColors.Warn,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,

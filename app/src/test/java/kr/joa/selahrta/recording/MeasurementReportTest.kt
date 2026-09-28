@@ -94,7 +94,9 @@ class MeasurementReportTest {
     @Test
     fun `실기기 조건이 그대로 적힌다`() {
         val m = meta(conditions = s23)
-        assertEquals("SM-S918N", value(m, "입력 기기"))
+        // 이름표가 「입력 기기」 → 「측정 기기」 로 바뀌었다(담당자 지시
+        // 2026-09-28). 리포트를 읽는 사람이 보는 글자라 시험도 같이 옮긴다.
+        assertEquals("SM-S918N", value(m, "측정 기기"))
         assertEquals("bottom", value(m, "마이크 자리"))
         assertEquals("22", value(m, "활성 마이크"))
         assertEquals(CaptureSource.VoiceRecognition.labelKo, value(m, "입력 경로"))
