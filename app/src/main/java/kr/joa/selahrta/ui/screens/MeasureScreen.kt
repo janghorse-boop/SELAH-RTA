@@ -1055,6 +1055,24 @@ private fun GaugeArc(
         }
 
         if (fraction != null) {
+            // **밝은 화면에서는 테두리를 먼저 두른다**(독립 검토 UIS-05).
+            //
+            // 원색에 가까운 바는 담당자 지시다(2026-09-28). 그런데 옅은
+            // 트랙 위에서 노랑은 **1.49:1** 밖에 안 되어, 색만으로는
+            // 어디까지 찼는지가 잘 안 읽혔다. 색조는 지시대로 두고 같은
+            // 색을 어둡게 한 테두리로 가른다 — 넓게 한 번 깔고 그 위에
+            // 채우면 1dp 테두리가 남는다.
+            if (SelahColors.IsLight) {
+                drawArc(
+                    color = SelahColors.barOutline(shownColor),
+                    startAngle = 180f,
+                    sweepAngle = 180f * shown,
+                    useCenter = false,
+                    topLeft = topLeft,
+                    size = arcSize,
+                    style = Stroke(width = stroke + 2.dp.toPx(), cap = StrokeCap.Round),
+                )
+            }
             drawArc(
                 color = shownColor,
                 startAngle = 180f,
