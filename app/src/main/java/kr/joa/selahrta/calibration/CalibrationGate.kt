@@ -1,5 +1,7 @@
 package kr.joa.selahrta.calibration
 
+import kr.joa.selahrta.dsp.CleanWindow.Companion.DEFAULT_WINDOW_MS as CLEAN_WINDOW_MS
+
 /**
  * **지금 보정값을 저장해도 되는가.**
  *
@@ -74,22 +76,24 @@ fun calibrationGate(
         ) + "연결을 확인하고 소리가 다시 들어온 뒤에 보정하십시오.",
     )
 
-    // **잘린 소리로 맞추지 않는다.** 풀스케일에 닿은 순간의 실제 음압은
-    // 읽은 값보다 높고, 얼마나 높은지는 알 길이 없다.
+    // **잘린 소리·묵은 소리로 맞추지 않는다.**
     //
-    // **「그 뒤로 조용했는가」를 묻는다**(독립 재검증 UISR-02). 예전에는
-    // 세션 누적 플래그를 봤는데, 그러면 시작할 때 충격음 한 번으로
-    // **입력을 낮춰도 영영 풀리지 않았다** — 안내는 낮추라고 하는데.
-    !evidence.cleanWindow(nowNs) -> CalibrationGate.Reject(
-        "소리가 너무 커서 파형이 잘렸습니다. 입력 볼륨을 낮추고 " +
-            "%.0f초쯤 기다린 뒤에 보정하십시오 — 잘린 값으로 맞추면 그만큼 틀립니다."
-                .format(CalibrationEvidence.CLEAN_WINDOW_MS / 1000.0),
+    // 예전에는 「지금 잘리고 있는가」와 「자리를 잡았는가」를 따로
+    // 물었다. 둘 다 **`CleanWindow` 가 흡수한다**(독립 재검증 UISRF-01) —
+    // 그 창은 실제로 들어온 깨끗한 프레임만 세고, 잘리거나 끊기면
+    // 처음부터 다시 세기 때문이다. 창이 찼다는 것이 곧 「잘리지 않은
+    // 소리가 그만큼 이어졌다」는 뜻이다.
+    //
+    // **기다리게 하는 것으로는 못 고쳤다.** 화면의 현재값은 지수
+    // 시간가중이라 3τ 뒤에도 옛 에너지의 5%가 남고, 진폭이 100배
+    // 바뀌면 그 5%가 새 에너지보다 훨씬 크다 — 검토자가 잰 잔류가
+    // +26.52 dB 였다.
+    evidence.cleanSpl == null -> CalibrationGate.Reject(
+        "잘리지 않은 소리가 %.1f초 더 필요합니다(지금 %.1f초). ".format(
+            (CLEAN_WINDOW_MS - evidence.cleanMs).coerceAtLeast(0L) / 1000.0,
+            evidence.cleanMs / 1000.0,
+        ) + "소리가 잘리거나 끊기면 처음부터 다시 셉니다.",
     )
-
-    // **바늘이 자리를 잡기 전에 맞추지 않는다.** 시작 직후 값은 0 에서
-    // 올라오는 중이라 실제보다 낮다.
-    !evidence.settled ->
-        CalibrationGate.Reject("값이 아직 자리를 잡는 중입니다. 잠시 뒤에 다시 누르십시오.")
 
     // **교정기 단추만 순음을 본다.** 기준 소음계에 맞추는 쪽은 사람이
     // 다른 계기의 숫자를 보고 적는 것이라 순음이 있을 까닭이 없다.

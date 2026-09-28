@@ -24,6 +24,22 @@ package kr.joa.selahrta.calibration
  * 그래서 「화면에 값이 남는 정책」과 「저장해도 되는 정책」을 갈랐다.
  * 화면은 마지막 값을 계속 보여 줘도 되지만, 저장은 **지금 들어오는
  * 소리**에만 기댄다.
+ *
+ * ## 값 자체도 화면 것을 쓰지 않는다 (독립 재검증 UISRF-01, 2026-09-29)
+ *
+ * 처음에는 「잘린 뒤 3초 기다리게 한다」로 막으려 했는데, **기다리는
+ * 것으로는 못 고치는 문제**였다. 화면의 현재값은 지수 시간가중이라
+ * 과거를 오래 기억한다 — 3τ 뒤에도 옛 에너지의 5%가 남고, 진폭이
+ * 100배 바뀌면 그 5%가 새 에너지보다 훨씬 크다.
+ *
+ * 검토자가 재현한 값: 잘린 큰 소리 뒤 **3.1초를 기다려도** −16.49 dBFS
+ * (안정값 −43.01), **잔류 +26.52 dB** 가 그대로 저장됐다. 게다가
+ * 입력이 끊긴 시간도 「조용했던 시간」으로 세고 있었다 — 소리가 안
+ * 들어오면 시간가중은 감쇠하지도 않는다.
+ *
+ * 그래서 보정에 쓸 값은 [kr.joa.selahrta.dsp.CleanWindow] 가 따로
+ * 잰다: **실제로 들어온 깨끗한 프레임**만 세는 유한 창 평균이고,
+ * 잘림·읽기 오류·공백이 있으면 처음부터 다시 센다.
  */
 data class CalibrationEvidence(
     /** 이 근거를 만든 입력 세션. 답을 받을 때 달라졌으면 버린다. */
@@ -31,49 +47,32 @@ data class CalibrationEvidence(
     /** 근거를 만든 때(단조 시계, ns). 나이를 재는 기준이다. */
     val atMonotonicNs: Long,
     /**
-     * 그때의 세 가중 결과.
+     * **깨끗한 구간의 유한 창 평균**(`CleanWindow`). 덜 찼으면 null.
      *
-     * **값을 미리 고르지 않는다.** 어느 가중으로 보정할지는 설정이
-     * 정하는데 그것은 주 스레드의 것이다. 오디오 스레드는 잰 것을 그대로
-     * 넘기고, 고르는 일은 [measuredDbfs] 를 부르는 쪽이 한다.
+     * 화면의 현재값이 아니다. 지수 시간가중은 과거를 오래 기억해서,
+     * 잘린 큰 소리 뒤 3초를 기다려도 **+26.5 dB 가 남아 있었다**
+     * (독립 재검증 UISRF-01). 유한 창은 창 밖의 기여가 0 이다.
      */
-    val spl: kr.joa.selahrta.dsp.MultiWeightFrame,
-    /**
-     * 마지막으로 파형이 잘린 때(단조 시계, ns). 한 번도 없으면 0.
-     *
-     * **누적 플래그가 아니다.** 언제였는지를 들고 있어야 「그 뒤로 충분히
-     * 조용했는가」를 물을 수 있다.
-     */
-    val lastClipNs: Long,
+    val cleanSpl: kr.joa.selahrta.dsp.MultiWeightFrame?,
+    /** 이어서 센 깨끗한 시간(ms). 화면이 「얼마나 더」를 적는 데 쓴다. */
+    val cleanMs: Long,
 ) {
-    /** 보정에 쓸 날 값. 화면의 SPL 과 달리 보정값이 걸리지 않은 값이다. */
-    fun measuredDbfs(w: kr.joa.selahrta.dsp.Weighting): Double =
-        spl.of(w).currentDbfs.value
-
     /**
-     * 시간가중이 자리를 잡았는가.
+     * 보정에 쓸 값. 깨끗한 구간이 덜 찼으면 null.
      *
-     * 세 가중이 같은 시간상수를 쓰므로 어느 것을 봐도 같다.
+     * **보정값이 걸리지 않은 날 값**이고, 화면의 현재값과 다른
+     * 계산이다 — 카드가 그 사실을 적어야 한다.
      */
-    val settled: Boolean get() = spl.a.settled
+    fun measuredDbfs(w: kr.joa.selahrta.dsp.Weighting): Double? =
+        cleanSpl?.of(w)?.leqShortDbfs?.value
 
     /** 이 근거가 만들어진 뒤 흐른 시간(ms). */
     fun ageMs(nowNs: Long): Double = (nowNs - atMonotonicNs) / 1e6
 
     /**
-     * 마지막 클리핑 뒤로 충분히 지났는가.
-     *
-     * **[CLEAN_WINDOW_MS] 는 음향 정확도 기준이 아니다.** 큰 소리 뒤의
-     * 잔류 응답이 가라앉기를 기다리는 운영 문턱이다 — Slow(τ=1s)의
-     * 자리잡기 3τ 를 그대로 쓴다.
-     */
-    fun cleanWindow(nowNs: Long): Boolean =
-        lastClipNs == 0L || (nowNs - lastClipNs) / 1e6 >= CLEAN_WINDOW_MS
-
-    /**
      * 지금 들어오는 소리라고 부를 만큼 새것인가.
      *
-     * **[FRESH_MS] 도 음향 기준이 아니다.** 화면 갱신 간격(66ms)의 몇
+     * **[FRESH_MS] 는 음향 기준이 아니다.** 화면 갱신 간격(66ms)의 몇
      * 배로, 「콜백이 살아 있다」를 판정하는 운영 문턱이다.
      */
     fun fresh(nowNs: Long): Boolean = ageMs(nowNs) <= FRESH_MS
@@ -81,8 +80,5 @@ data class CalibrationEvidence(
     companion object {
         /** 이보다 묵은 값으로는 보정하지 않는다(ms). */
         const val FRESH_MS = 500.0
-
-        /** 클리핑 뒤 이만큼 조용해야 다시 보정할 수 있다(ms). */
-        const val CLEAN_WINDOW_MS = 3_000.0
     }
 }
