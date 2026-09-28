@@ -72,6 +72,8 @@ fun SettingsScreen(
     onDismissCalibrationNotice: () -> Unit,
     /** 「이 자리에서 잰 것이 맞다」고 사람이 확인해 준다(독립 재검토 CAR-03). */
     onConfirmCalibrationRoute: () -> Unit,
+    onConfirmPendingCalibration: () -> Unit,
+    onDismissPendingCalibration: () -> Unit,
     /** 음압(SPL·Leq·MIN·MAX)의 가중. */
     onSplWeighting: (Weighting) -> Unit,
     /** 순간최고(PEAK)의 가중. 음압과 따로 둔다(지시서 §16). */
@@ -232,6 +234,8 @@ fun SettingsScreen(
             onClear = onClearCalibration,
             onDismissNotice = onDismissCalibrationNotice,
             onConfirmRoute = onConfirmCalibrationRoute,
+            onConfirmPending = onConfirmPendingCalibration,
+            onDismissPending = onDismissPendingCalibration,
             modifier = Modifier.padding(top = 8.dp),
         )
 

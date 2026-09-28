@@ -81,7 +81,7 @@ data class SelahPalette(
     val highBar: Color,
 )
 
-private val DarkPalette = SelahPalette(
+internal val DarkPalette = SelahPalette(
     background = Color(0xFF0B0E11),
     surface = Color(0xFF12171C),
     surfaceVariant = Color(0xFF1B2128),
@@ -129,7 +129,7 @@ private val DarkPalette = SelahPalette(
  * 바탕도 순백이 아니다. 종일 보는 계기 화면이라 순백은 눈이 아프고,
  * 그 위에 얹는 흰 카드([surface])가 구별되지 않는다.
  */
-private val LightPalette = SelahPalette(
+internal val LightPalette = SelahPalette(
     background = Color(0xFFF6F8FA),
     surface = Color(0xFFFFFFFF),
     surfaceVariant = Color(0xFFE9EEF3),
@@ -140,7 +140,16 @@ private val LightPalette = SelahPalette(
 
     textPrimary = Color(0xFF0D1620),
     textSecondary = Color(0xFF47576A),
-    textMuted = Color(0xFF8493A3),
+    // **읽으라고 쓴 글자가 흐렸다**(독립 검토 UIS-05, 2026-09-28).
+    //
+    // 예전 값 `0xFF8493A3` 은 흰 카드에서 **3.14:1**, 배경에서 2.95:1
+    // 이었다. 이 색은 비활성 값에만 쓰는 것이 아니라 11sp 교정 안내와
+    // 「순음을 왜 못 알아봤는가」에도 쓰인다 — **밝은 곳에서 쓰라고 만든
+    // 테마인데 정작 읽어야 할 설명이 옅어졌다.**
+    //
+    // 5.23:1 / 4.91:1 로 올린다(일반 글자 기준 4.5:1). 그래도
+    // textSecondary(7.40:1)보다 옅어 「덜 중요한 줄」로는 그대로 읽힌다.
+    textMuted = Color(0xFF5F6E7E),
 
     // 하늘색(0xFF4FC3F7)은 흰 바탕에서 글자로 못 쓴다. 같은 계열을
     // 어둡게 내린다.
@@ -153,7 +162,14 @@ private val LightPalette = SelahPalette(
     onChipOn = Color(0xFF015C8F),
 
     // **글자용이다.** 원색 노랑은 흰 바탕에서 사라지므로 내려 쓴다.
-    low = Color(0xFFB07D00),
+    //
+    // **한 번 내린 것으로는 모자랐다.** `0xFFB07D00` 은 흰 카드에서
+    // 3.63:1 이라 일반 글자 기준(4.5:1)에 못 미쳤다 — 노랑은 같은
+    // 밝기라도 유난히 잘 사라진다. 5.16:1 로 더 내린다.
+    //
+    // 이것은 검토 지적이 아니라 **대비 시험을 붙이고 나서** 나온 값이다
+    // (`PaletteContrastTest`). 눈으로 고른 색은 재 봐야 안다.
+    low = Color(0xFF8F6600),
     inRange = Color(0xFF2E7D32),
     high = Color(0xFFC62828),
     warn = Color(0xFFB45309),
@@ -202,6 +218,24 @@ object SelahColors {
      * 회색이라 흰 바탕에서는 사라진다(실제로 그렇게 나왔다).
      */
     val IsLight: Boolean get() = palette === LightPalette
+
+    /**
+     * **밝은 화면에서 바를 트랙과 가르는 테두리 색**(독립 검토 UIS-05).
+     *
+     * 원색에 가까운 바는 담당자 지시다(2026-09-28: 「노란, 녹색, 빨간
+     * 원색에 가깝게」). 그런데 옅은 트랙(`#E9EEF3`) 위에서 노랑은
+     * **1.49:1**, 초록은 2.79:1 로, 색만으로는 형태가 안 읽혔다
+     * (비텍스트 기준 3:1).
+     *
+     * 색을 바꾸는 대신 같은 색을 어둡게 한 **테두리**를 두른다. 지시한
+     * 색조는 그대로 두고 모양만 또렷해진다. 0.62 배에서 셋 다 3:1 을
+     * 넘는다(노랑 3.70 · 초록 6.10 · 빨강 7.51).
+     *
+     * 어두운 화면에서는 바가 이미 바탕보다 훨씬 밝아 두르지 않는다 —
+     * 두르면 도리어 획이 탁해진다.
+     */
+    fun barOutline(c: Color): Color =
+        Color(c.red * 0.62f, c.green * 0.62f, c.blue * 0.62f, c.alpha)
 
     val Background: Color get() = palette.background
     val Surface: Color get() = palette.surface

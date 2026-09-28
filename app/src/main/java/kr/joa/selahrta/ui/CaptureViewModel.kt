@@ -31,7 +31,9 @@ import kr.joa.selahrta.audio.OpenResult
 import kr.joa.selahrta.audio.OpenedFormat
 import kr.joa.selahrta.audio.RequestedFormat
 import kr.joa.selahrta.calibration.ActiveCalibration
+import kr.joa.selahrta.calibration.CalibrationGate
 import kr.joa.selahrta.calibration.CalibrationKey
+import kr.joa.selahrta.calibration.calibrationGate
 import kr.joa.selahrta.calibration.ROUTE_UNCONFIRMED_KO
 import kr.joa.selahrta.calibration.ActiveCurve
 import kr.joa.selahrta.calibration.CalibrationStore
@@ -148,6 +150,21 @@ enum class ResponsePhase(val labelKo: String) {
     Done("다 쟀습니다"),
 }
 
+/**
+ * 사람의 확인을 기다리는 보정 한 건(독립 검토 UIS-02).
+ *
+ * **왜 세션 번호를 들고 있나**: 묻는 사이에 측정이 멈추거나 마이크가
+ * 바뀔 수 있다. 그때 저장하면 묻던 것과 **다른 기기**의 보정값이 된다.
+ */
+data class PendingCalibration(
+    val referenceDb: Double,
+    val source: kr.joa.selahrta.calibration.CalibrationSource,
+    /** 물을 때의 입력 세션. 답을 받을 때 달라졌으면 취소한다. */
+    val session: Long,
+    /** 순음을 왜 못 알아봤는지. 사람이 판단할 재료다. */
+    val reasonKo: String?,
+)
+
 data class CaptureUiState(
     val measure: MeasureState = MeasureState.Idle,
     val opened: OpenedFormat? = null,
@@ -248,6 +265,13 @@ data class CaptureUiState(
     val errorKo: String? = null,
     /** 보정 저장 결과 안내. 한 번 보여 주고 지운다. */
     val calibrationNoticeKo: String? = null,
+    /**
+     * **묻고 있는 보정.** 순음이 안 보이는데 교정기 단추를 눌렀을 때만 찬다.
+     *
+     * 사람이 「교정기를 물렸다」고 답하면 저장하고, 아니면 버린다
+     * (독립 검토 UIS-02).
+     */
+    val pendingCalibration: PendingCalibration? = null,
     /**
      * 지금 입력 세션의 번호. 기기를 열 때마다 올라간다.
      *
@@ -832,6 +856,20 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 controller.update { st ->
                     st.copy(meterSettings = s, settingsLoaded = true, audioFormat = s.audioFormat)
                 }
+                // **구간 사건은 여기 한 곳에서만 남긴다**(독립 검토 UIS-04).
+                //
+                // 예전에는 `setSegment` 만 기록에 남겼다. 그런데 화면이 보는
+                // 것은 `activeSegment` 라서, **구간을 지우기만 해도** 화면은
+                // 다음 구간으로(마지막이면 구간 없음으로) 넘어갔다. 그 길에는
+                // 사건이 없어 기록과 CSV 는 계속 지워진 구간으로 분류했다 —
+                // 화면에서 견준 구간과 표에 적힌 구간이 달라진다.
+                //
+                // 단추마다 적지 않고 **설정을 받아들이는 경계**에서 앞뒤를
+                // 견준다. 더하기·빼기·고르기가 모두 여기를 지나므로 새 길이
+                // 생겨도 저절로 따라온다.
+                if (old.activeSegment != s.activeSegment) {
+                    noteSegmentToRecording(s.activeSegment, s)
+                }
                 controller.onSettingsChanged(old, s)
             }
         }
@@ -1319,11 +1357,15 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { settingsStore.removeSegment(s) }
     }
 
+    /**
+     * 구간을 고른다.
+     *
+     * **여기서 기록에 남기지 않는다**(독립 검토 UIS-04). 예전에는 이
+     * 함수만 사건을 남겼는데, 그러면 더하기·빼기로 바뀌는 구간이 빠진다.
+     * 설정을 받아들이는 경계 한 곳에서 앞뒤를 견주므로 여기는 저장만 한다.
+     */
     fun setSegment(s: ChurchSegment) {
         viewModelScope.launch { settingsStore.setSegment(s) }
-        // **기록에도 남긴다**(Phase 10). 구간은 행에 넣지 않고 사건으로
-        // 적으므로, 바뀌는 순간을 여기서 잡아야 한다.
-        noteSegmentToRecording(s)
     }
 
     /** 구간 범위를 고친다. 말이 안 되는 값은 저장하지 않고 그 사실을 알린다. */
@@ -1688,27 +1730,107 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      *
      * 지금 읽고 있는 dBFS 를 기준으로 삼는다. 소리가 안정된 상태에서
      * 눌러야 맞는 값이 나오며, 그렇지 않으면 저장소가 거부한다.
+     *
+     * ## 교정기 단추는 순음을 확인하고 누른다 (독립 검토 UIS-02)
+     *
+     * 2026-09-28 에 「간편교정은 쉬워야 한다」는 지시로 단추를 늘 누를 수
+     * 있게 열었다. 그때 **틀리게 맞추면 화면이 이상해질 것**이라고 적어
+     * 두었는데, **그 말이 틀렸다.**
+     *
+     * 오프셋은 `기준값 − 지금 읽는 값`이다. 그러니 무엇에 대고 맞추든
+     * **맞춘 직후 화면은 반드시 기준값(94)을 가리킨다.** 교정기를 안
+     * 끼우고 주변 소리에 맞춰도 화면은 94 다 — 틀릴수록 멀쩡해 보인다.
+     * 검토자가 실제로 넣어 본 값이 `offset=144.0 dB` 였고 저장됐다.
+     *
+     * 그래서 **막지는 않되 묻는다.** 순음이 보이면 예전처럼 곧바로
+     * 저장한다(쉬움은 그대로다). 안 보이면 「정말 교정기를 물렸습니까」를
+     * 한 번 묻고, 사람이 그렇다고 하면 저장한다. 회색으로 잠가 두던 옛
+     * 방식으로 돌아가지 않는다 — 그때는 아예 보정을 할 수 없었다.
      */
     fun saveSimpleCalibration(
         referenceDb: Double,
         source: kr.joa.selahrta.calibration.CalibrationSource =
             kr.joa.selahrta.calibration.CalibrationSource.Meter,
     ) {
-        val format = controller.confirmedFormat()
-        val measured = state.value.meter.currentDbfs
-        if (format == null || measured == null) {
+        when (val gate = currentGate(source)) {
+            is CalibrationGate.Reject ->
+                controller.update { st -> st.copy(calibrationNoticeKo = gate.reasonKo) }
+
+            CalibrationGate.AskConfirmation ->
+                controller.update { st -> st.copy(
+                    pendingCalibration = PendingCalibration(
+                        referenceDb = referenceDb,
+                        source = source,
+                        session = st.session,
+                        reasonKo = currentToneCheck()?.reasonKo,
+                    ),
+                ) }
+
+            CalibrationGate.Save -> performCalibrationSave(referenceDb, source)
+        }
+    }
+
+    /**
+     * 「교정기를 물렸다」는 사람의 확인을 받고 저장한다.
+     *
+     * **묻는 사이에 바뀌었으면 취소한다.** 대화상자가 떠 있는 동안 측정이
+     * 멈추거나 마이크가 바뀔 수 있는데, 그때 저장하면 **묻던 것과 다른
+     * 기기**의 보정값이 된다.
+     */
+    fun confirmPendingCalibration() {
+        val pending = state.value.pendingCalibration ?: return
+        controller.update { st -> st.copy(pendingCalibration = null) }
+
+        // **다시 검사한다.** 묻는 동안 소리가 잘리기 시작했을 수도 있다.
+        // 순음은 이미 사람이 답했으므로 여기서 또 묻지 않는다.
+        val gate = currentGate(pending.source)
+        if (gate is CalibrationGate.Reject) {
+            controller.update { st -> st.copy(calibrationNoticeKo = gate.reasonKo) }
+            return
+        }
+        if (state.value.session != pending.session) {
             controller.update { st -> st.copy(
-                calibrationNoticeKo = when {
-                    controller.baseState.value.opened == null -> "먼저 측정을 시작해야 보정할 수 있습니다."
-                    format == null ->
-                        "어느 마이크로 열렸는지 아직 확인되지 않았습니다. " +
-                            "확인된 뒤에 보정하십시오 — 지금 저장하면 다른 기기의 " +
-                            "보정값으로 남을 수 있습니다."
-                    else -> "아직 읽은 값이 없습니다. 잠시 뒤에 다시 누르십시오."
-                },
+                calibrationNoticeKo = "묻는 사이에 측정이 다시 시작됐습니다. " +
+                    "보정하지 않았습니다 — 다시 누르십시오.",
             ) }
             return
         }
+        performCalibrationSave(pending.referenceDb, pending.source)
+    }
+
+    fun dismissPendingCalibration() {
+        controller.update { st -> st.copy(pendingCalibration = null) }
+    }
+
+    /** 지금 들어오는 소리가 1kHz 순음인가. 첫 FFT 전이면 null. */
+    private fun currentToneCheck(): kr.joa.selahrta.dsp.CalibratorToneCheck? =
+        state.value.rta?.let { kr.joa.selahrta.dsp.checkCalibratorTone(it.bandsSpl) }
+
+    /**
+     * 지금 이 순간의 판단. 규칙 자체는 [calibrationGate] 에 있다 —
+     * 안드로이드 없이 시험할 수 있어야 하기 때문이다.
+     */
+    private fun currentGate(
+        source: kr.joa.selahrta.calibration.CalibrationSource,
+    ): CalibrationGate {
+        val st = state.value
+        return calibrationGate(
+            opened = controller.baseState.value.opened != null,
+            routeConfirmed = controller.confirmedFormat() != null,
+            measuredDbfs = st.meter.currentDbfs,
+            clipped = st.meter.peakClipped,
+            settled = st.meter.settled,
+            source = source,
+            toneOk = currentToneCheck()?.ok,
+        )
+    }
+
+    private fun performCalibrationSave(
+        referenceDb: Double,
+        source: kr.joa.selahrta.calibration.CalibrationSource,
+    ) {
+        val format = controller.confirmedFormat() ?: return
+        val measured = state.value.meter.currentDbfs ?: return
         val cal = GlobalCalibration(
             offsetDb = computeOffset(referenceDb, measured),
             savedAtEpochMs = System.currentTimeMillis(),
@@ -1968,6 +2090,15 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 recordingStartedAt = startedAt
                 recordingOpened = opened
                 controller.update { it.copy(recordingId = id) }
+                // **시작할 때의 구간을 첫 사건으로 남긴다**(독립 검토 UIS-04).
+                //
+                // 구간은 「바뀔 때」만 적히므로, 처음 고른 그대로 끝까지 가면
+                // 사건이 하나도 없다. 그러면 표의 구간 칸이 통째로 비어,
+                // 화면에서 분명히 고르고 잰 것이 **적지 않은 것처럼** 보인다.
+                noteSegmentToRecording(
+                    st.meterSettings.activeSegment,
+                    st.meterSettings,
+                )
             }
         }
     }
@@ -1979,11 +2110,24 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** 구간(설교/찬양)이 바뀌었다고 기록에 적는다. */
-    private fun noteSegmentToRecording(segment: ChurchSegment) {
+    /**
+     * 구간이 바뀐 순간을 기록에 남긴다. 구간은 행에 넣지 않고 사건으로 적는다.
+     *
+     * **「구간 없음」도 사건이다**(독립 검토 UIS-04). 마지막 구간을 지우면
+     * 화면은 구간 없이 돌아가는데, 그때 사건을 안 남기면 표는 **지워진
+     * 구간으로 끝까지 분류한다.** 비어 있는 것과 틀린 것은 다른 일이다.
+     *
+     * 이름은 **그때 화면에 적혀 있던 이름**으로 박아 둔다. 나중에 이름을
+     * 바꿔도 옛 기록의 글자가 따라 바뀌지 않는다.
+     */
+    private fun noteSegmentToRecording(
+        segment: ChurchSegment?,
+        settings: kr.joa.selahrta.settings.MeterSettings,
+    ) {
         controller.postToCapture { s ->
             s.recorder?.note(
                 kr.joa.selahrta.recording.SessionEventKind.SegmentChange,
-                segment.shortKo,
+                segment?.let { settings.nameFor(it) } ?: "구간 없음",
                 segment,
             )
         }

@@ -52,12 +52,30 @@
       따로 저장되므로**(CalibrationKey.storageKey) 새 폰으로 옮겨 가는
       것 자체가 틀린 값이다. 옮길 까닭이 없다.
 
-      제외 규칙(dataExtractionRules)으로 기록만 빼는 길도 있지만,
-      제조사별 기기 이전까지 막히는지는 실기기로 확인해야 한다.
-      약속을 지키는 데는 이쪽이 확실하다.
+      **끄는 것만으로는 모자랐다**(독립 검토 UIS-01, 2026-09-28).
+
+      처음에는 `allowBackup="false"` 하나로 끝냈다. 제외 규칙
+      (dataExtractionRules)도 보았지만 「기기 이전까지 막히는지 실기기로
+      확인해야 한다」며 미뤘다. **그 판단이 틀렸다** — 확인할 문제가
+      아니라 문서에 적힌 계약이다.
+
+      targetSdk 31 이상에서 `allowBackup` 은 **클라우드 백업만** 끈다.
+      **기기 간 이전(D2D)은 그 속성이 막지 않는다** — 새 폰을 살 때
+      제조사 마법사가 앱 데이터를 그대로 옮겨 갈 수 있다. 막으려면
+      `dataExtractionRules` 의 `<device-transfer>` 에서 저장 영역을
+      **하나하나 빼야** 한다.
+      https://developer.android.com/about/versions/12/behavior-changes-12#backup-restore
+
+      그래서 둘 다 건다. 옛 판(Android 11 이하)은 `allowBackup=false` 가,
+      12 이상은 제외 규칙이 맡는다. 녹음과 기록은 `filesDir/sessions`
+      아래에 있어 `file` 영역에 든다.
+
+      **이미 다른 곳에 생긴 사본은 이 설정이 되돌리지 못한다.** 새로
+      만들어지는 것을 막을 뿐이다 — 안내 문구도 그렇게 적어야 한다.
     -->
     <application
         android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"

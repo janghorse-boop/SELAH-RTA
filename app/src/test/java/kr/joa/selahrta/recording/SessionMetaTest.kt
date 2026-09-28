@@ -22,6 +22,7 @@ class SessionMetaTest {
         events: List<SessionEvent> = emptyList(),
         deviceLabel: String = "SM-S918N",
         memo: String = "",
+        leqWindowMs: Long = 60_000L,
     ) = SessionMeta(
         id = "2026-09-26T09-00-00-abc",
         startedAtEpochMs = 1_790_000_000_000L,
@@ -40,7 +41,7 @@ class SessionMetaTest {
         curveLabel = "EMM-6_17860",
         weighting = Weighting.A,
         timeWeight = TimeWeight.Fast,
-        leqWindowMs = 60_000L,
+        leqWindowMs = leqWindowMs,
         leqDb = 71.2,
         minDb = 48.0,
         maxDb = 88.5,
@@ -54,6 +55,23 @@ class SessionMetaTest {
     fun `겉장이 그대로 왕복한다`() {
         val m = sample()
         val back = decodeSessionMeta(encodeSessionMeta(m)).getOrThrow()
+        assertEquals(m, back)
+    }
+
+    /**
+     * **옛 기록의 -1 이 살아서 돌아온다**(독립 검토 UIS-06, 2026-09-28).
+     *
+     * 2026-09-28 까지 -1 은 「전체(측정 시작부터)」였다. 그 선택 칸을
+     * 없애면서 이 왕복 시험을 함께 지웠는데, **지울 것이 아니었다** —
+     * 새 측정이 그 값을 만들지 않는 것과 이미 저장된 파일에서 그 값을
+     * 읽어 내는 것은 다른 일이다. 여기서 뭉개지면 옛 기록의 조건이
+     * 조용히 사라진다.
+     */
+    @Test
+    fun `옛 기록의 Leq 전체 구간 값이 왕복한다`() {
+        val m = sample(leqWindowMs = -1L)
+        val back = decodeSessionMeta(encodeSessionMeta(m)).getOrThrow()
+        assertEquals(-1L, back.leqWindowMs)
         assertEquals(m, back)
     }
 

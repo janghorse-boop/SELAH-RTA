@@ -69,7 +69,7 @@ import kr.joa.selahrta.audio.inputSignalState
 import kr.joa.selahrta.dsp.CLIP_THRESHOLD
 import kr.joa.selahrta.audio.externalReadiness
 import kr.joa.selahrta.ui.components.ReadinessCard
-import kr.joa.selahrta.ui.components.DiagnosticsPanel
+import kr.joa.selahrta.audio.captureWarningKo
 import kr.joa.selahrta.ui.components.InfoBar
 import kr.joa.selahrta.ui.components.InputLevelBar
 import kr.joa.selahrta.ui.components.NO_VALUE
@@ -686,6 +686,19 @@ fun MeasureScreen(
         capture.inputForDisplay?.activeMicChangeKo?.let {
             InfoBar(it, Modifier.padding(top = 12.dp), tone = SelahColors.Warn)
         }
+
+        // **소리를 잃고 있으면 말한다**(독립 검토 UIS-03, 2026-09-28).
+        //
+        // 상자를 걷어내면서 `audioLagMs`·`readErrors` 의 표시 경로가 함께
+        // 사라졌다. 지워야 했던 것은 **늘 떠 있는 숫자판**이지 「소리를
+        // 잃고 있다」는 알림이 아니다 — 그것 없이는 사람이 **지나간
+        // 소리를 지금 값으로 읽는다.**
+        //
+        // 평상시에는 아무것도 안 그리고 문제가 있을 때만 한 줄이 뜬다.
+        // 기록을 켜지 않은 측정에서도 필요한 말이다.
+        captureWarningKo(capture.diagnostics)?.let {
+            InfoBar(it, Modifier.padding(top = 12.dp), tone = SelahColors.Warn)
+        }
     }
 }
 
@@ -1042,6 +1055,24 @@ private fun GaugeArc(
         }
 
         if (fraction != null) {
+            // **밝은 화면에서는 테두리를 먼저 두른다**(독립 검토 UIS-05).
+            //
+            // 원색에 가까운 바는 담당자 지시다(2026-09-28). 그런데 옅은
+            // 트랙 위에서 노랑은 **1.49:1** 밖에 안 되어, 색만으로는
+            // 어디까지 찼는지가 잘 안 읽혔다. 색조는 지시대로 두고 같은
+            // 색을 어둡게 한 테두리로 가른다 — 넓게 한 번 깔고 그 위에
+            // 채우면 1dp 테두리가 남는다.
+            if (SelahColors.IsLight) {
+                drawArc(
+                    color = SelahColors.barOutline(shownColor),
+                    startAngle = 180f,
+                    sweepAngle = 180f * shown,
+                    useCenter = false,
+                    topLeft = topLeft,
+                    size = arcSize,
+                    style = Stroke(width = stroke + 2.dp.toPx(), cap = StrokeCap.Round),
+                )
+            }
             drawArc(
                 color = shownColor,
                 startAngle = 180f,

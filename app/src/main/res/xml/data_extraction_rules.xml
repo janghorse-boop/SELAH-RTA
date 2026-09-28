@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    **앱 데이터를 이 폰 밖으로 내보내지 않는다**(독립 검토 UIS-01, 2026-09-28).
+
+    `android:allowBackup="false"` 는 targetSdk 31 이상에서 **클라우드 백업만**
+    끈다. 새 폰으로 옮길 때 제조사 마법사가 하는 **기기 간 이전(D2D)** 은
+    그 속성이 막지 않는다 — 막으려면 여기서 영역마다 빼야 한다.
+
+    왜 막는가: 녹음에는 설교와 성도들의 목소리가 그대로 담긴다. 앱도
+    홈페이지 개인정보처리방침도 「폰 안에만 둔다」고 적어 두었다. 이전된
+    사본은 원래 폰에서 기록을 지워도 **따라 지워지지 않는다.**
+
+    보정값을 잃는 것은 손해가 아니다. 보정은 마이크마다 따로 저장되므로
+    (`CalibrationKey.storageKey`) 새 폰으로 옮겨 간 값은 어차피 틀린 값이다.
+
+    **아홉 영역을 다 적는다.** 한 줄이라도 빠지면 그 영역만 조용히
+    딸려 간다. `path="."` 은 그 영역 전부를 뜻한다.
+    device_* 는 기기 보호 저장소(잠금 해제 전에도 읽히는 곳)다.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+        <exclude domain="device_root" path="." />
+        <exclude domain="device_file" path="." />
+        <exclude domain="device_database" path="." />
+        <exclude domain="device_sharedpref" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+        <exclude domain="device_root" path="." />
+        <exclude domain="device_file" path="." />
+        <exclude domain="device_database" path="." />
+        <exclude domain="device_sharedpref" path="." />
+    </device-transfer>
+</data-extraction-rules>

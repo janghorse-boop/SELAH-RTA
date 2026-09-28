@@ -35,6 +35,7 @@ class MeasurementReportTest {
         events: List<SessionEvent> = emptyList(),
         dropped: Int = 0,
         clippedRows: Int? = 0,
+        leqWindowMs: Long = 10_000L,
     ) = SessionMeta(
         id = "s1",
         startedAtEpochMs = 1_700_000_000_000L,
@@ -53,7 +54,7 @@ class MeasurementReportTest {
         curveLabel = curveLabel,
         weighting = Weighting.A,
         timeWeight = TimeWeight.Fast,
-        leqWindowMs = 10_000L,
+        leqWindowMs = leqWindowMs,
         leqDb = leq,
         minDb = 55.0,
         maxDb = 88.0,
@@ -157,6 +158,33 @@ class MeasurementReportTest {
         val m = meta(leq = Double.NaN)
         assertEquals(NOT_RECORDED_KO, value(m, "Leq"))
         assertEquals("88.0 dB", value(m, "MAX"))
+    }
+
+    /**
+     * **선택 칸을 없애도 옛 기록의 뜻은 그대로다**(독립 검토 UIS-06).
+     *
+     * 2026-09-28 까지 `leqWindowMs = -1` 은 「전체(측정 시작부터)」였다.
+     * 그 칸을 뺐다고 -1 을 「기록 없음」으로 적으면, **그때 분명히 적어
+     * 둔 조건을 적지 않은 것으로 바꿔** 버린다. 새 측정에서 고를 수 없게
+     * 하는 일과 옛 기록을 읽는 일은 별개다.
+     */
+    @Test
+    fun `옛 기록의 Leq 전체 구간을 그대로 읽는다`() {
+        assertEquals("전체(측정 시작부터)", value(meta(leqWindowMs = -1L), "Leq 구간"))
+    }
+
+    /** -1 만 뜻이 있다. 0 과 그 밖의 음수는 여전히 알 수 없는 값이다. */
+    @Test
+    fun `뜻을 모르는 Leq 구간은 기록 없음이다`() {
+        assertEquals(NOT_RECORDED_KO, value(meta(leqWindowMs = 0L), "Leq 구간"))
+        assertEquals(NOT_RECORDED_KO, value(meta(leqWindowMs = -2L), "Leq 구간"))
+        assertEquals(NOT_RECORDED_KO, value(meta(leqWindowMs = -1000L), "Leq 구간"))
+    }
+
+    /** 양수는 예전대로 초로 적는다. */
+    @Test
+    fun `Leq 구간은 초로 적는다`() {
+        assertEquals("30초", value(meta(leqWindowMs = 30_000L), "Leq 구간"))
     }
 
     // ── 믿음 등급 ──────────────────────────────────────────
