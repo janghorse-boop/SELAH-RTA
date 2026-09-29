@@ -94,8 +94,24 @@ class PartialWriteTest {
      */
     private fun expected(n: Int): FloatArray = FloatArray(n) { i ->
         val frame = i / CHANNELS
-        (DEFAULT_AMPLITUDE * sin(2 * PI * 1000 * frame / SAMPLE_RATE)).toFloat()
+        (DEFAULT_AMPLITUDE * rampGain(frame) * sin(2 * PI * 1000 * frame / SAMPLE_RATE)).toFloat()
     }
+
+    /**
+     * 시작 램프의 크기(2026-09-29, 지시서 §3).
+     *
+     * **소리는 0 에서 올라온다.** 첫 표본부터 제 크기로 내보내면 파형에
+     * 수직인 벽이 생기고, 스피커는 그것을 「딱」으로 낸다.
+     *
+     * 이 시험이 보는 것은 **파형이 이어지는가**(표본이 빠지거나 겹치지
+     * 않는가)이지 램프가 아니다. 그래서 원본 쪽에도 같은 램프를 곱해 두고
+     * 나머지를 견준다. 램프 자체는 `SignalRampTest` 가 본다.
+     *
+     * **`SignalPlayer.RAMP_SECONDS` 와 같아야 한다.** 그쪽을 바꾸면 여기도
+     * 바꾼다 — 그때 이 시험이 실패하는 것은 알림이지 고장이 아니다.
+     */
+    private fun rampGain(frame: Int): Double =
+        ((frame + 1) / (SAMPLE_RATE * 0.030)).coerceAtMost(1.0)
 
     /**
      * **128 → 256 → 나머지로 쪼개 받아도 파형이 이어진다.**
@@ -258,6 +274,24 @@ class PartialWriteTest {
      * 검증자가 「사용자가 이미 중지한 경우에는 나머지를 버리는 것이
      * 맞으므로 두 경우를 구분해야 한다」고 적었다. 멈춘 뒤에도 남은
      * 896개를 마저 밀어 넣으면 「멈추기」가 즉시 듣지 않는다.
+     *
+     * ## 2026-09-29 — 램프를 넣어도 여기서는 128 그대로다
+     *
+     * 지시서 §3 의 게인 램프를 넣었다. 멈출 때 소리를 30ms 에 걸쳐 0 까지
+     * 내리고 그만큼을 더 내보낸다 — 파형 한가운데서 끊으면 그 자리가
+     * 수직인 벽이 되어 「딱」 소리가 나기 때문이다.
+     *
+     * **그런데 이 시험에서는 램프가 나가지 않는다.** 여기 가짜 출력은
+     * `stop()` 이 불려야만 `write` 에서 깨어나도록 만들어져 있다. `stop()`
+     * 은 램프를 기다린 **뒤에** 출력을 멈추므로, 그리지 못하는 램프를
+     * 기다리다 시간을 넘기고 예전처럼 끊는다.
+     *
+     * 그 퇴화는 설계대로다 — 기다림은 **소리를 곱게 끊으려는** 것이지
+     * 지켜야 하는 값이 아니다. 램프가 실제로 그려지는 쪽은
+     * `SignalRampTest` 가 본다.
+     *
+     * 검증자의 걱정은 그대로 지킨다: **이미 만들어 둔 제 크기의 나머지는
+     * 어느 길로도 나가지 않는다.** 아래에서 그것을 직접 본다.
      */
     @Test
     fun `보내는 도중 멈추면 남은 부분을 버린다`() {
@@ -266,8 +300,12 @@ class PartialWriteTest {
         val sink = object : SignalSink {
             val calls = AtomicInteger()
             val taken = AtomicInteger()
+            /** 첫 128 칸 **뒤에** 나간 것들. 이것이 램프여야 한다. */
+            val tail = ArrayList<Float>()
             val released = CountDownLatch(1)
             override fun open(sampleRate: Int, frames: Int, channels: Int) = true
+
+            @Synchronized
             override fun write(buf: FloatArray, offset: Int, frames: Int): Int {
                 val call = calls.incrementAndGet()
                 if (call == 1) {
@@ -276,9 +314,13 @@ class PartialWriteTest {
                     taken.addAndGet(128)
                     return 128
                 }
+                for (i in 0 until frames) tail.add(buf[offset + i])
                 taken.addAndGet(frames)
                 return frames
             }
+
+            @Synchronized
+            fun tailCopy(): List<Float> = ArrayList(tail)
             override fun stop() = hold.countDown()
             override fun release(): Boolean {
                 released.countDown()
@@ -292,7 +334,14 @@ class PartialWriteTest {
         p.stop() // stop() 이 hold 를 풀고, write 는 128 만 받고 돌아온다
 
         assertTrue("자원을 놓아야 한다", sink.released.await(5, TimeUnit.SECONDS))
+
         assertEquals("멈춘 뒤에는 더 밀어 넣지 않는다", 128, sink.taken.get())
+        // **만들어 둔 나머지 1920 칸이 한 개도 나가면 안 된다.** 그것이
+        // 검증자가 막으라고 한 일이고, 램프를 넣은 뒤에도 그대로다.
+        assertTrue(
+            "멈춘 뒤 ${sink.tailCopy().size} 칸이 더 나갔다",
+            sink.tailCopy().isEmpty(),
+        )
         assertNull(p.playing)
     }
 }

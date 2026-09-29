@@ -75,6 +75,8 @@ fun SignalGeneratorCard(
     onToneHz: (Double) -> Unit,
     onChannels: (SignalChannels) -> Unit,
     onDismissNotice: () -> Unit,
+    /** 소리를 켜 둔 채 RTA 화면으로 간다. 재생은 끊기지 않는다. */
+    onMeasureInRta: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -93,6 +95,31 @@ fun SignalGeneratorCard(
             fontSize = 10.sp,
             lineHeight = 14.sp,
         )
+
+        // **틀어 놓고 바로 재러 간다**(지시서 §1).
+        //
+        // 소리는 화면을 넘어도 이어진다 — 재생은 앱 전체가 함께 쓰는
+        // `CaptureViewModel` 이 들고 있다. 그런데 지금은 도구 → 분석 →
+        // RTA 로 손가락을 세 번 옮겨야 하고, **그 사이에 끊길까 봐 사람이
+        // 먼저 멈춘다.** 한 걸음으로 만들면 그럴 까닭이 없어진다.
+        if (playing != null) {
+            TextButton(
+                onClick = onMeasureInRta,
+                modifier = Modifier.semantics { contentDescription = "RTA에서 재기" },
+            ) {
+                Text(
+                    "RTA에서 재기 →",
+                    color = SelahColors.Accent,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    "  소리는 그대로 납니다",
+                    color = SelahColors.TextMuted,
+                    fontSize = 10.sp,
+                )
+            }
+        }
 
         // **세기는 이어진 고르개다**(2026-09-24 담당자 지시). 작게·보통·크게
         // 셋뿐이던 때는 PA 에 물렸을 때 「보통은 크고 작게는 안 들리는」

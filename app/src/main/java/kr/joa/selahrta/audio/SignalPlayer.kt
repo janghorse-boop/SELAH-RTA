@@ -5,6 +5,7 @@ import android.os.Process
 import android.util.Log
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.PI
+import kotlin.math.ceil
 import kotlin.math.sin
 import kotlin.random.Random
 
@@ -94,6 +95,27 @@ class SignalPlayer(
          */
         @Volatile
         var toneHz: Double = 1_000.0
+
+        /**
+         * **소리를 내리는 중인가**(지시서 §3 게인 램프).
+         *
+         * `running` 을 바로 내리면 파형이 **한가운데서 뚝 끊긴다** —
+         * 스피커는 그 벽을 「딱」으로 낸다. 그래서 멈출 때는 이것을 먼저
+         * 올려, 내보내는 쪽이 제 손으로 30ms 에 걸쳐 0 까지 내리게 한다.
+         */
+        val fadeOut = AtomicBoolean(false)
+
+        /**
+         * 내리기가 끝났다는 신호.
+         *
+         * `stop()` 이 여기서 잠깐 기다린다 — 기다리지 않고 `sink.stop()`
+         * 을 부르면 내려가던 표본이 나가기 전에 출력이 닫혀, 램프를 둔
+         * 뜻이 없어진다.
+         *
+         * **오류로 끝난 길에서도 반드시 내려야 한다.** 안 내리면 `stop()`
+         * 이 기다릴 것 없는 것을 시간 끝까지 기다린다.
+         */
+        val faded = java.util.concurrent.CountDownLatch(1)
 
         /**
          * 놓기를 **시작**했는가. 두 번 놓지 않으려는 것뿐이다.
@@ -296,8 +318,45 @@ class SignalPlayer(
         // 미끄러지듯 따라오고, 끊기는 자리가 없다.
         var phase = 0.0
 
+        // **소리를 0 에서 올리고 0 으로 내린다**(지시서 §3: 20~50ms).
+        //
+        // 첫 표본부터 최대 진폭이 나가면 파형에 **수직인 벽**이 생기고,
+        // 스피커는 그것을 「딱」으로 낸다. 멈출 때도 같다 — 파형 한가운데를
+        // 끊는 것은 같은 크기의 벽이다.
+        //
+        // 위상을 이어 붙인 것(위)은 **주파수를 바꿀 때**의 벽을 없앴고,
+        // 이것은 **틀고 끌 때**의 벽을 없앤다. 둘은 다른 자리다.
+        val gainStep = 1.0 / (SAMPLE_RATE * RAMP_SECONDS)
+        var stopping = false
+        /** 내리기 시작할 때의 크기. 덩어리마다 그만큼씩 낮춘다. */
+        var fadeFrom = 1.0
+
+        // **`running` 이 여전히 주인이다.** 램프는 그것이 살아 있는 동안만
+        // 그린다 — `stop()` 이 기다려 주지 못하고 `running` 을 내렸다면
+        // 그 재생은 **더 쓰면 안 되는** 상태다(살아남은 옛 스레드가 새
+        // 재생과 겹쳐 소리가 둘이 난다. `SignalPlayerTest` 가 그것을 본다).
         while (pb.running.get()) {
-            for (f in 0 until FRAMES) {
+            // **끊으라는 말을 들으면 끊지 말고 내린다.** 다 내렸을 때에만
+            // 빠져나온다.
+            if (!stopping && pb.fadeOut.get()) {
+                stopping = true
+                // 다 올라가기 전에 멈췄으면 **그 자리에서** 내린다.
+                // 1.0 에서 내리면 소리가 한 번 커졌다 작아진다.
+                fadeFrom = (sample * gainStep).coerceAtMost(1.0)
+            }
+            if (stopping && fadeFrom <= 0.0) break
+
+            // **내리는 덩어리는 필요한 만큼만 만든다.** 1024 프레임을
+            // 채우면 다 내린 뒤의 0 들이 함께 나가, 「멈추기」가 그만큼
+            // 늦게 듣는다. 막 틀자마자 멈춘 경우에는 두 프레임이면 된다.
+            val frames = if (stopping) {
+                ceil(fadeFrom / gainStep).toInt().coerceIn(1, FRAMES)
+            } else {
+                FRAMES
+            }
+            val floats = frames * CHANNELS
+
+            for (f in 0 until frames) {
                 val time = (sample + f).toDouble() / SAMPLE_RATE
                 val v = when (req.signal) {
                     TestSignal.Pink -> pink.next()
@@ -320,7 +379,16 @@ class SignalPlayer(
                         out
                     }
                 }
-                val s = (amp * v).toFloat()
+                // **올라가는 쪽은 내보낸 표본 수에 묶는다.** 덩어리를 다
+                // 못 보내면 `sample` 은 나간 만큼만 나아가므로, 이렇게
+                // 하면 램프도 나간 소리와 같은 속도로 올라간다. 따로
+                // 세어 두면 못 나간 프레임까지 세어 **램프가 앞서간다.**
+                val gain = if (stopping) {
+                    (fadeFrom - (f + 1) * gainStep).coerceAtLeast(0.0)
+                } else {
+                    ((sample + f + 1) * gainStep).coerceAtMost(1.0)
+                }
+                val s = (amp * gain * v).toFloat()
                 // L·R 이 번갈아 든다. 안 내보내는 쪽은 **0 을 채운다** —
                 // 건너뛰면 지난 덩어리의 값이 남아 그쪽에서도 소리가 난다.
                 buf[f * CHANNELS] = if (toLeft) s else 0f
@@ -333,8 +401,18 @@ class SignalPlayer(
             // 어긋난다(독립 검증 SP02).
             var sent = 0
             var idleRounds = 0
-            while (sent < FLOATS && pb.running.get()) {
-                val wrote = pb.sink.write(buf, sent, FLOATS - sent)
+            // 나가는 조건이 덩어리에 따라 다르다.
+            //
+            // **내리는 덩어리는 끝까지 내보낸다.** `running` 만 보면 램프를
+            // 그려 놓고 내보내지 않는 꼴이 된다. 내리는 일은 30ms 안에
+            // 끝나므로 이 예외는 유한하다.
+            //
+            // **내리기 전에 만들어 둔 덩어리는 버린다**(독립 검증 SP02:
+            // 「사용자가 이미 중지한 경우에는 나머지를 버리는 것이 맞다」).
+            // 멈춘 뒤에도 그것을 마저 밀어 넣으면 「멈추기」가 즉시 듣지
+            // 않는다. 그 덩어리는 아직 제 크기라 더욱 그렇다.
+            while (sent < floats && pb.running.get() && (stopping || !pb.fadeOut.get())) {
+                val wrote = pb.sink.write(buf, sent, floats - sent)
                 if (wrote < 0) {
                     warn("write 오류로 재생을 끝낸다: $wrote")
                     endWithError(pb, wrote)
@@ -362,6 +440,8 @@ class SignalPlayer(
             // 주므로 나누어떨어지고, 설령 반 프레임이 남더라도 위상이
             // 표본 하나만큼 어긋날 뿐이라 들리지 않는다.
             sample += sent / CHANNELS
+            // 내리는 덩어리는 늘 통째로 나가므로 한 덩어리만큼 낮춘다.
+            if (stopping) fadeFrom = (fadeFrom - frames * gainStep).coerceAtLeast(0.0)
         }
 
         // 사람이 멈춰서 빠져나왔다. **여기서 놓는다** — `stop()` 의 기다림이
@@ -382,6 +462,8 @@ class SignalPlayer(
      * failedReleaseCount 0·pendingCount 0(상한 2).
      */
     private fun settle(pb: Playback) {
+        // 내릴 것이 남지 않았다. 기다리는 `stop()` 을 놓아 준다.
+        pb.faded.countDown()
         stuck.addIfPending(pb) { it.isSlotFree }
         pb.releaseOnce()
         if (pb.isSlotFree) stuck.remove(pb)
@@ -390,6 +472,9 @@ class SignalPlayer(
     /** 내보내기가 오류로 끝났다. **아직 내가 현재 재생일 때만** 알린다. */
     private fun endWithError(pb: Playback, wrote: Int) {
         pb.running.set(false)
+        // **오류로 끝난 길에서도 내린다.** 안 내리면 `stop()` 이 기다릴
+        // 것 없는 것을 시간 끝까지 기다린다.
+        pb.faded.countDown()
         // **떼어 내기와 종료 추적 등록은 한 전환이다.**
         //
         // 둘을 나눠 두면 그 사이에 새 재생이 끼어들 수 있다 — `current` 는
@@ -443,12 +528,24 @@ class SignalPlayer(
             current = null
             thread = null
             playing = null
-            pb?.running?.set(false)
+            // **아직 `running` 을 내리지 않는다**(지시서 §3 게인 램프).
+            // 여기서 내리면 파형이 한가운데서 끊겨 「딱」 소리가 난다.
+            // 대신 내리라고 일러 두고, 아래에서 잠깐 기다린다.
+            pb?.fadeOut?.set(true)
             // 떼어 내는 것과 종료 추적 등록을 **한 전환으로** 한다
             // (독립 검증 RC02 잔여 경합).
             pb?.let { p -> stuck.addIfPending(p) { it.isSlotFree } }
         }
         if (pb == null) return
+
+        // **자물쇠 밖에서 기다린다.** 안에서 기다리면 내보내는 쪽이
+        // 끝나기를 기다리며 화면·시작이 함께 막힌다.
+        //
+        // 시간을 넘겨도 그냥 간다 — 기다림은 **소리를 곱게 끊으려는**
+        // 것이지 정확성을 지키는 것이 아니다. 못 기다렸으면 예전처럼
+        // 끊길 뿐, 아래 순서는 그대로 지켜진다.
+        runCatching { pb.faded.await(FADE_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS) }
+        pb.running.set(false)
 
         pb.stopSink()
         t?.join(JOIN_MS)
@@ -477,6 +574,23 @@ class SignalPlayer(
 
         /** 한 덩어리의 프레임 수. */
         private const val FRAMES = 1024
+
+        /**
+         * 소리를 올리고 내리는 데 쓰는 시간(초) — 지시서 §3 의 20~50ms 안.
+         *
+         * **짧으면 벽이 남고 길면 소리가 늦는다.** 30ms 면 한 덩어리
+         * (1024 프레임 ≈ 21ms) 보다 조금 길어, 램프가 덩어리 경계에
+         * 맞춰지지 않고 고르게 그려진다.
+         */
+        private const val RAMP_SECONDS = 0.030
+
+        /**
+         * 내려가기를 기다리는 한도(ms).
+         *
+         * 램프 30ms 에 덩어리 하나(21ms)를 더한 것보다 넉넉하게 잡는다.
+         * 넘겨도 그냥 간다 — 곱게 끊자는 것이지 지켜야 하는 값이 아니다.
+         */
+        private const val FADE_WAIT_MS = 120L
 
         /**
          * 한 덩어리의 **칸** 수. `AudioTrack` 의 float 쓰기가 세는 단위다.
