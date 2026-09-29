@@ -23,7 +23,7 @@ import java.util.concurrent.TimeUnit
  *
  * | 단언 | 성격 |
  * |---|---|
- * | 놓기가 빠진 적이 없다(`notReleased == 0`) | **불변식** |
+ * | 제한 시간 안에 놓기 완료를 관측했다(`notReleased == 0`) | **완료 관측** |
  * | 놓은 뒤에 멈추라고 한 적이 없다(`stoppedAfterRelease == 0`) | **불변식** |
  * | 스스로 끝난 뒤의 `stop()` 은 sink 를 건드리지 않는다 | **결정적** |
  * | 건너뛴 횟수 | 세기만 한다 — 기계와 부하에 좌우된다 |
@@ -35,8 +35,8 @@ import java.util.concurrent.TimeUnit
  * 시험**이 되므로(이 저장소에서 이미 한 번 데였다) 그러지 않았다.
  *
  * 아래 `stoppedAfterRelease` 는 그 대신 **위반이 일어나면 잡는다.** 경합이
- * 그 순서로 벌어진 판에서만 걸리므로 변이를 늘 잡지는 못하지만, 거짓으로
- * 실패하지도 않는다.
+ * 그 순서로 벌어진 판에서만 걸리므로 변이를 늘 잡지는 못한다.
+ * 완료 대기 시간 초과도 시험 실패지만, 그것만으로 영구 누수를 단정하지 않는다.
  *
  * **가짜 sink 를 통과했다는 것이 실제 스피커가 조용해졌다는 뜻은 아니다.**
  * 여기서 보는 것은 호출 규약뿐이다.
@@ -46,6 +46,7 @@ class SignalPlayerStopContractTest {
     private class Sink : SignalSink {
         @Volatile var stopped = false
         @Volatile var released = false
+        val releaseObserved = CountDownLatch(1)
 
         /** **놓은 뒤에 멈추라고 했는가.** 실제 `AudioTrack` 이면 터진다. */
         @Volatile var stoppedAfterRelease = false
@@ -57,7 +58,11 @@ class SignalPlayerStopContractTest {
             stopped = true
         }
 
-        override fun release(): Boolean { released = true; return true }
+        override fun release(): Boolean {
+            released = true
+            releaseObserved.countDown()
+            return true
+        }
     }
 
     @Test
@@ -78,7 +83,10 @@ class SignalPlayerStopContractTest {
             player.stop()
 
             if (!sink.stopped) stopSkipped++
-            if (!sink.released) notReleased++
+            // stop() may return after JOIN_MS while the writer still owns the sink.
+            // Check eventual cleanup, not synchronous release at stop() return.
+            // Timeout remains a failure; a second run never erases that evidence.
+            if (!sink.releaseObserved.await(10, TimeUnit.SECONDS)) notReleased++
             if (sink.stoppedAfterRelease) stoppedAfterRelease++
         }
 
@@ -92,7 +100,7 @@ class SignalPlayerStopContractTest {
         // **「멈추지도 놓지도 않았다」 는 따로 세지 않는다.** 아래가 0 이면
         // 늘 놓은 것이므로 그 수는 언제나 0 이다 — 논리적으로 중복이고,
         // 두 줄이 서로를 확인해 주는 것처럼 보여 오히려 해롭다(검증자 지적).
-        assertEquals("놓지 않은 채로 끝난 적이 있다 — 장치를 붙든 채 남는다", 0, notReleased)
+        assertEquals("제한 시간 안에 해제 완료를 관측하지 못했다", 0, notReleased)
         assertEquals(
             "이미 놓은 출력에 stop 을 불렀다 — 실제 장치면 터진다",
             0,
