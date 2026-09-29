@@ -203,7 +203,14 @@ class SignalPlayerProbeTest {
         // 128 **칸**만 나갔다. 출력은 두 채널이라 칸 128 개는 프레임 64 개다
         // — 다음에 나갈 첫 칸은 프레임 64 의 왼쪽이다. 칸과 프레임을
         // 섞으면 여기서 두 배로 어긋난다.
-        val expected = (DEFAULT_AMPLITUDE * sin(2 * PI * 1000 * 64 / 48000)).toFloat()
+        //
+        // **시작 램프도 함께 곱한다**(2026-09-29, 지시서 §3). 소리는 0 에서
+        // 30ms 에 걸쳐 올라오므로 프레임 64 는 아직 제 크기가 아니다.
+        // 여기서 보는 것은 **어느 프레임에서 이어지는가**이지 크기가
+        // 아니므로, 원본 쪽에도 같은 램프를 곱해 두고 견준다.
+        val rampGain = ((64 + 1) / (48_000 * 0.030)).coerceAtMost(1.0)
+        val expected =
+            (DEFAULT_AMPLITUDE * rampGain * sin(2 * PI * 1000 * 64 / 48000)).toFloat()
         println(
             "[P3] 다음 칸 ${partial.secondStart} · 프레임 64 의 기대값 $expected · offset ${partial.secondOffset}",
         )

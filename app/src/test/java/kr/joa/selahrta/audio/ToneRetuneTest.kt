@@ -171,9 +171,13 @@ class ToneRetuneTest {
         p.retune(4_000.0)
         Thread.sleep(200)
         await(sink, 24_000)
-        p.stop()
-
+        // **멈추기 전에 떠 둔다**(2026-09-29 램프 도입).
+        //
+        // 멈추면 소리를 30ms 에 걸쳐 0 으로 내린다. 그 꼬리에는 0 이
+        // 줄지어 들어 있어 영교차가 세어지지 않는다 — 꼬리째 세면
+        // 4000Hz 가 3750Hz 로 보인다(실제로 그렇게 나왔다).
         val v = sink.snapshot()
+        p.stop()
         val tail = v.subList(maxOf(0, v.size - 9_600), v.size)   // 마지막 0.2초
         var crossings = 0
         for (i in 1 until tail.size) {
