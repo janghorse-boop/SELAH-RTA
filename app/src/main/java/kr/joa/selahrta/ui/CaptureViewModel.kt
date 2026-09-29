@@ -345,6 +345,8 @@ data class CaptureUiState(
     val rtaLiveVisible: Boolean = true,
     /** 저장에 관해 알릴 것(실패 까닭 등). */
     val rtaSaveNoticeKo: String? = null,
+    /** 차례대로 재는 중이면 「2/3 · 오른쪽만」. 아니면 null. */
+    val rtaSequenceKo: String? = null,
     /** FR — 지금 어느 단계인가. */
     val responsePhase: ResponsePhase = ResponsePhase.Idle,
     /** 그 단계가 얼마나 찼는가(0~1). */
@@ -1718,6 +1720,19 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun startRtaCapture(nameKo: String, setId: String?) {
         if (rtaJob?.isActive == true) return
+        rtaJob = viewModelScope.launch { runOneRtaCapture(nameKo, setId) }
+    }
+
+    /**
+     * 한 번 재고 저장한다. **끝날 때까지 기다린다.**
+     *
+     * 차례대로 재는 쪽([startRtaSequence])이 이것을 이어 부르므로, 한 번이
+     * 끝난 것을 **기다릴 수 있어야** 한다. 예전에는 이 일이 `launch` 안에
+     * 통째로 들어 있어 밖에서 끝을 볼 수 없었다.
+     *
+     * 저장까지 됐으면 true.
+     */
+    private suspend fun runOneRtaCapture(nameKo: String, setId: String?): Boolean {
         val st0 = controller.baseState.value
         val spec = rtaSpec()
         val startOffsetDb = st0.calibration.offset.db
@@ -1732,7 +1747,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         rtaRun = run
         publishRtaCapture(run, nameKo)
 
-        rtaJob = viewModelScope.launch {
+        return kotlinx.coroutines.coroutineScope {
             // **장을 받는 쪽과 시간을 보는 쪽을 따로 둔다.** 장이 아예 안
             // 오는 것이 알아채야 할 일이므로, 시간은 장과 무관하게 흘러야
             // 한다.
@@ -1765,8 +1780,70 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** 사람이 그만둔다. **저장하지 않는다.** */
+    /**
+     * **L → R → L+R 을 이어서 잰다**(지시서 §7 후속).
+     *
+     * 좌우를 견주려면 세 번을 **같은 자리에서, 같은 조건으로** 재야 한다.
+     * 손으로 하면 그 사이에 채널을 잘못 고르거나 이름을 다르게 적게 되고,
+     * 그러면 잰 차이가 **좌우의 차이가 아니게 된다.**
+     *
+     * **소리가 나고 있어야 한다.** 안 틀고 재면 조용한 방을 세 번 재어
+     * 저장하게 된다 — 그것을 좌우 비교라고 읽으면 안 된다.
+     *
+     * 한 걸음이 실패하면 **거기서 멈춘다.** 그때까지 저장한 것은 그대로
+     * 둔다 — 한 채널만 있어도 쓸모가 있다(담당자 지시 2항).
+     */
+    fun startRtaSequence(baseNameKo: String) {
+        if (rtaJob?.isActive == true) return
+        if (controller.baseState.value.playingSignal == null) {
+            controller.update { st ->
+                st.copy(
+                    rtaSaveNoticeKo = "테스트 신호를 먼저 트십시오. " +
+                        "소리가 없으면 조용한 방을 세 번 재게 됩니다.",
+                )
+            }
+            return
+        }
+
+        val seq = kr.joa.selahrta.data.rta.RtaSequence(
+            baseNameKo = baseNameKo,
+            setId = kr.joa.selahrta.data.rta.RtaMeasurementStore.newId(),
+        )
+        rtaSequence = seq
+        rtaJob = viewModelScope.launch {
+            try {
+                while (!seq.done) {
+                    val channel = seq.currentChannel() ?: break
+                    // 채널을 바꾸면 소리를 다시 연다. **안정화 구간이
+                    // 그것을 받아 준다** — 앞 채널의 소리가 안 섞인다.
+                    setSignalChannels(channel)
+                    publishRtaSequence(seq)
+                    val ok = runOneRtaCapture(seq.currentNameKo(), seq.setId)
+                    if (!ok) break
+                    seq.advance()
+                }
+            } finally {
+                rtaSequence = null
+                controller.update { st -> st.copy(rtaSequenceKo = null) }
+            }
+        }
+    }
+
+    private fun publishRtaSequence(seq: kr.joa.selahrta.data.rta.RtaSequence) {
+        controller.update { st -> st.copy(rtaSequenceKo = seq.progressKo()) }
+    }
+
+    /** 지금 도는 차례. 한 번만 재는 경우에는 null 이다. */
+    private var rtaSequence: kr.joa.selahrta.data.rta.RtaSequence? = null
+
+    /**
+     * 사람이 그만둔다. **저장하지 않는다.**
+     *
+     * 차례대로 재는 중이면 **그 차례도 함께 그만둔다** — 한 걸음만
+     * 멈추고 다음으로 넘어가면 사람이 멈춘 뜻과 다르다.
+     */
     fun cancelRtaCapture() {
+        rtaJob?.cancel()
         rtaRun?.cancel()
     }
 
@@ -1799,22 +1876,22 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         setId: String?,
         offsetDb: Double,
         spec: Pair<Int, Int>?,
-    ) {
+    ): Boolean {
         rtaRun = null
         controller.update { st -> st.copy(rtaCapture = null) }
 
         when (val p = run.phase) {
             is kr.joa.selahrta.data.rta.RtaCapturePhase.Failed -> {
                 controller.update { st -> st.copy(rtaSaveNoticeKo = p.reasonKo) }
-                return
+                return false
             }
-            is kr.joa.selahrta.data.rta.RtaCapturePhase.Cancelled -> return
+            is kr.joa.selahrta.data.rta.RtaCapturePhase.Cancelled -> return false
             else -> Unit
         }
 
         val mean = run.average.meanDb(offsetDb) ?: run {
             controller.update { st -> st.copy(rtaSaveNoticeKo = "잰 것이 없어 저장하지 않았습니다.") }
-            return
+            return false
         }
 
         val st = controller.baseState.value
@@ -1850,7 +1927,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             controller.update { st2 ->
                 st2.copy(rtaSaveNoticeKo = "저장하지 못했습니다: ${saved.exceptionOrNull()?.message}")
             }
-            return
+            return false
         }
         reloadSavedRta()
         // 막 저장한 것은 바로 보여 준다 — 재고 나서 안 보이면 저장이
@@ -1858,6 +1935,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         controller.update { st2 ->
             st2.copy(rtaOverlayIds = st2.rtaOverlayIds + snapshot.id, rtaSaveNoticeKo = null)
         }
+        return true
     }
 
     fun setRtaOverlayShown(id: String, shown: Boolean) {
