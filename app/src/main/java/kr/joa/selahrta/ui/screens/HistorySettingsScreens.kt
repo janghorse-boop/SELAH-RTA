@@ -24,6 +24,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -449,10 +451,85 @@ fun SettingsScreen(
             "조아웍스 | JOAWORKS",
             color = SelahColors.TextMuted,
             fontSize = 11.sp,
-            modifier = Modifier.padding(top = 4.dp, bottom = 24.dp),
+            modifier = Modifier.padding(top = 4.dp),
         )
+
+        // **앱 안에서 방침에 닿을 수 있어야 한다.**
+        //
+        // 스토어 목록에만 링크를 두는 것으로는 모자란다 — Play 정책은
+        // **앱 안에서도** 개인정보처리방침에 닿을 것을 요구한다. 지금까지
+        // 코드에 그 주소가 한 군데도 없었다.
+        //
+        // 마이크를 쓰고 소리를 파일로 남기는 앱이라 더 그렇다. 무엇이
+        // 담기고 어디에 남는지를 **담기 전에** 읽을 수 있어야 한다.
+        //
+        // **인터넷 권한은 필요 없다.** 여는 것은 브라우저이지 이 앱이
+        // 아니다 — `ACTION_VIEW` 는 권한 없이 쓸 수 있고, 그래서
+        // 「서버로 보내지 않는다」는 방침이 그대로 유지된다
+        // (`ManifestPromisesTest` 가 권한 목록을 못박고 있다).
+        PolicyLinks(Modifier.padding(top = 12.dp, bottom = 24.dp))
     }
 }
+
+/**
+ * 개인정보처리방침·이용약관으로 가는 두 줄.
+ *
+ * 열리지 않을 수 있다 — 브라우저가 없는 기기이거나 막혀 있으면
+ * [android.content.ActivityNotFoundException] 이 난다. 그때 **조용히
+ * 아무 일도 없으면** 사람은 앱이 고장 난 줄 안다. 주소를 그대로
+ * 보여 주어 옮겨 적을 수 있게 한다.
+ */
+@Composable
+private fun PolicyLinks(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    var failedUrl by remember { mutableStateOf<String?>(null) }
+
+    fun open(url: String) {
+        val intent = android.content.Intent(
+            android.content.Intent.ACTION_VIEW,
+            android.net.Uri.parse(url),
+        )
+        try {
+            context.startActivity(intent)
+        } catch (e: android.content.ActivityNotFoundException) {
+            failedUrl = url
+        }
+    }
+
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            TextButton(
+                onClick = { open(PRIVACY_URL) },
+                contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp),
+            ) {
+                Text("개인정보처리방침", color = SelahColors.Accent, fontSize = 12.sp)
+            }
+            TextButton(
+                onClick = { open(TERMS_URL) },
+                contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp),
+            ) {
+                Text("이용약관", color = SelahColors.Accent, fontSize = 12.sp)
+            }
+        }
+        failedUrl?.let {
+            Text(
+                "브라우저를 열 수 없습니다. 주소를 직접 여십시오: $it",
+                color = SelahColors.Warn,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+            )
+        }
+    }
+}
+
+/**
+ * 공개 방침 주소.
+ *
+ * **여기 적힌 주소가 곧 약속이다.** 바꾸면 홈페이지 쪽도 같이 봐야
+ * 한다 — `joaworks-website` 저장소의 `privacy/`·`terms/` 다.
+ */
+private const val PRIVACY_URL = "https://joaworks.com/privacy/"
+private const val TERMS_URL = "https://joaworks.com/terms/"
 
 /**
  * 고르는 줄. 지금 고른 것이 색으로도 글자로도 드러나야 한다.
