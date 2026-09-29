@@ -52,12 +52,16 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kr.joa.selahrta.R
+import kr.joa.selahrta.audio.SignalChannels
+import kr.joa.selahrta.audio.TestSignal
 import kr.joa.selahrta.calibration.DeviceBuildInfo
 import kr.joa.selahrta.calibration.currentProfileEnvironment
 import kr.joa.selahrta.domain.CalibrationState
 import kr.joa.selahrta.domain.ChurchSegment
 import kr.joa.selahrta.domain.MeasureState
 import kr.joa.selahrta.domain.MicKind
+import kr.joa.selahrta.ui.components.SignalMiniBar
+import kr.joa.selahrta.ui.components.signalMiniBarVisible
 import kr.joa.selahrta.ui.nav.NavSection
 import kr.joa.selahrta.ui.nav.ViewMode
 import kr.joa.selahrta.ui.nav.defaultMode
@@ -367,15 +371,14 @@ fun SelahApp() {
     Scaffold(
         containerColor = SelahColors.Background,
         bottomBar = {
-            // **분석 화면에서는 아래 탭을 줄인다**(2026-09-25
-            // 담당자 지시: 「RTA와 같이 수정해주세요. 그래프가 최대한 크게
-            // 보이게 하기 위해서입니다」).
-            //
-            // 줄이면 글자가 빠지고 46dp 가 된다. 눕힌 화면의 세로가 380dp
-            // 안팎이라 그 차이가 차트 높이의 한 자리를 좌우한다. RTA 만
-            // 줄여 두었는데, 분석은 넷 다 눕는 화면이라 나머지 셋만 글자가
-            // 붙어 있었다.
-            BottomBar(section, compact = screen?.section == NavSection.Analyze) { picked ->
+            AppBottomArea(
+                section = section,
+                screen = screen,
+                playingSignal = capture.playingSignal,
+                signalToneHz = capture.signalToneHz,
+                signalChannels = capture.signalChannels,
+                onStopSignal = vm::stopSignal,
+            ) { picked ->
                 section = picked
                 // **탭을 옮기면 마법사를 닫는다.** 마법사는 탭 내용 위에
                 // 덮여 있어서, 닫지 않으면 다른 탭으로 가도 그대로 얹혀
@@ -842,6 +845,56 @@ private fun ModeChips(
                 )
             }
         }
+    }
+}
+
+/**
+ * 화면 아래에 쌓이는 것 — **틀어 둔 신호의 줄**과 탭 줄.
+ *
+ * ## 왜 따로 떼었나
+ *
+ * 앞선 독립 검토에서 **네 번** 같은 자리에 걸렸다 — 부품 시험은 부품을
+ * 직접 세워 놓고 보므로, **진짜 화면이 그 부품을 부르지 않아도** 다
+ * 통과한다(누적 요청서 5-1 의 6번). 마지막에는 검토자가 `SettingsScreen`
+ * 의 호출 한 줄을 주석 처리하니 시험 여섯이 그대로 통과했다.
+ *
+ * `SelahApp` 전체는 ViewModel·권한·마이크를 물고 있어 시험이 열 수 없다.
+ * 그래서 **값과 콜백만 받는 이 조각**을 떼어, 계측 시험이 앱이 실제로
+ * 쓰는 함수를 열게 했다. 시험 밖에 남는 것은 `SelahApp` 이 이것을 부르는
+ * **한 줄**뿐이고, 그 한 줄은 기기에서 눈으로 본다.
+ *
+ * `BottomBar` 는 여기서만 부른다.
+ */
+@Composable
+internal fun AppBottomArea(
+    section: NavSection,
+    screen: ViewMode?,
+    playingSignal: TestSignal?,
+    signalToneHz: Double,
+    signalChannels: SignalChannels,
+    onStopSignal: () -> Unit,
+    onSelect: (NavSection) -> Unit,
+) {
+    Column {
+        // 틀어 둔 것이 있으면 탭 줄 **위**에 한 줄 얹는다. 탭은 늘
+        // 맨 아래에 있어야 손가락이 찾는 자리가 바뀌지 않는다.
+        playingSignal.takeIf { signalMiniBarVisible(it, screen) }?.let {
+            SignalMiniBar(
+                playing = it,
+                toneHz = signalToneHz,
+                channels = signalChannels,
+                onStop = onStopSignal,
+            )
+        }
+        // **분석 화면에서는 아래 탭을 줄인다**(2026-09-25 담당자 지시:
+        // 「RTA와 같이 수정해주세요. 그래프가 최대한 크게 보이게 하기
+        // 위해서입니다」).
+        //
+        // 줄이면 글자가 빠지고 46dp 가 된다. 눕힌 화면의 세로가 380dp
+        // 안팎이라 그 차이가 차트 높이의 한 자리를 좌우한다. RTA 만
+        // 줄여 두었는데, 분석은 넷 다 눕는 화면이라 나머지 셋만 글자가
+        // 붙어 있었다.
+        BottomBar(section, compact = screen?.section == NavSection.Analyze, onSelect = onSelect)
     }
 }
 
