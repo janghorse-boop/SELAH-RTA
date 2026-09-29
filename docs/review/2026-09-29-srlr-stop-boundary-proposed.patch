@@ -1,0 +1,33 @@
+diff --git a/app/src/main/java/kr/joa/selahrta/ui/CaptureViewModel.kt b/app/src/main/java/kr/joa/selahrta/ui/CaptureViewModel.kt
+index 66dd1ed..acd1318 100644
+--- a/app/src/main/java/kr/joa/selahrta/ui/CaptureViewModel.kt
++++ b/app/src/main/java/kr/joa/selahrta/ui/CaptureViewModel.kt
+@@ -795,6 +795,9 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
+      */
+     private val signalIntent = java.util.concurrent.atomic.AtomicLong()
+ 
++    /** A queued stop ends the old playback's right to be reused by retune. */
++    private val lastSignalStopIntent = java.util.concurrent.atomic.AtomicLong()
++
+     /** ViewModel 이 끝났는가. 끝난 뒤의 결과는 화면에 올리지 않는다. */
+     @Volatile
+     private var signalClosed = false
+@@ -1437,6 +1440,9 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
+         val old = activeSignalRequest
+         if (req.signal == TestSignal.Custom && old?.signal == TestSignal.Custom &&
+             req.safeAmplitude == old.safeAmplitude && req.channels == old.channels &&
++            // A newer start may supersede the queued stop, but must then take
++            // the normal start path, including reacquiring audio focus.
++            activeSignalIntent > lastSignalStopIntent.get() &&
+             player.retune(req.toneHz)
+         ) {
+             activeSignalRequest = req
+@@ -1515,7 +1521,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
+      */
+     fun stopSignal() {
+         // **뜻을 먼저 올린다.** 이 뒤에 끝나는 옛 시작은 화면을 못 되돌린다.
+-        signalIntent.incrementAndGet()
++        lastSignalStopIntent.set(signalIntent.incrementAndGet())
+         controller.update { st -> st.copy(playingSignal = null) }
+         // **소리를 멈춘 뒤에 놓는다.** 먼저 놓으면 놓는 그 순간에 다른
+         // 앱이 소리를 시작해 마지막 30ms 램프와 겹친다.

@@ -1,0 +1,63 @@
+SELAH RTA SRLR ownership independent verification, 2026-09-29
+Pinned 8fdca3a8abbd3ebc6c19182c9e74f177224b0757; merge dd796fb230cbcd7b79374372c4e79a7158e2cb56, identical tree.
+API 34 Medium_Phone, read-only no-window no-audio emulator-5582; physical phone not used.
+Baseline JVM: DSP 633 + app 893 = 1526, failures 0, skipped 0.
+Proposed app JVM: 893 + new SerialOwnershipIndependentTest 4 = 897, failures/errors/skipped 0.
+
+SOURCE: baseline-build.log
+BUILD SUCCESSFUL in 5m 34s
+
+SOURCE: baseline-instrumentation.log
+INSTRUMENTATION_STATUS: stack=org.junit.AssumptionViolatedException: Requires the emulator-only deny-focus app-op
+Time: 118.7
+OK (35 tests)
+Status-code count: pass=34, fail=0, assumptionSkip=1
+
+SOURCE: denied-focus.log
+Time: 0.367
+OK (1 test)
+
+SOURCE: independent-build.log
+BUILD SUCCESSFUL in 31s
+
+SOURCE: independent-instrumentation.log
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: Coalescing a stop must not retune the old playback without reacquiring focus expected null, but was:<Custom>
+Time: 2.81
+FAILURES!!!
+Tests run: 4,  Failures: 1
+Status-code count: pass=3, fail=1, assumptionSkip=0
+
+SOURCE: final-probe-original.log
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: Coalescing a stop must not retune the old playback without reacquiring focus expected null, but was:<Custom>
+Time: 2.066
+FAILURES!!!
+Tests run: 4,  Failures: 1
+Status-code count: pass=3, fail=1, assumptionSkip=0
+
+SOURCE: proposed-build.log
+BUILD SUCCESSFUL in 3m 30s
+
+SOURCE: proposed-instrumentation.log
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: 한 번에 50.1ms 걸렸다(한도 40ms) — 고치기 전 154ms
+INSTRUMENTATION_STATUS: stack=org.junit.AssumptionViolatedException: Requires the emulator-only deny-focus app-op
+Time: 82.554
+FAILURES!!!
+Tests run: 39,  Failures: 1
+Status-code count: pass=37, fail=1, assumptionSkip=1
+
+SOURCE: proposed-targeted-recheck.log
+INSTRUMENTATION_STATUS: stack=org.junit.AssumptionViolatedException: Requires the emulator-only deny-focus app-op
+Time: 3.588
+OK (14 tests)
+Status-code count: pass=13, fail=0, assumptionSkip=1
+
+SOURCE: proposed-denied-focus.log
+Time: 0.186
+OK (1 test)
+
+Original observation: playing=Custom ui=Custom opened=1 held=true
+Proposed observation: playing=null ui=null opened=1 held=false
+Proposal full instrumentation had one 50.1ms failure vs 40ms limit; targeted rerun passed, cause not established.
+The final provided latch does NOT automatically unblock after a timeout. It failed on the original APK again.
+Probe drives the registered LOSS callback and Android AppOps denial; not a physical incoming call/unplug test.
+Patch is proposed only; no production source edits.

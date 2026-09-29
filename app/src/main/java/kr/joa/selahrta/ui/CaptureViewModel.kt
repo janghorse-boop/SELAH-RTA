@@ -795,6 +795,23 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      */
     private val signalIntent = java.util.concurrent.atomic.AtomicLong()
 
+    /**
+     * **마지막으로 「멈춰」라고 한 뜻의 번호**(독립 검토 SRLRO-01).
+     *
+     * 줄에 선 정지는 더 새 명령에 **덮일 수 있다** — 그것이 「낡은 것은
+     * 버린다」의 뜻이다. 그런데 그렇게 덮이고 나면 **「중간에 멈추라고
+     * 했다」는 이력이 어디에도 안 남았다.**
+     *
+     * 그 틈으로 포커스를 잃은 재생이 되살아났다: 포커스를 잃어 정지가
+     * 줄에 서고, 그것이 돌기 전에 같은 순음을 다시 누르면 — 세기·채널이
+     * 같으므로 — **위상을 잇는 지름길로 빠져 `acquire()` 를 지나치지
+     * 않는다.** 옛 소리가 포커스 없이 계속 나고 화면은 정상으로 돌아온다.
+     *
+     * 그래서 이 번호를 따로 남긴다. **이 뒤에 시작된 재생만** 지름길을
+     * 쓸 수 있다.
+     */
+    private val lastSignalStopIntent = java.util.concurrent.atomic.AtomicLong()
+
     /** ViewModel 이 끝났는가. 끝난 뒤의 결과는 화면에 올리지 않는다. */
     @Volatile
     private var signalClosed = false
@@ -1437,6 +1454,12 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         val old = activeSignalRequest
         if (req.signal == TestSignal.Custom && old?.signal == TestSignal.Custom &&
             req.safeAmplitude == old.safeAmplitude && req.channels == old.channels &&
+            // **멈추라는 말이 있었으면 지름길을 쓰지 않는다**(SRLRO-01).
+            //
+            // 그 정지가 더 새 명령에 덮여 실제로 안 돌았더라도, **뒤따르는
+            // 시작은 정규 길을 지나야 한다** — 포커스를 다시 얻고 옛 재생을
+            // 정리하는 그 길이다.
+            activeSignalIntent > lastSignalStopIntent.get() &&
             player.retune(req.toneHz)
         ) {
             activeSignalRequest = req
@@ -1515,7 +1538,10 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun stopSignal() {
         // **뜻을 먼저 올린다.** 이 뒤에 끝나는 옛 시작은 화면을 못 되돌린다.
-        signalIntent.incrementAndGet()
+        //
+        // **멈추라고 한 그 번호를 따로 남긴다**(SRLRO-01). 이 정지가 뒤에
+        // 온 시작에 덮이더라도, 그 시작은 지름길 대신 정규 길을 지나야 한다.
+        lastSignalStopIntent.set(signalIntent.incrementAndGet())
         controller.update { st -> st.copy(playingSignal = null) }
         // **소리를 멈춘 뒤에 놓는다.** 먼저 놓으면 놓는 그 순간에 다른
         // 앱이 소리를 시작해 마지막 30ms 램프와 겹친다.
