@@ -3080,6 +3080,41 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         return java.io.File(sessionStore.dirOf(meta.id), a.fileName)
     }
 
+    /**
+     * 기록 하나를 **읽을 수 있는 한 장(PDF)으로** 내보낸다.
+     *
+     * **CSV 와 쓰임이 다르다.** CSV 는 표 계산기로 여는 것이고, 이것은
+     * 목사님·장로님께 그대로 건네거나 인쇄하는 것이다. 그래서 **따로
+     * 보낸다** — 한 장만 필요한 자리에 표와 소리까지 딸려 가면 받는 쪽이
+     * 무엇을 봐야 하는지 흐려진다.
+     *
+     * 글은 화면 리포트와 **같은 문장**이고, 믿음에 관한 경고가 숫자보다
+     * 먼저 온다([kr.joa.selahrta.recording.ReportPdf]).
+     */
+    fun exportReportPdf(meta: kr.joa.selahrta.recording.SessionMeta) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val app = getApplication<Application>()
+            val r = runCatching {
+                val dir = java.io.File(app.cacheDir, "export").apply { mkdirs() }
+                val pdf = java.io.File(dir, kr.joa.selahrta.recording.ReportPdf.fileName(meta))
+                pdf.outputStream().buffered().use { out ->
+                    kr.joa.selahrta.recording.ReportPdf.write(meta, out)
+                }
+                uriFor(pdf)
+            }
+            onMainThread {
+                r.fold(
+                    onSuccess = { uri -> controller.update { it.copy(shareUris = listOf(uri)) } },
+                    onFailure = { e ->
+                        controller.update {
+                            it.copy(historyNoticeKo = "리포트를 만들지 못했습니다: ${e.message}")
+                        }
+                    },
+                )
+            }
+        }
+    }
+
     private fun uriFor(f: java.io.File): android.net.Uri {
         val app = getApplication<Application>()
         return androidx.core.content.FileProvider.getUriForFile(app, "${app.packageName}.files", f)
