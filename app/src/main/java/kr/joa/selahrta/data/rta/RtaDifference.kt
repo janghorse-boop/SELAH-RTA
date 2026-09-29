@@ -115,9 +115,19 @@ class RtaDifference private constructor(
          */
         private fun comparable(a: RtaConditions, b: RtaConditions): Boolean =
             a.inputKey == b.inputKey &&
+                a.inputSource == b.inputSource &&
+                a.inputChannel == b.inputChannel &&
                 a.calibrationState == b.calibrationState &&
                 a.calibrationSource == b.calibrationSource &&
+                // **수치까지 본다**(독립 검토 RMS-03). 「보정됨·교정기」까지만
+                // 보면 100dB 로 맞춘 것과 106dB 로 맞춘 것이 같은 조건이 되고,
+                // 그 6dB 이 좌우 차이로 읽힌다.
+                a.offsetDb == b.offsetDb &&
                 a.curveName == b.curveName &&
+                // **이름이 같아도 내용이 다를 수 있다.**
+                a.curveHash == b.curveHash &&
+                // **가중이 다르면 같은 소리도 다르게 찍힌다** — 100Hz 에서 19dB.
+                a.analysisWeighting == b.analysisWeighting &&
                 a.fftSize == b.fftSize &&
                 a.sampleRate == b.sampleRate
     }

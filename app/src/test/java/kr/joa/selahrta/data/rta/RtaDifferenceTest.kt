@@ -26,7 +26,15 @@ class RtaDifferenceTest {
         curve: String? = "",
         fft: Int? = 4096,
         rate: Int? = 48_000,
-    ) = RtaConditions(input, state, source, curve, fft, rate)
+        weighting: String? = "Z",
+        offsetDb: Double? = 118.0,
+        curveHash: String? = "",
+        inputSource: String? = "Unprocessed",
+        inputChannel: Int? = 0,
+    ) = RtaConditions(
+        input, state, source, curve, fft, rate,
+        weighting, offsetDb, curveHash, inputSource, inputChannel,
+    )
 
     private fun m(
         id: String,
@@ -234,5 +242,72 @@ class RtaDifferenceTest {
         val text = RtaDifference.of(a, b)!!.summaryKo()
         assertTrue("왼쪽이 안 적혔다: $text", text.contains("왼쪽"))
         assertTrue("오른쪽이 안 적혔다: $text", text.contains("오른쪽"))
+    }
+
+    // ── 조건이 다르면 셀하지 않는다 (독립 검토 RMS-03) ──
+
+    /**
+     * **가중이 다르면 같은 소리도 다르게 찍힌다.**
+     *
+     * Z 와 A 는 100Hz 에서 **19dB** 차이 난다. 이것을 좌우 차이라고
+     * 내밀면 사람은 스피커를 만지게 된다.
+     */
+    @Test
+    fun `분석 가중이 다르면 차이를 안 낸다`() {
+        val a = m("a", "Left", flat(60.0), conditions(weighting = "Z"))
+        val b = m("b", "Left", flat(60.0), conditions(weighting = "A"))
+        assertNull(RtaDifference.of(a, b))
+    }
+
+    /**
+     * **보정 수치가 다르면 셀지 않는다.**
+     *
+     * 「보정됨·교정기」까지만 보면 100dB 로 맞춘 것과 106dB 로
+     * 맞춘 것이 같은 조건이 되고, 그 6dB 이 좌우 차이로 읽힌다.
+     */
+    @Test
+    fun `보정값이 다르면 차이를 안 낸다`() {
+        val a = m("a", "Left", flat(60.0), conditions(offsetDb = 100.0))
+        val b = m("b", "Left", flat(60.0), conditions(offsetDb = 106.0))
+        assertNull(RtaDifference.of(a, b))
+    }
+
+    /**
+     * **이름이 같아도 내용이 다를 수 있다.**
+     *
+     * 같은 파일 이름으로 다른 곡선을 가져오면, 이름만 보는 쉬에서는
+     * **곡선이 바뀜 줄 모르고 견준다.**
+     */
+    @Test
+    fun `곡선 이름이 같아도 내용이 다르면 안 셀는다`() {
+        val a = m("a", "Left", flat(60.0), conditions(curve = "UMIK-1.txt", curveHash = "1111"))
+        val b = m("b", "Left", flat(60.0), conditions(curve = "UMIK-1.txt", curveHash = "2222"))
+        assertNull(RtaDifference.of(a, b))
+    }
+
+    /**
+     * **입력 채널이 다르면 다른 마이크다.**
+     *
+     * 같은 USB 인터페이스라도 1번과 2번에 꽂힌 마이크가 같을 까닭이
+     * 없다.
+     */
+    @Test
+    fun `입력 채널이 다르면 안 셀는다`() {
+        val a = m("a", "Left", flat(60.0), conditions(inputChannel = 0))
+        val b = m("b", "Left", flat(60.0), conditions(inputChannel = 1))
+        assertNull(RtaDifference.of(a, b))
+    }
+
+    /**
+     * **새 칸이 없는 옛 기록은 자동 차이에서 빠진다**(담당자 기준 5).
+     *
+     * 지금 설정으로 메우면 「이 조건으로 쉗다」는 거짓이 생긴다.
+     * 그래서 **모른다고 남기고, 모르는 것은 견주지 않는다.**
+     */
+    @Test
+    fun `새 조건이 없는 옛 기록은 뺄다`() {
+        val old = m("a", "Left", flat(60.0), conditions(weighting = null))
+        val now = m("b", "Left", flat(60.0))
+        assertNull(RtaDifference.of(old, now))
     }
 }

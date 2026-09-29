@@ -90,6 +90,28 @@ class SerialCommands(
     }
 
     /**
+     * **명령 스레드가 아는 것을 물어본다**(독립 검토 RMS-02).
+     *
+     * 재생의 세대 같은 값은 **명령 스레드만 읽고 쓴다.** 밖에서 그냥 읽으면
+     * 그 사이에 명령 스레드가 바꿔 둘이 어긋난다. 그렇다고 공유하게 만들면
+     * 「멈췄다」와 「막 시작했다」가 서로를 덮는다(SRLR-01·02).
+     *
+     * 그래서 **줄 맨 뒤에 서서 물어본다.** 앞에 선 명령이 다 돈 뒤에 대답이
+     * 오므로, 「방금 넣은 그 명령이 실제로 돌았는가」를 이것으로 가린다.
+     *
+     * 닫혔거나 [timeoutMs] 안에 대답이 없으면 **null** 이다 — 「모른다」이지
+     * 「아니다」가 아니다. 부르는 쪽이 그 둘을 갈라 다뤄야 한다.
+     */
+    fun <T : Any> ask(timeoutMs: Long, block: () -> T?): T? {
+        val out = java.util.concurrent.ArrayBlockingQueue<Any>(1)
+        val none = Any()
+        postAlways { out.offer(block() ?: none) }
+        val got = out.poll(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+        @Suppress("UNCHECKED_CAST")
+        return if (got == null || got === none) null else got as T
+    }
+
+    /**
      * 더 받지 않고, **돌던 일이 끝난 뒤** [finalizer] 를 돌린다.
      *
      * [shutdownNow] 로는 안 된다 — 그것은 끼어들기를 **시도**할 뿐이고,

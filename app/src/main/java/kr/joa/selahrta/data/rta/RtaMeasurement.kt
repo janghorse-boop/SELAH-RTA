@@ -96,6 +96,44 @@ data class RtaConditions(
     val curveName: String?,
     val fftSize: Int?,
     val sampleRate: Int?,
+    /**
+     * **분석 가중**(Z·A·C) — 독립 검토 RMS-03.
+     *
+     * 이것이 빠져 있어서 **같은 소리를 Z 로 잰 것과 A 로 잰 것이 「같은
+     * 조건」이었다.** 100Hz 에서 그 차이는 **19dB** 다 — 좌우 차이라며
+     * 19dB 을 내밀 수 있었다.
+     */
+    val analysisWeighting: String? = null,
+    /**
+     * **보정값 그 자체**(dB) — 독립 검토 RMS-03.
+     *
+     * 「보정됨·교정기」까지만 적고 **수치를 안 적었다.** 100dB 로 맞춘 것과
+     * 106dB 로 맞춘 것이 같은 조건으로 저장되어 6dB 이 좌우 차이로 읽혔다.
+     */
+    val offsetDb: Double? = null,
+    /**
+     * **곡선 내용의 지문** — 독립 검토 RMS-03.
+     *
+     * 파일 이름만으로는 모자란다. 같은 이름으로 **다른 곡선**을 가져올 수
+     * 있고, 그러면 곡선이 바뀐 줄 모르고 견준다.
+     *
+     * 곡선이 안 걸렸으면 빈 글자다 — 「모른다」가 아니다.
+     */
+    val curveHash: String? = null,
+    /**
+     * 입력 소스 — 독립 검토 RMS-03.
+     *
+     * 같은 기기라도 무엇으로 열었는지에 따라 가공이 다르다.
+     */
+    val inputSource: String? = null,
+    /**
+     * 입력 채널 — 독립 검토 RMS-03.
+     *
+     * 같은 USB 인터페이스라도 **어느 채널을 들었는지**에 따라 다른
+     * 마이크다. 보정 쪽 열쇠는 이미 이것을 갈라 쓰고 있었는데 여기만
+     * 빠져 있었다.
+     */
+    val inputChannel: Int? = null,
 ) {
     /**
      * 겉장에 없던 것은 **null 로 남는다**(담당자 지시 2026-09-29 기준 5).
@@ -106,7 +144,9 @@ data class RtaConditions(
      * 그렇다.
      */
     val hasUnknown: Boolean
-        get() = inputKey == null || calibrationState == null ||
+        get() = analysisWeighting == null || offsetDb == null || curveHash == null ||
+            inputSource == null || inputChannel == null ||
+            inputKey == null || calibrationState == null ||
             calibrationSource == null || curveName == null ||
             fftSize == null || sampleRate == null
 
@@ -128,4 +168,16 @@ data class RtaComparisonSet(
     val id: String,
     val nameKo: String,
     val createdAtEpochMs: Long,
+)
+
+/**
+ * 목록과 **못 읽은 것의 수**(독립 검토 12회차 4장).
+ *
+ * 「읽을 수 없다」와 「없다」는 다른 말이다. 조용히 건너뛰면 사람은
+ * 저장이 안 된 줄 알고 **다시 재다.**
+ */
+data class RtaListing(
+    val items: List<RtaMeasurement>,
+    /** 격장을 못 읽어 빠진 수. 보통 **더 새 판**으로 저장된 것이다. */
+    val unreadable: Int,
 )

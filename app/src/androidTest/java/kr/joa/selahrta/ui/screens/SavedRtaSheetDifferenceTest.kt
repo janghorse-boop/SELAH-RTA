@@ -34,6 +34,13 @@ class SavedRtaSheetDifferenceTest {
         curveName = "",
         fftSize = fft,
         sampleRate = 48_000,
+        // 독립 검토 RMS-03 으로 늘어난 칸들. **하나라도 없으면 「미확인」**
+        // 이라 자동 차이에서 빠진다 — 여기서는 다 적힌 기록을 흉내 낸다.
+        analysisWeighting = "Z",
+        offsetDb = 118.0,
+        curveHash = "",
+        inputSource = "Unprocessed",
+        inputChannel = 0,
     )
 
     private fun m(id: String, name: String, channel: String, bands: DoubleArray, c: RtaConditions) =

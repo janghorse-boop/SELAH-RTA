@@ -49,6 +49,11 @@ class RtaMeasurementStoreTest {
             curveName = "UMIK-1",
             fftSize = 4096,
             sampleRate = 48_000,
+            analysisWeighting = "Z",
+            offsetDb = 118.0,
+            curveHash = "abcd1234",
+            inputSource = "Unprocessed",
+            inputChannel = 0,
         ),
         measuredAtEpochMs = at,
         memoKo = "마이크 1.2m",
@@ -356,5 +361,62 @@ class RtaMeasurementStoreTest {
         val b = RtaMeasurementStore.newId()
         assertNotEquals(a, b)
         assertTrue(a.isNotBlank())
+    }
+
+    // ── 바꿔치기가 실패하면 (독립 검토 12회차 4장) ──
+
+    /**
+     * **바꿔치기가 실패해도 있던 기록은 그대로 남는다.**
+     *
+     * 예전에는 실패하면 **원본에 직접 덮어썼다.** 그것은 대비책이
+     * 아니라 원자 교체를 포기하는 일이다 — 덮어쓰는 도중에 끊기면
+     * **멀집하던 옛 기록까지 잃는다.**
+     *
+     * 끝 표시(`end=1`)는 이 자리를 대신하지 못한다. 그것은 **잘린 새
+     * 파일을 걸러 낼 뿐**, 덮어쓰다 잃은 옛 파일을 되살리지 않는다.
+     */
+    @Test
+    fun `바꿔치기가 실패해도 있던 기록은 살아남는다`() {
+        val good = store()
+        good.save(sample(id = "keep", at = 1_000L)).getOrThrow()
+        val before = File(File(tmp.root, "keep"), RtaMeasurementStore.META_NAME).readText()
+
+        val broken = RtaMeasurementStore(tmp.root, rename = { _, _ -> false })
+        val r = broken.save(sample(id = "keep", at = 2_000L))
+
+        assertTrue("바꿔치기가 실패했으면 저장도 실패다", r.isFailure)
+        val after = File(File(tmp.root, "keep"), RtaMeasurementStore.META_NAME).readText()
+        assertEquals("있던 것이 바뀌었다", before, after)
+        assertEquals(1_000L, store().list().single { it.id == "keep" }.measuredAtEpochMs)
+    }
+
+    /** 실패한 뒤 **임시 파일을 남기지 않는다.** 쌓이면 저장소만 먹는다. */
+    @Test
+    fun `실패하면 임시 파일을 치운다`() {
+        val broken = RtaMeasurementStore(tmp.root, rename = { _, _ -> false })
+        broken.save(sample(id = "x"))
+        val leftovers = File(tmp.root, "x").listFiles()?.filter { it.name.endsWith(".tmp") }.orEmpty()
+        assertTrue("임시 파일이 남았다: $leftovers", leftovers.isEmpty())
+    }
+
+    // ── 못 읽는 것을 세어 알린다 ──
+
+    /**
+     * **「읽을 수 없다」와 「없다」는 다른 말이다.**
+     *
+     * 조용히 건너뛰면 목록이 아무 말 없이 짧아진다 — 사람은 저장이
+     * 안 된 줄 알고 **다시 재다.**
+     */
+    @Test
+    fun `못 읽은 겉장을 세어 돌려준다`() {
+        val s = store()
+        s.save(sample(id = "ok")).getOrThrow()
+        val newer = File(tmp.root, "newer").apply { mkdirs() }
+        File(newer, RtaMeasurementStore.META_NAME)
+            .writeText(listOf("schemaVersion=99", "end=1").joinToString("\n", postfix = "\n"))
+
+        val listing = s.listing()
+        assertEquals(1, listing.items.size)
+        assertEquals(1, listing.unreadable)
     }
 }

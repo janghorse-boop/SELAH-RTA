@@ -67,7 +67,9 @@ class RtaCaptureRun(
         private set
 
     private var measureStartedAtMs: Long = startedAtMs + settleMs
-    private val settleStartedAtMs: Long = startedAtMs
+
+    /** 안정화를 **다시 시작할 수 있으므로** 고정이 아니다([restart]). */
+    private var settleStartedAtMs: Long = startedAtMs
 
     /** 마지막으로 장이 들어온 때. 끊김은 이것으로 본다. */
     private var lastFrameAtMs: Long = startedAtMs
@@ -180,6 +182,15 @@ class RtaCaptureRun(
         phase = RtaCapturePhase.Settling
         lastFrameAtMs = nowMs
         measureStartedAtMs = nowMs + settleMs
+        // **안정화도 지금부터 다시 센다**(독립 검토 RMS-06).
+        //
+        // 이 셋을 안 되돌리면 「다시 잰다」가 말뿐이 된다. 4초에 다시
+        // 시작하면 안정화가 **이미 지났다고 판정되어** 곧바로 측정으로
+        // 넘어가고, 기대 장 수도 **옛 구간에서 잰 빠르기**를 그대로 쓴다.
+        // 처음부터 다시 재려고 부른 것이 처음부터가 아니게 된다.
+        settleStartedAtMs = nowMs
+        settleFrames = 0
+        minFrames = 1
     }
 
     companion object {

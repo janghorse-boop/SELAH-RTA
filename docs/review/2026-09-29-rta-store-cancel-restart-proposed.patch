@@ -1,0 +1,39 @@
+diff --git a/app/src/main/java/kr/joa/selahrta/ui/CaptureViewModel.kt b/app/src/main/java/kr/joa/selahrta/ui/CaptureViewModel.kt
+index ea8828f..712ac2e 100644
+--- a/app/src/main/java/kr/joa/selahrta/ui/CaptureViewModel.kt
++++ b/app/src/main/java/kr/joa/selahrta/ui/CaptureViewModel.kt
+@@ -1775,6 +1775,11 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
+                 }
+             } finally {
+                 frames.cancel()
++                // Cancellation skips finishRtaCapture. Only this run may clear its UI.
++                if (rtaRun === run) {
++                    rtaRun = null
++                    controller.update { st -> st.copy(rtaCapture = null) }
++                }
+             }
+             finishRtaCapture(run, nameKo, setId, startOffsetDb, spec)
+         }
+diff --git a/app/src/main/java/kr/joa/selahrta/data/rta/RtaCaptureRun.kt b/app/src/main/java/kr/joa/selahrta/data/rta/RtaCaptureRun.kt
+index f1657aa..bff9004 100644
+--- a/app/src/main/java/kr/joa/selahrta/data/rta/RtaCaptureRun.kt
++++ b/app/src/main/java/kr/joa/selahrta/data/rta/RtaCaptureRun.kt
+@@ -67,7 +67,7 @@ class RtaCaptureRun(
+         private set
+ 
+     private var measureStartedAtMs: Long = startedAtMs + settleMs
+-    private val settleStartedAtMs: Long = startedAtMs
++    private var settleStartedAtMs: Long = startedAtMs
+ 
+     /** 마지막으로 장이 들어온 때. 끊김은 이것으로 본다. */
+     private var lastFrameAtMs: Long = startedAtMs
+@@ -178,6 +178,9 @@ class RtaCaptureRun(
+     fun restart(nowMs: Long) {
+         average.reset()
+         phase = RtaCapturePhase.Settling
++        settleStartedAtMs = nowMs
++        settleFrames = 0
++        minFrames = 1
+         lastFrameAtMs = nowMs
+         measureStartedAtMs = nowMs + settleMs
+     }

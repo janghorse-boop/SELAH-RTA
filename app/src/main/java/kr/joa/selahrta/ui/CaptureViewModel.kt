@@ -1042,6 +1042,9 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
 
         /** RTA 측정 중 화면을 고쳐 그리는 간격. 남은 시간이 이만큼씩 준다. */
         const val RTA_TICK_MS = 100L
+
+        /** 명령 스레드에 물어볼 때 기다리는 시간. 여는 데 걸리는 시간을 넣고 잡았다. */
+        const val SIGNAL_ASK_TIMEOUT_MS = 3_000L
     }
     private var calibrationJob: Job? = null
     private var curveJob: Job? = null
@@ -1722,9 +1725,26 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     /** 저장된 것을 다시 읽어 화면에 올린다. */
     fun reloadSavedRta() {
         viewModelScope.launch {
-            val items = kotlinx.coroutines.withContext(Dispatchers.IO) { rtaStore.list() }
+            val listing = kotlinx.coroutines.withContext(Dispatchers.IO) { rtaStore.listing() }
             val sets = kotlinx.coroutines.withContext(Dispatchers.IO) { rtaStore.sets() }
-            controller.update { st -> st.copy(savedRta = items, savedRtaSets = sets) }
+            // **못 읽은 것이 있으면 말한다**(독립 검토 12회차 4장).
+            //
+            // 조용히 건너뛰면 목록이 아무 말 없이 짧아진다 — 사람은 저장이
+            // 안 된 줄 알고 **다시 잰다.** 「읽을 수 없다」와 「없다」는
+            // 다른 말이다.
+            val notice = if (listing.unreadable > 0) {
+                "기록 ${listing.unreadable}개를 읽지 못했습니다. " +
+                    "더 새 판으로 저장된 것일 수 있습니다 — 앱을 올린 뒤 다시 보십시오."
+            } else {
+                null
+            }
+            controller.update { st ->
+                st.copy(
+                    savedRta = listing.items,
+                    savedRtaSets = sets,
+                    rtaSaveNoticeKo = notice ?: st.rtaSaveNoticeKo,
+                )
+            }
         }
     }
 
@@ -1751,10 +1771,41 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      *
      * 저장까지 됐으면 true.
      */
-    private suspend fun runOneRtaCapture(nameKo: String, setId: String?): Boolean {
-        val st0 = controller.baseState.value
-        val spec = rtaSpec()
-        val startOffsetDb = st0.calibration.offset.db
+    private suspend fun runOneRtaCapture(
+        nameKo: String,
+        setId: String?,
+        /**
+         * 이 측정이 **테스트 신호를 내며** 재는 것인가(차례 측정).
+         *
+         * 참이면 **출력이 실제로 열린 것을 확인한 뒤에** 재기 시작하고,
+         * 재는 동안 그 출력이 살아 있는지 본다.
+         */
+        requireOutput: Boolean = false,
+    ): Boolean {
+        // **출력이 실제로 열렸는지 먼저 확인한다**(독립 검토 RMS-02).
+        //
+        // 화면의 `playingSignal` 은 **사람의 뜻**이지 출력이 아니다. 채널
+        // 바꾸기를 줄에 넣자마자 안정화를 시작하면, 명령이 밀렸을 때
+        // **소리가 나기도 전에 안정화가 끝난다** — 검토자가 출력이 한 번도
+        // 안 열린 채 아홉 장을 쌓는 것을 보였다.
+        val outputGeneration = if (requireOutput) {
+            val gen = awaitSignalGeneration()
+            if (gen == null || gen == SignalPlayer.NONE) {
+                controller.update { st ->
+                    st.copy(
+                        rtaSaveNoticeKo = "테스트 신호가 실제로 나오지 않아 측정을 시작하지 않았습니다.",
+                    )
+                }
+                return false
+            }
+            gen
+        } else {
+            null
+        }
+
+        // **여기서 조건을 붙박는다**(독립 검토 RMS-01). 저장할 때 화면을
+        // 다시 읽으면 그사이 바뀐 값이 「그때의 조건」인 척 적힌다.
+        val context = rtaContextNow()
 
         val run = kr.joa.selahrta.data.rta.RtaCaptureRun(
             settleMs = kr.joa.selahrta.data.rta.RtaCaptureRun.DEFAULT_SETTLE_MS,
@@ -1771,11 +1822,19 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             // 오는 것이 알아채야 할 일이므로, 시간은 장과 무관하게 흘러야
             // 한다.
             val frames = launch {
+                // **같은 장을 두 번 세지 않는다**(독립 검토 RMS-05).
+                //
+                // 꾸러미의 시각은 **새 FFT 가 없어도 바뀐다** — 마이크에서
+                // 0표본을 읽은 덩어리에도 들고 있던 그 장이 그대로 실린다.
+                // 시각으로 가리면 **입력이 멈췄는데도 10초가 정상 완료된다.**
+                // 장 번호가 같으면 같은 장이다.
+                var lastSeq = -1L
                 controller.measurement
                     .filterNotNull()
-                    .distinctUntilChangedBy { it.atMonotonicMs }
                     .collect { m ->
                         val rta = m.rta ?: return@collect
+                        if (rta.seq == lastSeq) return@collect
+                        lastSeq = rta.seq
                         run.onFrame(rta.bandsDbfs, nowMs())
                     }
             }
@@ -1783,20 +1842,145 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 while (run.running) {
                     kotlinx.coroutines.delay(RTA_TICK_MS)
                     run.tick(nowMs())
-                    // 보정이 바뀌면 잣대가 달라진다 — 그만둔다.
-                    if (controller.baseState.value.calibration.offset.db != startOffsetDb) {
+                    // **조건이 바뀌면 그만둔다**(RMS-01). 앞뒤가 다른 잣대로
+                    // 잰 값을 한 곡선에 담으면 나중에 가릴 길이 없다.
+                    val changed = rtaContextChangeKo(context, rtaContextNow())
+                    if (changed != null) {
+                        run.cancel()
+                        controller.update { st -> st.copy(rtaSaveNoticeKo = changed) }
+                    } else if (outputGeneration != null &&
+                        awaitSignalGeneration() != outputGeneration
+                    ) {
+                        // **출력이 끊기면 그만둔다**(RMS-02). 백그라운드로
+                        // 가거나 포커스를 잃으면 소리가 멎는데, 그대로 두면
+                        // **조용한 방을 재어 좌우 비교로 저장한다.**
                         run.cancel()
                         controller.update { st ->
-                            st.copy(rtaSaveNoticeKo = "재는 도중 보정이 바뀌어 측정을 멈췄습니다.")
+                            st.copy(rtaSaveNoticeKo = "테스트 신호가 멈춰 측정을 중단했습니다.")
                         }
                     }
                     publishRtaCapture(run, nameKo)
                 }
             } finally {
                 frames.cancel()
+                // **그만둔 길에서도 화면을 치운다**(독립 검토 RMS-04).
+                //
+                // 코루틴이 취소되면 아래 `finishRtaCapture` 까지 못 간다.
+                // 그러면 일은 끝났는데 화면에는 「안정화 중」이 남아, 저장
+                // 단추로도 차례 시작으로도 돌아오지 못한다.
+                //
+                // **내 것일 때만 치운다** — 늦은 정리가 새 측정을 지우면
+                // 안 된다.
+                if (rtaRun === run) {
+                    rtaRun = null
+                    controller.update { st -> st.copy(rtaCapture = null) }
+                }
             }
-            finishRtaCapture(run, nameKo, setId, startOffsetDb, spec)
+            finishRtaCapture(run, nameKo, setId, context)
         }
+    }
+
+    /**
+     * **명령 스레드에 물어 지금 나가는 재생의 세대를 받는다**(RMS-02).
+     *
+     * 줄 맨 뒤에 서서 묻기 때문에, **바로 앞에 넣은 채널 바꾸기가 실제로
+     * 돈 뒤**의 값이 온다. 못 열었으면 [SignalPlayer.NONE] 이고, 대답이
+     * 없으면 null 이다.
+     */
+    private suspend fun awaitSignalGeneration(): Long? =
+        kotlinx.coroutines.withContext(Dispatchers.IO) {
+            signalCommands.ask(SIGNAL_ASK_TIMEOUT_MS) { playGeneration }
+        }
+
+    /**
+     * **한 측정 구간 내내 붙박여 있어야 하는 조건**(독립 검토 RMS-01).
+     *
+     * 재는 도중에 이 가운데 하나라도 바뀌면 **그 앞뒤는 같은 곡선에 담을 수
+     * 없다.** 담아 놓으면 어느 부분이 어떤 조건이었는지 **저장한 뒤에는
+     * 되살릴 길이 없다.**
+     *
+     * 저장할 때 쓰는 값도 여기서 나온다 — 끝나고 화면을 다시 읽으면 그사이
+     * 바뀐 값이 「그때의 조건」인 척 적힌다.
+     */
+    private data class RtaCaptureContext(
+        val inputKey: String?,
+        val inputSource: String?,
+        val inputChannel: Int?,
+        val calibrationState: String,
+        val calibrationSource: String,
+        val offsetDb: Double,
+        val curveName: String,
+        val curveHash: String,
+        val analysisWeighting: String,
+        val fftSize: Int?,
+        val sampleRate: Int?,
+        val signal: String,
+        val channel: String,
+        val outputDbfs: Double,
+    )
+
+    private fun rtaContextNow(): RtaCaptureContext {
+        val st = controller.baseState.value
+        val spec = rtaSpec()
+        val curve = st.curve?.takeIf { it.enabled }
+        return RtaCaptureContext(
+            inputKey = st.opened?.deviceKey,
+            inputSource = st.opened?.audioSource?.name,
+            inputChannel = st.opened?.channelIndex,
+            calibrationState = st.calibration.state.name,
+            // **「보정이 없다」와 「모른다」를 가른다**(담당자 지시 기준 5).
+            calibrationSource = st.calibration.saved?.source?.name ?: "",
+            offsetDb = st.calibration.offset.db,
+            // **「안 걸렸다」와 「모른다」를 가른다.**
+            curveName = curve?.fileName ?: "",
+            curveHash = curveHashOf(curve),
+            analysisWeighting = st.meterSettings.analysisWeighting.name,
+            fftSize = spec?.first,
+            sampleRate = spec?.second,
+            signal = st.playingSignal?.name ?: "",
+            channel = st.signalChannels.name,
+            outputDbfs = 20.0 * kotlin.math.log10(st.signalAmplitude.coerceAtLeast(1e-6)),
+        )
+    }
+
+    /**
+     * **곡선 내용의 지문**(독립 검토 RMS-03).
+     *
+     * 파일 이름만으로는 모자라다 — 같은 이름으로 **다른 곡선**을 가져올 수
+     * 있고, 그러면 곡선이 바뀐 줄 모르고 견준다.
+     *
+     * 곡선이 안 걸렸으면 빈 글자다. 「모른다」가 아니라 「없다」이다.
+     */
+    private fun curveHashOf(curve: kr.joa.selahrta.calibration.ActiveCurve?): String {
+        val points = curve?.curve?.points ?: return ""
+        val text = points.joinToString(";") { p -> "${p.hz}:${p.gainDb}" }
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(text.toByteArray())
+        return digest.take(8).joinToString("") { b -> "%02x".format(b) }
+    }
+
+    /**
+     * 무엇이 바뀌었는지 **사람 말로** 돌려준다. 안 바뀌었으면 null.
+     *
+     * 「측정을 멈췄습니다」만 적으면 사람이 무엇을 되돌려야 할지 모른다.
+     */
+    private fun rtaContextChangeKo(
+        fixed: RtaCaptureContext,
+        now: RtaCaptureContext,
+    ): String? {
+        if (fixed == now) return null
+        val what = when {
+            fixed.offsetDb != now.offsetDb || fixed.calibrationState != now.calibrationState ||
+                fixed.calibrationSource != now.calibrationSource -> "보정"
+            fixed.curveName != now.curveName || fixed.curveHash != now.curveHash -> "보정 곡선"
+            fixed.analysisWeighting != now.analysisWeighting -> "분석 가중"
+            fixed.channel != now.channel -> "출력 채널"
+            fixed.signal != now.signal -> "테스트 신호"
+            fixed.outputDbfs != now.outputDbfs -> "출력 세기"
+            fixed.inputKey != now.inputKey || fixed.inputSource != now.inputSource ||
+                fixed.inputChannel != now.inputChannel -> "입력 마이크"
+            else -> "측정 조건"
+        }
+        return "재는 도중 ${what}이(가) 바뀌어 측정을 멈췄습니다."
     }
 
     /**
@@ -1837,7 +2021,12 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                     // 그것을 받아 준다** — 앞 채널의 소리가 안 섞인다.
                     setSignalChannels(channel)
                     publishRtaSequence(seq)
-                    val ok = runOneRtaCapture(seq.currentNameKo(), seq.setId)
+                    // **출력이 실제로 열렸는지 확인한 뒤에 재게 한다**(RMS-02).
+                    val ok = runOneRtaCapture(
+                        seq.currentNameKo(),
+                        seq.setId,
+                        requireOutput = true,
+                    )
                     if (!ok) break
                     seq.advance()
                 }
@@ -1893,11 +2082,13 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         run: kr.joa.selahrta.data.rta.RtaCaptureRun,
         nameKo: String,
         setId: String?,
-        offsetDb: Double,
-        spec: Pair<Int, Int>?,
+        /** 잴 때 붙박아 둔 조건. **끝나고 화면을 다시 읽지 않는다**(RMS-01). */
+        context: RtaCaptureContext,
     ): Boolean {
-        rtaRun = null
-        controller.update { st -> st.copy(rtaCapture = null) }
+        if (rtaRun === run) {
+            rtaRun = null
+            controller.update { st -> st.copy(rtaCapture = null) }
+        }
 
         when (val p = run.phase) {
             is kr.joa.selahrta.data.rta.RtaCapturePhase.Failed -> {
@@ -1908,35 +2099,48 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             else -> Unit
         }
 
-        val mean = run.average.meanDb(offsetDb) ?: run {
+        val mean = run.average.meanDb(context.offsetDb) ?: run {
             controller.update { st -> st.copy(rtaSaveNoticeKo = "잰 것이 없어 저장하지 않았습니다.") }
             return false
         }
 
-        val st = controller.baseState.value
+        // **끝나고 화면을 다시 읽지 않는다**(독립 검토 RMS-01).
+        //
+        // 예전에는 여기서 `baseState` 를 다시 읽어 채널·신호·보정을 적었다.
+        // 그러면 **재는 도중에 바뀐 값이 「그때의 조건」인 척** 적힌다 —
+        // 검토자가 왼쪽으로 시작해 6초에 오른쪽으로 바꾼 공에서, **섞인
+        // 곡선이 `Right` 로 저장되는 것**을 보였다.
         val snapshot = kr.joa.selahrta.data.rta.RtaMeasurement(
             id = kr.joa.selahrta.data.rta.RtaMeasurementStore.newId(),
             setId = setId ?: kr.joa.selahrta.data.rta.RtaMeasurementStore.newId(),
             nameKo = nameKo,
             method = "rta",
             bandsSpl = mean,
-            signal = st.playingSignal?.name ?: "",
-            channel = st.signalChannels.name,
-            outputDbfs = 20.0 * kotlin.math.log10(st.signalAmplitude.coerceAtLeast(1e-6)),
+            signal = context.signal,
+            channel = context.channel,
+            outputDbfs = context.outputDbfs,
             averagedFrames = run.average.frames,
             conditions = kr.joa.selahrta.data.rta.RtaConditions(
-                inputKey = st.opened?.deviceKey,
-                calibrationState = st.calibration.state.name,
+                inputKey = context.inputKey,
+                calibrationState = context.calibrationState,
                 // **「보정이 없다」와 「모른다」를 가른다**(담당자 지시 기준 5).
                 // null 을 그대로 두면 겉장에 그 줄이 아예 안 쓰이고, 다시
                 // 읽을 때 「미확인」이 된다 — 보정이 없다는 것은 아는
                 // 사실이므로 빈 글자로 적어 둔다(실기기 겉장에서 확인).
-                calibrationSource = st.calibration.saved?.source?.name ?: "",
+                calibrationSource = context.calibrationSource,
                 // **「안 걸렸다」와 「모른다」를 가른다.** 곡선이 꺼져 있으면
                 // 빈 글자이고, 그것은 「모른다」가 아니다.
-                curveName = st.curve?.takeIf { it.enabled }?.fileName ?: "",
-                fftSize = spec?.first,
-                sampleRate = spec?.second,
+                curveName = context.curveName,
+                fftSize = context.fftSize,
+                sampleRate = context.sampleRate,
+                // **이 다섯이 없어서 가중·보정 수치가 다른 것끼리 「같은
+                // 조건」이 되었다**(독립 검토 RMS-03). 100Hz 에서 19dB 이,
+                // 보정 6dB 이 좌우 차이로 읽혔다.
+                analysisWeighting = context.analysisWeighting,
+                offsetDb = context.offsetDb,
+                curveHash = context.curveHash,
+                inputSource = context.inputSource,
+                inputChannel = context.inputChannel,
             ),
             measuredAtEpochMs = System.currentTimeMillis(),
         )
