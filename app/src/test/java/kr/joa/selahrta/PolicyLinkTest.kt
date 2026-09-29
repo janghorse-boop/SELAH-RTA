@@ -15,10 +15,25 @@ import java.io.File
  * 2026-09-29 까지 **코드 어디에도 그 주소가 없었다.** 홈페이지에 방침을
  * 올리고 문서까지 갖춰 두고도, 앱에서 가는 길만 빠져 있었다.
  *
- * ## 화면을 띄우지 않고 무엇을 지키나
+ * ## 무엇을 지키고 무엇을 못 지키나
  *
- * 이 시험은 Compose 를 돌리지 않는다. 소스를 읽어 **주소가 맞는지**와
- * **그 줄이 화면에 실제로 불려 나오는지**를 본다.
+ * 이 시험은 Compose 를 돌리지 않는다. **소스를 문자열로 읽을 뿐이다** —
+ * 「화면에 실제로 그려지는지 본다」고 적었던 것은 **과한 말이었다**
+ * (독립 재검증 2026-09-29).
+ *
+ * 검토자가 넣은 변이 넷 가운데 **하나만** 잡았다:
+ *
+ * | 변이 | 이 시험 |
+ * |---|---|
+ * | 호출부 **삭제** | **잡음** |
+ * | 호출 줄을 `//` 로 주석 처리 | 통과 ← 주석과 코드를 구별 못 한다 |
+ * | 개인정보 단추를 `TERMS_URL` 로 연결 | 통과 |
+ * | `failedUrl` 갱신 제거 | 통과 |
+ *
+ * **정규식 조건을 늘려 메우려 하지 않는다.** 누른 결과를 보는 시험이
+ * 있어야 하고, 그것은 `PolicyLinksInteractionTest`(androidTest) 다.
+ * 여기 남는 값어치는 **주소가 공개 방침의 것과 같은가** 하나다 —
+ * 기기 없이 돌고, 오타가 나도 빌드는 통과하는 값이기 때문이다.
  *
  * ## 처음 쓴 판은 뚫렸다 (독립 재검증 2026-09-29)
  *
@@ -44,15 +59,18 @@ class PolicyLinkTest {
     /**
      * **선언이 아니라 호출을 센다.** 이것이 없으면 화면에서 링크를
      * 지워도 시험이 통과한다(검토자가 실제로 뚫었다).
+     *
+     * **주석 처리는 못 잡는다.** 문자열 검색의 한계이고, 그쪽은
+     * `PolicyLinksInteractionTest` 가 덮는다.
      */
     @Test
     fun `설정 화면이 방침 줄을 실제로 그린다`() {
-        val declAt = source.indexOf("internal fun PolicyLinks(")
-        assertTrue("PolicyLinks 선언을 못 찾았다", declAt > 0)
-        val callAt = source.indexOf("PolicyLinks(")
+        val declAt = source.indexOf("internal fun AppInfoWithPolicyLinks(")
+        assertTrue("AppInfoWithPolicyLinks 선언을 못 찾았다", declAt > 0)
+        val callAt = source.indexOf("AppInfoWithPolicyLinks(")
         assertTrue(
-            "PolicyLinks 를 선언만 하고 부르지 않는다 — 화면에서 링크가 " +
-                "사라져도 아무도 모른다.",
+            "AppInfoWithPolicyLinks 를 선언만 하고 부르지 않는다 — 화면에서 " +
+                "링크가 사라져도 아무도 모른다.",
             callAt in 1 until declAt,
         )
     }
