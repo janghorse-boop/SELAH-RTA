@@ -85,7 +85,7 @@ fun SignalGeneratorCard(
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text("테스트 신호 내보내기", color = SelahColors.TextPrimary, fontSize = 13.sp)
+        Text("테스트 신호 송출", color = SelahColors.TextPrimary, fontSize = 13.sp)
         Text(
             "폰이 두 대면 한 대가 내보내고 한 대가 잽니다. 한 대뿐이어도 " +
                 "스피커 소리가 제 마이크로 돌아오므로 하울링 탐지를 확인할 수 있습니다.",
@@ -137,16 +137,18 @@ fun SignalGeneratorCard(
 
         ChannelPicker(channels, onChannels)
 
-        // 신호 목록. 「주파수 지정」은 고르개를 함께 그려야 해서 따로 뺀다.
+        // 신호 목록. **주파수를 쓰는 둘은 따로 뺀다** — 슬라이더와
+        // 입력칸을 함께 그려야 하고, 둘이 같은 주파수를 쓰므로 고르개를
+        // 두 번 그릴 까닭이 없다.
         for (s in TestSignal.entries) {
-            if (s == TestSignal.Custom) continue
+            if (s.usesPickedHz) continue
             SignalRow(s, s == playing, onPlay, onStop)
         }
-        CustomToneRow(
-            playing = playing == TestSignal.Custom,
+        PickedHzCard(
+            playing = playing,
             toneHz = toneHz,
             onToneHz = onToneHz,
-            onPlay = { onPlay(TestSignal.Custom) },
+            onPlay = onPlay,
             onStop = onStop,
         )
 
@@ -230,51 +232,42 @@ private fun ChannelPicker(
  * 쓰임이라, 멈췄다 다시 눌러야 하면 못 찾는다.
  */
 @Composable
-private fun CustomToneRow(
-    playing: Boolean,
+private fun PickedHzCard(
+    playing: TestSignal?,
     toneHz: Double,
     onToneHz: (Double) -> Unit,
-    onPlay: () -> Unit,
+    onPlay: (TestSignal) -> Unit,
     onStop: () -> Unit,
 ) {
     var range by remember { mutableStateOf(ToneRange.All) }
+    val playingHere = playing?.usesPickedHz == true
 
     Column(
         Modifier
             .fillMaxWidth()
             .background(
-                if (playing) SelahColors.Accent.copy(alpha = 0.16f) else SelahColors.SurfaceVariant,
+                if (playingHere) {
+                    SelahColors.Accent.copy(alpha = 0.16f)
+                } else {
+                    SelahColors.SurfaceVariant
+                },
                 RoundedCornerShape(8.dp),
             )
             .border(
                 1.dp,
-                if (playing) SelahColors.Accent else Color.Transparent,
+                if (playingHere) SelahColors.Accent else Color.Transparent,
                 RoundedCornerShape(8.dp),
             )
             .padding(horizontal = 12.dp, vertical = 9.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    TestSignal.Custom.labelKo,
-                    color = if (playing) SelahColors.Accent else SelahColors.TextPrimary,
-                    fontSize = 12.sp,
-                    fontWeight = if (playing) FontWeight.SemiBold else FontWeight.Normal,
-                )
-                ToneHzField(toneHz, onToneHz)
-            }
-            PlayStopMark(
-                playing,
-                Modifier
-                    .clickable { if (playing) onStop() else onPlay() }
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-            )
-        }
+        Text(
+            "주파수 지정",
+            color = if (playingHere) SelahColors.Accent else SelahColors.TextPrimary,
+            fontSize = 12.sp,
+            fontWeight = if (playingHere) FontWeight.SemiBold else FontWeight.Normal,
+        )
+        ToneHzField(toneHz, onToneHz)
         // **구간을 좁혀 미세하게 맞춘다**(담당자 지시 2026-09-29).
         //
         // 20Hz~20kHz 를 한 슬라이더에 펴면 손가락 한 마디가 수백 Hz 다.
@@ -312,12 +305,40 @@ private fun CustomToneRow(
                 fontSize = 9.sp,
             )
         }
-        Text(
-            TestSignal.Custom.noteKo,
-            color = SelahColors.TextMuted,
-            fontSize = 10.sp,
-            lineHeight = 14.sp,
-        )
+        // **같은 주파수를 두 가지로 낸다**(담당자 지시 2026-09-29).
+        //
+        // 순음은 그 한 점만 울린다 — 그 자리에 방의 공진이 있으면
+        // 엉뚱하게 크게 들린다. 1/3 옥타브 대역은 EQ 슬라이더 하나가
+        // 덮는 폭을 고르게 채워, **그 슬라이더를 만지며 듣는** 데 맞다.
+        //
+        // 고르개를 두 번 그리지 않는다 — 같은 주파수를 쓰므로.
+        for (s in TestSignal.entries.filter { it.usesPickedHz }) {
+            val on = playing == s
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable { if (on) onStop() else onPlay(s) }
+                    .padding(vertical = 2.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        if (s == TestSignal.Custom) "순음" else s.labelKo,
+                        color = if (on) SelahColors.Accent else SelahColors.TextPrimary,
+                        fontSize = 12.sp,
+                        fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
+                    )
+                    Text(
+                        s.noteKo,
+                        color = SelahColors.TextMuted,
+                        fontSize = 10.sp,
+                        lineHeight = 14.sp,
+                    )
+                }
+                PlayStopMark(on, Modifier.padding(start = 8.dp))
+            }
+        }
     }
 }
 
