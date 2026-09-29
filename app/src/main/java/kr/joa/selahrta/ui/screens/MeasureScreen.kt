@@ -1233,19 +1233,14 @@ private fun InputCard(
             // 긴 USB 기기 이름이 경고를 밀어내지 않는다.
             modifier = Modifier.weight(1f),
         )
-        // **고른 기기가 사라졌을 때만** 뜬다. 평소에는 아무 말도 없다.
+        // **고른 기기가 없어도 아무 말도 하지 않는다**(담당자 지시
+        // 2026-09-29: 「외부장치가 없으면 당연히 핸드폰 자체 마이크가
+        // 기본이 됩니다」).
         //
-        // 재는 중에는 적지 않는다 — 그때 화면이 적는 것은 이미 「실제로
-        // 열린 것」이라, 고른 것이 없었다는 말은 시작 전에 할 말이다.
-        if (!running && choice.reason == ChoiceReason.PreferredMissing) {
-            Text(
-                "고르신 기기가 없습니다",
-                color = SelahColors.Warn,
-                fontSize = 11.sp,
-                maxLines = 1,
-                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-            )
-        }
+        // 예전에는 여기 「고르신 기기가 없습니다」를 적고, 위에는 주황
+        // 알림까지 띄웠다. 둘 다 **바로 옆 「측정 기기」 칸이 이미 하는
+        // 말**이었다 — 그 칸에 `SM-S918N` 이 적혀 있으면 USB 마이크로
+        // 재는 중이 아니라는 뜻이다.
     }
 }
 
