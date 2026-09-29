@@ -7,10 +7,16 @@
 > (`app/build.gradle.kts` 에 릴리스 `signingConfig` 가 없다). 디버그
 > 서명으로는 Play 에 올릴 수 없다.
 >
-> 그리고 **키를 잃으면 그 앱은 영영 갱신할 수 없다.** 같은 이름으로
-> 새 앱을 올려야 하고, 설치한 사람들은 갱신이 아니라 **새로 깔아야**
-> 하며 기존 데이터는 따라가지 않는다. 급할 때 만들면 보관이 허술해지니
-> 미리 만들어 둔다.
+> **키를 잃었을 때 무슨 일이 생기는지는 Play App Signing 을 켰는지에
+> 달렸다**(독립 재검증 UISRFF-03).
+>
+> - **켠 경우**(권함): 여기서 만드는 것은 「업로드 키」이고, 잃으면
+>   구글에 **재설정을 요청할 수 있다.** 배포 키는 구글이 들고 있다.
+> - **안 켠 경우**: 그 키가 곧 배포 키다. 잃으면 **영영 갱신할 수
+>   없고**, 같은 이름으로 새 앱을 올려야 하며 설치한 사람들은 갱신이
+>   아니라 새로 깔아야 한다. 기존 데이터는 따라가지 않는다.
+>
+> 어느 쪽이든 급할 때 만들면 보관이 허술해지니 미리 만들어 둔다.
 
 ---
 
@@ -95,6 +101,12 @@ android {
         release {
             // **없으면 조용히 디버그 서명으로 떨어지지 않게** 한다.
             // 서명 없이 만들어진 것을 모르고 올리는 쪽이 더 나쁘다.
+            //
+            // **「signingConfig 를 지정했다」는 사실만으로는 모자란다**
+            // (독립 재검증 UISRFF-03). 속성이 없으면 storeFile 이 null 인
+            // 채로 지정만 되어, release 패키징이 조용히 디버그로 떨어질
+            // 수 있다. 그래서 아래에서 키 파일까지 보고 **명시적으로
+            // 실패시킨다.**
             signingConfig = signingConfigs.getByName("release")
         }
     }
@@ -104,26 +116,71 @@ android {
 `providers.gradleProperty(...).orNull` 로 두는 까닭: 키가 없는 기계
 (CI·다른 사람의 PC)에서도 **디버그 빌드는 그대로 되어야** 한다.
 
+그리고 **release 패키징은 명시적으로 막는다** — 조용히 디버그 서명으로
+떨어지는 것이 가장 나쁘다:
+
+```kotlin
+tasks.matching { it.name.startsWith("bundleRelease") || it.name.startsWith("assembleRelease") }
+    .configureEach {
+        doFirst {
+            val f = providers.gradleProperty("SELAH_STORE_FILE").orNull
+            check(f != null && file(f).isFile) {
+                "업로드 키가 없습니다. docs/release-signing.md 를 보고 " +
+                    "~/.gradle/gradle.properties 에 SELAH_STORE_FILE 을 두십시오."
+            }
+        }
+    }
+```
+
 ---
 
 ## 4. 만든 뒤 확인
 
+**만든 것과 검사하는 것이 같아야 한다**(독립 재검증 UISRFF-03).
+`bundleRelease` 가 내놓는 것은 **AAB** 인데 옛 판 이 문서는 `apksigner`
+로 **APK** 를 검사하라고 적고 있었다 — APK 가 없으면 실패하고, 옛
+APK 가 남아 있으면 **이번에 올릴 파일과 무관한 서명**을 보게 된다.
+
+### 키 지문 보기
+
 ```bash
-# 지문 — Play Console 에 등록된 것과 같아야 한다
 keytool -list -v -keystore selah-rta-upload.jks -alias selah-rta
+```
 
-# 릴리스 번들 만들기
-cd /d/Cowork/SELAH-RTA
-JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew :app:bundleRelease
+### Play 에 올릴 번들(AAB)을 만들고 그것을 검사한다
 
-# 무엇으로 서명됐는지 확인 — 「debug」 가 보이면 안 된다
-"$ANDROID_HOME/build-tools/<버전>/apksigner" verify --print-certs \
+```powershell
+.\gradlew.bat :app:bundleRelease
+
+& "$env:JAVA_HOME/bin/jarsigner.exe" -verify -verbose -certs `
+  app/build/outputs/bundle/release/app-release.aab
+
+& "$env:JAVA_HOME/bin/keytool.exe" -printcert -jarfile `
+  app/build/outputs/bundle/release/app-release.aab
+```
+
+### APK 를 따로 나눠 줄 때만
+
+```powershell
+.\gradlew.bat :app:assembleRelease
+& "$env:ANDROID_HOME/build-tools/<버전>/apksigner.bat" verify --print-certs `
   app/build/outputs/apk/release/app-release.apk
 ```
 
-**「빌드가 끝났다」가 아니라 「이 지문으로 서명됐다」를 본다.**
+### 무엇을 보고 통과라 하나
 
----
+**종료 코드 0 으로는 모자란다.** `jarsigner` 는 서명이 없어도 경고만
+내고 0 으로 끝날 수 있다. 셋을 눈으로 본다:
+
+1. `jar verified` 가 찍혔는가
+2. 서명된 항목이 있는가(`sm` 표시)
+3. 인증서 **SHA-256 지문**이 Play Console 의 **업로드 인증서**와 같은가
+
+`unsigned` · `no manifest` · `This jar contains entries whose certificate
+chain is not validated` 같은 말이 보이면 통과가 아니다.
+
+**새 AAB 만 남은 폴더에서 해 본다.** 옛 산출물이 섞여 있으면 무엇을
+검사했는지 알 수 없다 — `app/build/outputs` 를 지우고 다시 만든다.
 
 ## 5. 이 일이 끝나야 다음이 열린다
 
