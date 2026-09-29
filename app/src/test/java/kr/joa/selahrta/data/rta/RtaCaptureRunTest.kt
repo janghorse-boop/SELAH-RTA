@@ -20,9 +20,15 @@ class RtaCaptureRunTest {
         settle: Long = 1_000,
         measure: Long = 10_000,
         gap: Long = 700,
-        minFrames: Int = 140,
+        ratio: Double = 0.6,
         at: Long = 0,
-    ) = RtaCaptureRun(settle, measure, gap, minFrames, at)
+    ) = RtaCaptureRun(
+        settleMs = settle,
+        measureMs = measure,
+        maxGapMs = gap,
+        minFrameRatio = ratio,
+        startedAtMs = at,
+    )
 
     /** 장을 [perSec] 개/초로 [ms] 동안 흘려 넣는다. */
     private fun feed(r: RtaCaptureRun, fromMs: Long, ms: Long, perSec: Int, db: Double): Long {
@@ -92,7 +98,7 @@ class RtaCaptureRunTest {
     /** **장이 빨리 와도 10초를 채운다.** 장 수로 세면 5초에 끝난다. */
     @Test
     fun `장이 빨리 와도 시간을 채운다`() {
-        val r = run(settle = 1_000, measure = 10_000, minFrames = 140)
+        val r = run(settle = 1_000, measure = 10_000, ratio = 0.6)
         var t = feed(r, 0, 1_000, 20, 60.0)
         // 초당 60장(세 배로 빠르게) — 5초만에 300장이 모인다.
         t = feed(r, t, 5_000, 60, 60.0)
@@ -127,7 +133,7 @@ class RtaCaptureRunTest {
      */
     @Test
     fun `장이 모자라면 완료가 아니다`() {
-        val r = run(settle = 1_000, measure = 10_000, gap = 5_000, minFrames = 140)
+        val r = run(settle = 1_000, measure = 10_000, gap = 5_000, ratio = 0.6)
         var t = feed(r, 0, 1_000, 20, 60.0)
         // 초당 2장뿐 — 10초에 20장.
         t = feed(r, t, 10_000, 2, 60.0)
@@ -180,7 +186,7 @@ class RtaCaptureRunTest {
 
     @Test
     fun `끝난 뒤에는 더 세지 않는다`() {
-        val r = run(settle = 0, measure = 1_000, minFrames = 1)
+        val r = run(settle = 0, measure = 1_000, ratio = 0.0)
         var t = feed(r, 0, 1_100, 20, 60.0)
         r.tick(t)
         assertEquals(RtaCapturePhase.Done, r.phase)
@@ -209,18 +215,33 @@ class RtaCaptureRunTest {
 
     // ── 최소 장 수 셈 ───────────────────────────────────
 
+    /**
+     * **기대치는 셈하지 않고 잰다.**
+     *
+     * 처음에는 `표본율 / (FFT/2)` 로 셈했다 — 50% 겹침을 가정한 것이었다.
+     * 실기기에서 재 보니 10초에 124장(초당 12.4장), 가정한 23.4장의
+     * **절반**이었다. 그래서 멀쩡한 측정이 「장이 모자라다」로 실패했다.
+     *
+     * 이제 안정화 구간의 빠르기를 재어 기대치로 삼는다 — 어떤 겹침·FFT·
+     * 기기에서도 스스로 맞는다.
+     */
     @Test
-    fun `최소 장 수는 분석 설정에서 나온다`() {
-        // 48kHz·4096·50% 겹침 = 초당 23.4장, 10초면 234장. 그 6할.
-        assertEquals(140, RtaCaptureRun.minFramesFor(4096, 48_000, 10_000))
-        // FFT 가 길면 장이 드물다.
-        assertTrue(RtaCaptureRun.minFramesFor(8192, 48_000, 10_000) < 140)
+    fun `느리게 들어와도 그 빠르기를 기준으로 삼는다`() {
+        val r = run(settle = 2_000, measure = 10_000, gap = 5_000)
+        // 초당 12장(실기기에서 잰 빠르기와 비슷하다).
+        var t = feed(r, 0, 2_000, 12, 60.0)
+        t = feed(r, t, 10_100, 12, 60.0)
+        r.tick(t)
+        assertEquals("멀쩡한 측정을 실패로 봤다", RtaCapturePhase.Done, r.phase)
     }
 
-    /** 분석 설정을 모르면 **막지 않는다.** 모른다고 못 재게 하면 안 된다. */
+    /** **빠르기가 도중에 반으로 떨어지면** 모자란 것이 맞다. */
     @Test
-    fun `분석 설정을 모르면 최소를 1로 둔다`() {
-        assertEquals(1, RtaCaptureRun.minFramesFor(0, 48_000, 10_000))
-        assertEquals(1, RtaCaptureRun.minFramesFor(4096, 0, 10_000))
+    fun `도중에 절반으로 느려지면 완료가 아니다`() {
+        val r = run(settle = 2_000, measure = 10_000, gap = 5_000)
+        var t = feed(r, 0, 2_000, 20, 60.0)
+        t = feed(r, t, 10_100, 5, 60.0)
+        r.tick(t)
+        assertTrue("느려진 것을 못 봤다", r.phase is RtaCapturePhase.Failed)
     }
 }

@@ -49,6 +49,8 @@ import androidx.compose.ui.platform.LocalConfiguration
 import kr.joa.selahrta.ui.components.BAND_SLOT_WIDE
 import kr.joa.selahrta.ui.components.formatHz
 import kr.joa.selahrta.ui.components.hzUnit
+import kr.joa.selahrta.ui.components.RtaOverlayCurve
+import androidx.compose.foundation.layout.Box
 import kr.joa.selahrta.ui.components.BandMeter
 import kr.joa.selahrta.ui.components.InfoBar
 import kr.joa.selahrta.ui.components.NO_VALUE
@@ -83,6 +85,15 @@ fun RtaScreen(
      * 길이 **아예 없어졌다** — 눌러도 아무 일이 없으니 고장으로 보인다.
      */
     onMode: (ViewMode) -> Unit,
+    /** 한 곡선을 재어 저장한다(지시서 §7). 이름과 묶을 세트를 받는다. */
+    onSaveRtaCurve: (String, String?) -> Unit = { _, _ -> },
+    onCancelRtaCapture: () -> Unit = {},
+    onRtaOverlayShown: (String, Boolean) -> Unit = { _, _ -> },
+    onRtaLiveVisible: (Boolean) -> Unit = {},
+    onRenameRtaSet: (String, String) -> Unit = { _, _ -> },
+    onDeleteRtaSet: (String) -> Unit = {},
+    onDeleteRtaMeasurement: (String) -> Unit = {},
+    onDismissRtaNotice: () -> Unit = {},
 ) {
     // **멈추는 것은 화면뿐이다**(2026-09-26 담당자 지시). 마지막 장을
     // 붙들어 두고 그린다 — 캡처·기록은 그대로 흐른다.
@@ -102,7 +113,18 @@ fun RtaScreen(
     var axisMode by remember { mutableStateOf(AxisMode.Fixed) }
     val (floor, ceil) = rememberAxisRange(axisMode, rtaTopSpl(rta))
     val onAxisTap = { axisMode = axisMode.next() }
+    var sheetOpen by remember { mutableStateOf(false) }
+    var renaming by remember { mutableStateOf<Pair<String, String>?>(null) }
+
     val controls: @Composable () -> Unit = {
+        RtaSaveControls(
+            capture = capture,
+            onSave = { name -> onSaveRtaCurve(name, capture.savedRtaSets.lastOrNull()?.id) },
+            onSaveNewSet = { name -> onSaveRtaCurve(name, null) },
+            onCancel = onCancelRtaCapture,
+            onOpenSaved = { sheetOpen = true },
+            onDismissNotice = onDismissRtaNotice,
+        )
         ChartControls(
             frozen = frozen,
             calibration = capture.calibration,
@@ -113,6 +135,40 @@ fun RtaScreen(
         )
     }
     val unresolved = rta?.resolved?.indexOfFirst { it }?.takeIf { it > 0 }
+
+    // 저장해 둔 것 중 켜 놓은 것만 겹친다(지시서 §7).
+    val overlays = capture.savedRta
+        .filter { it.id in capture.rtaOverlayIds }
+        .map { RtaOverlayCurve(it.nameKo, it.bandsSpl, channelColor(it.channel)) }
+    // **실시간 곡선도 끌 수 있다**(담당자 지시 3항) — 저장한 둘만 견줄 때
+    // 지금 소리가 위에 덮이면 못 본다.
+    val drawn = if (capture.rtaLiveVisible) rta else null
+
+    val sheet: @Composable () -> Unit = {
+        if (sheetOpen) {
+            SavedRtaSheet(
+                sets = capture.savedRtaSets,
+                items = capture.savedRta,
+                shownIds = capture.rtaOverlayIds,
+                liveVisible = capture.rtaLiveVisible,
+                currentConditions = capture.currentRtaConditions(),
+                onShown = onRtaOverlayShown,
+                onLiveVisible = onRtaLiveVisible,
+                onRenameSet = { id, name -> renaming = id to name },
+                onDeleteSet = onDeleteRtaSet,
+                onDelete = onDeleteRtaMeasurement,
+                onClose = { sheetOpen = false },
+                modifier = Modifier.padding(12.dp),
+            )
+        }
+        renaming?.let { (id, was) ->
+            RenameSetDialog(
+                initial = was,
+                onDone = { name -> onRenameRtaSet(id, name); renaming = null },
+                onDismiss = { renaming = null },
+            )
+        }
+    }
 
     val running = capture.measure is MeasureState.Running
     // 눕히는 일은 분석 **구역**이 한다(`SelahApp` 의 `LockLandscape`), 이 화면이
@@ -134,8 +190,9 @@ fun RtaScreen(
     // 기기마다·표시줄 크기마다 달라 미리 셈할 수 없고, 못박아 두었더니 폰을
     // 눕혔을 때 가로축 주파수 눈금이 탭 바에 잘렸다(기기에서 확인).
     if (landscape) {
+        Box(Modifier.fillMaxSize()) {
         BandMeter(
-            rta,
+            drawn,
             floor,
             ceil,
             Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 6.dp),
@@ -154,7 +211,10 @@ fun RtaScreen(
             // 남는다. 늘일 까닭이 없다.
             minSlotWidth = 0.dp,
             feedback = feedback,
+            overlays = overlays,
         )
+        sheet()
+        }
         return
     }
 
@@ -171,10 +231,11 @@ fun RtaScreen(
         // 각자 자리를 갖도록 늘이고 옆으로 밀어 본다. 눕히면 위의 가로 전용
         // 배치로 간다.
         BandMeter(
-            rta,
+            drawn,
             floor,
             ceil,
             Modifier.fillMaxWidth(),
+            overlays = overlays,
             chartHeight = 260.dp,
             modes = { AnalyzeModes(ViewMode.Rta, onMode) },
             controls = controls,

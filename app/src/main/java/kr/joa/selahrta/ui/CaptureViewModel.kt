@@ -1553,6 +1553,11 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         java.io.File(app.filesDir, "rta-measurements"),
     )
 
+    init {
+        // 앱을 껐다 켜도 남아 있어야 한다 — 열자마자 한 번 읽어 둔다.
+        reloadSavedRta()
+    }
+
     private var rtaRun: kr.joa.selahrta.data.rta.RtaCaptureRun? = null
     private var rtaJob: Job? = null
 
@@ -1584,11 +1589,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             settleMs = kr.joa.selahrta.data.rta.RtaCaptureRun.DEFAULT_SETTLE_MS,
             measureMs = kr.joa.selahrta.data.rta.RtaCaptureRun.DEFAULT_MEASURE_MS,
             maxGapMs = kr.joa.selahrta.data.rta.RtaCaptureRun.DEFAULT_MAX_GAP_MS,
-            minFrames = kr.joa.selahrta.data.rta.RtaCaptureRun.minFramesFor(
-                fftSize = spec?.first ?: 0,
-                sampleRate = spec?.second ?: 0,
-                measureMs = kr.joa.selahrta.data.rta.RtaCaptureRun.DEFAULT_MEASURE_MS,
-            ),
+            minFrameRatio = kr.joa.selahrta.data.rta.RtaCaptureRun.DEFAULT_MIN_FRAME_RATIO,
             startedAtMs = nowMs(),
         )
         rtaRun = run
@@ -1693,7 +1694,11 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             conditions = kr.joa.selahrta.data.rta.RtaConditions(
                 inputKey = st.opened?.deviceKey,
                 calibrationState = st.calibration.state.name,
-                calibrationSource = st.calibration.saved?.source?.name,
+                // **「보정이 없다」와 「모른다」를 가른다**(담당자 지시 기준 5).
+                // null 을 그대로 두면 겉장에 그 줄이 아예 안 쓰이고, 다시
+                // 읽을 때 「미확인」이 된다 — 보정이 없다는 것은 아는
+                // 사실이므로 빈 글자로 적어 둔다(실기기 겉장에서 확인).
+                calibrationSource = st.calibration.saved?.source?.name ?: "",
                 // **「안 걸렸다」와 「모른다」를 가른다.** 곡선이 꺼져 있으면
                 // 빈 글자이고, 그것은 「모른다」가 아니다.
                 curveName = st.curve?.takeIf { it.enabled }?.fileName ?: "",

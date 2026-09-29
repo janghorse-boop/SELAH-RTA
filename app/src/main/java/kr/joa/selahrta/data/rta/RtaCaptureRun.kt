@@ -52,8 +52,13 @@ class RtaCaptureRun(
     private val measureMs: Long,
     /** 이만큼 장이 안 오면 입력이 끊긴 것으로 본다. */
     private val maxGapMs: Long,
-    /** 평균 구간에서 이보다 적게 모이면 **정상 완료로 보지 않는다.** */
-    private val minFrames: Int,
+    /**
+     * 평균 구간에 들어와야 할 장 수의 **최소 비율**.
+     *
+     * 기대치는 **안정화 구간에서 실제로 들어온 빠르기**로 잰다 — 뒤의
+     * `expectedFrames` 참고.
+     */
+    private val minFrameRatio: Double = 0.6,
     startedAtMs: Long,
 ) {
     val average = BandPowerAverage()
@@ -66,6 +71,25 @@ class RtaCaptureRun(
 
     /** 마지막으로 장이 들어온 때. 끊김은 이것으로 본다. */
     private var lastFrameAtMs: Long = startedAtMs
+
+    /** 안정화 구간에 들어온 장 수. **빠르기를 여기서 잰다.** */
+    private var settleFrames: Int = 0
+
+    /**
+     * 평균 구간에 들어와야 할 최소 장 수.
+     *
+     * ## 왜 셈하지 않고 재는가
+     *
+     * 처음에는 `표본율 / (FFT/2)` 로 셈했다 — **50% 겹침을 가정**한
+     * 것이었다. 실기기에서 재 보니 10초에 124장, 초당 12.4장이었다.
+     * 가정한 23.4장의 **절반**이다. 그래서 멀쩡한 측정이 「장이 모자라다」로
+     * 실패했다.
+     *
+     * 겹침·FFT 길이·기기 부하를 미리 알 길이 없다. 그래서 **안정화 구간에
+     * 실제로 들어온 빠르기**를 재어 기대치로 삼는다. 어떤 설정에서도
+     * 스스로 맞는다.
+     */
+    private var minFrames: Int = 1
 
     /** 끝날 때까지 남은 밀리초. 화면이 이것을 적는다. */
     fun remainingMs(nowMs: Long): Long = when (phase) {
@@ -103,6 +127,11 @@ class RtaCaptureRun(
             // 보고, 이 줄은 시험으로 덮이지 않는다고 적어 둔다.
             average.reset()
             measureStartedAtMs = nowMs
+            // **여기서 기대치를 셈한다.** 안정화 동안 들어온 빠르기가
+            // 이 기기·이 설정의 실제 빠르기다.
+            val elapsed = (nowMs - settleStartedAtMs).coerceAtLeast(1)
+            val perMs = settleFrames.toDouble() / elapsed
+            minFrames = (perMs * measureMs * minFrameRatio).toInt().coerceAtLeast(1)
             phase = RtaCapturePhase.Measuring
             return
         }
@@ -125,7 +154,12 @@ class RtaCaptureRun(
     fun onFrame(bandsDb: DoubleArray, nowMs: Long) {
         if (!running) return
         lastFrameAtMs = nowMs
-        if (phase is RtaCapturePhase.Measuring) average.add(bandsDb)
+        if (phase is RtaCapturePhase.Measuring) {
+            average.add(bandsDb)
+        } else {
+            // 안정화 구간에서는 **세기만 한다.** 그 수로 빠르기를 잰다.
+            settleFrames++
+        }
         // 시간 경계를 장이 들어온 그 자리에서도 본다 — 틱만 기다리면
         // 최대 한 틱만큼 늦게 끝난다.
         tick(nowMs)
@@ -158,18 +192,7 @@ class RtaCaptureRun(
         /** 0.7초 동안 한 장도 안 오면 끊긴 것으로 본다. */
         const val DEFAULT_MAX_GAP_MS = 700L
 
-        /**
-         * 10초에 기대하는 장 수의 **6할**을 최소로 둔다.
-         *
-         * 기기가 바쁘면 몇 장은 빠진다 — 그것까지 실패로 보면 현장에서
-         * 아무것도 못 잰다. 그러나 반도 안 들어왔다면 그것은 10초 평균이
-         * 아니다.
-         */
-        fun minFramesFor(fftSize: Int, sampleRate: Int, measureMs: Long): Int {
-            if (fftSize <= 0 || sampleRate <= 0) return 1
-            // 50% 겹침이라 hop 은 FFT 길이의 절반이다.
-            val perSecond = sampleRate.toDouble() / (fftSize / 2.0)
-            return ((perSecond * measureMs / 1000.0) * 0.6).toInt().coerceAtLeast(1)
-        }
+        /** 들어와야 할 장 수의 최소 비율. 기대치는 안정화 구간에서 잰다. */
+        const val DEFAULT_MIN_FRAME_RATIO = 0.6
     }
 }
