@@ -82,57 +82,30 @@ SELAH_KEY_ALIAS=selah-rta
 SELAH_KEY_PASSWORD=...
 ```
 
-그다음 `app/build.gradle.kts` 에 이렇게 더한다(아직 안 되어 있다):
+`app/build.gradle.kts` 에는 **이미 배선되어 있다.** 속성 넷을 모두
+`orNull` 로 읽고, 넷이 다 있을 때만 `signingConfig` 를 채운다.
 
-```kotlin
-android {
-    signingConfigs {
-        create("release") {
-            val f = providers.gradleProperty("SELAH_STORE_FILE").orNull
-            if (f != null) {
-                storeFile = file(f)
-                storePassword = providers.gradleProperty("SELAH_STORE_PASSWORD").get()
-                keyAlias = providers.gradleProperty("SELAH_KEY_ALIAS").get()
-                keyPassword = providers.gradleProperty("SELAH_KEY_PASSWORD").get()
-            }
-        }
-    }
-    buildTypes {
-        release {
-            // **없으면 조용히 디버그 서명으로 떨어지지 않게** 한다.
-            // 서명 없이 만들어진 것을 모르고 올리는 쪽이 더 나쁘다.
-            //
-            // **「signingConfig 를 지정했다」는 사실만으로는 모자란다**
-            // (독립 재검증 UISRFF-03). 속성이 없으면 storeFile 이 null 인
-            // 채로 지정만 되어, release 패키징이 조용히 디버그로 떨어질
-            // 수 있다. 그래서 아래에서 키 파일까지 보고 **명시적으로
-            // 실패시킨다.**
-            signingConfig = signingConfigs.getByName("release")
-        }
-    }
-}
+**release 패키징은 별도 검증 task 가 막는다** — `verifyReleaseSigning`.
+`doFirst` 로는 안 된다(독립 재검증 2026-09-29): 그 task 가 **의존하는
+작업들보다 먼저 돌지 않아**, 서명 task 가 이미 지나간 뒤에 실패한다.
+그래서 선행 의존성으로 건다.
+
+지금 이렇게 갈린다(실제로 돌려 확인함):
+
+| 상황 | 결과 |
+|---|---|
+| 키 없음 · `assembleDebug` | **통과** — 개발에 지장 없다 |
+| 키 없음 · `bundleRelease` | **실패** — 없는 속성 이름을 알려 준다 |
+| 일부만 있음 | **실패** — 모자란 것만 짚어 준다 |
+| 넷 다 있으나 파일 없음 | **실패** — 경로를 확인하라고 한다 |
+
+**비밀번호는 어디에도 찍지 않는다.** 무엇이 없는지 이름으로만 말한다.
+
+확인해 보려면:
+
+```bash
+./gradlew :app:verifyReleaseSigning
 ```
-
-`providers.gradleProperty(...).orNull` 로 두는 까닭: 키가 없는 기계
-(CI·다른 사람의 PC)에서도 **디버그 빌드는 그대로 되어야** 한다.
-
-그리고 **release 패키징은 명시적으로 막는다** — 조용히 디버그 서명으로
-떨어지는 것이 가장 나쁘다:
-
-```kotlin
-tasks.matching { it.name.startsWith("bundleRelease") || it.name.startsWith("assembleRelease") }
-    .configureEach {
-        doFirst {
-            val f = providers.gradleProperty("SELAH_STORE_FILE").orNull
-            check(f != null && file(f).isFile) {
-                "업로드 키가 없습니다. docs/release-signing.md 를 보고 " +
-                    "~/.gradle/gradle.properties 에 SELAH_STORE_FILE 을 두십시오."
-            }
-        }
-    }
-```
-
----
 
 ## 4. 만든 뒤 확인
 
@@ -176,8 +149,14 @@ keytool -list -v -keystore selah-rta-upload.jks -alias selah-rta
 2. 서명된 항목이 있는가(`sm` 표시)
 3. 인증서 **SHA-256 지문**이 Play Console 의 **업로드 인증서**와 같은가
 
-`unsigned` · `no manifest` · `This jar contains entries whose certificate
-chain is not validated` 같은 말이 보이면 통과가 아니다.
+`unsigned` · `no manifest`, 서명 검증 실패, 서명되지 않은 payload,
+등록된 업로드 인증서와 다른 지문은 거절한다.
+
+다만 `certificate chain is not validated` 또는 `self signed` 경고만으로
+거절하지 않는다. 이 문서의 `keytool -genkeypair`는 자체 서명 인증서를
+만든다. JVM의 CA 신뢰 경로와 Play에 등록한 업로드 인증서의 일치는 다른
+검사다. 경고를 무조건 무시하는 대신, 그 원인을 확인하고 같은 AAB의 서명
+무결성·payload 서명 여부·인증서 유효기간·업로드 SHA-256 일치를 확인한다.
 
 **새 AAB 만 남은 폴더에서 해 본다.** 옛 산출물이 섞여 있으면 무엇을
 검사했는지 알 수 없다 — `app/build/outputs` 를 지우고 다시 만든다.
