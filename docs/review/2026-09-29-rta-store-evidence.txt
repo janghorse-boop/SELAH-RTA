@@ -1,0 +1,113 @@
+SELAH RTA independent review evidence (2026-09-29)
+
+Review pin: 5cff7c37a3b290bd586feeb33bae020efbef08e9
+Observed checkout HEAD after concurrent merges: d394c7b2b766ed7ca5c32e3272fd23932d1f9040
+Production diff from pin to observed HEAD: CaptureViewModel KDoc only, +19 lines.
+Isolated source: D:/Cowork/SELAH-RTA/build/independent-review/rta-store-20260929/source
+Evidence root: D:/Cowork/SELAH-RTA/build/independent-review/rta-store-20260929
+JDK: C:/Program Files/Android/Android Studio/jbr
+Android SDK: C:/Users/jangh/AppData/Local/Android/Sdk
+Instrumentation serial: emulator-5586 (Medium_Phone; silent, headless, read-only AVD)
+Physical connected phone was NOT used.
+
+BASELINE
+baseline-build.log: BUILD SUCCESSFUL in 1m 43s
+Tasks: :app:testDebugUnitTest --tests kr.joa.selahrta.data.rta.*
+       :app:assembleDebug :app:assembleDebugAndroidTest
+Gradle flags: --offline --no-build-cache --max-workers=2
+XML retained under baseline-results/:
+  BandPowerAverageTest      tests=8  failures=0 errors=0 skipped=0
+  RtaCaptureRunTest         tests=13 failures=0 errors=0 skipped=0
+  RtaDifferenceTest         tests=15 failures=0 errors=0 skipped=0
+  RtaMeasurementStoreTest   tests=21 failures=0 errors=0 skipped=0
+  RtaSequenceTest           tests=9  failures=0 errors=0 skipped=0
+  Total 66/66 passed.
+baseline-sequence-tests.log: RtaSequenceGateTest OK (2 tests), Time 4.848.
+
+JVM INDEPENDENT PROBE (unpatched pinned production)
+Artifact: docs/review/2026-09-29-rta-store-independent-regression.kt
+Install location: app/src/test/java/kr/joa/selahrta/ui/RtaStoreIndependentTest.kt
+Existing FakeClock/FakeSource test helpers are required.
+Final result: jvm-final.xml, jvm-final-probe.log
+  tests=5 failures=4 errors=0 skipped=0
+  PASS linearPowerMeanControl
+  FAIL emptyReadsMustNotCountTheOldSpectrumAsNewFrames
+  FAIL restartedRunMustWaitForANewSettlingInterval
+  FAIL differentAnalysisWeightingMustNotBeAutomaticallyComparable
+  FAIL differentScalarOffsetsMustNotDisappearOnDisk
+Observations copied from final XML:
+  RMS_STALE phase=Done averaged=103 errors=100 pcmBefore=128000 pcmAfter=128000 sameSpectrum=true
+  RMS_WEIGHT conditionsEqual=true accepted=true delta100=19.07365167861407
+  RMS_OFFSET conditionsEqual=true accepted=true delta=-6.0
+  RMS_RESTART at=4100 restarted=4000 phase=Measuring remaining=10000
+Control expectation: 10*log10((10^6+10^8)/2) = 77.032913781 dB.
+The stale test injects zero-frame reads, NOT continuing negative-error reads.
+The weighting test runs real RtaEngine with identical 100Hz PCM under A and Z.
+The scalar offset test constructs records with different applied offsets; it is
+a persistence/comparison model test, not an actual calibration wizard test.
+
+ANDROID VM INDEPENDENT PROBE (unpatched pinned production)
+Artifact: docs/review/2026-09-29-rta-store-vm-independent-regression.kt
+Install location: app/src/androidTest/java/kr/joa/selahrta/ui/RtaStoreVmIndependentTest.kt
+vm-probe.log: Tests run: 5, Failures: 4; Time 42.459
+  PASS stableCaptureControlPersistsViaFreshStore
+  FAIL cancellationMustClearVisibleCaptureState
+  FAIL changedOutputChannelMustNotSaveMixedCurveAsFinalChannel
+  FAIL sequenceMustStopWhenAppGoesToBackground
+  FAIL sequenceMustWaitForOutputAcknowledgement
+vm-observations.log (PID 5510):
+  RMS_CHANNEL saved=1 label=Right mean=97.42470853866502 name=left
+  RMS_ACK player=null uiSignal=Pink capture=RtaCaptureUi(settling=false, remainingMs=9290, frames=9, nameKo=pending · 왼쪽만)
+  RMS_VM_CONTROL saved=1 mean=59.99999999999999
+  RMS_BACKGROUND saved=1 storedSignal= output=null sequence=2/3 · 오른쪽만
+  RMS_CANCEL jobActive=false ui=RtaCaptureUi(settling=true, remainingMs=1500, frames=0, nameKo=cancel) phase=Cancelled
+Boundary: actual Android ViewModel, controller flow, coroutine job, output command
+executor and file save. Input is synthetic MeasurementSnapshot (no active real
+microphone); SignalSink is silent. It does not verify real AudioTrack/acoustics.
+Each test uses a new temp store and ViewModelStore cleanup.
+The acknowledgement test holds the command worker with a latch, not a guessed delay.
+
+MINIMAL PROPOSAL VALIDATION (isolated source only)
+Artifact: docs/review/2026-09-29-rta-store-cancel-restart-proposed.patch
+Changes: finally clears run-owned UI; restart resets settling epoch and counters.
+proposed-build.log: BUILD SUCCESSFUL in 1m 27s
+  RtaCaptureRunTest: 13/13 pass
+  RtaStoreIndependentTest.restartedRunMustWaitForANewSettlingInterval: 1/1 pass
+  :app:assembleDebug succeeded.
+XML preserved under proposed-results/.
+proposed-vm.log: OK (2 tests), Time 14.273
+  stableCaptureControlPersistsViaFreshStore: PASS
+  cancellationMustClearVisibleCaptureState: PASS
+proposed-vm-observations.log (patched run PID 8057; log also contains prior run):
+  RMS_VM_CONTROL saved=1 mean=59.99999999999999
+  RMS_CANCEL jobActive=false ui=null phase=null
+Both patched production files were restored from exact pinned backups after testing.
+The built APK still represents the proposal; do not mistake it for the restored
+source. It was installed only on the dedicated emulator.
+git apply --check succeeded against observed live HEAD d394c7b.
+Proposal does NOT fix context mixing, output acknowledgement/lifetime, incomplete
+comparison conditions, or stale-frame acceptance. It is not an approval patch.
+
+REPRODUCTION COMMANDS (inside the isolated source, PowerShell)
+$env:JAVA_HOME = 'C:/Program Files/Android/Android Studio/jbr'
+.\gradlew.bat --offline --no-build-cache --max-workers=2 :app:testDebugUnitTest --tests 'kr.joa.selahrta.ui.RtaStoreIndependentTest'
+.\gradlew.bat --offline --no-build-cache --max-workers=2 :app:assembleDebug :app:assembleDebugAndroidTest
+$adb = 'C:/Users/jangh/AppData/Local/Android/Sdk/platform-tools/adb.exe'
+& $adb -s emulator-5586 install -r 'app/build/outputs/apk/debug/app-debug.apk'
+& $adb -s emulator-5586 install -r 'app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk'
+& $adb -s emulator-5586 shell am instrument -w -r -e class 'kr.joa.selahrta.ui.RtaStoreVmIndependentTest' kr.joa.selahrta.test/androidx.test.runner.AndroidJUnitRunner
+
+Proposal selected run:
+.\gradlew.bat --offline --no-build-cache --max-workers=2 :app:testDebugUnitTest --tests 'kr.joa.selahrta.ui.RtaStoreIndependentTest.restartedRunMustWaitForANewSettlingInterval' --tests 'kr.joa.selahrta.data.rta.RtaCaptureRunTest' :app:assembleDebug
+& $adb -s emulator-5586 shell am instrument -w -e class 'kr.joa.selahrta.ui.RtaStoreVmIndependentTest#cancellationMustClearVisibleCaptureState,kr.joa.selahrta.ui.RtaStoreVmIndependentTest#stableCaptureControlPersistsViaFreshStore' kr.joa.selahrta.test/androidx.test.runner.AndroidJUnitRunner
+
+DELIVERED ARTIFACT SHA-256
+3CB04C839BE17E4B35E7EDEAC11335921655CED76FB353547F132036798BC284  2026-09-29-rta-store-independent-regression.kt
+E570B26B91B22924C931B44AC01D135A8D2C9220186F4F99E9CD5F1C35117FDB  2026-09-29-rta-store-vm-independent-regression.kt
+2982B0CC9B5885BB627B74D97DE904E9BF68E5D0B5539B23BAE82074107BCD47  2026-09-29-rta-store-cancel-restart-proposed.patch
+
+NOT CLAIMED
+No new full DSP/app suite or lint run. No real-device audio/routing/USB check.
+No measured hall stabilization/average-duration validation. No crash/fsync or
+disk-failure durability validation. No production code changes, commit or push.
+Previous signal-stop boundary approval is separate and remains unchanged.
