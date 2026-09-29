@@ -21,18 +21,20 @@ import java.util.concurrent.atomic.AtomicLong
  * 명령마다 따로 스레드를 띄우면 `start` 와 `stop` 이 서로를 앞질러
  * 단일 제어 계약이 깨진다. 한 줄로 세우면 부른 차례가 그대로 지켜진다.
  *
- * ## 왜 낡은 것을 버리는가
+ * ## 줄에 세우는 세 가지 길
  *
- * 줄에 세우기만 하면 화면은 안 멎지만 **소리가 손가락을 뒤쫓는다** —
- * 스무 개가 줄을 서서 하나에 144ms 씩, 손을 뗀 뒤로도 2.4초를 더 돈다.
- * 사람이 듣고 싶은 것은 **손을 뗀 그 자리**다.
+ * 처음에는 [post] 하나뿐이었다. 그것이 **세 가지 다른 일을 한 규칙으로**
+ * 다루어, 독립 검토 9회차에서 결함 넷이 나왔다(SRLR-01·02·04).
  *
- * 버려진 `stop` 도 안전하다 — 뒤따르는 `start` 가 제 안에서 먼저 멈춘다.
+ * | 길 | 무엇 | 낡으면 |
+ * |---|---|---|
+ * | [post] | **사람이 바라는 상태**(틀어라·멈춰라) | 버린다 |
+ * | [postAlways] | **생명주기 소식**(스스로 끝남·자원 놓기) | 버리지 않는다 |
+ * | [close] | **마지막 정리** | 돌던 것 **뒤에** 반드시 돈다 |
  *
- * ## 이것이 하지 않는 일
- *
- * 무엇이 안전한 명령인지 모른다. 그저 **마지막 것만 남긴다.** 하나하나가
- * 반드시 실행돼야 하는 일에는 쓰면 안 된다.
+ * **버려도 되는 것은 「바라는 상태」뿐이다.** 손가락을 끄는 동안 쌓인
+ * 스무 개는 이미 지나간 바람이다. 그러나 **자원을 놓는 일은 바람이
+ * 아니다** — 그것을 버리면 샌다.
  */
 class SerialCommands(
     threadName: String,
@@ -43,18 +45,62 @@ class SerialCommands(
 ) {
     private val seq = AtomicLong()
 
-    /** 줄에 세운다. 이 뒤에 더 새 명령이 오면 **이것은 하지 않는다.** */
-    fun post(block: () -> Unit) {
+    /** 받아들이는 자리를 직렬화한다. 번호를 매기는 것과 넣는 것이 한 몸이다. */
+    private val admission = Any()
+
+    @Volatile
+    private var closed = false
+
+    /**
+     * **바라는 상태**를 줄에 세운다. 뒤에 더 새 것이 오면 **하지 않는다.**
+     *
+     * 줄에 세우기만 하고 안 버리면 **소리가 손가락을 뒤쫓는다** — 스무 개가
+     * 하나에 144ms 씩, 손을 뗀 뒤로도 2.4초를 더 돈다. 사람이 듣고 싶은
+     * 것은 **손을 뗀 그 자리**다.
+     *
+     * **하나하나가 반드시 돌아야 하는 일에는 쓰면 안 된다** — [postAlways]
+     * 를 쓴다.
+     */
+    fun post(block: () -> Unit) = synchronized(admission) {
+        if (closed) return@synchronized
         val mine = seq.incrementAndGet()
-        // **이미 닫힌 뒤에 들어오는 것은 조용히 버린다.** 앱이 꺼지는
-        // 길에서 마지막 명령이 터지면 그것이 사람이 보는 마지막 화면이 된다.
-        runCatching {
-            executor.execute { if (mine == seq.get()) block() }
-        }
+        executor.execute { if (!closed && mine == seq.get()) block() }
     }
 
-    /** 더 받지 않는다. 돌고 있는 것은 끊는다. */
-    fun shutdownNow() {
+    /**
+     * **반드시 도는 일**을 줄에 세운다. 번호를 올리지 않는다.
+     *
+     * 자원을 놓는 것처럼 **건너뛰면 새는** 일이 여기로 온다. 번호를
+     * 올리지 않으므로 **사람이 막 넣은 명령을 지우지 않는다**(SRLR-04:
+     * 옛 재생의 정리가 새 시작을 지워, 두 번째 출력이 아예 안 열렸다).
+     */
+    fun postAlways(block: () -> Unit) = synchronized(admission) {
+        if (closed) return@synchronized
+        executor.execute { if (!closed) block() }
+    }
+
+    /**
+     * 더 받지 않고, **돌던 일이 끝난 뒤** [finalizer] 를 돌린다.
+     *
+     * [shutdownNow] 로는 안 된다 — 그것은 끼어들기를 **시도**할 뿐이고,
+     * 끼어들기를 무시하는 `open()` 은 뒤늦게 돌아와 **주인이 사라진 자리에서
+     * 소리를 시작한다.** 그러면 치울 사람이 없다(SRLR-01, High).
+     */
+    fun close(finalizer: () -> Unit) = synchronized(admission) {
+        if (closed) return@synchronized
+        closed = true
+        // 아직 안 돈 「바라는 상태」들을 한꺼번에 낡게 만든다.
+        seq.incrementAndGet()
+        executor.execute(finalizer)
+        (executor as? ExecutorService)?.shutdown()
+        Unit
+    }
+
+    /** 치울 자원이 없는 쪽이 쓴다. 돌던 것에 끼어들기만 한다. */
+    fun shutdownNow() = synchronized(admission) {
+        closed = true
+        seq.incrementAndGet()
         (executor as? ExecutorService)?.shutdownNow()
+        Unit
     }
 }

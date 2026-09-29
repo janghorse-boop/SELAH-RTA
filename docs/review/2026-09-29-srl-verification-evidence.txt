@@ -1,0 +1,82 @@
+SELAH RTA SRL independent verification, 2026-09-29
+Pinned: 07e0ee4c19c7099c92f8101c95a8af0535c468b1
+Merge HEAD: bd9d63ec8fb357dea760a36127b343bd05d5d071; same tree
+Environment: API 34 Medium_Phone, read-only no-window no-audio emulator-5580. No physical phone output.
+Baseline JVM XML: DSP 633 + app 851 = 1484, failures/errors/skipped = 0.
+Baseline lint: errors/fatal 0, warnings 11, hints 4.
+
+SOURCE: baseline-build.log
+BUILD SUCCESSFUL in 3m 46s
+
+SOURCE: baseline-instrumentation.log
+Time: 100.317
+OK (28 tests)
+
+SOURCE: independent-build.log
+BUILD SUCCESSFUL in 47s
+
+SOURCE: final-probe-original-focus-allowed.log
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: Cleanup must not supersede a user's start expected:<2> but was:<1>
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: A stale start completion must not undo a newer stop expected null, but was:<Pink>
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: The owner is cleared but the newly opened playback leaked
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: Queued restart must not restore 1 kHz expected:<3000.0> but was:<1007.8125>
+INSTRUMENTATION_STATUS: stack=org.junit.AssumptionViolatedException: Requires the emulator-only deny-focus app-op
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: Failed start must unwind focus and receiver registration
+Time: 0.86
+FAILURES!!!
+Tests run: 6,  Failures: 5
+
+SOURCE: denied-focus.log
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: Do not claim normal playback when focus was denied expected:<0> but was:<1>
+Time: 0.127
+FAILURES!!!
+Tests run: 1,  Failures: 1
+
+SOURCE: proposed-build.log
+BUILD SUCCESSFUL in 1m 50s
+
+SOURCE: proposed-instrumentation.log
+INSTRUMENTATION_STATUS: stack=org.junit.AssumptionViolatedException: Requires the emulator-only deny-focus app-op
+Time: 74.668
+OK (36 tests)
+
+SOURCE: proposed-final-probe.log
+INSTRUMENTATION_STATUS: stack=org.junit.AssumptionViolatedException: Requires the emulator-only deny-focus app-op
+Time: 0.374
+OK (7 tests)
+
+SOURCE: proposed-final-denied-focus.log
+Time: 0.116
+OK (1 test)
+
+Original observations (multiple runs; logcat System.out):
+I/System.out(10157): SRLR_END queuedPink=true opened=1 ui=null
+I/System.out(10157): SRLR_CLEAR released=false player=Pink wrote=true
+I/System.out(10157): SRLR_STOP ui=Pink player=null
+I/System.out(10157): SRLR_RETUNE ui=3000.0 outputHz=1007.8125
+I/System.out(10157): SRLR_OPEN_FAIL player=null interruptionHeld=true
+I/System.out(10334): SRLR_FOCUS denied=true opened=1 ui=Pink
+I/System.out(10439): SRLR_END queuedPink=true opened=1 ui=null
+I/System.out(10439): SRLR_STOP ui=Pink player=null
+I/System.out(10439): SRLR_CLEAR released=false player=Pink wrote=true
+I/System.out(10439): SRLR_RETUNE ui=3000.0 outputHz=1007.8125
+I/System.out(10439): SRLR_FOCUS denied=true opened=1 ui=Pink
+I/System.out(10439): SRLR_OPEN_FAIL player=null interruptionHeld=true
+I/System.out(10578): SRLR_END queuedPink=true opened=1 ui=null
+I/System.out(10578): SRLR_STOP ui=Pink player=null
+I/System.out(10578): SRLR_CLEAR released=false player=Pink wrote=true
+I/System.out(10578): SRLR_RETUNE ui=3000.0 outputHz=1007.8125
+I/System.out(10578): SRLR_OPEN_FAIL player=null interruptionHeld=true
+
+Proposed observations (first full run and focus-denial run):
+I/System.out(10750): SRLR_END queuedPink=true opened=2 ui=Pink
+I/System.out(10750): SRLR_STOP ui=null player=null
+I/System.out(10750): SRLR_CLEAR released=true player=null wrote=false
+I/System.out(10750): SRLR_RETUNE ui=3000.0 outputHz=2976.5625
+I/System.out(10750): SRLR_OPEN_FAIL player=null interruptionHeld=false
+I/System.out(11215): SRLR_FOCUS denied=true opened=0 ui=null
+
+The runner OK(36 tests) includes one assumption skip. The separate denial run proves that condition.
+Final provided probe has seven tests: six defect regressions and one ordinary-retune preservation check.
+The original failure traces use six defect tests; the positive ordinary-retune test was added afterward.
+Proposal is NOT applied to production checkout. Two-file patch applies with git apply --check.
