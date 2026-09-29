@@ -43,6 +43,8 @@ class SignalMiniBarTest {
         toneHz: Double = 1_000.0,
         channels: SignalChannels = SignalChannels.Both,
         onStop: () -> Unit = {},
+        noticeKo: String? = null,
+        onDismissNotice: () -> Unit = {},
     ) {
         compose.setContent {
             MaterialTheme {
@@ -52,7 +54,9 @@ class SignalMiniBarTest {
                     playingSignal = playing,
                     signalToneHz = toneHz,
                     signalChannels = channels,
+                    signalNoticeKo = noticeKo,
                     onStopSignal = onStop,
+                    onDismissSignalNotice = onDismissNotice,
                     onSelect = {},
                 )
             }
@@ -121,7 +125,50 @@ class SignalMiniBarTest {
         assertEquals(1, stops)
     }
 
+    // ── 멎은 까닭을 알린다 (독립 검토 SRL-03) ────────────
+
+    /**
+     * **소리가 멎은 까닭이 다른 화면에서는 안 보였다.**
+     *
+     * 출력이 죽으면 ViewModel 은 `playingSignal = null` 과 까닭을 함께
+     * 적는데, 그 까닭을 그리는 곳이 **테스트 신호 화면 하나뿐**이었다.
+     * RTA 에서는 미니 바가 사라질 뿐이라 **사람이 멈춘 것과 장치가 죽은
+     * 것이 화면에서 똑같아 보였다.**
+     *
+     * 그러면 테스트 입력이 끊긴 줄 모르고 RTA 의 레벨이 내려간 것을
+     * 방이나 PA 의 응답으로 읽는다 — 재는 일 자체가 틀어진다.
+     */
+    @Test
+    fun 멎은_까닭이_다른_화면에서도_보인다() {
+        area(playing = null, noticeKo = "출력이 바뀌어 테스트 신호를 멈췄습니다.")
+        compose.onNodeWithText("출력이 바뀌어", substring = true).assertIsDisplayed()
+    }
+
+    /** 틀려 있는 중에 온 까닭도 알린다(시작이 막힌 경우 등). */
+    @Test
+    fun _틀려_있어도_까닭이_보인다() {
+        area(playing = TestSignal.Pink, noticeKo = "소리를 내보내지 못했습니다.")
+        compose.onNodeWithText("소리를 내보내지", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("핑크 노이즈", substring = true).assertIsDisplayed()
+    }
+
+    /** **테스트 신호 화면에는 띄우지 않는다.** 그 화면의 카드가 이미 적는다. */
+    @Test
+    fun 테스트_신호_화면에서는_까닭을_겹쳐_적지_않는다() {
+        area(playing = null, screen = ViewMode.Signal, noticeKo = "출력이 바뀌었습니다.")
+        compose.onNodeWithText("출력이 바뀌었습니다.", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun 확인을_누르면_까닭을_치운다() {
+        var dismissed = 0
+        area(playing = null, noticeKo = "출력이 바뀌었습니다.", onDismissNotice = { dismissed++ })
+        compose.onNodeWithContentDescription(NOTICE_OK_DESC).performClick()
+        assertEquals(1, dismissed)
+    }
+
     private companion object {
         const val STOP_DESC = "테스트 신호 멈추기"
+        const val NOTICE_OK_DESC = "알림 확인"
     }
 }

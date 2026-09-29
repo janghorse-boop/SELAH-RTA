@@ -61,6 +61,7 @@ import kr.joa.selahrta.domain.ChurchSegment
 import kr.joa.selahrta.domain.MeasureState
 import kr.joa.selahrta.domain.MicKind
 import kr.joa.selahrta.ui.components.SignalMiniBar
+import kr.joa.selahrta.ui.components.SignalNoticeBar
 import kr.joa.selahrta.ui.components.signalMiniBarVisible
 import kr.joa.selahrta.ui.nav.NavSection
 import kr.joa.selahrta.ui.nav.ViewMode
@@ -377,7 +378,9 @@ fun SelahApp() {
                 playingSignal = capture.playingSignal,
                 signalToneHz = capture.signalToneHz,
                 signalChannels = capture.signalChannels,
+                signalNoticeKo = capture.signalNoticeKo,
                 onStopSignal = vm::stopSignal,
+                onDismissSignalNotice = vm::dismissSignalNotice,
             ) { picked ->
                 section = picked
                 // **탭을 옮기면 마법사를 닫는다.** 마법사는 탭 내용 위에
@@ -879,10 +882,19 @@ internal fun AppBottomArea(
     playingSignal: TestSignal?,
     signalToneHz: Double,
     signalChannels: SignalChannels,
+    signalNoticeKo: String?,
     onStopSignal: () -> Unit,
+    onDismissSignalNotice: () -> Unit,
     onSelect: (NavSection) -> Unit,
 ) {
     Column {
+        // **멎은 까닭을 먼저 적는다**(독립 검토 SRL-03). 까닭은 미니 바가
+        // 사라지는 것과 함께 오므로, 바 위에 두어야 눈이 가던 자리에 남는다.
+        //
+        // 테스트 신호 화면에는 띄우지 않는다 — 그 화면의 카드가 이미 적는다.
+        if (screen != ViewMode.Signal) {
+            signalNoticeKo?.let { SignalNoticeBar(it, onDismissSignalNotice) }
+        }
         // 틀어 둔 것이 있으면 탭 줄 **위**에 한 줄 얹는다. 탭은 늘
         // 맨 아래에 있어야 손가락이 찾는 자리가 바뀌지 않는다.
         playingSignal.takeIf { signalMiniBarVisible(it, screen) }?.let {

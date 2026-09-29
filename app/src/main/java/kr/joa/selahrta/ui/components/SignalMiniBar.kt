@@ -99,6 +99,57 @@ fun SignalMiniBar(
 }
 
 /**
+ * **소리가 멎은 까닭을 어느 화면에서나 알린다**(독립 검토 SRL-03).
+ *
+ * ## 왜 필요한가
+ *
+ * 출력이 죽으면 ViewModel 은 `playingSignal = null` 과 까닭을 함께
+ * 적는데, 그 까닭을 그리는 곳이 **테스트 신호 화면 하나뿐**이었다.
+ * RTA 에서는 미니 바가 사라질 뿐이라 **사람이 멈춘 것과 장치가 죽은
+ * 것이 화면에서 똑같아 보였다.**
+ *
+ * 그러면 테스트 입력이 끊긴 줄 모르고 RTA 의 레벨이 내려간 것을 방이나
+ * PA 의 응답으로 읽는다. 미니 바를 둔 까닭이 「무슨 소리가 나가는지
+ * 알린다」인데, **소리가 안 나가게 된 것을 안 알리면 반쪽이다.**
+ *
+ * 이어폰이 빠져 멈춘 경우도 여기로 온다.
+ */
+@Composable
+fun SignalNoticeBar(
+    noticeKo: String,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier
+            .fillMaxWidth()
+            .background(SelahColors.SurfaceVariant)
+            .padding(start = 14.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            noticeKo,
+            Modifier.weight(1f),
+            color = SelahColors.Warn,
+            fontSize = 11.sp,
+            lineHeight = 15.sp,
+            // **줄여 적지 않는다.** 까닭이 잘리면 무엇이 일어났는지 모른다 —
+            // 미니 바는 이름 한 줄이라 줄여도 되지만 이쪽은 아니다.
+            maxLines = 3,
+        )
+        TextButton(
+            onClick = onDismiss,
+            modifier = Modifier
+                .height(36.dp)
+                .semantics { contentDescription = "알림 확인" },
+        ) {
+            Text("확인", color = SelahColors.Accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+/**
  * 미니 바를 보일 것인가.
  *
  * **테스트 신호 화면에는 띄우지 않는다** — 그 화면엔 본체가 있어서,
