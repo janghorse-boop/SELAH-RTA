@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kr.joa.selahrta.data.rta.RtaComparisonSet
 import kr.joa.selahrta.data.rta.RtaConditions
+import kr.joa.selahrta.data.rta.RtaDifference
 import kr.joa.selahrta.data.rta.RtaMeasurement
 import kr.joa.selahrta.ui.theme.SelahColors
 import java.text.SimpleDateFormat
@@ -87,6 +88,15 @@ fun SavedRtaSheet(
                 modifier = Modifier.semantics { contentDescription = "실시간 곡선 보기" },
             )
             Text("지금 곡선", color = SelahColors.TextPrimary, fontSize = 12.sp)
+        }
+
+        // **두 곡선을 켜 두면 차이를 셈해 적는다**(지시서 §7 후속).
+        //
+        // 31칸을 눈으로 훑어 「어디가 얼마나 벌어졌나」를 찾으라고 하면
+        // 좌우를 견주려고 만든 기능이 절반만 된 것이다.
+        val shown = items.filter { it.id in shownIds }
+        if (shown.size == 2) {
+            AutoDifference(shown[0], shown[1])
         }
 
         if (items.isEmpty()) {
@@ -219,6 +229,44 @@ private fun MeasurementRow(
                 fontSize = 10.sp,
                 lineHeight = 14.sp,
                 modifier = Modifier.padding(start = 12.dp, bottom = 2.dp),
+            )
+        }
+    }
+}
+
+/**
+ * 켜 둔 두 곡선의 차이. **셈할 수 없으면 까닭을 적는다.**
+ *
+ * 숫자를 자동으로 내놓으면 사람은 그것을 믿는다. 그래서 조건을 모르거나
+ * 서로 다르면 **셈하지 않고, 왜 안 하는지 적는다**(담당자 지시 기준 5).
+ * 아무 말도 없으면 「차이가 없다」로 읽힌다.
+ */
+@Composable
+private fun AutoDifference(a: RtaMeasurement, b: RtaMeasurement) {
+    val d = RtaDifference.of(a, b)
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(SelahColors.SurfaceVariant)
+            .padding(8.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text("두 곡선의 차이", color = SelahColors.TextMuted, fontSize = 10.sp)
+        if (d == null) {
+            Text(
+                "측정 조건이 다르거나 ${RtaConditions.UNKNOWN_KO}이라 차이를 셈하지 " +
+                    "않았습니다. 겹쳐 보는 것은 그대로 됩니다.",
+                color = SelahColors.Warn,
+                fontSize = 11.sp,
+                lineHeight = 15.sp,
+            )
+        } else {
+            Text(
+                d.summaryKo(),
+                color = SelahColors.TextPrimary,
+                fontSize = 12.sp,
+                lineHeight = 16.sp,
             )
         }
     }
