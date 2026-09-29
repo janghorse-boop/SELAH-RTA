@@ -148,7 +148,11 @@ val verifyReleaseSigning = tasks.register("verifyReleaseSigning") {
     )
     val absent = missing.filter { !it.second.isPresent }.map { it.first }
     val storePath = store.orNull
-    val fileMissing = storePath != null && !File(storePath).isFile
+    // **signingConfig 와 같은 기준으로 푼다**(독립 재검증 UIS6-01).
+    // `File(...)` 은 실행 디렉터리 기준이라, `file(...)` 이 app 프로젝트
+    // 기준으로 제대로 찾은 키를 여기서는 「없다」고 했다. 문서의 절대
+    // 경로 예제는 멀쩡했고 **상대 경로를 쓰는 사람만** 막혔다.
+    val fileMissing = storePath != null && !file(storePath).isFile
 
     doLast {
         check(absent.isEmpty()) {
@@ -164,9 +168,22 @@ val verifyReleaseSigning = tasks.register("verifyReleaseSigning") {
 }
 
 // release 로 묶거나 서명하는 일 **앞에** 세운다.
-tasks.matching {
-    it.name.startsWith("bundleRelease") ||
-        it.name.startsWith("assembleRelease") ||
-        it.name.startsWith("packageRelease") ||
-        it.name.startsWith("signingConfigWriterRelease")
-}.configureEach { dependsOn(verifyReleaseSigning) }
+//
+// **이름을 못박는다**(독립 재검증 UIS6-02, 2026-09-29). 예전에는
+// `startsWith("bundleRelease")` 같은 접두사로 걸었는데, 그것이
+// `bundleReleaseClassesToCompileJar`·`packageReleaseResources` 까지
+// 잡았다. 그것들은 **서명과 무관한 release 단위 시험의 선행 작업**이라,
+// 키가 없으면 `:app:testReleaseUnitTest` 조차 못 돌았다.
+//
+// 막으려던 것은 **최종 산출물과 서명**뿐이다.
+//
+// AGP 8.13.0 기준 이름이다. **AGP 나 variant 를 올리면 이 목록을 다시
+// 확인한다** — 이름이 바뀌면 조용히 안 막게 된다(`-x` 로 일부러 빼는
+// 것까지 막는 보안 경계는 아니다).
+val guardedReleaseTasks = setOf(
+    "bundleRelease", "assembleRelease", "packageRelease", "packageReleaseBundle",
+    "packageReleaseUniversalApk", "signReleaseBundle", "validateSigningRelease",
+    "signingConfigWriterRelease",
+)
+tasks.matching { it.name in guardedReleaseTasks }
+    .configureEach { dependsOn(verifyReleaseSigning) }

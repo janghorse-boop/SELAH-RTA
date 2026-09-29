@@ -32,6 +32,8 @@ import java.io.File
  *
  * **정규식 조건을 늘려 메우려 하지 않는다.** 누른 결과를 보는 시험이
  * 있어야 하고, 그것은 `PolicyLinksInteractionTest`(androidTest) 다.
+ * **바깥 호출을 주석 처리하는 변이도 못 잡는다**(UIS6-03) — 그쪽은
+ * `SettingsScreenPolicyPresenceTest` 가 진짜 화면을 열어 본다.
  * 여기 남는 값어치는 **주소가 공개 방침의 것과 같은가** 하나다 —
  * 기기 없이 돌고, 오타가 나도 빌드는 통과하는 값이기 때문이다.
  *
