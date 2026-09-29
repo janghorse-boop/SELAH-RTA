@@ -3,12 +3,16 @@ package kr.joa.selahrta.ui
 import android.app.Application
 import android.os.Handler
 import android.os.Looper
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelStore
 import androidx.test.platform.app.InstrumentationRegistry
+import kr.joa.selahrta.audio.SerialCommands
 import kr.joa.selahrta.audio.TestSignal
 import org.junit.After
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.TimeUnit
 
 /**
@@ -45,15 +49,46 @@ import java.util.concurrent.TimeUnit
  * [멈추기도_주_스레드를_안_잡는다] 는 놓쳤다 — 멈출 때 감쇠를 기다리는
  * 시간이 그때그때 달라, 운 좋은 판에서는 한도 안에 들어온다. 그 하나는
  * **약한 그물**이라고 적어 둔다.
+ *
+ * ## 앞 시험을 확실히 치우고 잰다 (독립 검토 11회차 7장)
+ *
+ * 예전에는 `CaptureViewModel(app)` 을 **직접** 만들고 `onBackground()` 뒤에
+ * 300ms 를 잤다. 둘 다 잘못이다.
+ *
+ * - 직접 만든 ViewModel 은 **[CaptureViewModel.onCleared] 가 영영 안 돈다.**
+ *   명령 실행자도, 소리를 쓰던 스레드도 시험이 끝나도 그대로 살아 있다.
+ *   시험이 셋이니 **앞의 둘이 살아 있는 채로 셋째를 잰다.**
+ * - `Thread.sleep(300)` 은 기다린 것이 아니라 **그쯤이면 끝났겠지**다.
+ *
+ * 시간을 재는 시험에서 이것은 그냥 지저분한 것이 아니다 — **재는 값을
+ * 흔든다.** 11회차 전체 실행에서 50.1ms 한 번이 실패했다가 다음 판에
+ * 재현되지 않았는데, 살아남은 앞 시험의 소리 스레드가 **그럴듯한 원인**이다.
+ * (**원인을 밝힌 것은 아니다.** 한 번 통과했다고 끝난 것으로도 안 친다.)
+ *
+ * 그래서 다른 소유권 시험들처럼 [ViewModelStore] 로 만들고 `clear()` 로
+ * 끝낸 뒤 **실행자가 실제로 끝났는지 기다려 확인한다.**
  */
 class SignalCommandLatencyTest {
 
     private var vm: CaptureViewModel? = null
+    private var store: ViewModelStore? = null
 
     @After
     fun 치운다() {
-        onMain { vm?.onBackground() }
-        Thread.sleep(300)
+        val m = vm ?: return
+        val commands = m.javaClass.getDeclaredField("signalCommands")
+            .apply { isAccessible = true }.get(m) as SerialCommands
+        val executor = commands.javaClass.getDeclaredField("executor")
+            .apply { isAccessible = true }.get(commands) as ExecutorService
+
+        onMain { store?.clear() }   // → onCleared() → 실행자 닫기·소리 정리
+
+        assertTrue(
+            "앞 시험의 명령 실행자가 안 끝났다 — 다음 시험이 그 위에서 시간을 잰다",
+            executor.awaitTermination(10, TimeUnit.SECONDS),
+        )
+        vm = null
+        store = null
     }
 
     private fun <T> onMain(block: () -> T): T {
@@ -79,7 +114,12 @@ class SignalCommandLatencyTest {
     private fun newVm(): CaptureViewModel {
         val app = InstrumentationRegistry.getInstrumentation()
             .targetContext.applicationContext as Application
-        return onMain { CaptureViewModel(app) }.also { vm = it }
+        val s = ViewModelStore().also { store = it }
+        return onMain {
+            ViewModelProvider(s, ViewModelProvider.AndroidViewModelFactory(app))[
+                CaptureViewModel::class.java
+            ]
+        }.also { vm = it }
     }
 
     /**
