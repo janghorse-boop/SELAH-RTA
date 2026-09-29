@@ -811,6 +811,25 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      *
      * 그래서 이 번호를 따로 남긴다. **이 뒤에 시작된 재생만** 지름길을
      * 쓸 수 있다.
+     *
+     * ## 이 번호를 올리는 길 — 그리고 안 올리는 길 하나
+     *
+     * 다섯 갈래가 모두 [stopSignal] 로 모이므로 같은 번호를 올린다:
+     * **정지 단추 · 백그라운드**([onBackground]) **· 출력 변경 알림**
+     * (이어폰 뽑힘) **· 포커스 상실**(LOSS · TRANSIENT · CAN_DUCK).
+     *
+     * **[onCleared] 는 다르다. 이 번호를 올리지 않는다.** 11회차 요청서에
+     * 「거기도 같은 번호를 올린다」고 적었는데 **사실이 아니었다.** 거기서는
+     * [signalClosed] 와 실행자 닫기가 막는다. 끝난 ViewModel 은 **다시 시작할
+     * 일이 없으므로** 「이 뒤에 시작된 것인가」를 물을 자리가 아니다. 두
+     * 그물의 역할이 다르다 — 맞추려고 여기에 한 줄 더 넣을 것이 아니다.
+     *
+     * ## 정지 길을 하나 더 만든다면
+     *
+     * `SrlStopBoundaryIndependentTest` 의 `Stop` 에도 함께 더한다. 그 시험이
+     * **정지 원인 × 포커스 재획득(거절·허용)** 두 계약을 원인마다 건다.
+     * 새 길만 내고 거기에 안 더하면 그 길로 들어온 정지는 **아무도 안 본다** —
+     * 이 결함이 처음 난 까닭이 바로 「한 길만 보았다」였다.
      */
     private val lastSignalStopIntent = java.util.concurrent.atomic.AtomicLong()
 
