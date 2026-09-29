@@ -180,6 +180,83 @@ class CleanWindowTest {
         assertEquals(a, z, 0.1)
     }
 
+    // ── 48kHz·고른 덩어리만이 아니다 ──────────────────────
+
+    /**
+     * **44.1kHz 에서도 같아야 한다**(독립 재검증 요청서 6장에 「미확인」
+     * 으로 적어 둔 것).
+     *
+     * 창 길이를 프레임 수로 셈하므로 샘플레이트가 바뀌면 필요한 프레임
+     * 수도 바뀐다. 그 셈이 틀리면 **어떤 기기에서만** 창이 일찍 차거나
+     * 영영 안 차는데, 48kHz 로만 시험하면 드러나지 않는다.
+     */
+    @Test
+    fun `44100Hz 에서도 3초를 채워야 값이 나온다`() {
+        val fs2 = 44_100
+        val frames = 441                       // 10ms
+        fun t(amp: Double) = FloatArray(frames) {
+            (amp * sin(2 * PI * 1000 * it / fs2)).toFloat()
+        }
+        val w = CleanWindow(fs2)
+        var at = 1_000_000_000L
+        // 2.99초 — 아직 모자라다
+        repeat(299) { at += 10_000_000L; w.observe(t(0.01), frames, at, false) }
+        assertFalse("2.99초인데 찼다고 한다 (cleanMs=${w.cleanMs})", w.ready)
+        // 3.00초 — 찬다
+        repeat(2) { at += 10_000_000L; w.observe(t(0.01), frames, at, false) }
+        assertTrue("3초를 넣었는데 안 찼다 (cleanMs=${w.cleanMs})", w.ready)
+
+        val got = w.value(at, Weighting.A)!!
+        val ref = MultiWeightEngine(fs2, TimeWeight.Slow).let { e ->
+            repeat(1000) { e.process(t(0.01), frames) }
+            e.process(t(0.01), frames).a.currentDbfs.value
+        }
+        assertTrue("44.1kHz 에서 값이 틀리다: %.2f vs %.2f".format(got, ref), abs(got - ref) < 0.1)
+    }
+
+    /**
+     * **덩어리 크기가 들쑥날쑥해도 같아야 한다.**
+     *
+     * USB 기기는 늘 같은 크기로 주지 않는다. 프레임 수로 세므로
+     * 문제없어야 하는데, 「덩어리 수」로 세는 실수를 하면 여기서 갈린다.
+     */
+    @Test
+    fun `덩어리 크기가 달라도 프레임으로 센다`() {
+        val w = CleanWindow(fs)
+        var at = 1_000_000_000L
+        var total = 0L
+        // 128·960·2048 프레임을 섞어 3초를 넘긴다
+        val sizes = listOf(128, 960, 2048)
+        var i = 0
+        while (total < fs * 3L) {
+            val n = sizes[i++ % sizes.size]
+            val block = FloatArray(n) { (0.01 * sin(2 * PI * 1000 * it / fs)).toFloat() }
+            at += n * 1_000_000_000L / fs
+            w.observe(block, n, at, false)
+            total += n
+        }
+        assertTrue("프레임으로 3초를 넣었는데 안 찼다 (cleanMs=${w.cleanMs})", w.ready)
+        assertNotNull(w.value(at, Weighting.A))
+    }
+
+    /**
+     * **덩어리보다 짧게 넣어도 그만큼만 센다.**
+     *
+     * `frameCount` 가 배열보다 작을 수 있다(마지막 조각). 배열 크기로
+     * 세면 실제보다 빨리 찬다.
+     */
+    @Test
+    fun `배열이 아니라 frameCount 로 센다`() {
+        val w = CleanWindow(fs)
+        val big = FloatArray(4800) { (0.01 * sin(2 * PI * 1000 * it / fs)).toFloat() }
+        var at = 1_000_000_000L
+        // 4800짜리 배열에 480프레임(10ms)씩만 넣는다 → 3초에 300번
+        repeat(299) { at += 10_000_000L; w.observe(big, 480, at, false) }
+        assertFalse("frameCount 가 아니라 배열 크기로 셌다", w.ready)
+        repeat(2) { at += 10_000_000L; w.observe(big, 480, at, false) }
+        assertTrue(w.ready)
+    }
+
     @Test
     fun `아무것도 안 넣으면 값이 없다`() {
         val w = CleanWindow(fs)
