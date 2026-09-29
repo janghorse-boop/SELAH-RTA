@@ -84,6 +84,17 @@ class SignalPlayer(
         val running = AtomicBoolean(true)
 
         /**
+         * 지금 낼 순음의 주파수(Hz). 주 스레드가 바꾸고 소리 스레드가 읽는다.
+         *
+         * **다시 시작하지 않고 바꾸려고** 둔다(담당자 지시 2026-09-29:
+         * 「손가락으로 슬라이더를 움직일 때 아주 부드럽게」). 예전에는
+         * 주파수가 바뀔 때마다 `start()` 가 불려 **AudioTrack 을 닫고 다시
+         * 열었다** — 슬라이더가 뻑뻑하고, 끌 때마다 소리가 끊겼다.
+         */
+        @Volatile
+        var toneHz: Double = 1_000.0
+
+        /**
          * 놓기를 **시작**했는가. 두 번 놓지 않으려는 것뿐이다.
          *
          * **이것을 「끝났다」로 쓰면 안 된다.** `compareAndSet` 이 먼저 돌고
@@ -196,6 +207,25 @@ class SignalPlayer(
      *
      * @return 시작한 재생의 세대. 못 열면 [NONE].
      */
+    /**
+     * **다시 시작하지 않고 주파수만 바꾼다**(담당자 지시 2026-09-29).
+     *
+     * 순음을 내고 있는 중에만 뜻이 있다. 잡음·스윕이면 아무 일도 없다 —
+     * 그쪽은 주파수라는 것이 없다.
+     *
+     * 돌려주는 값은 **바꿨는가**다. 내고 있지 않으면 false 이고, 부르는
+     * 쪽은 그때 `start` 를 골라야 한다.
+     */
+    fun retune(hz: Double): Boolean {
+        synchronized(lock) {
+            val pb = current ?: return false
+            if (!pb.running.get()) return false
+            if (playing?.isTone != true) return false
+            pb.toneHz = hz
+            return true
+        }
+    }
+
     fun start(req: SignalRequest): Long {
         stop()
         // **자리를 비켜 준 것만** 치운다 — 놓기를 끝냈고 성공한 것.
@@ -223,6 +253,7 @@ class SignalPlayer(
         synchronized(lock) {
             generation++
             pb = Playback(generation, s, warn)
+            pb.toneHz = req.effectiveHz ?: 1_000.0
             current = pb
             playing = req.signal
             thread = Thread({ loop(pb, req) }, "selah-signal-out").apply {
@@ -239,10 +270,19 @@ class SignalPlayer(
         val rng = Random(System.nanoTime())
         val pink = PinkNoise(rng)
         val amp = req.safeAmplitude
-        val hz = req.effectiveHz ?: 1_000.0
         val toLeft = req.channels != SignalChannels.Right
         val toRight = req.channels != SignalChannels.Left
         var sample = 0L
+
+        // **위상을 이어서 쌓는다**(담당자 지시 2026-09-29).
+        //
+        // `sin(2π·f·t)` 로 그리면 f 가 바뀌는 순간 **위상이 튄다** — 같은
+        // t 에서 각이 갑자기 달라지므로 파형이 끊기고 「틱」 소리가 난다.
+        // 슬라이더를 끄는 동안 그 소리가 계속 난다.
+        //
+        // 표본마다 조금씩 더해 가면 주파수를 바꿔도 각은 이어진다. 소리가
+        // 미끄러지듯 따라오고, 끊기는 자리가 없다.
+        var phase = 0.0
 
         while (pb.running.get()) {
             for (f in 0 until FRAMES) {
@@ -250,7 +290,19 @@ class SignalPlayer(
                 val v = when (req.signal) {
                     TestSignal.Pink -> pink.next()
                     TestSignal.Sweep -> sin(sweepPhase(time))
-                    else -> sin(2 * PI * hz * time)
+                    else -> {
+                        // **그리고 나서 나아간다.** 더한 뒤에 그리면 첫
+                        // 표본이 sin(0) 이 아니라 한 칸 앞선 값이 되어,
+                        // 같은 주파수인데도 예전 파형과 한 표본 어긋난다
+                        // (`PartialWriteTest` 가 그것을 잡았다).
+                        //
+                        // **덩어리마다가 아니라 표본마다 읽는다.** 주
+                        // 스레드가 언제 바꾸든 다음 표본부터 따라간다.
+                        val out = sin(phase)
+                        phase += 2 * PI * pb.toneHz / SAMPLE_RATE
+                        if (phase > 2 * PI) phase -= 2 * PI
+                        out
+                    }
                 }
                 val s = (amp * v).toFloat()
                 // L·R 이 번갈아 든다. 안 내보내는 쪽은 **0 을 채운다** —

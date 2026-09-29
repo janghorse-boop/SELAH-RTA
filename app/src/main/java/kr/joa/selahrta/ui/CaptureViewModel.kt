@@ -1438,8 +1438,17 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         controller.update { st ->
             st.copy(signalToneHz = hz.coerceIn(MIN_TONE_HZ, MAX_TONE_HZ))
         }
+        // **다시 시작하지 않는다**(담당자 지시 2026-09-29: 「아주 부드럽게」).
+        //
+        // 예전에는 `playSignal` 을 다시 불러 **AudioTrack 을 닫고 열었다.**
+        // 슬라이더를 끌면 그 일이 손가락 움직임마다 일어나, 화면은 뻑뻑하고
+        // 소리는 끊겼다. 이제 소리 스레드가 읽는 값만 바꾼다 — 위상이
+        // 이어져 미끄러지듯 따라온다.
         val playing = controller.baseState.value.playingSignal
-        if (playing == TestSignal.Custom) playSignal(playing)
+        if (playing == TestSignal.Custom && !player.retune(hz)) {
+            // 내고 있지 않거나 이미 끝났다. 그때만 처음부터 연다.
+            playSignal(playing)
+        }
     }
 
     /** 어느 쪽 스피커로 낼지 바꾼다. 내보내는 중이면 그 자리에서 바꿔 끼운다. */
