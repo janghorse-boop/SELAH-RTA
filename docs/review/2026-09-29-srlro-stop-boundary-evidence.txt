@@ -1,0 +1,99 @@
+SRLRO independent verification, 2026-09-29
+Fix: f895d7e92a2e5f45d950eb25f0f3c605de353824 (PR #76)
+Executed pinned archive: 5bcc5da9eddd891921ba26b43b4f23e0757ab76f
+Logs: D:/Cowork/SELAH-RTA/build/independent-review/srlro-20260929
+Environment: Android API 34, emulator-5584, Medium_Phone, -no-audio -no-window -read-only
+Android fingerprint: google/sdk_gphone64_x86_64/emu64xa:14/UE1A.230829.036.A4/12096271:user/release-keys
+No real phone installed/launched/played. API callbacks directly injected; not physical focus/routing events.
+JAVA_HOME=C:/Program Files/Android/Android Studio/jbr
+Baseline command: gradlew.bat -p <isolated-source> --offline --no-build-cache --rerun-tasks --max-workers=2 :dsp:test :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug
+app tests=921 failures=0 errors=0 skipped=0
+dsp tests=633 failures=0 errors=0 skipped=0
+lint Hint=4
+lint Warning=11
+
+[baseline instrumentation]
+INSTRUMENTATION_STATUS_CODE: -4 count=1
+INSTRUMENTATION_STATUS_CODE: 0 count=44
+INSTRUMENTATION_STATUS_CODE: 1 count=45
+INSTRUMENTATION_STATUS: stack=org.junit.AssumptionViolatedException: Requires the emulator-only deny-focus app-op
+Time: 109.443
+OK (45 tests)
+
+[focus-denied instrumentation]
+INSTRUMENTATION_STATUS_CODE: 0 count=1
+INSTRUMENTATION_STATUS_CODE: 1 count=1
+Time: 0.762
+OK (1 test)
+
+[matrix instrumentation]
+INSTRUMENTATION_STATUS_CODE: 0 count=13
+INSTRUMENTATION_STATUS_CODE: 1 count=13
+Time: 6.191
+OK (13 tests)
+
+[mutation instrumentation]
+INSTRUMENTATION_STATUS_CODE: -2 count=12
+INSTRUMENTATION_STATUS_CODE: 0 count=1
+INSTRUMENTATION_STATUS_CODE: 1 count=13
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: expected null, but was:<Custom>
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: BACKGROUND: a stopped generation must not be reused expected:<2> but was:<1>
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: expected null, but was:<Custom>
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: expected null, but was:<Custom>
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: DUCK: a stopped generation must not be reused expected:<2> but was:<1>
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: expected null, but was:<Custom>
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: NOISY: a stopped generation must not be reused expected:<2> but was:<1>
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: expected null, but was:<Custom>
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: expected null, but was:<Custom>
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: BUTTON: a stopped generation must not be reused expected:<2> but was:<1>
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: TRANSIENT: a stopped generation must not be reused expected:<2> but was:<1>
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: LOSS: a stopped generation must not be reused expected:<2> but was:<1>
+Time: 4.73
+FAILURES!!!
+Tests run: 13,  Failures: 12
+
+[restored instrumentation]
+INSTRUMENTATION_STATUS_CODE: 0 count=13
+INSTRUMENTATION_STATUS_CODE: 1 count=13
+Time: 1.652
+OK (13 tests)
+
+Codes: 1=start; 0=passed; -4=assumption skipped; -2=failed assertion.
+Mutation: remove ONLY activeSignalIntent > lastSignalStopIntent.get() && from retune condition; onCleared remains protected and passes.
+Baseline deny-focus skipped in allow; separate deny-focus run passed under ignore; focus state restored to allow.
+Final: TAKE_AUDIO_FOCUS: allow
+
+[matrix observations]
+09-29 12:44:42.748  8356  8379 I System.out: SRLRO_MATRIX cause=TRANSIENT granted=false sinks=1 playing=null
+09-29 12:44:42.992  8356  8379 I System.out: SRLRO_MATRIX cause=BACKGROUND granted=true sinks=2 playing=Custom
+09-29 12:44:43.343  8356  8379 I System.out: SRLRO_MATRIX cause=NOISY granted=false sinks=1 playing=null
+09-29 12:44:43.680  8356  8379 I System.out: SRLRO_MATRIX cause=DUCK granted=false sinks=1 playing=null
+09-29 12:44:44.003  8356  8379 I System.out: SRLRO_MATRIX cause=DUCK granted=true sinks=2 playing=Custom
+09-29 12:44:44.285  8356  8379 I System.out: SRLRO_MATRIX cause=BUTTON granted=false sinks=1 playing=null
+09-29 12:44:44.705  8356  8379 I System.out: SRLRO_MATRIX cause=NOISY granted=true sinks=2 playing=Custom
+09-29 12:44:45.190  8356  8379 I System.out: SRLRO_MATRIX cause=LOSS granted=false sinks=1 playing=null
+09-29 12:44:45.681  8356  8379 I System.out: SRLRO_MATRIX cause=BACKGROUND granted=false sinks=1 playing=null
+09-29 12:44:46.090  8356  8379 I System.out: SRLRO_CLEAR stopBefore=0 stopAfter=0 intentBefore=1 intentAfter=2 closed=true sinks=1 playing=null
+09-29 12:44:46.655  8356  8379 I System.out: SRLRO_MATRIX cause=BUTTON granted=true sinks=2 playing=Custom
+09-29 12:44:47.282  8356  8379 I System.out: SRLRO_MATRIX cause=TRANSIENT granted=true sinks=2 playing=Custom
+09-29 12:44:47.811  8356  8379 I System.out: SRLRO_MATRIX cause=LOSS granted=true sinks=2 playing=Custom
+[mutation observations]
+09-29 12:46:27.386  9366  9388 I System.out: SRLRO_CLEAR stopBefore=0 stopAfter=0 intentBefore=1 intentAfter=2 closed=true sinks=1 playing=null
+[restored observations]
+09-29 12:48:32.733 11001 11026 I System.out: SRLRO_MATRIX cause=TRANSIENT granted=false sinks=1 playing=null
+09-29 12:48:32.863 11001 11026 I System.out: SRLRO_MATRIX cause=BACKGROUND granted=true sinks=2 playing=Custom
+09-29 12:48:32.970 11001 11026 I System.out: SRLRO_MATRIX cause=NOISY granted=false sinks=1 playing=null
+09-29 12:48:33.059 11001 11026 I System.out: SRLRO_MATRIX cause=DUCK granted=false sinks=1 playing=null
+09-29 12:48:33.169 11001 11026 I System.out: SRLRO_MATRIX cause=DUCK granted=true sinks=2 playing=Custom
+09-29 12:48:33.297 11001 11026 I System.out: SRLRO_MATRIX cause=BUTTON granted=false sinks=1 playing=null
+09-29 12:48:33.406 11001 11026 I System.out: SRLRO_MATRIX cause=NOISY granted=true sinks=2 playing=Custom
+09-29 12:48:33.530 11001 11026 I System.out: SRLRO_MATRIX cause=LOSS granted=false sinks=1 playing=null
+09-29 12:48:33.638 11001 11026 I System.out: SRLRO_MATRIX cause=BACKGROUND granted=false sinks=1 playing=null
+09-29 12:48:33.730 11001 11026 I System.out: SRLRO_CLEAR stopBefore=0 stopAfter=0 intentBefore=1 intentAfter=2 closed=true sinks=1 playing=null
+09-29 12:48:33.807 11001 11026 I System.out: SRLRO_MATRIX cause=BUTTON granted=true sinks=2 playing=Custom
+09-29 12:48:33.901 11001 11026 I System.out: SRLRO_MATRIX cause=TRANSIENT granted=true sinks=2 playing=Custom
+09-29 12:48:34.000 11001 11026 I System.out: SRLRO_MATRIX cause=LOSS granted=true sinks=2 playing=Custom
+Original backup SHA256: AB969586E30BE6654B27D944A633475B4F55B36578176A98A6F12F855353623C
+Restored source SHA256: AB969586E30BE6654B27D944A633475B4F55B36578176A98A6F12F855353623C
+Delivered and executed regression SHA256: C7316890A379309B8E350FAE88134D6CF8741A06F35FD4302087F24CC8C9367C
+APK mutation and restoration builds: :app:assembleDebug --offline --no-build-cache --max-workers=2; both BUILD SUCCESSFUL
