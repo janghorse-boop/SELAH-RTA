@@ -29,7 +29,16 @@ import java.util.UUID
  * 읽다 실패한 폴더는 **그 하나만 건너뛴다.** 기록 하나가 상했다고 나머지
  * 스무 개를 못 보게 하면, 사람은 앱을 지우고 다시 깐다.
  */
-class RtaMeasurementStore(private val root: File) {
+class RtaMeasurementStore(
+    private val root: File,
+    /**
+     * 이름 바꾸기. **시험이 실패하게 만들어 볼 수 있게** 밖에서도 받는다.
+     *
+     * 교체가 실패했을 때 **옛 기록이 살아남는가**는 일부러 실패시켜
+     * 보지 않고는 확인할 길이 없다(독립 검토 12회차 4장).
+     */
+    private val rename: (File, File) -> Boolean = { from, to -> from.renameTo(to) },
+) {
 
     private fun dirOf(id: String) = File(root, id)
 
@@ -44,14 +53,30 @@ class RtaMeasurementStore(private val root: File) {
     }
 
     /** 남아 있는 측정 전부. **읽히는 것만** 돌려준다. */
-    fun list(): List<RtaMeasurement> {
-        val dirs = root.listFiles()?.filter { it.isDirectory } ?: return emptyList()
-        return dirs.mapNotNull { d ->
+    fun list(): List<RtaMeasurement> = listing().items
+
+    /**
+     * 목록과 **못 읽은 것의 수**를 함께 돌려준다(독립 검토 12회차 4장).
+     *
+     * ## 왜 수를 세어 돌려주나
+     *
+     * [list] 는 못 읽은 겉장을 **조용히 건너뛴다.** 그러면 새 판으로 저장한
+     * 기록이 있는 기기에서 **아무 말 없이 목록이 짧아진다** — 사람은 저장이
+     * 안 된 줄 알고 다시 잰다. 「읽을 수 없다」와 「없다」는 다른 말이다.
+     */
+    fun listing(): RtaListing {
+        val dirs = root.listFiles()?.filter { it.isDirectory } ?: return RtaListing(emptyList(), 0)
+        var unreadable = 0
+        val items = dirs.mapNotNull { d ->
             val f = File(d, META_NAME)
             if (!f.isFile) return@mapNotNull null
-            runCatching { decode(f.readText()) }.getOrNull()
+            decodeOrNull(f).also { if (it == null) unreadable++ }
         }.sortedBy { it.measuredAtEpochMs }
+        return RtaListing(items, unreadable)
     }
+
+    private fun decodeOrNull(f: File): RtaMeasurement? =
+        runCatching { decode(f.readText()) }.getOrNull()
 
     fun delete(id: String) {
         dirOf(id).deleteRecursively()
@@ -61,9 +86,14 @@ class RtaMeasurementStore(private val root: File) {
     fun deleteSet(setId: String) {
         list().filter { it.setId == setId }.forEach { delete(it.id) }
         File(setsFile().parentFile, SETS_NAME).takeIf { it.isFile } ?: return
-        val kept = readSets().filterNot { it.id == setId }
-        writeSets(kept)
+        synchronized(setsLock) {
+            val kept = readSets().filterNot { it.id == setId }
+            writeSets(kept)
+        }
     }
+
+    /** 세트 파일은 여러 벌이 한 장에 있다 — 읽고-고쳐-쓰기를 한 줄로 세운다. */
+    private val setsLock = Any()
 
     // ── 비교 세트 ────────────────────────────────────────
 
@@ -86,11 +116,19 @@ class RtaMeasurementStore(private val root: File) {
         }.sortedBy { it.createdAtEpochMs }
     }
 
-    /** 세트 이름을 짓거나 바꾼다. 측정은 건드리지 않는다. */
+    /**
+     * 세트 이름을 짓거나 바꾼다. 측정은 건드리지 않는다.
+     *
+     * **읽고-고쳐-쓰기를 한 줄로 세운다**(독립 검토 12회차 4장). 세트는
+     * 여러 벌이 **한 파일**에 있어서, 두 곳에서 동시에 이름을 지으면 나중
+     * 것이 앞의 것을 **통째로 덮는다** — 앞서 지은 이름이 소리 없이 사라진다.
+     */
     fun putSet(set: RtaComparisonSet): Result<Unit> = runCatching {
-        if (!root.isDirectory && !root.mkdirs()) throw IOException("폴더를 만들지 못했습니다")
-        val kept = readSets().filterNot { it.id == set.id } + set
-        writeSets(kept)
+        synchronized(setsLock) {
+            if (!root.isDirectory && !root.mkdirs()) throw IOException("폴더를 만들지 못했습니다")
+            val kept = readSets().filterNot { it.id == set.id } + set
+            writeSets(kept)
+        }
     }
 
     // ── 겉장 ─────────────────────────────────────────────
@@ -127,17 +165,28 @@ class RtaMeasurementStore(private val root: File) {
     }
 
     /**
-     * **임시 이름으로 쓴 뒤 옮긴다.**
+     * **임시 이름으로 쓴 뒤 옮긴다. 못 옮기면 그대로 실패한다.**
      *
-     * 옮기기가 안 되면 덮어쓰기라도 한다 — 옮기기만 믿으면 일부 저장소에서
-     * 기록이 통째로 사라진다(`SessionStore` 에서 겪은 것과 같다).
+     * ## 덮어쓰기 갈래를 없앤 까닭 (독립 검토 12회차 4장)
+     *
+     * 예전에는 옮기기가 실패하면 **원본에 직접 덮어썼다.** 그것은 「안전한
+     * 대비책」이 아니라 **원자 교체를 포기하는 일**이다 — 덮어쓰는 도중에
+     * 끊기면 **멀쩡하던 옛 기록까지 함께 잃는다.** 새 기록을 못 쓰는 것과
+     * 옛 기록을 잃는 것은 **피해의 크기가 다르다.**
+     *
+     * 끝 표시(`end=1`)가 이 자리를 대신하지 못한다. 그것은 **잘린 새 파일을
+     * 걸러 낼 뿐**, 덮어쓰다 잃은 옛 파일을 되살리지 않는다. 둘이 같은
+     * 보장인 줄 알고 `docs/unverified.md` 에 「구별되지 않는 자리」로
+     * 적어 두었는데, **틀린 묶음이었다.**
+     *
+     * 그래서 **실패는 실패로 알린다.** 부르는 쪽이 사람에게 말한다.
      */
     private fun writeAtomically(target: File, text: String) {
         val tmp = File(target.parentFile, "${target.name}.tmp")
         tmp.writeText(text)
-        if (!tmp.renameTo(target)) {
-            target.writeText(tmp.readText())
+        if (!rename(tmp, target)) {
             tmp.delete()
+            error("임시 파일을 옮기지 못했습니다: ${target.name}")
         }
     }
 
@@ -175,6 +224,11 @@ class RtaMeasurementStore(private val root: File) {
             put("curveName", m.conditions.curveName)
             put("fftSize", m.conditions.fftSize)
             put("sampleRate", m.conditions.sampleRate)
+            put("analysisWeighting", m.conditions.analysisWeighting)
+            put("offsetDb", m.conditions.offsetDb)
+            put("curveHash", m.conditions.curveHash)
+            put("inputSource", m.conditions.inputSource)
+            put("inputChannel", m.conditions.inputChannel)
             put("measuredAtEpochMs", m.measuredAtEpochMs)
             put("memoKo", m.memoKo)
             // **끝 표시를 맨 뒤에 둔다.** 쓰다가 죽으면 이 줄이 없으므로
@@ -226,6 +280,11 @@ class RtaMeasurementStore(private val root: File) {
                     curveName = r.strOrNull("curveName"),
                     fftSize = r.intOrNull("fftSize"),
                     sampleRate = r.intOrNull("sampleRate"),
+                    analysisWeighting = r.strOrNull("analysisWeighting"),
+                    offsetDb = r.dblOrNull("offsetDb"),
+                    curveHash = r.strOrNull("curveHash"),
+                    inputSource = r.strOrNull("inputSource"),
+                    inputChannel = r.intOrNull("inputChannel"),
                 ),
                 measuredAtEpochMs = r.longOrNull("measuredAtEpochMs") ?: 0L,
                 memoKo = r.strOrNull("memoKo").orEmpty(),
