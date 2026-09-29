@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kr.joa.selahrta.audio.AudioInterruptions
+import kr.joa.selahrta.audio.SerialCommands
 import kr.joa.selahrta.audio.AudioBlock
 import kr.joa.selahrta.audio.AudioSource
 import kr.joa.selahrta.audio.ChoiceReason
@@ -736,7 +737,10 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 // **스스로 끝난 길에서도 지킴이를 놓는다**(스윕이 다 훑었거나
                 // 오류로 끝났거나). 안 놓으면 방송 수신기가 남아, 다음에
                 // 이어폰을 뽑을 때 안 틀었는데 「멈췄습니다」가 뜬다.
-                interruptions.release()
+                //
+                // 다른 소리 명령과 **같은 줄에 세운다** — 놓기와 걸기가
+                // 서로를 앞지르면 방송 수신기가 어긋난 채로 남는다.
+                postSignalCommand { interruptions.release() }
                 controller.update { st -> st.copy(playingSignal = null, signalNoticeKo = reason) }
             }
         },
@@ -744,6 +748,33 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 지금 내보내고 있는 재생의 세대. 늦게 온 소식을 가린다. */
     private var playGeneration = SignalPlayer.NONE
+
+    /**
+     * **소리 명령을 한 줄로 세운다**(독립 검토 8회차 3장).
+     *
+     * ## 왜 주 스레드에서 빼는가 — 실기기에서 잰 값
+     *
+     * | 무엇 | 중앙 | 최대 |
+     * |---|---:|---:|
+     * | `stop()` | 24~38ms | **129ms** |
+     * | 대역 슬라이더 한 번(stop→start) | **148ms** | **167ms** |
+     * | 슬라이더 20번(손가락 한 번 끌기) | — | **합 2.5초** |
+     *
+     * 세기·좌우·대역 주파수 슬라이더는 모두 `playSignal` 을 다시 부른다.
+     * 그것이 주 스레드에서 돌면 **손가락을 끄는 동안 화면이 통째로
+     * 멎는다.** 감쇠를 기다리는 120ms 도 그 안에 있지만 더 큰 몫은
+     * `AudioTrack` 을 새로 여는 일이다 — 둘 다 여기서 빠진다.
+     *
+     * ## 하나짜리 실행자인 까닭
+     *
+     * 명령마다 따로 스레드를 띄우면 `start` 와 `stop` 이 서로를 앞질러
+     * 지금의 단일 제어 계약이 깨진다. 한 줄로 세우면 부른 차례가 그대로
+     * 지켜진다.
+     */
+    private val signalCommands = SerialCommands("selah-signal-cmd")
+
+    /** 소리 명령을 줄에 세운다. 뒤에 더 새 명령이 왔으면 **하지 않는다.** */
+    private fun postSignalCommand(block: () -> Unit) = signalCommands.post(block)
 
     /**
      * 소리를 끊어야 할 바깥 사정 — 이어폰이 빠지거나 전화가 오거나
@@ -1279,48 +1310,83 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun playSignal(signal: TestSignal, amplitude: Double? = null) {
         val st0 = controller.baseState.value
+        // 세기를 받으면 그것으로 튼다. 교정 측정은 사람이 고른 값이 아니라
+        // 제 쓰임에 맞는 세기가 필요하다(독립 검토 뒤 실기기에서 조정).
+        //
+        // **지금 값을 여기서 뜬다.** 실행자 안에서 상태를 다시 읽으면,
+        // 슬라이더가 그 사이에 더 움직였을 때 엉뚱한 값으로 튼다.
+        val req = SignalRequest(
+            signal = signal,
+            amplitude = amplitude ?: st0.signalAmplitude,
+            toneHz = st0.signalToneHz,
+            channels = st0.signalChannels,
+        )
+        // **화면은 먼저 바꾼다.** 소리를 여는 데 실기기에서 150ms 가
+        // 걸린다 — 그 동안 눌러도 아무 일이 없으면 사람은 한 번 더 누른다.
+        controller.update { st -> st.copy(playingSignal = signal, signalNoticeKo = null) }
+        postSignalCommand { startSignalOnCommandThread(signal, req) }
+    }
+
+    /**
+     * 실제로 소리를 여는 자리. **`signalCommands` 스레드에서만 부른다.**
+     *
+     * 여기서 걸리는 시간이 주 스레드에 닿지 않는 것이 요점이다.
+     */
+    private fun startSignalOnCommandThread(signal: TestSignal, req: SignalRequest) {
         // **소리를 내기 전에 지킴이를 건다**(지시서 §5). 얻지 못해도
         // 막지 않는다 — 다른 앱 하나 때문에 예배 준비가 멈추면 안 된다.
         // 걸어 두는 것만으로 이어폰이 빠질 때 멈출 수 있다.
         interruptions.acquire()
-        // 세기를 받으면 그것으로 튼다. 교정 측정은 사람이 고른 값이 아니라
-        // 제 쓰임에 맞는 세기가 필요하다(독립 검토 뒤 실기기에서 조정).
-        val gen = player.start(
-            SignalRequest(
-                signal = signal,
-                amplitude = amplitude ?: st0.signalAmplitude,
-                toneHz = st0.signalToneHz,
-                channels = st0.signalChannels,
-            ),
-        )
-        playGeneration = gen
+        val gen = player.start(req)
         val ok = gen != SignalPlayer.NONE
-        controller.update { st -> st.copy(
-            playingSignal = if (ok) signal else null,
-            // **막힌 까닭을 구분해 적는다**(독립 검증 답변 1번). 앞 재생이
-            // 아직 끝나지 않아 막힌 것인데 「다른 앱이 스피커를 쓰는지
-            // 보라」고 하면 엉뚱한 곳을 보게 된다.
-            signalNoticeKo = when {
-                ok -> null
-                // 놓기에 **실패**한 것이 자리를 차지하고 있으면 기다려도
-                // 풀리지 않는다. 그때 「잠시 뒤 다시」라고 하면 안 된다.
-                player.failedReleaseCount > 0 ->
-                    "소리 장치를 정리하지 못했습니다. 기다려도 풀리지 않으니 앱을 모두 닫았다가 다시 여십시오."
-                player.pendingCount >= SignalPlayer.MAX_STUCK_PLAYBACKS ->
-                    "앞서 내보내던 소리가 아직 끝나지 않았습니다. 잠시 뒤 다시 눌러 보십시오."
-                else ->
-                    "소리를 내보내지 못했습니다. 다른 앱이 스피커를 쓰고 있는지 보십시오."
-            },
-        ) }
+        val notice = signalStartNoticeKo(ok)
+        onMainThread {
+            // **세대를 먼저 적는다.** 늦게 온 종료 소식이 이 값을 본다.
+            playGeneration = gen
+            controller.update { st -> st.copy(
+                playingSignal = if (ok) signal else null,
+                signalNoticeKo = notice,
+            ) }
+        }
     }
 
+    /**
+     * 못 튼 까닭.
+     *
+     * **막힌 까닭을 구분해 적는다**(독립 검증 답변 1번). 앞 재생이 아직
+     * 끝나지 않아 막힌 것인데 「다른 앱이 스피커를 쓰는지 보라」고 하면
+     * 엉뚱한 곳을 보게 된다.
+     *
+     * 내보내는 쪽의 값을 읽으므로 **명령 스레드에서 부른다.**
+     */
+    private fun signalStartNoticeKo(ok: Boolean): String? = when {
+        ok -> null
+        // 놓기에 **실패**한 것이 자리를 차지하고 있으면 기다려도 풀리지
+        // 않는다. 그때 「잠시 뒤 다시」라고 하면 안 된다.
+        player.failedReleaseCount > 0 ->
+            "소리 장치를 정리하지 못했습니다. 기다려도 풀리지 않으니 앱을 모두 닫았다가 다시 여십시오."
+        player.pendingCount >= SignalPlayer.MAX_STUCK_PLAYBACKS ->
+            "앞서 내보내던 소리가 아직 끝나지 않았습니다. 잠시 뒤 다시 눌러 보십시오."
+        else ->
+            "소리를 내보내지 못했습니다. 다른 앱이 스피커를 쓰고 있는지 보십시오."
+    }
+
+    /**
+     * 소리를 멈춘다.
+     *
+     * **화면은 곧바로 꺼지고 실제 멈춤은 명령 스레드에서 한다.** 실기기에서
+     * `stop()` 하나가 최대 129ms 걸린다 — 그만큼 손가락이 멎으면 「눌렸나」
+     * 싶어 한 번 더 누르게 된다.
+     */
     fun stopSignal() {
-        player.stop()
         playGeneration = SignalPlayer.NONE
-        // **소리를 멈춘 뒤에 놓는다.** 먼저 놓으면 놓는 그 순간에 다른
-        // 앱이 소리를 시작해 마지막 30ms 램프와 겹친다.
-        interruptions.release()
         controller.update { st -> st.copy(playingSignal = null) }
+        postSignalCommand {
+            player.stop()
+            // **소리를 멈춘 뒤에 놓는다.** 먼저 놓으면 놓는 그 순간에 다른
+            // 앱이 소리를 시작해 마지막 30ms 램프와 겹친다.
+            interruptions.release()
+        }
     }
 
     /**
@@ -2609,6 +2675,10 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      * 켜진 채로 알림만 남는다.
      */
     override fun onCleared() {
+        // **여기서만은 기다린다.** 다른 자리는 화면이 멎지 않게 명령을
+        // 줄에 세우지만, 여기서는 돌아가고 나면 아무도 남지 않는다 —
+        // 소리가 실제로 멎은 것을 보고 가야 한다.
+        signalCommands.shutdownNow()
         player.stop()
         // **여기서도 놓는다.** 방송 수신기는 `applicationContext` 에
         // 걸려 있어, 안 떼면 ViewModel 이 사라진 뒤에도 남는다.
