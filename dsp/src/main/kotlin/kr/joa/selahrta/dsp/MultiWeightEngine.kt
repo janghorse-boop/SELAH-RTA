@@ -70,6 +70,9 @@ class MultiWeightEngine(
             z = z.process(samples, frames, offset),
         )
 
+    fun enableExactShortWindow() {
+        a.enableExactShortWindow(); c.enableExactShortWindow(); z.enableExactShortWindow()
+    }
     val hasInput: Boolean get() = a.hasInput
 
     /**
