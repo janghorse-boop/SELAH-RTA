@@ -17,11 +17,61 @@
 
 ---
 
-## 보낼 때 함께 건넬 것
+## 검토자에게 — 이 문서 하나로 시작하시면 됩니다
 
-- 이 문서
-- 아래 각 항목이 가리키는 **요청서 파일**
-- 고정본 커밋(아래 각 항목에 적음)
+**고정본: `main` 의 `1a4d7bb`**(2026-09-30). 그 뒤의 커밋은 문서뿐입니다.
+
+아래 넷을 **한 번에** 봐 주시기를 청합니다. 각 항목에 **무엇을 했나 ·
+봐 달라 · 확인 못 한 것**을 적었고, 더 자세한 것은 그 항목이 가리키는
+요청서 파일에 있습니다. 저장소 안에 다 들어 있으니 **따로 받으실 것은
+없습니다.**
+
+### 크레딧이 빠듯하다면 이 차례로
+
+1. **1번(§7 저장·차이·차례)** — 앞 회차가 **승인 보류**였고, 여섯 가지를
+   고쳤습니다. 계약이 맞는지가 제일 궁금합니다.
+2. **4번(악기 EQ 가이드)** — 새 화면입니다. **말이 처방으로 새지 않는지**를
+   봐 주시면 좋겠습니다.
+3. **2번(리포트 PDF)** — 종이로 나간 뒤 **경고가 살아남는지**.
+4. **3번(정지 경계 계약 시험)** — 11회차 권고를 그대로 들인 것이라 가장
+   가볍습니다.
+
+### 돌리는 법 — **함정 둘**
+
+```powershell
+$env:JAVA_HOME="C:\Program Files\Android\Android Studio\jbr"
+.\gradlew :dsp:test :app:testDebugUnitTest --rerun-tasks
+```
+
+계측은 **두 번 나누어** 돌리십시오.
+
+```powershell
+# 1) 브라우저를 띄우는 시험 하나를 빼고
+adb shell am instrument -w -r `
+  -e notClass kr.joa.selahrta.ui.SrlStopBoundaryIndependentTest,kr.joa.selahrta.ui.screens.SettingsScreenPolicyIntentTest `
+  kr.joa.selahrta.test/androidx.test.runner.AndroidJUnitRunner
+
+# 2) 그 하나만 따로
+adb shell am instrument -w -r `
+  -e class kr.joa.selahrta.ui.screens.SettingsScreenPolicyIntentTest `
+  kr.joa.selahrta.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+- **`SettingsScreenPolicyIntentTest` 는 브라우저를 띄웁니다.** 실기기에서
+  한 번에 돌리면 **그 뒤로 실행이 이어지지 않습니다**(런처가 앞에 남습니다).
+  따로 돌리면 2개 다 통과합니다. **까닭은 아직 모릅니다.**
+- **`SrlStopBoundaryIndependentTest` 는 진짜 앱의 AppOps 를 바꿉니다**
+  (`TAKE_AUDIO_FOCUS` 를 allow↔ignore). **쓰는 휴대폰에 돌리지 마십시오** —
+  별도 에뮬레이터에서만. 도중에 죽으면 `ignore` 로 남아 앱이 소리를 못
+  냅니다(되돌리기: `adb shell appops set kr.joa.selahrta TAKE_AUDIO_FOCUS allow`).
+
+### 이번 범위가 **아닌** 것
+
+- 11회차에서 **이미 승인된** 신호 정지 경계 자체(3번은 그 **시험을 들인
+  일**만 봐 주십시오).
+- 장비가 있어야 닫히는 것들 — 교정기·기준 소음계·USB 인터페이스·2시간
+  부하. [`../unverified.md`](../unverified.md) 에 「누가 닫을 수 있는가」로
+  묶어 두었습니다.
 
 ---
 
@@ -53,7 +103,6 @@
 |---|---|
 | 요청서 | 없음 — **이 문서가 전부다** |
 | PR | #83 |
-| 고정본 | `71d1b98` |
 
 **무엇을 했나**: 기록 하나를 **읽을 수 있는 한 장(PDF)** 으로 내보낸다.
 글은 화면 리포트와 **같은 문장**(`buildReport`·`reportWarningsKo`)에서 오고,
