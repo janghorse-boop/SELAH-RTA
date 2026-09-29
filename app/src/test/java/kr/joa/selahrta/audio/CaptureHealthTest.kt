@@ -15,12 +15,19 @@ import org.junit.Test
  * 멀쩡히 움직이는데 그 숫자가 몇 초 전 것이다.
  */
 class CaptureHealthTest {
+    @Test
+    fun `열렸지만 첫 입력이 없으면 마지막 값이 있다고 말하지 않는다`() {
+        val warning = captureWarningKo(CaptureDiagnostics(), 10_000.0)!!
+        assertTrue(warning.contains("아직 유효한 소리"))
+        assertTrue(!warning.contains("마지막"))
+    }
 
     private fun diag(
         lagMs: Double = 0.0,
         readErrors: Long = 0L,
         baselineMs: Double = 0.0,
     ) = CaptureDiagnostics(
+        frames = 960, // The existing cases describe input that was previously received.
         audioLagMs = lagMs,
         lagBaselineMs = baselineMs,
         readErrors = readErrors,
@@ -102,7 +109,7 @@ class CaptureHealthTest {
         val w = captureWarningKo(diag(), lastInputAgeMs = 10_040.0)
         assertTrue("아무 말도 안 한다", w != null)
         assertTrue("멈췄다는 말이 없다: $w", w!!.contains("들어오지 않습니다"))
-        assertTrue("언제 것인지 안 적는다: $w", w.contains("그때 잰 것"))
+        assertTrue("언제 것인지 안 적는다: $w", w.contains("마지막으로 받은 값"))
     }
 
     @Test
@@ -162,3 +169,4 @@ class CaptureHealthTest {
         assertNull(captureWarningKo(spike))
     }
 }
+

@@ -129,8 +129,7 @@ class CaptureController(
      * **화면 방출(66ms)과 무관하게 덩어리마다 갱신한다.** 방출에 맞추면
      * 그 간격만큼 나이가 부풀어, 신선도 문턱을 방출 주기가 정하게 된다.
      */
-    @Volatile
-    private var evidence: kr.joa.selahrta.calibration.CalibrationEvidence? = null
+
 
     /**
      * 지금 보정해도 되는지 판단할 근거. 측정 중이 아니거나 아직 값이
@@ -140,7 +139,33 @@ class CaptureController(
      * [kr.joa.selahrta.calibration.CalibrationEvidence.ageMs] 에 지금
      * 시각을 넘긴다.
      */
-    fun calibrationEvidence(): kr.joa.selahrta.calibration.CalibrationEvidence? = evidence
+    fun calibrationEvidence(): kr.joa.selahrta.calibration.CalibrationEvidence? {
+        // **지금 도는 세션의 것만 돌려준다**(독립 재검증 UISRF-03).
+        //
+        // 예전에는 근거를 컨트롤러가 전역으로 들고 있어, 멈춘 뒤에도
+        // 같은 객체를 돌려주고 **새 세션이 아직 한 덩어리도 못 받았는데
+        // 옛 세션의 근거를 내주었다.** 「측정 중이 아니면 null」이라던
+        // 설명과 달랐다.
+        //
+        // 앞뒤로 두 번 보는 까닭: 읽는 사이에 세션이 갈릴 수 있다.
+        val owner = active ?: return null
+        val observed = owner.calibrationEvidence
+        return observed?.takeIf { active === owner }
+    }
+
+    /**
+     * 마지막 유효 입력 뒤 흐른 시간(ms). **아직 한 덩어리도 안 왔으면
+     * 연 뒤로 흐른 시간**이다(독립 재검증 UISRF-02).
+     *
+     * 근거에서만 나이를 만들면, 입력이 **처음부터** 안 들어올 때 영영
+     * null 이라 감시가 조용하다 — 열기와 경로 확인은 성공했는데 읽기가
+     * 나아가지 않는 상태를 아무도 말해 주지 않는다.
+     */
+    fun inputWaitAgeMs(): Double? {
+        val owner = active ?: return null
+        val since = owner.calibrationEvidence?.atMonotonicNs ?: owner.startedNs
+        return ((nowNs() - since) / 1e6).coerceAtLeast(0.0)
+    }
 
     /** 근거의 나이를 재는 데 쓰는 시계. 주입된 것과 같은 것이어야 한다. */
     fun monotonicNs(): Long = nowNs()
@@ -681,15 +706,26 @@ class CaptureController(
         // UISR-01·02). 방출(66ms)에 맞추면 그 간격만큼 나이가 부풀고,
         // 무엇보다 **콜백이 멈추면 근거도 멈춰야** 한다 — 그래야 나이가
         // 자라 신선도 검사에 걸린다.
-        if (stats.clipped) session.lastClipNs = block.monotonicNs
-        splFrame?.let { f ->
-            evidence = kr.joa.selahrta.calibration.CalibrationEvidence(
-                session = session.id,
-                atMonotonicNs = block.monotonicNs,
-                spl = f,
-                lastClipNs = session.lastClipNs,
-            )
-        }
+        //
+        // **보정에 쓸 값은 따로 잰다**(독립 재검증 UISRF-01). 화면의
+        // 현재값은 지수 시간가중이라 큰 소리를 오래 기억한다 — 잘린 뒤
+        // 3초를 기다려도 +26.5 dB 가 남아 있었다. 깨끗한 구간의 유한 창
+        // 평균은 창 밖의 기여가 0 이다.
+        //
+        // **버린 덩어리도 넣는다.** 읽기 오류는 「그 자리를 모른다」는
+        // 뜻이라 세던 구간을 버려야 하고, 그 판단은 창이 한다.
+        session.cleanWindow.observe(
+            block.samples,
+            block.frames,
+            block.monotonicNs,
+            stats.clipped,
+        )
+        session.calibrationEvidence = kr.joa.selahrta.calibration.CalibrationEvidence(
+            session = session.id,
+            atMonotonicNs = block.monotonicNs,
+            cleanSpl = session.cleanWindow.frame(block.monotonicNs),
+            cleanMs = session.cleanWindow.cleanMs,
+        )
 
         val now = nowNs()
         if (now - session.lastEmitNs < emitIntervalNs) return
@@ -726,6 +762,7 @@ class CaptureController(
                 lagBaselineMs = session.minLagMs,
             ),
             spl = splFrame,
+            calibration = session.calibrationEvidence,
             rta = session.rta.frame(),
             spectrum = session.rta.spectrumFrame(),
             // **덩어리를 받은 때**다. 화면이 그릴 때가 아니다.

@@ -44,6 +44,7 @@ import kr.joa.selahrta.calibration.computeOffset
 import kr.joa.selahrta.calibration.factoryEntrySnippet
 import kr.joa.selahrta.domain.MicKind
 import kr.joa.selahrta.dsp.CalibratorToneCheck
+import kr.joa.selahrta.dsp.CleanWindow.Companion.DEFAULT_WINDOW_MS as CLEAN_WINDOW_MS
 import kr.joa.selahrta.dsp.checkCalibratorTone
 import kr.joa.selahrta.ui.CaptureUiState
 import kr.joa.selahrta.ui.theme.SelahColors
@@ -192,6 +193,37 @@ fun CalibrationCard(
                     append("%.1f dBFS".format(measured))
                 },
                 color = SelahColors.TextSecondary,
+                fontSize = 11.sp,
+            )
+        }
+
+        // **저장에 쓸 값을 따로 적는다**(독립 재검증 UISRF-01, 2026-09-29).
+        //
+        // 위 줄은 화면의 계기값(지수 시간가중)이다. 그런데 **보정에 쓰는
+        // 값은 그것이 아니다** — 깨끗한 구간 3초의 평균이다. 두 값이 다른
+        // 계산이라, 위 줄만 적어 두면 사람은 그 숫자로 맞춰진다고 읽는다.
+        //
+        // 갈라 둔 까닭: 지수 시간가중은 큰 소리를 오래 기억해서, 잘린 뒤
+        // 3초를 기다려도 +26.5 dB 가 남아 있었다(검토자 재현).
+        //
+        // 아직 덜 찼으면 **얼마나 더 필요한지**를 적는다. 단추를 눌러
+        // 거절당하고 나서야 알게 두지 않는다.
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text("보정에 쓸 값", color = SelahColors.TextMuted, fontSize = 11.sp)
+            val cal = capture.meter.calibrationDbfs
+            Text(
+                if (cal != null) {
+                    "%.1f dBFS  ·  최근 %.0f초 평균".format(cal, CLEAN_WINDOW_MS / 1000.0)
+                } else {
+                    "잘리지 않은 소리 %.1f초 더 필요".format(
+                        (CLEAN_WINDOW_MS - capture.meter.calibrationCleanMs)
+                            .coerceAtLeast(0L) / 1000.0,
+                    )
+                },
+                color = if (cal != null) SelahColors.TextSecondary else SelahColors.TextMuted,
                 fontSize = 11.sp,
             )
         }

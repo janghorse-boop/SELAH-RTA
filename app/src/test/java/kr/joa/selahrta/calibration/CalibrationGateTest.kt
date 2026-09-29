@@ -5,6 +5,7 @@ import kr.joa.selahrta.dsp.MultiWeightFrame
 import kr.joa.selahrta.dsp.SplFrame
 import kr.joa.selahrta.dsp.Weighting
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -28,37 +29,40 @@ class CalibrationGateTest {
 
     private val nowNs = 1_000_000_000_000L
 
-    private fun frame(dbfs: Double, settled: Boolean): SplFrame = SplFrame(
+    private fun frame(dbfs: Double): SplFrame = SplFrame(
         currentDbfs = Dbfs(dbfs),
-        leqShortDbfs = null,
-        leqLongDbfs = null,
+        leqShortDbfs = Dbfs(dbfs),
+        leqLongDbfs = Dbfs(dbfs),
         leqSessionDbfs = null,
         maxDbfs = Dbfs(dbfs),
         minDbfs = null,
         peakDbfs = Dbfs(dbfs),
         weightedPeakDbfs = Dbfs(dbfs),
         peakClipped = false,
-        settled = settled,
+        settled = true,
         blockMaxDbfs = Dbfs(dbfs),
         blockMinDbfs = Dbfs(dbfs),
         blockPeakDbfs = Dbfs(dbfs),
         blockClipped = false,
-        leqLongFull = false,
+        leqLongFull = true,
     )
 
+    /**
+     * @param cleanMs 이어서 센 깨끗한 시간. 3초에 못 미치면 값이 없다
+     *   (`CleanWindow` 가 그렇게 준다).
+     */
     private fun evidence(
         ageMs: Double = 0.0,
         dbfs: Double = -50.0,
-        settled: Boolean = true,
-        clipAgeMs: Double? = null,
+        cleanMs: Long = 3_000L,
         session: Long = 1L,
     ): CalibrationEvidence {
-        val f = frame(dbfs, settled)
+        val f = frame(dbfs)
         return CalibrationEvidence(
             session = session,
             atMonotonicNs = nowNs - (ageMs * 1e6).toLong(),
-            spl = MultiWeightFrame(f, f, f),
-            lastClipNs = clipAgeMs?.let { nowNs - (it * 1e6).toLong() } ?: 0L,
+            cleanSpl = if (cleanMs >= 3_000L) MultiWeightFrame(f, f, f) else null,
+            cleanMs = cleanMs,
         )
     }
 
@@ -116,40 +120,42 @@ class CalibrationGateTest {
         assertEquals(CalibrationGate.Save, gate(ev = evidence(ageMs = 480.0)))
     }
 
-    // ── 옛 클리핑이 영영 막지 않는다 (UISR-02) ────────────
-
-    /** 지금 잘리고 있으면 막는다. 그 값은 하한일 뿐이다. */
-    @Test
-    fun `방금 잘렸으면 막는다`() {
-        val g = gate(ev = evidence(clipAgeMs = 100.0))
-        assertTrue("잘렸는데 통과한다: $g", g is CalibrationGate.Reject)
-        assertTrue((g as CalibrationGate.Reject).reasonKo.contains("잘렸"))
-    }
+    // ── 깨끗한 구간이 차야 저장한다 (UISRF-01) ────────────
 
     /**
-     * **입력을 낮추고 기다리면 풀려야 한다.** 예전에는 세션 누적 플래그를
-     * 봐서, 시작할 때 충격음 한 번으로 그 측정 내내 보정을 못 했다 —
-     * 안내는 낮추라고 하는데 낮춰도 그대로였다.
+     * **기다리는 것으로는 못 고치는 문제였다.**
+     *
+     * 예전에는 「마지막 클리핑 뒤 3초」를 벽시계로 셌다. 그런데 화면의
+     * 현재값은 지수 시간가중이라 큰 소리를 오래 기억한다 — 검토자가
+     * 잰 잔류가 **+26.52 dB** 였고, 그 값이 그대로 저장됐다. 게다가
+     * **입력이 끊긴 시간도 조용했던 시간으로 세고 있었다.**
+     *
+     * 이제 `CleanWindow` 가 **실제로 들어온 깨끗한 프레임**만 센다.
+     * 덜 찼으면 값 자체가 없다.
      */
     @Test
-    fun `잘린 뒤 충분히 조용하면 다시 허용한다`() {
-        assertEquals(
-            CalibrationGate.Save,
-            gate(ev = evidence(clipAgeMs = CalibrationEvidence.CLEAN_WINDOW_MS + 100.0)),
-        )
+    fun `깨끗한 구간이 덜 찼으면 막는다`() {
+        val g = gate(ev = evidence(cleanMs = 1_200L))
+        assertTrue("덜 찼는데 통과한다: $g", g is CalibrationGate.Reject)
+        val why = (g as CalibrationGate.Reject).reasonKo
+        assertTrue("얼마나 더 필요한지 안 적는다: $why", why.contains("1.8초 더"))
+        assertTrue("지금 얼마인지 안 적는다: $why", why.contains("1.2초"))
     }
 
     @Test
-    fun `한 번도 안 잘렸으면 막지 않는다`() {
-        assertEquals(CalibrationGate.Save, gate(ev = evidence(clipAgeMs = null)))
+    fun `깨끗한 구간이 차면 저장한다`() {
+        assertEquals(CalibrationGate.Save, gate(ev = evidence(cleanMs = 3_000L)))
+    }
+
+    /** 한 번도 안 찼으면 0초부터 세고 있다고 적는다. */
+    @Test
+    fun `아직 아무것도 못 셌으면 그대로 적는다`() {
+        val g = gate(ev = evidence(cleanMs = 0L))
+        assertTrue(g is CalibrationGate.Reject)
+        assertTrue((g as CalibrationGate.Reject).reasonKo.contains("3.0초 더"))
     }
 
     // ── 나머지 거절 조건 ──────────────────────────────────
-
-    @Test
-    fun `자리를 잡기 전에는 막는다`() {
-        assertTrue(gate(ev = evidence(settled = false)) is CalibrationGate.Reject)
-    }
 
     @Test
     fun `측정 전에는 막는다`() {
@@ -175,9 +181,8 @@ class CalibrationGateTest {
      */
     @Test
     fun `막을 까닭이 있으면 묻지 않는다`() {
-        assertTrue(gate(ev = evidence(clipAgeMs = 100.0), toneOk = false) is CalibrationGate.Reject)
+        assertTrue(gate(ev = evidence(cleanMs = 500L), toneOk = false) is CalibrationGate.Reject)
         assertTrue(gate(ev = evidence(ageMs = 5_000.0), toneOk = null) is CalibrationGate.Reject)
-        assertTrue(gate(ev = evidence(settled = false), toneOk = false) is CalibrationGate.Reject)
         assertTrue(gate(opened = false, toneOk = false) is CalibrationGate.Reject)
     }
 
@@ -197,6 +202,7 @@ class CalibrationGateTest {
     /** 저장에 쓸 값은 **판정에 쓴 근거**에서 나온다 — 다시 읽지 않는다. */
     @Test
     fun `근거가 보정에 쓸 값을 들고 있다`() {
-        assertEquals(-50.0, evidence(dbfs = -50.0).measuredDbfs(Weighting.A), 1e-9)
+        assertEquals(-50.0, evidence(dbfs = -50.0).measuredDbfs(Weighting.A)!!, 1e-9)
+        assertNull("덜 찼는데 값을 준다", evidence(cleanMs = 100L).measuredDbfs(Weighting.A))
     }
 }

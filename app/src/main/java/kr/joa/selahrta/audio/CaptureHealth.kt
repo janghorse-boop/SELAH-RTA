@@ -56,9 +56,11 @@ fun captureWarningKo(diag: CaptureDiagnostics, lastInputAgeMs: Double? = null): 
         // 콜백이 멈추면 [diag] 도 멈춘다 — 그래서 누적값만 보던 예전
         // 경고는 입력이 끊겨도 **아무 말도 하지 않았다.** 화면은 마지막
         // 숫자를 그대로 들고 멀쩡히 서 있었다.
-        if (stalled) {
+        if (stalled && diag.frames == 0L) {
+            append("입력은 열렸지만 아직 유효한 소리를 받지 못했습니다 — 연결을 확인하십시오.")
+        } else if (stalled) {
             append("소리가 들어오지 않습니다(마지막 %.0f초 전). ".format(lastInputAgeMs!! / 1000.0))
-            append("화면의 값은 그때 잰 것입니다 — 연결을 확인하십시오.")
+            append("화면에는 마지막으로 받은 값이 남아 있습니다 — 연결을 확인하십시오.")
         }
 
         if (shortfall) {
@@ -89,3 +91,4 @@ fun captureWarningKo(diag: CaptureDiagnostics, lastInputAgeMs: Double? = null): 
  * 느끼기 전에는 뜬다.
  */
 const val INPUT_STALL_MS = 1_000.0
+
