@@ -522,7 +522,18 @@ fun SelahApp() {
                         onStopRecording = vm::stopRecording,
                         onDismissDeviceNotice = vm::dismissDeviceNotice,
                     )
-                    ViewMode.Rta -> RtaScreen(capture, onMode = { mode = it })
+                    ViewMode.Rta -> RtaScreen(
+                        capture,
+                        onMode = { mode = it },
+                        onSaveRtaCurve = vm::startRtaCapture,
+                        onCancelRtaCapture = vm::cancelRtaCapture,
+                        onRtaOverlayShown = vm::setRtaOverlayShown,
+                        onRtaLiveVisible = vm::setRtaLiveVisible,
+                        onRenameRtaSet = vm::renameRtaSet,
+                        onDeleteRtaSet = vm::deleteRtaSet,
+                        onDeleteRtaMeasurement = vm::deleteRtaMeasurement,
+                        onDismissRtaNotice = vm::dismissRtaSaveNotice,
+                    )
                     ViewMode.Spectrogram -> SpectrogramScreen(
                         capture = capture,
                         feed = spectrogram,

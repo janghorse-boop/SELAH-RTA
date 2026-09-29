@@ -34,6 +34,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.AnnotatedString
@@ -50,6 +51,18 @@ import kr.joa.selahrta.ui.RtaView
 import kr.joa.selahrta.ui.theme.SelahColors
 
 /** 1kHz 아래는 Hz, 위는 kHz 로 적는다. 자릿수가 너무 길어지지 않게. */
+/**
+ * 그래프에 겹쳐 그릴 저장 곡선 하나.
+ *
+ * 색은 **채널마다** 다르다 — 좌우를 견주려고 겹치는 것이므로 어느 쪽인지
+ * 색으로 갈려야 한다.
+ */
+class RtaOverlayCurve(
+    val nameKo: String,
+    val bandsSpl: DoubleArray,
+    val color: Color,
+)
+
 fun formatHz(hz: Double): String =
     if (hz < 1000) "%.0f".format(hz) else "%.2f".format(hz / 1000)
 
@@ -145,6 +158,13 @@ fun BandMeter(
      * 바꿔야 한다. 길어져야 하는 것은 차트뿐이다.
      */
     minSlotWidth: Dp = 0.dp,
+    /**
+     * 저장해 둔 측정을 **지금 곡선 위에 겹쳐** 그린다(지시서 §7).
+     *
+     * 막대가 아니라 **선**이다 — 막대를 겹치면 어느 것이 어느 것인지
+     * 가려지고, 겹친 자리의 색이 섞여 둘 다 못 읽는다.
+     */
+    overlays: List<RtaOverlayCurve> = emptyList(),
     /**
      * 지금 잡고 있는 하울링 후보. 차트 위에 **세로 표식**으로 찍는다.
      *
@@ -321,6 +341,36 @@ fun BandMeter(
                         }
                     }
                     }
+
+                // **저장 곡선은 막대 위, 후보 아래.** 막대에 가리면 겹쳐
+                // 보는 뜻이 없고, 후보 표식을 가리면 하울링 자리를 놓친다.
+                for (ov in overlays) {
+                    if (ov.bandsSpl.size != n) continue
+                    val path = Path()
+                    var started = false
+                    for (i in 0 until n) {
+                        val db = ov.bandsSpl[i]
+                        if (!db.isFinite()) continue
+                        val cx = slot * (i + 0.5f)
+                        // 축 밖으로 나가도 **자르지 않고 그대로 둔다** —
+                        // 잘라 붙이면 없는 값이 축 끝에 붙어 있는 것처럼 보인다.
+                        val cy = (((ceilDb - db) / span) * size.height).toFloat()
+                        if (started) path.lineTo(cx, cy) else { path.moveTo(cx, cy); started = true }
+                    }
+                    if (started) {
+                        drawPath(
+                            path = path,
+                            color = ov.color,
+                            style = Stroke(
+                                width = 2.dp.toPx(),
+                                // 점선으로 그어 **지금 곡선과 한눈에 갈린다.**
+                                pathEffect = PathEffect.dashPathEffect(
+                                    floatArrayOf(8.dp.toPx(), 5.dp.toPx()),
+                                ),
+                            ),
+                        )
+                    }
+                }
 
                 // **후보는 막대 위에 찍는다.** 밑에 깔면 솟은 막대가 가린다 —
                 // 하필 후보가 있는 자리가 제일 높은 막대라 늘 가려진다.

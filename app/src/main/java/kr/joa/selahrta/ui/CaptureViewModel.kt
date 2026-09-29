@@ -76,6 +76,8 @@ import kr.joa.selahrta.settings.MeterSettings
 import kr.joa.selahrta.settings.MeterSettingsStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.distinctUntilChangedBy
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -329,6 +331,20 @@ data class CaptureUiState(
     val signalChannels: SignalChannels = SignalChannels.Both,
     /** 신호 발생기에 관해 알릴 것. */
     val signalNoticeKo: String? = null,
+
+    // ── RTA 측정 저장 (지시서 §7) ───────────────────────
+    /** 지금 재는 중이면 그 상태. 안 재면 null. */
+    val rtaCapture: RtaCaptureUi? = null,
+    /** 저장해 둔 측정 전부. */
+    val savedRta: List<kr.joa.selahrta.data.rta.RtaMeasurement> = emptyList(),
+    /** 비교 세트 목록. */
+    val savedRtaSets: List<kr.joa.selahrta.data.rta.RtaComparisonSet> = emptyList(),
+    /** 지금 그래프에 겹쳐 그릴 측정들. */
+    val rtaOverlayIds: Set<String> = emptySet(),
+    /** 실시간 곡선을 보일 것인가. 저장 곡선만 보고 싶을 때가 있다. */
+    val rtaLiveVisible: Boolean = true,
+    /** 저장에 관해 알릴 것(실패 까닭 등). */
+    val rtaSaveNoticeKo: String? = null,
     /** FR — 지금 어느 단계인가. */
     val responsePhase: ResponsePhase = ResponsePhase.Idle,
     /** 그 단계가 얼마나 찼는가(0~1). */
@@ -918,6 +934,9 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
 
         /** 진행을 얼마나 자주 볼 것인가(ms). */
         const val RESPONSE_TICK_MS = 100L
+
+        /** RTA 측정 중 화면을 고쳐 그리는 간격. 남은 시간이 이만큼씩 준다. */
+        const val RTA_TICK_MS = 100L
     }
     private var calibrationJob: Job? = null
     private var curveJob: Job? = null
@@ -1521,6 +1540,240 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     fun dismissSignalNotice() {
         controller.update { st -> st.copy(signalNoticeKo = null) }
     }
+
+    // ── RTA 측정 저장 (지시서 §7) ────────────────────────
+
+    /**
+     * 저장한 측정을 담아 두는 곳.
+     *
+     * `filesDir` 안이라 **앱을 지우면 함께 사라진다.** 기록 탭의 세션과
+     * 같은 자리다.
+     */
+    private val rtaStore = kr.joa.selahrta.data.rta.RtaMeasurementStore(
+        java.io.File(app.filesDir, "rta-measurements"),
+    )
+
+    init {
+        // 앱을 껐다 켜도 남아 있어야 한다 — 열자마자 한 번 읽어 둔다.
+        reloadSavedRta()
+    }
+
+    private var rtaRun: kr.joa.selahrta.data.rta.RtaCaptureRun? = null
+    private var rtaJob: Job? = null
+
+    /** 저장된 것을 다시 읽어 화면에 올린다. */
+    fun reloadSavedRta() {
+        viewModelScope.launch {
+            val items = kotlinx.coroutines.withContext(Dispatchers.IO) { rtaStore.list() }
+            val sets = kotlinx.coroutines.withContext(Dispatchers.IO) { rtaStore.sets() }
+            controller.update { st -> st.copy(savedRta = items, savedRtaSets = sets) }
+        }
+    }
+
+    /**
+     * 한 채널을 재어 저장한다(담당자 지시 2026-09-29).
+     *
+     * **안정화 1.5초 뒤 10초를 잰다.** 장 수가 아니라 시간으로 센다 —
+     * 까닭은 [kr.joa.selahrta.data.rta.RtaCaptureRun] 에 적었다.
+     *
+     * 재는 동안 **보정이 바뀌면 그만둔다.** 앞뒤가 다른 잣대로 잰 값을
+     * 한 곡선에 담으면 그것을 나중에 가릴 길이 없다.
+     */
+    fun startRtaCapture(nameKo: String, setId: String?) {
+        if (rtaJob?.isActive == true) return
+        val st0 = controller.baseState.value
+        val spec = rtaSpec()
+        val startOffsetDb = st0.calibration.offset.db
+
+        val run = kr.joa.selahrta.data.rta.RtaCaptureRun(
+            settleMs = kr.joa.selahrta.data.rta.RtaCaptureRun.DEFAULT_SETTLE_MS,
+            measureMs = kr.joa.selahrta.data.rta.RtaCaptureRun.DEFAULT_MEASURE_MS,
+            maxGapMs = kr.joa.selahrta.data.rta.RtaCaptureRun.DEFAULT_MAX_GAP_MS,
+            minFrameRatio = kr.joa.selahrta.data.rta.RtaCaptureRun.DEFAULT_MIN_FRAME_RATIO,
+            startedAtMs = nowMs(),
+        )
+        rtaRun = run
+        publishRtaCapture(run, nameKo)
+
+        rtaJob = viewModelScope.launch {
+            // **장을 받는 쪽과 시간을 보는 쪽을 따로 둔다.** 장이 아예 안
+            // 오는 것이 알아채야 할 일이므로, 시간은 장과 무관하게 흘러야
+            // 한다.
+            val frames = launch {
+                controller.measurement
+                    .filterNotNull()
+                    .distinctUntilChangedBy { it.atMonotonicMs }
+                    .collect { m ->
+                        val rta = m.rta ?: return@collect
+                        run.onFrame(rta.bandsDbfs, nowMs())
+                    }
+            }
+            try {
+                while (run.running) {
+                    kotlinx.coroutines.delay(RTA_TICK_MS)
+                    run.tick(nowMs())
+                    // 보정이 바뀌면 잣대가 달라진다 — 그만둔다.
+                    if (controller.baseState.value.calibration.offset.db != startOffsetDb) {
+                        run.cancel()
+                        controller.update { st ->
+                            st.copy(rtaSaveNoticeKo = "재는 도중 보정이 바뀌어 측정을 멈췄습니다.")
+                        }
+                    }
+                    publishRtaCapture(run, nameKo)
+                }
+            } finally {
+                frames.cancel()
+            }
+            finishRtaCapture(run, nameKo, setId, startOffsetDb, spec)
+        }
+    }
+
+    /** 사람이 그만둔다. **저장하지 않는다.** */
+    fun cancelRtaCapture() {
+        rtaRun?.cancel()
+    }
+
+    private fun publishRtaCapture(
+        run: kr.joa.selahrta.data.rta.RtaCaptureRun,
+        nameKo: String,
+    ) {
+        val ui = if (run.running) {
+            RtaCaptureUi(
+                settling = run.phase is kr.joa.selahrta.data.rta.RtaCapturePhase.Settling,
+                remainingMs = run.remainingMs(nowMs()),
+                frames = run.average.frames,
+                nameKo = nameKo,
+            )
+        } else {
+            null
+        }
+        controller.update { st -> st.copy(rtaCapture = ui) }
+    }
+
+    /**
+     * 다 잰 뒤. **정상으로 끝났을 때만 저장한다**(담당자 지시 기준 1).
+     *
+     * 끝난 평균과 **그때의 조건을 한 벌로** 담는다(기준 6) — 나중에 상태를
+     * 다시 읽어 채우면 그 사이에 바뀐 값이 섞인다.
+     */
+    private suspend fun finishRtaCapture(
+        run: kr.joa.selahrta.data.rta.RtaCaptureRun,
+        nameKo: String,
+        setId: String?,
+        offsetDb: Double,
+        spec: Pair<Int, Int>?,
+    ) {
+        rtaRun = null
+        controller.update { st -> st.copy(rtaCapture = null) }
+
+        when (val p = run.phase) {
+            is kr.joa.selahrta.data.rta.RtaCapturePhase.Failed -> {
+                controller.update { st -> st.copy(rtaSaveNoticeKo = p.reasonKo) }
+                return
+            }
+            is kr.joa.selahrta.data.rta.RtaCapturePhase.Cancelled -> return
+            else -> Unit
+        }
+
+        val mean = run.average.meanDb(offsetDb) ?: run {
+            controller.update { st -> st.copy(rtaSaveNoticeKo = "잰 것이 없어 저장하지 않았습니다.") }
+            return
+        }
+
+        val st = controller.baseState.value
+        val snapshot = kr.joa.selahrta.data.rta.RtaMeasurement(
+            id = kr.joa.selahrta.data.rta.RtaMeasurementStore.newId(),
+            setId = setId ?: kr.joa.selahrta.data.rta.RtaMeasurementStore.newId(),
+            nameKo = nameKo,
+            method = "rta",
+            bandsSpl = mean,
+            signal = st.playingSignal?.name ?: "",
+            channel = st.signalChannels.name,
+            outputDbfs = 20.0 * kotlin.math.log10(st.signalAmplitude.coerceAtLeast(1e-6)),
+            averagedFrames = run.average.frames,
+            conditions = kr.joa.selahrta.data.rta.RtaConditions(
+                inputKey = st.opened?.deviceKey,
+                calibrationState = st.calibration.state.name,
+                // **「보정이 없다」와 「모른다」를 가른다**(담당자 지시 기준 5).
+                // null 을 그대로 두면 겉장에 그 줄이 아예 안 쓰이고, 다시
+                // 읽을 때 「미확인」이 된다 — 보정이 없다는 것은 아는
+                // 사실이므로 빈 글자로 적어 둔다(실기기 겉장에서 확인).
+                calibrationSource = st.calibration.saved?.source?.name ?: "",
+                // **「안 걸렸다」와 「모른다」를 가른다.** 곡선이 꺼져 있으면
+                // 빈 글자이고, 그것은 「모른다」가 아니다.
+                curveName = st.curve?.takeIf { it.enabled }?.fileName ?: "",
+                fftSize = spec?.first,
+                sampleRate = spec?.second,
+            ),
+            measuredAtEpochMs = System.currentTimeMillis(),
+        )
+
+        val saved = kotlinx.coroutines.withContext(Dispatchers.IO) { rtaStore.save(snapshot) }
+        if (saved.isFailure) {
+            controller.update { st2 ->
+                st2.copy(rtaSaveNoticeKo = "저장하지 못했습니다: ${saved.exceptionOrNull()?.message}")
+            }
+            return
+        }
+        reloadSavedRta()
+        // 막 저장한 것은 바로 보여 준다 — 재고 나서 안 보이면 저장이
+        // 됐는지 알 수 없다.
+        controller.update { st2 ->
+            st2.copy(rtaOverlayIds = st2.rtaOverlayIds + snapshot.id, rtaSaveNoticeKo = null)
+        }
+    }
+
+    fun setRtaOverlayShown(id: String, shown: Boolean) {
+        controller.update { st ->
+            st.copy(rtaOverlayIds = if (shown) st.rtaOverlayIds + id else st.rtaOverlayIds - id)
+        }
+    }
+
+    fun setRtaLiveVisible(visible: Boolean) {
+        controller.update { st -> st.copy(rtaLiveVisible = visible) }
+    }
+
+    fun renameRtaSet(setId: String, nameKo: String) {
+        viewModelScope.launch {
+            val existing = kotlinx.coroutines.withContext(Dispatchers.IO) { rtaStore.sets() }
+                .firstOrNull { it.id == setId }
+            kotlinx.coroutines.withContext(Dispatchers.IO) {
+                rtaStore.putSet(
+                    kr.joa.selahrta.data.rta.RtaComparisonSet(
+                        id = setId,
+                        nameKo = nameKo,
+                        createdAtEpochMs = existing?.createdAtEpochMs ?: System.currentTimeMillis(),
+                    ),
+                )
+            }
+            reloadSavedRta()
+        }
+    }
+
+    fun deleteRtaMeasurement(id: String) {
+        viewModelScope.launch {
+            kotlinx.coroutines.withContext(Dispatchers.IO) { rtaStore.delete(id) }
+            controller.update { st -> st.copy(rtaOverlayIds = st.rtaOverlayIds - id) }
+            reloadSavedRta()
+        }
+    }
+
+    fun deleteRtaSet(setId: String) {
+        viewModelScope.launch {
+            val gone = controller.baseState.value.savedRta
+                .filter { it.setId == setId }.map { it.id }.toSet()
+            kotlinx.coroutines.withContext(Dispatchers.IO) { rtaStore.deleteSet(setId) }
+            controller.update { st -> st.copy(rtaOverlayIds = st.rtaOverlayIds - gone) }
+            reloadSavedRta()
+        }
+    }
+
+    fun dismissRtaSaveNotice() {
+        controller.update { st -> st.copy(rtaSaveNoticeKo = null) }
+    }
+
+    /** 단조 시계. 벽시계를 쓰면 시간이 바뀔 때 남은 시간이 튄다. */
+    private fun nowMs(): Long = android.os.SystemClock.elapsedRealtime()
 
     fun dismissDeviceNotice() {
         controller.update { st -> st.copy(deviceNoticeKo = null) }
