@@ -91,13 +91,24 @@ fun SelahApp() {
     // 구역과 칩을 **따로** 둔다. 구역을 칩에서 파생시키면 칩이 가리키지 않는
     // 기록·설정에는 갈 방법이 아예 없어진다. 대신 둘이 어긋나지 않도록
     // 한쪽을 바꿀 때 다른 쪽을 맞춘다.
-    var section by remember { mutableStateOf(NavSection.Measure) }
+    // **보고 있던 자리를 잃지 않는다.**
+    //
+    // `remember` 는 **화면이 다시 만들어지면 값을 잃는다.** 그러면 돌아왔을
+    // 때 보던 화면이 아니라 **측정 탭**이다.
+    //
+    // 개발자 옵션 「활동 유지 안 함」을 켜고 악기 EQ 에서 홈으로 나갔다
+    // 돌아오면 `remember` 판은 측정 화면으로, 이 판은 가이드로 돌아온다
+    // (에뮬레이터에서 둘 다 확인). 메모리가 모자라 화면이 날아간 뒤도 같다.
+    //
+    // 마법사·프로필 여닫이는 이미 `rememberSaveable` 이었다. **자리만 빠져
+    // 있었다.**
+    var section by rememberSaveable { mutableStateOf(NavSection.Measure) }
     // 교정 마법사는 탭이 아니라 **위에 덮는 화면**이다. 탭으로 두면
     // 측정 중에 잘못 눌러 들어가게 된다.
     var wizardOpen by rememberSaveable { mutableStateOf(false) }
     var wizardExample by rememberSaveable { mutableStateOf(false) }
     var profilesOpen by rememberSaveable { mutableStateOf(false) }
-    var mode by remember { mutableStateOf(ViewMode.Spl) }
+    var mode by rememberSaveable { mutableStateOf(ViewMode.Spl) }
 
     val vm: CaptureViewModel = viewModel()
     val capture by vm.state.collectAsStateWithLifecycle()
@@ -597,7 +608,19 @@ fun SelahApp() {
                         },
                     )
                     // 캡처를 쓰지 않는다. 권한이 없어도 그대로 열린다.
-                    ViewMode.InstrumentEq -> InstrumentGuideScreen()
+                    ViewMode.InstrumentEq -> InstrumentGuideScreen(
+                        capture = capture,
+                        // **측정 화면과 같은 길을 쓴다.** 권한이 없으면 먼저
+                        // 묻고, 있으면 곧바로 잰다 — 여기서 따로 시작하면
+                        // 알림 권한을 묻는 자리가 둘이 된다.
+                        onStartMeasure = {
+                            if (hasPermission) {
+                                beginMeasure()
+                            } else {
+                                askPermission.launch(Manifest.permission.RECORD_AUDIO)
+                            }
+                        },
+                    )
                 }
 
                 // **탭 내용 위에 덮는다.** 탭으로 두면 측정 중에 잘못
