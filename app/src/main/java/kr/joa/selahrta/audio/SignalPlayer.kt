@@ -1,5 +1,6 @@
 package kr.joa.selahrta.audio
 
+import kr.joa.selahrta.dsp.BandNoiseFilter
 import android.os.Process
 import android.util.Log
 import java.util.concurrent.atomic.AtomicBoolean
@@ -269,6 +270,17 @@ class SignalPlayer(
         val buf = FloatArray(FLOATS)
         val rng = Random(System.nanoTime())
         val pink = PinkNoise(rng)
+        // **대역 잡음은 핑크를 걸러 만든다.** 화이트를 거르면 그 대역
+        // 안에서도 고역 쪽이 더 크다 — 좁은 대역이라 차이는 작지만,
+        // 「핑크의 한 조각」이라는 뜻이 분명한 쪽이 낫다.
+        val band = if (req.signal == TestSignal.Band) {
+            BandNoiseFilter(req.effectiveHz ?: 1_000.0, SAMPLE_RATE)
+        } else {
+            null
+        }
+        // 대역을 좁히면 에너지가 줄어 훨씬 작게 들린다. 귀에 비슷하게
+        // 들리도록 되돌린다 — 잰 값이 아니라 **들려주는 소리**다.
+        val bandMakeUp = if (band != null) BAND_MAKEUP else 1.0
         val amp = req.safeAmplitude
         val toLeft = req.channels != SignalChannels.Right
         val toRight = req.channels != SignalChannels.Left
@@ -289,6 +301,10 @@ class SignalPlayer(
                 val time = (sample + f).toDouble() / SAMPLE_RATE
                 val v = when (req.signal) {
                     TestSignal.Pink -> pink.next()
+                    // Hz 마다 고른 잡음. 핑크와 달리 기울이지 않는다.
+                    TestSignal.White -> rng.nextDouble() * 2 - 1
+                    TestSignal.Band -> (band!!.process(pink.next()) * bandMakeUp)
+                        .coerceIn(-1.0, 1.0)
                     TestSignal.Sweep -> sin(sweepPhase(time))
                     else -> {
                         // **그리고 나서 나아간다.** 더한 뒤에 그리면 첫
@@ -497,5 +513,18 @@ class SignalPlayer(
 
         /** 0 이 이어질 때 한 번 쉬는 시간(ms). 바쁜 맴돌이를 만들지 않는다. */
         private const val IDLE_WAIT_MS = 2L
+
+        /**
+         * 대역 잡음의 크기를 되돌리는 값.
+         *
+         * 1/3 옥타브만 남기면 에너지가 전대역의 약 1/40 로 줄어 귀에
+         * 훨씬 작게 들린다. 사람이 세기 슬라이더를 올려 맞추게 두면
+         * **다른 신호로 바꿨을 때 갑자기 커진다** — 그쪽이 더 위험하다.
+         *
+         * **잰 값이 아니라 들려주는 소리다.** 이 배수는 「엇비슷하게
+         * 들리게」 하는 것이지 대역 레벨을 맞추는 것이 아니다. 대역
+         * 레벨을 재는 것은 RTA 의 몫이다.
+         */
+        private const val BAND_MAKEUP = 6.0
     }
 }

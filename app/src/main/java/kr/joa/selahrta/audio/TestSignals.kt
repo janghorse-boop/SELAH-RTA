@@ -22,8 +22,35 @@ enum class TestSignal(val labelKo: String, val noteKo: String) {
     /** 방 응답을 보는 표준 신호. 옥타브마다 에너지가 고르다. */
     Pink("핑크 노이즈", "방의 주파수 응답을 봅니다. RTA 를 고를 때 쓰는 기본 신호입니다"),
 
+    /**
+     * 화이트 노이즈(Hz 당 에너지가 고르다).
+     *
+     * **핑크와 성격이 다르다.** 핑크는 옥타브마다 에너지가 고르고,
+     * 화이트는 **Hz 마다** 고르다 — 옥타브는 위로 갈수록 넓으므로
+     * 화이트는 고역이 훨씬 크게 들린다.
+     *
+     * 방·PA 튜닝의 표준은 핑크다. 화이트는 고역 쪽 특성이나 잡음
+     * 성향을 볼 때 쓰는 보조 신호다(담당자 지시 2026-09-29).
+     */
+    White("화이트 노이즈", "Hz 마다 에너지가 고릅니다. 고역이 강하게 들리며, 고역 특성을 볼 때 씁니다"),
+
     /** 20Hz→20kHz 로그 스윕. 공진과 하울링 나는 자리를 찾는다. */
     Sweep("스윕 20Hz~20kHz", "30초에 한 번 훑습니다. 방이 울리는 자리와 하울링 나기 쉬운 자리를 찾습니다"),
+
+    /**
+     * 1/3 옥타브 한 대역만 담은 핑크 잡음(담당자 지시 2026-09-29).
+     *
+     * **그래픽 EQ 를 만질 때 쓴다.** 31밴드 EQ 의 250Hz 를 올리는
+     * 중이라면 그 대역만 담긴 잡음을 틀어 놓고 변화를 듣는다.
+     *
+     * 순음으로는 그 일을 못 한다 — 한 점만 울리므로 대역 전체가 어떻게
+     * 되는지 못 듣고, 방의 공진 한 자리에 걸리면 엉뚱하게 크게 들린다.
+     *
+     * 중심은 [SignalRequest.toneHz] 가 들고 오되 **가장 가까운 1/3
+     * 옥타브 호칭 중심으로 맞춘다** — EQ 눈금과 같은 자리를 내주어야
+     * 쓸모가 있다.
+     */
+    Band("1/3 옥타브 대역", "고른 주파수의 1/3 옥타브 대역만 냅니다. 그래픽 EQ 를 만질 때 그 대역을 귀로 확인합니다"),
 
     Sine125("125Hz", "저역. 웅웅거림을 보는 자리입니다"),
     Sine250("250Hz", "저중역. 여기가 많으면 말소리가 탁해집니다"),
@@ -61,6 +88,14 @@ enum class TestSignal(val labelKo: String, val noteKo: String) {
 
     /** 순음인가. 화면이 묶어서 보이는 데 쓴다. [Custom] 도 순음이다. */
     val isTone: Boolean get() = toneHz != null || this == Custom
+
+    /**
+     * 사람이 고른 주파수를 쓰는가.
+     *
+     * [Custom] 은 그 주파수로 순음을 내고, [Band] 는 그 주파수의 1/3
+     * 옥타브 대역을 낸다. 둘 다 슬라이더·입력칸을 따라가야 한다.
+     */
+    val usesPickedHz: Boolean get() = this == Custom || this == Band
 }
 
 /**
@@ -104,7 +139,7 @@ data class SignalRequest(
 ) {
     /** 실제로 낼 주파수. 순음이 아니면 null. */
     val effectiveHz: Double?
-        get() = if (signal == TestSignal.Custom) toneHz else signal.toneHz
+        get() = if (signal.usesPickedHz) toneHz else signal.toneHz
 
     /** 잘라 낸 진폭. 내보내는 쪽은 이것만 본다. */
     val safeAmplitude: Double

@@ -1403,9 +1403,14 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         // 소리는 끊겼다. 이제 소리 스레드가 읽는 값만 바꾼다 — 위상이
         // 이어져 미끄러지듯 따라온다.
         val playing = controller.baseState.value.playingSignal
-        if (playing == TestSignal.Custom && !player.retune(hz)) {
-            // 내고 있지 않거나 이미 끝났다. 그때만 처음부터 연다.
-            playSignal(playing)
+        when {
+            // **대역 잡음은 다시 시작해야 한다.** 필터의 중심이 바뀌므로
+            // 계수를 다시 셈해야 하고, 그것을 소리 나는 중에 갈아 끼우면
+            // 필터 상태가 어긋나 「퍽」 소리가 난다.
+            playing == TestSignal.Band -> playSignal(playing)
+
+            // 순음은 값만 바꾸면 된다(위상이 이어진다).
+            playing == TestSignal.Custom && !player.retune(hz) -> playSignal(playing)
         }
     }
 
