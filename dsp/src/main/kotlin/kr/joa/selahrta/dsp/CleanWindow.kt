@@ -100,7 +100,11 @@ class CleanWindow(
             // **짧은 창을 이 길이로 쓴다.** 긴 창은 쓰지 않으므로 같게 둔다.
             leqShortMs = windowMs,
             leqLongMs = windowMs,
-        ).also { engine = it }
+        ).also {
+            // **칸 근사로는 「창 밖은 0」을 못 지킨다**(UISRFF-01).
+            it.enableExactShortWindow()
+            engine = it
+        }
         latest = target.process(samples, frameCount)
         frames += frameCount
     }
@@ -128,7 +132,9 @@ class CleanWindow(
     }
 
     private fun reset() {
-        engine = null
+        // **버리지 않고 비운다.** 잘림·공백마다 새로 만들면 3MiB 넘는
+        // 버퍼를 다시 잡는다 — 손뼉 한 번에 그 일이 일어난다.
+        engine?.reset()
         latest = null
         frames = 0
         lastNs = null

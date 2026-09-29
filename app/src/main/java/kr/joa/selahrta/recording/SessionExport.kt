@@ -39,7 +39,11 @@ object SessionExport {
      * BOM 세 바이트가 있으면 엑셀이 UTF-8 로 읽는다. 첫 줄은 `#` 로
      * 시작하는 주석이라 BOM 이 열 이름에 붙을 일도 없다.
      */
-    private const val UTF8_BOM = "﻿"
+    // **글자를 그대로 박지 않고 코드포인트로 쓴다**(독립 재검증
+    // UISRFF-03 옆 지적). 소스에 진짜 BOM 문자가 들어 있으면 눈에
+    // 보이지 않으면서 lint 가 `ByteOrderMark` 로 잡고, 편집기마다
+    // 다르게 다뤄 조용히 사라지거나 늘어난다. 뜻은 같다.
+    private const val UTF8_BOM = "\uFEFF"
 
     /**
      * @param out **UTF-8 로 쓰는 Writer 여야 한다.** 다른 인코딩이면

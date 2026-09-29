@@ -524,6 +524,20 @@ class CaptureSession(
     var calibrationEvidence: kr.joa.selahrta.calibration.CalibrationEvidence? = null
 
     /**
+     * 마지막으로 **실제 PCM 이 온** 때(단조 시계). 아직 없으면 null.
+     *
+     * 보정 근거와 따로 둔다(독립 재검증 UISRFF-02). 근거는 빈 덩어리
+     * (읽기 오류)에도 갱신해야 한다 — 옛 값이 저장되는 것을 막아야
+     * 하므로. 그런데 감시가 그 시각을 「소리가 온 때」로 다시 쓰면,
+     * **읽기가 계속 실패하는 동안에도 나이가 0** 이 된다.
+     *
+     * 하나는 「저장해도 되는가」를, 다른 하나는 「소리가 오고 있는가」를
+     * 말한다. 같은 값으로 둘 다 답할 수 없다.
+     */
+    @Volatile
+    var lastValidInputNs: Long? = null
+
+    /**
      * 기록을 남기는 중이면 그 기록기(Phase 10). 아니면 null.
      *
      * **세션이 소유한다.** 마이크가 다시 열리면 세션이 바뀌고, 그때

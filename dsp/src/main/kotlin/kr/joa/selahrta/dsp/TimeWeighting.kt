@@ -152,7 +152,7 @@ class ExponentialTimeWeighting(
  * 굴린다. 칸 길이만큼의 시간 분해능을 잃지만, 1분 Leq 에서 100ms 는 문제가 아니다.
  */
 class RollingLeq(
-    windowMs: Long,
+    private val windowMs: Long,
     private val sampleRate: Int,
     private val bucketMs: Long = 100L,
 ) {
@@ -162,6 +162,37 @@ class RollingLeq(
         require(sampleRate > 0) { "샘플레이트가 0 이하다" }
     }
 
+    private var exact: ExactEnergyWindow? = null
+
+    /**
+     * **칸 근사 대신 정확한 창으로 바꾼다**(독립 재검증 UISRFF-01).
+     *
+     * 첫 표본을 넣기 **전에만** 부른다. 화면의 계기는 그대로 칸 근사를
+     * 쓴다 — 바꿀 까닭이 없고, 바꾸면 초당 수만 번의 링 갱신이 늘어난다.
+     *
+     * ## 왜 필요한가
+     *
+     * 이 클래스의 기본 계산은 **100ms 칸 근사**다. 닫힌 칸 30개에
+     * 아직 안 닫힌 칸을 함께 더하므로, 3초로 설정해도 실제 평균 구간은
+     * **3.0초에서 3.1초 사이**를 오간다.
+     *
+     * 화면의 Leq 에는 그것으로 충분하다. 그러나 보정은 「창 밖의 기여는
+     * 0」이라는 계약 위에 서 있는데, **그 계약을 못 지킨다** — 창이
+     * 0.1초 더 뻗으면 그 안에 든 큰 소리가 그대로 섞인다.
+     *
+     * 검토자가 잰 값: 진폭 0.9 로 5.02초(40dB 큰 소리) → 0.009 로
+     * 3.02초. 저장된 값이 −25.65 dBFS, 실제로 안정된 값은 −43.93 —
+     * **18.27 dB** 가 틀렸고 그 오프셋이 이후 모든 SPL 에 걸렸다.
+     *
+     * **기다리는 시간을 3.1초로 늘려서는 못 고친다.** 레벨이 바뀔
+     * 때마다 같은 경계가 다시 생긴다.
+     */
+    fun enableExactWindow() {
+        check(exact == null && filledBuckets == 0 && currentCount == 0)
+        val n = sampleRate * windowMs / 1000
+        require(n in 1L..Int.MAX_VALUE.toLong())
+        exact = ExactEnergyWindow(n.toInt())
+    }
     private val bucketFrames = (sampleRate * bucketMs / 1000).toInt().coerceAtLeast(1)
     private val bucketCount = (windowMs / bucketMs).toInt().coerceAtLeast(1)
 
@@ -177,6 +208,7 @@ class RollingLeq(
     private var filledBuckets = 0
 
     fun add(sample: Double) {
+        exact?.let { it.add(sample); return }
         currentSum += sample * sample
         currentCount++
         if (currentCount >= bucketFrames) closeBucket()
@@ -203,6 +235,7 @@ class RollingLeq(
      * 「아주 조용함」으로 보인다.
      */
     fun leqDbfs(): Dbfs? {
+        exact?.let { return it.dbfs() }
         var s = currentSum
         var n = currentCount.toLong()
         for (i in 0 until bucketCount) {
@@ -214,9 +247,10 @@ class RollingLeq(
     }
 
     /** 창이 가득 찼는가. 차기 전의 Leq 는 그 이름이 뜻하는 구간보다 짧다. */
-    val isFull: Boolean get() = filledBuckets >= bucketCount
+    val isFull: Boolean get() = exact?.isFull ?: (filledBuckets >= bucketCount)
 
     fun reset() {
+        exact?.reset()
         sums.fill(0.0)
         counts.fill(0)
         head = 0
@@ -224,4 +258,39 @@ class RollingLeq(
         currentCount = 0
         filledBuckets = 0
     }
+}
+
+/**
+ * **보정 전용 정확 창.** 최근 [capacity] 표본의 에너지 평균을 낸다.
+ *
+ * 칸 근사와 달리 창 밖의 기여가 **정확히 0** 이다 — 링에서 밀려난
+ * 표본은 합에서도 빠진다.
+ *
+ * **보정 합산(Kahan)을 쓴다.** 초당 48,000번씩 더하고 빼는 자리라,
+ * 긴 측정에서는 부동소수점 오차가 쌓여 값이 천천히 어긋난다. 예배
+ * 두 시간이면 3억 번이 넘는다.
+ */
+private class ExactEnergyWindow(private val capacity: Int) {
+    private val powers = DoubleArray(capacity)
+    private var head = 0
+    private var size = 0
+    private var sum = 0.0
+    private var correction = 0.0
+    val isFull get() = size == capacity
+    private fun accumulate(delta: Double) {
+        val y = delta - correction
+        val next = sum + y
+        correction = (next - sum) - y
+        sum = next
+    }
+    fun add(sample: Double) {
+        if (size == capacity) accumulate(-powers[head]) else size++
+        val power = sample * sample
+        powers[head] = power
+        accumulate(power)
+        head = (head + 1) % capacity
+    }
+    fun dbfs(): Dbfs? = if (size == 0) null else
+        amplitudeToDbfs(kotlin.math.sqrt(sum.coerceAtLeast(0.0) / size))
+    fun reset() { head = 0; size = 0; sum = 0.0; correction = 0.0 }
 }

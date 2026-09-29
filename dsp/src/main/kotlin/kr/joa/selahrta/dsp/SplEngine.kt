@@ -95,6 +95,7 @@ class SplEngine(
     private val filter = weightingFilter(weighting, sampleRate)
     private val timeWeighting = ExponentialTimeWeighting(timeWeight, sampleRate)
     private val leqShort = RollingLeq(leqShortMs, sampleRate)
+    fun enableExactShortWindow() = leqShort.enableExactWindow()
     private val leqLong = RollingLeq(leqLongMs, sampleRate)
     private val leqSession = EnergyAverage()
 

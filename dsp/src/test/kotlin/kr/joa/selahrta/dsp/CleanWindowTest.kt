@@ -257,6 +257,37 @@ class CleanWindowTest {
         assertTrue(w.ready)
     }
 
+    /**
+     * **칸 근사로는 「창 밖은 0」을 못 지킨다**(독립 재검증 UISRFF-01).
+     *
+     * `RollingLeq` 의 기본 계산은 100ms 칸이라, 3초로 설정해도 실제
+     * 평균 구간이 **3.0~3.1초**를 오간다. 창이 0.1초 더 뻗으면 그 안에
+     * 든 큰 소리가 섞인다.
+     *
+     * 검토자가 잰 값: 진폭 0.9 로 5.02초 → 0.009 로 3.02초에서
+     * **18.27 dB** 가 틀렸다. 여기서는 같은 순서를 짧게 재현한다.
+     */
+    @Test
+    fun `칸 경계에 걸쳐도 창 밖의 큰 소리가 안 섞인다`() {
+        val w = CleanWindow(fs)
+        val f = Feeder(w)
+        // 잘리지 않는 큰 소리(0.9) — 클리핑이 아니라 창이 계속 찬다
+        f.feed(tone(0.9), blockFrames, clipped = false, times = 251)
+        // 40dB 낮춘다. 3.02초 — 칸 근사였다면 앞의 큰 소리가 남는다
+        f.feed(tone(0.009), blockFrames, clipped = false, times = 151)
+
+        val got = w.value(f.atNs, Weighting.Z)!!
+        val ref = run {
+            val e = MultiWeightEngine(fs, TimeWeight.Slow)
+            repeat(1000) { e.process(tone(0.009), blockFrames) }
+            e.process(tone(0.009), blockFrames).z.currentDbfs.value
+        }
+        assertTrue(
+            "창 밖의 큰 소리가 섞였다: %.2f vs %.2f (차 %.2f dB)".format(got, ref, got - ref),
+            abs(got - ref) < 0.1,
+        )
+    }
+
     @Test
     fun `아무것도 안 넣으면 값이 없다`() {
         val w = CleanWindow(fs)
