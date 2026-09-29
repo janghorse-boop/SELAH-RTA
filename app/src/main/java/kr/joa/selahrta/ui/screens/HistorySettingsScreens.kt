@@ -442,32 +442,7 @@ fun SettingsScreen(
         // 문구 자체는 `SEGMENT_CAUTIONS` 에 그대로 있다 — 지우지 않았으니
         // 다시 보이고 싶으면 되살리면 된다.
 
-        SectionTitle("앱 정보")
-        SettingRow("SELAH RTA", "v0.1.0 (Phase 8)")
-        Text(
-            // 만든 곳만 적는다(담당자 지시 2026-09-28). 영문 확장명
-            // (Real-Time Audio Analyzer)은 **바로 위 머리글에 이미 있어**
-            // 같은 말이 한 화면에 두 번 나왔다.
-            "조아웍스 | JOAWORKS",
-            color = SelahColors.TextMuted,
-            fontSize = 11.sp,
-            modifier = Modifier.padding(top = 4.dp),
-        )
-
-        // **앱 안에서 방침에 닿을 수 있어야 한다.**
-        //
-        // 스토어 목록에만 링크를 두는 것으로는 모자란다 — Play 정책은
-        // **앱 안에서도** 개인정보처리방침에 닿을 것을 요구한다. 지금까지
-        // 코드에 그 주소가 한 군데도 없었다.
-        //
-        // 마이크를 쓰고 소리를 파일로 남기는 앱이라 더 그렇다. 무엇이
-        // 담기고 어디에 남는지를 **담기 전에** 읽을 수 있어야 한다.
-        //
-        // **인터넷 권한은 필요 없다.** 여는 것은 브라우저이지 이 앱이
-        // 아니다 — `ACTION_VIEW` 는 권한 없이 쓸 수 있고, 그래서
-        // 「서버로 보내지 않는다」는 방침이 그대로 유지된다
-        // (`ManifestPromisesTest` 가 권한 목록을 못박고 있다).
-        PolicyLinks(Modifier.padding(top = 12.dp, bottom = 24.dp))
+        AppInfoWithPolicyLinks()
     }
 }
 
@@ -479,6 +454,50 @@ fun SettingsScreen(
  * 아무 일도 없으면** 사람은 앱이 고장 난 줄 안다. 주소를 그대로
  * 보여 주어 옮겨 적을 수 있게 한다.
  */
+
+/**
+ * 「앱 정보」와 그 아래 방침·약관 줄.
+ *
+ * **조각으로 뽑아 둔 까닭**(독립 재검증 2026-09-29): 설정 화면 전체는
+ * 캡처 상태·설정 저장소·기기 목록을 다 받아서, 화면 시험으로 띄우면
+ * **링크가 아닌 것들 때문에** 깨진다. 이 조각만 띄우면 「앱 정보 아래에
+ * 두 줄이 있다」는 계약 하나를 곧바로 본다(`SettingsPolicyLinksTest`).
+ */
+@Composable
+internal fun AppInfoWithPolicyLinks(
+    openUrl: ((String) -> Boolean)? = null,
+) {
+    SectionTitle("앱 정보")
+    SettingRow("SELAH RTA", "v0.1.0 (Phase 8)")
+    Text(
+        // 만든 곳만 적는다(담당자 지시 2026-09-28). 영문 확장명
+        // (Real-Time Audio Analyzer)은 **바로 위 머리글에 이미 있어**
+        // 같은 말이 한 화면에 두 번 나왔다.
+        "조아웍스 | JOAWORKS",
+        color = SelahColors.TextMuted,
+        fontSize = 11.sp,
+        modifier = Modifier.padding(top = 4.dp),
+    )
+
+    // **앱 안에서 방침에 닿을 수 있어야 한다.**
+    //
+    // 스토어 목록에만 링크를 두는 것으로는 모자란다 — Play 정책은
+    // **앱 안에서도** 개인정보처리방침에 닿을 것을 요구한다. 지금까지
+    // 코드에 그 주소가 한 군데도 없었다.
+    //
+    // 마이크를 쓰고 소리를 파일로 남기는 앱이라 더 그렇다. 무엇이
+    // 담기고 어디에 남는지를 **담기 전에** 읽을 수 있어야 한다.
+    //
+    // **인터넷 권한은 필요 없다.** 여는 것은 브라우저이지 이 앱이
+    // 아니다 — `ACTION_VIEW` 는 권한 없이 쓸 수 있고, 그래서
+    // 「서버로 보내지 않는다」는 방침이 그대로 유지된다
+    // (`ManifestPromisesTest` 가 권한 목록을 못박고 있다).
+    PolicyLinks(
+        Modifier.padding(top = 12.dp, bottom = 24.dp),
+        openUrl = openUrl ?: rememberUrlOpener(),
+    )
+}
+
 @Composable
 internal fun PolicyLinks(
     modifier: Modifier = Modifier,
