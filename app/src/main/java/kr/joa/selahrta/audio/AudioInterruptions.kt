@@ -77,8 +77,15 @@ class AudioInterruptions(
                 .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                 .build(),
         )
-        // **눌러 내보내기를 받지 않는다.** 위 KDoc 의 까닭이다. 이렇게
-        // 두면 시스템이 `CAN_DUCK` 대신 보통의 `LOSS_TRANSIENT` 를 준다.
+        // **눌러 내보내기를 시스템에 맡기지 않는다.**
+        //
+        // 앞서 「이렇게 두면 `CAN_DUCK` 대신 `LOSS_TRANSIENT` 가 온다」고
+        // 적었는데 **틀린 말이다**(독립 검토 9회차 3장). 이 플래그는
+        // 시스템이 **저절로 소리를 줄이지 않게** 하고 그 판단을 우리 귀
+        // (listener)로 넘길 뿐이다 — 어느 값이 오는지는 보장하지 않는다.
+        //
+        // 그래서 [focusLossReasonKo] 가 **두 값을 모두** 다룬다. 이 플래그는
+        // 「우리가 알아서 하겠다」는 뜻이고, 무엇을 할지는 그쪽이 정한다.
         .setWillPauseWhenDucked(true)
         .setOnAudioFocusChangeListener(listener)
         .build()
