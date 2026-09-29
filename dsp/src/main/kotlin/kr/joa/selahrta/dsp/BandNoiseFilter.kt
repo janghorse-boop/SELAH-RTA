@@ -3,6 +3,7 @@ package kr.joa.selahrta.dsp
 import kotlin.math.PI
 import kotlin.math.pow
 import kotlin.math.sqrt
+import kotlin.math.tan
 
 /**
  * **1/3 옥타브 한 대역만 통과시키는 필터**(담당자 지시 2026-09-29).
@@ -41,13 +42,40 @@ class BandNoiseFilter(centerHz: Double, sampleRate: Int) {
 
     init {
         require(sampleRate > 0) { "샘플레이트가 0 이하다: $sampleRate" }
-        // **나이퀴스트 가까이는 피한다.** 쌍일차 변환이 주파수 축을 휘게
-        // 만들어, 그 근처에서는 중심이 눈에 띄게 아래로 밀린다.
-        val f0 = this.centerHz.coerceAtMost(sampleRate * 0.4)
-        val w0 = 2 * PI * f0
+
+        // **양 끝을 먼저 사전 보정한다**(독립 검토 SRL-02, 2026-09-29).
+        //
+        // 쌍일차 변환은 주파수 축을 휜다 — 아날로그의 Ω 가 디지털에서는
+        // `2·fs·atan(Ω/2fs)` 자리로 간다. 그래서 `2πf` 를 그대로 넣으면
+        // **적어 둔 주파수가 안 나온다.** 나이퀴스트에 가까울수록 심하다:
+        //
+        // | 적은 대역 | 고치기 전 실제 봉우리 | 적은 자리의 이득 |
+        // |---:|---:|---:|
+        // | 8,000 Hz | 7,382 Hz | −2.25 dB |
+        // | 16,000 Hz | 12,342 Hz | −19.6 dB |
+        // | 20,000 Hz | 13,691 Hz | −34.7 dB |
+        //
+        // 16kHz 를 점검한다고 믿으면서 12.3kHz 를 듣고 있었다.
+        //
+        // 예전에는 중심을 `fs·0.4` 로 **자르기만** 했다. 자르는 것은 휘는
+        // 것을 되돌리지 못한다 — 틀린 자리를 조금 덜 틀리게 옮길 뿐이다.
+        val ratio = 2.0.pow(1.0 / 6)
+        val fLo = this.centerHz / ratio
+        // **위 끝은 나이퀴스트 아래로 묶는다.** `tan` 이 거기서 발산한다.
+        // 48kHz 에서 20kHz 대역의 위 끝은 22,449Hz 라 걸리지 않는다.
+        // 더 낮은 표본율을 쓰게 되면 맨 위 대역만 폭이 좁아진다 — 중심은
+        // 그대로 맞고, 그 사실을 여기 적어 둔다.
+        val fHi = (this.centerHz * ratio).coerceAtMost(sampleRate * 0.4995)
+
+        // 아날로그 쪽으로 미리 펴 둔 양 끝(rad/s 가 아니라 `2·fs·tan` 꼴).
+        val wLo = 2.0 * sampleRate * tan(PI * fLo / sampleRate)
+        val wHi = 2.0 * sampleRate * tan(PI * fHi / sampleRate)
+        // 기하평균이 대역통과의 중심이다.
+        val w0 = sqrt(wLo * wHi)
+
         // 2차를 둘 이어 붙인다. 하나씩은 Q 를 낮춰 잡아야 둘을 합쳤을 때
         // 원하는 폭이 된다 — 같은 Q 로 둘을 겹치면 대역이 좁아진다.
-        val q = BAND_Q * BUTTERWORTH_PAIR
+        val q = w0 / (wHi - wLo) * BUTTERWORTH_PAIR
         chain = BiquadChain(
             List(2) {
                 // 아날로그 대역통과: (w0/Q)·s / (s² + (w0/Q)·s + w0²)

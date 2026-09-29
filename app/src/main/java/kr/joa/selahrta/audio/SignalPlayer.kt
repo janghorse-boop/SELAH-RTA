@@ -318,6 +318,23 @@ class SignalPlayer(
         // 미끄러지듯 따라오고, 끊기는 자리가 없다.
         var phase = 0.0
 
+        /**
+         * 덩어리 안 **프레임 경계마다의 각**(독립 검토 SRL-01, 2026-09-29).
+         *
+         * 덩어리를 다 못 보내면 `sample` 은 나간 만큼만 나아가는데
+         * `phase` 는 **끝까지 나아가 있었다.** 그래서 다음 덩어리 —
+         * 특히 감쇠 덩어리 — 가 엉뚱한 각에서 시작했다. 진폭 0.4 짜리
+         * 순음에서 이음매가 0.346 튀었다. 램프로 없애려던 바로 그 벽이
+         * 램프 시작점에 그대로 남아 있었던 것이다.
+         *
+         * **하나의 Hz 로 거꾸로 셈해서는 안 된다** — 덩어리를 그리는
+         * 도중에 사람이 슬라이더를 움직이면 프레임마다 Hz 가 다르다.
+         * 그래서 지나온 각을 그대로 적어 둔다.
+         *
+         * 재생마다 하나만 만들어 돌려 쓴다.
+         */
+        val phaseAt = DoubleArray(FRAMES + 1)
+
         // **소리를 0 에서 올리고 0 으로 내린다**(지시서 §3: 20~50ms).
         //
         // 첫 표본부터 최대 진폭이 나가면 파형에 **수직인 벽**이 생기고,
@@ -355,6 +372,7 @@ class SignalPlayer(
                 FRAMES
             }
             val floats = frames * CHANNELS
+            phaseAt[0] = phase
 
             for (f in 0 until frames) {
                 val time = (sample + f).toDouble() / SAMPLE_RATE
@@ -376,6 +394,9 @@ class SignalPlayer(
                         val out = sin(phase)
                         phase += 2 * PI * pb.toneHz / SAMPLE_RATE
                         if (phase > 2 * PI) phase -= 2 * PI
+                        // **프레임마다의 각을 적어 둔다**(독립 검토 SRL-01).
+                        // 덩어리를 다 못 보내면 아래에서 이 자리로 되감는다.
+                        phaseAt[f + 1] = phase
                         out
                     }
                 }
@@ -439,9 +460,15 @@ class SignalPlayer(
             // 칸을 프레임으로 되돌린다. `AudioTrack` 은 프레임 단위로 받아
             // 주므로 나누어떨어지고, 설령 반 프레임이 남더라도 위상이
             // 표본 하나만큼 어긋날 뿐이라 들리지 않는다.
-            sample += sent / CHANNELS
-            // 내리는 덩어리는 늘 통째로 나가므로 한 덩어리만큼 낮춘다.
-            if (stopping) fadeFrom = (fadeFrom - frames * gainStep).coerceAtLeast(0.0)
+            val sentFrames = sent / CHANNELS
+            sample += sentFrames
+            // **각도 나간 만큼만 나아간다**(독립 검토 SRL-01). 안 그러면
+            // 버린 프레임만큼 각이 앞서가, 다음 덩어리 첫 표본에서 파형이
+            // 수직으로 튄다.
+            // 잡음·스윕은 각을 쓰지 않으므로 적어 둔 것도 없다.
+            if (req.signal.isTone) phase = phaseAt[sentFrames]
+            // 내리는 쪽도 **나간 만큼만** 낮춘다. 같은 까닭이다.
+            if (stopping) fadeFrom = (fadeFrom - sentFrames * gainStep).coerceAtLeast(0.0)
         }
 
         // 사람이 멈춰서 빠져나왔다. **여기서 놓는다** — `stop()` 의 기다림이
