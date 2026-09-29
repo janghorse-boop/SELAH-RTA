@@ -1,7 +1,9 @@
 package kr.joa.selahrta.data.rta
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -199,6 +201,109 @@ class RtaMeasurementStoreTest {
         s.save(sample(id = "good")).getOrThrow()
         val left = File(tmp.root, "good").listFiles()?.map { it.name }.orEmpty()
         assertEquals(listOf("meta.txt"), left)
+    }
+
+    // ── 저장이 실패할 때 (담당자 지시 기준 4) ──────────
+
+    /**
+     * **쓰기가 실패해도 멀쩡한 기록은 그대로 남는다.**
+     *
+     * 이 시험은 **진짜 `save()` 를 지난다** — 앞선 「반쯤 쓰인 겉장」
+     * 시험이 `.tmp` 를 손으로 만드느라 저장 경로를 안 지났던 것과 다르다.
+     *
+     * 실패를 만드는 방법: 기록 폴더가 될 자리에 **파일**을 놓아 둔다.
+     * 그러면 `mkdirs()` 가 실패한다.
+     */
+    @Test
+    fun `저장이 실패해도 앞 기록이 남는다`() {
+        val s = store()
+        s.save(sample(id = "good")).getOrThrow()
+
+        File(tmp.root, "blocked").writeText("이 자리에는 폴더가 못 생긴다")
+        val r = s.save(sample(id = "blocked"))
+
+        assertTrue("실패를 실패라고 알려야 한다", r.isFailure)
+        assertEquals("멀쩡한 기록이 사라졌다", listOf("good"), s.list().map { it.id })
+    }
+
+    /** **실패한 저장은 목록에 안 나온다.** 반쯤 된 기록이 남지 않는다. */
+    @Test
+    fun `실패한 저장은 목록에 안 나온다`() {
+        val s = store()
+        File(tmp.root, "blocked").writeText("막는다")
+        s.save(sample(id = "blocked"))
+
+        assertTrue(s.list().none { it.id == "blocked" })
+    }
+
+    /**
+     * **밴드 수가 틀리면 아예 안 쓴다.** 쓰고 나서 못 읽는 것보다
+     * 쓰기 전에 막는 편이 낫다.
+     */
+    @Test
+    fun `밴드 수가 틀리면 저장하지 않는다`() {
+        val s = store()
+        val bad = sample(id = "bad").copy(bandsSpl = DoubleArray(30))
+        assertTrue(s.save(bad).isFailure)
+        assertTrue(s.list().none { it.id == "bad" })
+    }
+
+    // ── 옛 기록의 빠진 조건 (담당자 지시 기준 5) ────────
+
+    /**
+     * **겉장에 없던 조건은 「미확인」으로 남는다.**
+     *
+     * 지금 설정이나 기본값으로 채우면 「이 조건으로 쟀다」는 거짓이
+     * 만들어져, 다음에 견줄 때 **다른 조건인데 같다고** 읽힌다.
+     */
+    @Test
+    fun `옛 겉장에 없는 조건은 미확인으로 남는다`() {
+        val s = store()
+        s.save(sample(id = "old")).getOrThrow()
+
+        // 옛 판을 흉내 낸다 — 조건 줄을 지운다.
+        val f = File(File(tmp.root, "old"), "meta.txt")
+        f.writeText(
+            f.readText().lineSequence()
+                .filterNot { it.startsWith("fftSize=") || it.startsWith("curveName=") }
+                .joinToString(System.lineSeparator()),
+        )
+
+        val back = s.list().single()
+        assertNull("없던 것을 채웠다", back.conditions.fftSize)
+        assertNull("없던 것을 채웠다", back.conditions.curveName)
+        assertTrue("모르는 것이 있다고 알려야 한다", back.conditions.hasUnknown)
+        // 있던 것은 그대로다.
+        assertEquals("builtin:0", back.conditions.inputKey)
+    }
+
+    @Test
+    fun `다 있으면 미확인이 아니다`() {
+        val s = store()
+        s.save(sample()).getOrThrow()
+        assertFalse(s.list().single().conditions.hasUnknown)
+    }
+
+    // ── 새 인스턴스로 다시 읽기 (담당자 지시 기준 6) ────
+
+    /**
+     * **앱을 껐다 켠 것과 같은 상태에서 그대로 돌아와야 한다.**
+     *
+     * 저장한 그 인스턴스가 기억하고 있는 것을 돌려주면 시험이 통과해도
+     * 실제로는 안 남는다. **새 인스턴스로** 읽는다.
+     */
+    @Test
+    fun `새 인스턴스로 읽어도 곡선과 조건이 같다`() {
+        val bands = DoubleArray(31) { 55.5 + it * 0.37 }
+        val m = sample(bands = bands)
+        store().save(m).getOrThrow()
+
+        val back = RtaMeasurementStore(tmp.root).list().single()
+        assertEquals("겉장 전체가 같아야 한다", m, back)
+        for (i in 0 until 31) assertEquals("밴드 $i", bands[i], back.bandsSpl[i], 1e-9)
+        assertEquals(m.conditions, back.conditions)
+        assertEquals(m.measuredAtEpochMs, back.measuredAtEpochMs)
+        assertEquals(m.averagedFrames, back.averagedFrames)
     }
 
     @Test

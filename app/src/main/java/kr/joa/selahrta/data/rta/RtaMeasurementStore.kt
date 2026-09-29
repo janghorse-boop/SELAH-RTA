@@ -216,13 +216,16 @@ class RtaMeasurementStore(private val root: File) {
                 channel = r.str("channel"),
                 outputDbfs = r.dblOrNull("outputDbfs") ?: 0.0,
                 averagedFrames = r.intOrNull("averagedFrames") ?: 0,
+                // **없는 것은 없는 채로 둔다**(담당자 지시 기준 5). 지금
+                // 설정이나 기본값으로 채우면 「이 조건으로 쟀다」는 거짓이
+                // 만들어져, 다음에 견줄 때 다른 조건인데 같다고 읽힌다.
                 conditions = RtaConditions(
-                    inputKey = r.str("inputKey"),
-                    calibrationState = r.str("calibrationState"),
-                    calibrationSource = r.str("calibrationSource"),
-                    curveName = r.strOrNull("curveName").orEmpty(),
-                    fftSize = r.intOrNull("fftSize") ?: 0,
-                    sampleRate = r.intOrNull("sampleRate") ?: 0,
+                    inputKey = r.strOrNull("inputKey"),
+                    calibrationState = r.strOrNull("calibrationState"),
+                    calibrationSource = r.strOrNull("calibrationSource"),
+                    curveName = r.strOrNull("curveName"),
+                    fftSize = r.intOrNull("fftSize"),
+                    sampleRate = r.intOrNull("sampleRate"),
                 ),
                 measuredAtEpochMs = r.longOrNull("measuredAtEpochMs") ?: 0L,
                 memoKo = r.strOrNull("memoKo").orEmpty(),

@@ -82,16 +82,41 @@ data class RtaMeasurement(
  */
 data class RtaConditions(
     /** 어느 마이크로 쟀나. 마이크가 다르면 곡선이 통째로 다르다. */
-    val inputKey: String,
+    val inputKey: String?,
     /** 보정 상태. 보정 안 된 값과 된 값은 같은 축이 아니다. */
-    val calibrationState: String,
+    val calibrationState: String?,
     /** 보정이 어디서 왔나. */
-    val calibrationSource: String,
-    /** 주파수 보정 곡선 이름. 안 걸렸으면 빈 글자. */
-    val curveName: String,
-    val fftSize: Int,
-    val sampleRate: Int,
-)
+    val calibrationSource: String?,
+    /**
+     * 주파수 보정 곡선 이름.
+     *
+     * **「안 걸렸다」와 「모른다」는 다르다.** 안 걸렸으면 빈 글자,
+     * 겉장에 아예 없었으면 null 이다.
+     */
+    val curveName: String?,
+    val fftSize: Int?,
+    val sampleRate: Int?,
+) {
+    /**
+     * 겉장에 없던 것은 **null 로 남는다**(담당자 지시 2026-09-29 기준 5).
+     *
+     * **지금 설정이나 기본값으로 채우지 않는다.** 채우면 그 자리에서
+     * 「이 기록은 이 조건으로 쟀다」는 거짓이 만들어지고, 다음에 견줄 때
+     * **다른 조건인데 같다고** 읽힌다. 옛 판으로 저장한 기록이 특히
+     * 그렇다.
+     */
+    val hasUnknown: Boolean
+        get() = inputKey == null || calibrationState == null ||
+            calibrationSource == null || curveName == null ||
+            fftSize == null || sampleRate == null
+
+    /** 화면에 적을 때 쓴다. 모르는 것은 「미확인」이라고 적는다. */
+    fun textOf(value: Any?): String = value?.toString()?.ifBlank { "없음" } ?: UNKNOWN_KO
+
+    companion object {
+        const val UNKNOWN_KO = "미확인"
+    }
+}
 
 /**
  * 한 자리·한 조건에서 잰 것들의 묶음.
