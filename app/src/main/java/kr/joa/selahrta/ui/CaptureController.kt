@@ -163,7 +163,7 @@ class CaptureController(
      */
     fun inputWaitAgeMs(): Double? {
         val owner = active ?: return null
-        val since = owner.calibrationEvidence?.atMonotonicNs ?: owner.startedNs
+        val since = owner.lastValidInputNs ?: owner.startedNs
         return ((nowNs() - since) / 1e6).coerceAtLeast(0.0)
     }
 
@@ -714,6 +714,13 @@ class CaptureController(
         //
         // **버린 덩어리도 넣는다.** 읽기 오류는 「그 자리를 모른다」는
         // 뜻이라 세던 구간을 버려야 하고, 그 판단은 창이 한다.
+        // **빈 덩어리는 「소리가 왔다」가 아니다**(독립 재검증 UISRFF-02).
+        //
+        // 보정 근거는 빈 덩어리에도 갱신한다 — 옛 값이 저장되는 것을
+        // 막아야 하므로 맞다. 그런데 감시가 그 시각을 「마지막으로 소리가
+        // 온 때」로 다시 쓰고 있었다. 그래서 읽기 오류가 반복되는 동안
+        // **2초째 아무것도 못 받고 있는데 나이는 0ms** 였다.
+        if (block.frames > 0) session.lastValidInputNs = block.monotonicNs
         session.cleanWindow.observe(
             block.samples,
             block.frames,
