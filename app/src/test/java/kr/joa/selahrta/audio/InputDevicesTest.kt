@@ -66,14 +66,33 @@ class InputDevicesTest {
         assertEquals(ChoiceReason.UserPicked, c.reason)
     }
 
+    /**
+     * **고른 기기가 없으면 내장으로 열되, 화면에는 아무 말도 안 한다**
+     * (담당자 지시 2026-09-29: 「외부장치가 없으면 당연히 핸드폰 자체
+     * 마이크가 기본이 됩니다」).
+     *
+     * 예전에는 주황 알림을 띄웠는데, **바로 옆 「측정 기기」 칸이 이미
+     * 하는 말**이었다 — 그 칸에 폰 이름이 적혀 있으면 USB 마이크로
+     * 재는 중이 아니라는 뜻이다.
+     *
+     * 고른 **까닭**은 그대로 남긴다. 「사용자가 골랐다」와 「고른 것이
+     * 없어 규칙대로 골랐다」는 다른 일이고, 보정값을 어느 기기의 것으로
+     * 걸지가 거기 달렸다.
+     */
     @Test
-    fun `골라 둔 기기가 사라지면 조용히 바꾸지 않고 알린다`() {
+    fun `골라 둔 기기가 사라지면 내장으로 열되 알리지는 않는다`() {
         val c = chooseInput(listOf(builtIn()), usb().stableKey)
         assertEquals(MicKind.BuiltIn, c.device!!.kind)
         assertEquals(ChoiceReason.PreferredMissing, c.reason)
-        val notice = c.reason.noticeKo(c.device)
-        assertNotNull("사실을 알려야 한다", notice)
-        assertTrue("보정값이 바뀐다는 것도 알려야 한다", notice!!.contains("보정"))
+        assertNull("당연한 일을 알리지 않는다", c.reason.noticeKo(c.device))
+    }
+
+    /** **쓸 기기가 아예 없는 것은 다르다.** 그때는 말해야 한다. */
+    @Test
+    fun `쓸 수 있는 기기가 없으면 그것은 알린다`() {
+        val c = chooseInput(emptyList(), null)
+        assertEquals(ChoiceReason.NoDevice, c.reason)
+        assertNotNull(c.reason.noticeKo(null))
     }
 
     @Test
