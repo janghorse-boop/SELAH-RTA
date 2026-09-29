@@ -15,6 +15,10 @@ USB-C 측정 마이크를 연결하면 정확도가 올라갑니다.
 >
 > **USB 오디오인터페이스를 꽂아 볼 때** →
 > [`docs/manual/usb-audio-interface-check.md`](docs/manual/usb-audio-interface-check.md)
+>
+> **무엇을 아직 모르는가** → [`docs/unverified.md`](docs/unverified.md)
+> 시험이 다 통과해도 **확인하지 못한 것**이 있다. 모아 두지 않으면
+> 모른다는 사실이 사라지고 「시험이 통과했으니 됐다」가 된다.
 
 ---
 
