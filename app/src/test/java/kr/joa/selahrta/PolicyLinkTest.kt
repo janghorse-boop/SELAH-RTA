@@ -17,13 +17,21 @@ import java.io.File
  *
  * ## 화면을 띄우지 않고 무엇을 지키나
  *
- * 이 시험은 Compose 를 돌리지 않는다. **주소가 소스에 있는지**와 그
- * 주소가 **공개 방침의 것과 같은지**만 본다 — 실제 탭 동작은 기기에서
- * 봐야 한다.
+ * 이 시험은 Compose 를 돌리지 않는다. 소스를 읽어 **주소가 맞는지**와
+ * **그 줄이 화면에 실제로 불려 나오는지**를 본다.
  *
- * 그래도 값어치가 있다. 주소는 조용히 어긋나기 쉬운 값이다: 홈페이지
- * 경로를 바꾸거나 오타가 나도 **빌드는 통과하고 화면도 멀쩡하며**,
- * 누르는 사람만 404 를 본다.
+ * ## 처음 쓴 판은 뚫렸다 (독립 재검증 2026-09-29)
+ *
+ * 검토자가 **설정 화면에서 `PolicyLinks(...)` 호출을 지우는 변이**를
+ * 넣었는데 **다섯 개가 다 통과했다.** 주소 상수는 선언부에 그대로
+ * 남아 있으니 문자열 검색이 참이었던 것이다 — 화면에서는 링크가
+ * 사라졌는데.
+ *
+ * UIS-07 에서 매니페스트 시험이 같은 함정에 빠졌었다. 같은 실수를
+ * 같은 저장소에서 두 번 했다.
+ *
+ * 그래서 **선언 말고 호출**을 센다. 그래도 Compose 를 돌리는 것은
+ * 아니므로, 실제 탭 동작은 기기에서 봐야 한다(2026-09-29 확인함).
  */
 class PolicyLinkTest {
 
@@ -31,6 +39,22 @@ class PolicyLinkTest {
         val f = File("src/main/java/kr/joa/selahrta/ui/screens/HistorySettingsScreens.kt")
         assertTrue("설정 화면 소스를 못 찾았다: ${f.absolutePath}", f.isFile)
         f.readText()
+    }
+
+    /**
+     * **선언이 아니라 호출을 센다.** 이것이 없으면 화면에서 링크를
+     * 지워도 시험이 통과한다(검토자가 실제로 뚫었다).
+     */
+    @Test
+    fun `설정 화면이 방침 줄을 실제로 그린다`() {
+        val declAt = source.indexOf("internal fun PolicyLinks(")
+        assertTrue("PolicyLinks 선언을 못 찾았다", declAt > 0)
+        val callAt = source.indexOf("PolicyLinks(")
+        assertTrue(
+            "PolicyLinks 를 선언만 하고 부르지 않는다 — 화면에서 링크가 " +
+                "사라져도 아무도 모른다.",
+            callAt in 1 until declAt,
+        )
     }
 
     @Test
@@ -61,6 +85,11 @@ class PolicyLinkTest {
             "ACTION_VIEW 가 아니다. 앱이 직접 받아 오는 길로 바꾸면 " +
                 "INTERNET 권한이 필요해지고, 방침의 뼈대가 무너진다.",
             source.contains("Intent.ACTION_VIEW"),
+        )
+        // 여는 일을 밖에서 받게 해 두었는가 — 나중에 화면 시험을 붙일 길이다.
+        assertTrue(
+            "여는 일이 화면 안에 박혀 있다 — 가짜를 넣어 시험할 수 없다",
+            source.contains("openUrl: (String) -> Boolean"),
         )
     }
 

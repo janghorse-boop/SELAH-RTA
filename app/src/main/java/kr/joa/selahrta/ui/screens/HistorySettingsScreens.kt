@@ -480,32 +480,33 @@ fun SettingsScreen(
  * 보여 주어 옮겨 적을 수 있게 한다.
  */
 @Composable
-private fun PolicyLinks(modifier: Modifier = Modifier) {
-    val context = LocalContext.current
+internal fun PolicyLinks(
+    modifier: Modifier = Modifier,
+    /**
+     * 주소를 여는 일. **성공했으면 true.**
+     *
+     * 밖에서 받는 까닭(독립 재검증 UISRFF-02 회신): 진짜 `Intent` 를
+     * 안에서 만들면 이 화면은 기기 없이 시험할 수 없다. 여는 일만
+     * 빼 두면 가짜를 넣어 「무슨 주소로 가려 했나」를 볼 수 있다.
+     */
+    openUrl: (String) -> Boolean = rememberUrlOpener(),
+) {
     var failedUrl by remember { mutableStateOf<String?>(null) }
 
-    fun open(url: String) {
-        val intent = android.content.Intent(
-            android.content.Intent.ACTION_VIEW,
-            android.net.Uri.parse(url),
-        )
-        try {
-            context.startActivity(intent)
-        } catch (e: android.content.ActivityNotFoundException) {
-            failedUrl = url
-        }
+    fun go(url: String) {
+        if (!openUrl(url)) failedUrl = url
     }
 
     Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             TextButton(
-                onClick = { open(PRIVACY_URL) },
+                onClick = { go(PRIVACY_URL) },
                 contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp),
             ) {
                 Text("개인정보처리방침", color = SelahColors.Accent, fontSize = 12.sp)
             }
             TextButton(
-                onClick = { open(TERMS_URL) },
+                onClick = { go(TERMS_URL) },
                 contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp),
             ) {
                 Text("이용약관", color = SelahColors.Accent, fontSize = 12.sp)
@@ -523,11 +524,32 @@ private fun PolicyLinks(modifier: Modifier = Modifier) {
 }
 
 /**
- * 공개 방침 주소.
+ * 브라우저로 여는 기본 방식.
  *
- * **여기 적힌 주소가 곧 약속이다.** 바꾸면 홈페이지 쪽도 같이 봐야
- * 한다 — `joaworks-website` 저장소의 `privacy/`·`terms/` 다.
+ * **인터넷 권한이 필요 없다.** 여는 것은 브라우저이지 이 앱이 아니다 —
+ * `ACTION_VIEW` 는 권한 없이 쓸 수 있고, 그래서 「서버로 보내지
+ * 않는다」는 방침의 뼈대가 그대로다.
  */
+@Composable
+private fun rememberUrlOpener(): (String) -> Boolean {
+    val context = LocalContext.current
+    return remember(context) {
+        { url ->
+            try {
+                context.startActivity(
+                    android.content.Intent(
+                        android.content.Intent.ACTION_VIEW,
+                        android.net.Uri.parse(url),
+                    ),
+                )
+                true
+            } catch (e: android.content.ActivityNotFoundException) {
+                false
+            }
+        }
+    }
+}
+
 private const val PRIVACY_URL = "https://joaworks.com/privacy/"
 private const val TERMS_URL = "https://joaworks.com/terms/"
 
