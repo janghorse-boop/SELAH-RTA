@@ -16,6 +16,19 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -65,7 +78,7 @@ fun SignalGeneratorCard(
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text("시험 신호 내보내기", color = SelahColors.TextPrimary, fontSize = 13.sp)
+        Text("테스트 신호 내보내기", color = SelahColors.TextPrimary, fontSize = 13.sp)
         Text(
             "폰이 두 대면 한 대가 내보내고 한 대가 잽니다. 한 대뿐이어도 " +
                 "스피커 소리가 제 마이크로 돌아오므로 하울링 탐지를 확인할 수 있습니다.",
@@ -217,6 +230,8 @@ private fun CustomToneRow(
     onPlay: () -> Unit,
     onStop: () -> Unit,
 ) {
+    var range by remember { mutableStateOf(ToneRange.All) }
+
     Column(
         Modifier
             .fillMaxWidth()
@@ -244,12 +259,7 @@ private fun CustomToneRow(
                     fontSize = 12.sp,
                     fontWeight = if (playing) FontWeight.SemiBold else FontWeight.Normal,
                 )
-                Text(
-                    "%s %s".format(formatHz(toneHz), hzUnit(toneHz)),
-                    color = SelahColors.TextPrimary,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold,
-                )
+                ToneHzField(toneHz, onToneHz)
             }
             Text(
                 if (playing) "멈추기" else "내보내기",
@@ -262,9 +272,21 @@ private fun CustomToneRow(
                     .padding(horizontal = 8.dp, vertical = 6.dp),
             )
         }
+        // **구간을 좁혀 미세하게 맞춘다**(담당자 지시 2026-09-29).
+        //
+        // 20Hz~20kHz 를 한 슬라이더에 펴면 손가락 한 마디가 수백 Hz 다.
+        // 3150Hz 를 짚으려면 화면 폭의 0.3% 를 눌러야 한다. 구간을 한
+        // 옥타브 남짓으로 좁히면 같은 손가락이 몇 Hz 를 움직인다.
+        //
+        // 값은 **구간 밖으로 나가도 그대로 둔다** — 직접 적어 넣은
+        // 주파수를 구간 때문에 조용히 바꾸면 안 된다. 슬라이더만 끝에
+        // 붙는다.
+        ToneRangeChips(range) { range = it }
         Slider(
-            value = hzToSlider(toneHz),
-            onValueChange = { onToneHz(sliderToHz(it)) },
+            value = range.toSlider(toneHz),
+            // **손가락을 바로 따라간다.** 소리도 다시 시작하지 않고 그
+            // 자리에서 주파수만 바뀐다(`SignalPlayer.retune`).
+            onValueChange = { onToneHz(range.fromSlider(it)) },
             colors = SliderDefaults.colors(
                 thumbColor = SelahColors.Accent,
                 activeTrackColor = SelahColors.Accent,
@@ -272,6 +294,21 @@ private fun CustomToneRow(
             ),
             modifier = Modifier.fillMaxWidth(),
         )
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                "%s %s".format(formatHz(range.minHz), hzUnit(range.minHz)),
+                color = SelahColors.TextMuted,
+                fontSize = 9.sp,
+            )
+            Text(
+                "%s %s".format(formatHz(range.maxHz), hzUnit(range.maxHz)),
+                color = SelahColors.TextMuted,
+                fontSize = 9.sp,
+            )
+        }
         Text(
             TestSignal.Custom.noteKo,
             color = SelahColors.TextMuted,
@@ -280,6 +317,147 @@ private fun CustomToneRow(
         )
     }
 }
+
+/**
+ * 슬라이더가 덮을 구간(담당자 지시 2026-09-29).
+ *
+ * **왜 나누는가**: 20Hz~20kHz 를 한 슬라이더에 펴면 3 십년(decade)이
+ * 한 화면에 들어간다. 400px 폭이면 1px 이 약 1.8% — 3150Hz 옆의
+ * 3100·3200 을 손가락으로 가를 수 없다.
+ *
+ * 구간을 한 옥타브 남짓으로 좁히면 같은 1px 이 몇 Hz 가 된다.
+ *
+ * 나눈 자리는 음향에서 흔히 쓰는 경계다 — 저역/중역/고역. [All] 은
+ * 예전 그대로라, 넓게 훑다가 자리를 잡고 좁히는 쓰임이 된다.
+ */
+private enum class ToneRange(
+    val labelKo: String,
+    val minHz: Double,
+    val maxHz: Double,
+) {
+    All("전체", MIN_TONE_HZ, MAX_TONE_HZ),
+    Low("저역", 20.0, 200.0),
+    Mid("중역", 200.0, 2_000.0),
+    High("고역", 2_000.0, MAX_TONE_HZ),
+    ;
+
+    /**
+     * 주파수를 슬라이더 자리(0~1)로. **로그 눈금이다.**
+     *
+     * 구간 밖의 값은 끝에 붙는다 — 직접 적어 넣은 주파수를 구간 때문에
+     * 바꾸지는 않고, 슬라이더만 갈 수 있는 데까지 간다.
+     */
+    fun toSlider(hz: Double): Float {
+        val lo = log10(minHz)
+        val hi = log10(maxHz)
+        return ((log10(hz.coerceIn(minHz, maxHz)) - lo) / (hi - lo)).toFloat()
+    }
+
+    fun fromSlider(pos: Float): Double =
+        10.0.pow(log10(minHz) + (log10(maxHz) - log10(minHz)) * pos.coerceIn(0f, 1f))
+}
+
+/** 구간을 고르는 칩 넷. 고른 것은 색으로 드러난다. */
+@Composable
+private fun ToneRangeChips(selected: ToneRange, onPick: (ToneRange) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        for (r in ToneRange.entries) {
+            val on = r == selected
+            Text(
+                r.labelKo,
+                color = if (on) SelahColors.OnChipOn else SelahColors.TextSecondary,
+                fontSize = 10.sp,
+                fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
+                softWrap = false,
+                modifier = Modifier
+                    .background(
+                        if (on) SelahColors.ChipOn else SelahColors.Surface,
+                        RoundedCornerShape(6.dp),
+                    )
+                    .clickable { onPick(r) }
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+            )
+        }
+    }
+}
+
+/**
+ * 주파수를 **직접 적는 칸**(담당자 지시 2026-09-29).
+ *
+ * **슬라이더만으로는 특정 주파수를 맞출 수 없다.** 20Hz~20kHz 를 로그로
+ * 편 슬라이더에서 3150Hz 를 정확히 짚으려면 손가락 굵기보다 가는 자리를
+ * 눌러야 한다. RTA 가 「3150Hz 가 솟았다」고 알려 주었는데 3100 이나
+ * 3200 을 내면 다른 대역을 듣는 셈이다.
+ *
+ * ## 적는 동안은 건드리지 않는다
+ *
+ * 글자를 쓰는 중에 값을 곧바로 되돌리면 「3」을 치자마자 20 으로
+ * 튄다(범위 밖이라). 그래서 **적는 동안은 글자 그대로 두고**, 자리를
+ * 옮기거나 완료를 누를 때 숫자로 읽는다.
+ *
+ * 숫자가 아니거나 범위 밖이면 **마지막 성한 값으로 되돌린다** — 조용히
+ * 엉뚱한 주파수를 내는 것보다 낫다.
+ */
+@Composable
+private fun ToneHzField(toneHz: Double, onToneHz: (Double) -> Unit) {
+    var text by remember(toneHz) { mutableStateOf(formatHzPlain(toneHz)) }
+    var editing by remember { mutableStateOf(false) }
+
+    fun commit() {
+        val v = text.trim().replace(",", "").toDoubleOrNull()
+        if (v != null && v >= MIN_TONE_HZ && v <= MAX_TONE_HZ) {
+            onToneHz(v)
+        } else {
+            text = formatHzPlain(toneHz)
+        }
+        editing = false
+    }
+
+    Row(verticalAlignment = Alignment.Bottom) {
+        BasicTextField(
+            value = if (editing) text else formatHzPlain(toneHz),
+            onValueChange = { new ->
+                editing = true
+                // 숫자와 소수점만 받는다. 붙여넣기로 글자가 들어오는 것도 막는다.
+                text = new.filter { it.isDigit() || it == '.' }.take(7)
+            },
+            singleLine = true,
+            textStyle = TextStyle(
+                color = SelahColors.TextPrimary,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+            ),
+            cursorBrush = SolidColor(SelahColors.Accent),
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Decimal,
+                imeAction = ImeAction.Done,
+            ),
+            keyboardActions = KeyboardActions(onDone = { commit() }),
+            modifier = Modifier
+                .width(96.dp)
+                .onFocusChanged { if (!it.isFocused && editing) commit() },
+        )
+        Text(
+            " Hz",
+            color = SelahColors.TextSecondary,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(bottom = 3.dp),
+        )
+    }
+}
+
+/**
+ * 적는 칸에 넣을 글자. **늘 Hz 단위의 온전한 숫자다.**
+ *
+ * 화면의 다른 자리는 1kHz 위를 「1.00 kHz」로 줄여 적지만, 여기서는
+ * 그러면 안 된다 — 사람이 그 칸에 3150 을 쓰는데 3.15 가 보이면
+ * **무슨 단위로 쓰는지**가 헷갈린다.
+ */
+private fun formatHzPlain(hz: Double): String =
+    if (hz >= 100.0 || hz == kotlin.math.floor(hz)) "%.0f".format(hz) else "%.1f".format(hz)
 
 /**
  * 진폭과 슬라이더 자리를 오간다. **dB 로 편다.**

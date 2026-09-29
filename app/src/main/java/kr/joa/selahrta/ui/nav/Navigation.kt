@@ -121,7 +121,7 @@ enum class ViewMode(val labelKo: String, val section: NavSection) {
      * 설정이 아니라 도구다. 값을 바꿔 두는 일이 아니라 **하는 일**이기
      * 때문이다.
      */
-    Signal("시험 신호", NavSection.Tools),
+    Signal("테스트 신호", NavSection.Tools),
 
     /**
      * 악기 EQ 가이드(명세 §6).
