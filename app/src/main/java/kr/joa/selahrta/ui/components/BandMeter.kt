@@ -198,6 +198,26 @@ fun BandMeter(
      * 숫자를 가렸다(Spectrogram 에서 실제로 겪었다).
      */
     controls: (@Composable () -> Unit)? = null,
+    /**
+     * **지금 보고 있는 가이드 대역**을 막대 뒤에 띠로 깔아 표시한다
+     * (악기 EQ 지시서 §7).
+     *
+     * ## 막대 색을 바꾸지 않는다
+     *
+     * 지시서가 **「기존 RTA bar 색상을 완전히 바꾸지 말고 배경 band
+     * highlight 또는 outline 권장」**이라고 못박았다. 맞는 말이다 — 이
+     * 차트의 막대 색은 이미 **하울링 후보**가 쓰고 있다. 가이드까지 막대를
+     * 물들이면 서로 다른 두 소식이 같은 자리에서 다투고, **어느 쪽이
+     * 무엇인지 사람이 못 가린다.**
+     *
+     * ## 이것은 판정이 아니다
+     *
+     * 띠가 있다고 그 대역을 **깎거나 올리라는 뜻이 아니다.** 카드가 가리킨
+     * 자리를 그림에서 찾기 쉽게 하는 것뿐이다(지시서 §15).
+     *
+     * 칸 번호는 [kr.joa.selahrta.domain.instrument.EqBandHighlight] 가 고른다.
+     */
+    highlightBands: List<Int> = emptyList(),
     /** 세로축을 누르면 부른다(고정↔자동). null 이면 누를 수 없다. */
     onAxisTap: (() -> Unit)? = null,
 ) {
@@ -280,6 +300,35 @@ fun BandMeter(
                         Offset(size.width, y),
                         strokeWidth = 1f,
                     )
+                }
+
+                // **가이드 띠는 막대 뒤, 눈금 위.** 값이 없어도 그린다 —
+                // 측정이 꺼져 있어도 「어느 자리를 보라」는 말은 유효하다.
+                if (highlightBands.isNotEmpty()) {
+                    val n0 = ThirdOctave.BAND_COUNT
+                    val slot0 = size.width / n0
+                    // 이어진 칸은 **한 덩어리로** 그린다. 칸마다 테두리를
+                    // 그리면 빗살처럼 보여 한 구간으로 안 읽힌다.
+                    val sorted = highlightBands.filter { it in 0 until n0 }.sorted()
+                    var i = 0
+                    while (i < sorted.size) {
+                        var j = i
+                        while (j + 1 < sorted.size && sorted[j + 1] == sorted[j] + 1) j++
+                        val left = slot0 * sorted[i]
+                        val right = slot0 * (sorted[j] + 1)
+                        drawRect(
+                            color = SelahColors.Accent.copy(alpha = 0.14f),
+                            topLeft = Offset(left, 0f),
+                            size = Size(right - left, size.height),
+                        )
+                        drawRect(
+                            color = SelahColors.Accent.copy(alpha = 0.55f),
+                            topLeft = Offset(left, 0f),
+                            size = Size(right - left, size.height),
+                            style = Stroke(width = 2f),
+                        )
+                        i = j + 1
+                    }
                 }
 
                 if (rta == null) return@Canvas
