@@ -1,0 +1,203 @@
+diff --git a/dsp/src/main/kotlin/kr/joa/selahrta/dsp/CleanWindow.kt b/dsp/src/main/kotlin/kr/joa/selahrta/dsp/CleanWindow.kt
+index 2d396b1..86ed93f 100644
+--- a/dsp/src/main/kotlin/kr/joa/selahrta/dsp/CleanWindow.kt
++++ b/dsp/src/main/kotlin/kr/joa/selahrta/dsp/CleanWindow.kt
+@@ -100,7 +100,7 @@ class CleanWindow(
+             // **짧은 창을 이 길이로 쓴다.** 긴 창은 쓰지 않으므로 같게 둔다.
+             leqShortMs = windowMs,
+             leqLongMs = windowMs,
+-        ).also { engine = it }
++        ).also { it.enableExactShortWindow(); engine = it }
+         latest = target.process(samples, frameCount)
+         frames += frameCount
+     }
+@@ -128,7 +128,7 @@ class CleanWindow(
+     }
+ 
+     private fun reset() {
+-        engine = null
++        engine?.reset() // Reuse the bounded buffers after a clip or gap.
+         latest = null
+         frames = 0
+         lastNs = null
+@@ -147,4 +147,4 @@ class CleanWindow(
+         /** 이보다 긴 공백은 「그 사이를 모른다」로 본다(ms). */
+         const val DEFAULT_MAX_GAP_MS = 500L
+     }
+-}
++}
+diff --git a/dsp/src/main/kotlin/kr/joa/selahrta/dsp/TimeWeighting.kt b/dsp/src/main/kotlin/kr/joa/selahrta/dsp/TimeWeighting.kt
+index d853c35..d44dfdc 100644
+--- a/dsp/src/main/kotlin/kr/joa/selahrta/dsp/TimeWeighting.kt
++++ b/dsp/src/main/kotlin/kr/joa/selahrta/dsp/TimeWeighting.kt
+@@ -152,7 +152,7 @@ class ExponentialTimeWeighting(
+  * 굴린다. 칸 길이만큼의 시간 분해능을 잃지만, 1분 Leq 에서 100ms 는 문제가 아니다.
+  */
+ class RollingLeq(
+-    windowMs: Long,
++    private val windowMs: Long,
+     private val sampleRate: Int,
+     private val bucketMs: Long = 100L,
+ ) {
+@@ -162,6 +162,15 @@ class RollingLeq(
+         require(sampleRate > 0) { "샘플레이트가 0 이하다" }
+     }
+ 
++    private var exact: ExactEnergyWindow? = null
++
++    /** Opt in before the first sample; live meter defaults remain unchanged. */
++    fun enableExactWindow() {
++        check(exact == null && filledBuckets == 0 && currentCount == 0)
++        val n = sampleRate * windowMs / 1000
++        require(n in 1L..Int.MAX_VALUE.toLong())
++        exact = ExactEnergyWindow(n.toInt())
++    }
+     private val bucketFrames = (sampleRate * bucketMs / 1000).toInt().coerceAtLeast(1)
+     private val bucketCount = (windowMs / bucketMs).toInt().coerceAtLeast(1)
+ 
+@@ -177,6 +186,7 @@ class RollingLeq(
+     private var filledBuckets = 0
+ 
+     fun add(sample: Double) {
++        exact?.let { it.add(sample); return }
+         currentSum += sample * sample
+         currentCount++
+         if (currentCount >= bucketFrames) closeBucket()
+@@ -203,6 +213,7 @@ class RollingLeq(
+      * 「아주 조용함」으로 보인다.
+      */
+     fun leqDbfs(): Dbfs? {
++        exact?.let { return it.dbfs() }
+         var s = currentSum
+         var n = currentCount.toLong()
+         for (i in 0 until bucketCount) {
+@@ -214,9 +225,10 @@ class RollingLeq(
+     }
+ 
+     /** 창이 가득 찼는가. 차기 전의 Leq 는 그 이름이 뜻하는 구간보다 짧다. */
+-    val isFull: Boolean get() = filledBuckets >= bucketCount
++    val isFull: Boolean get() = exact?.isFull ?: (filledBuckets >= bucketCount)
+ 
+     fun reset() {
++        exact?.reset()
+         sums.fill(0.0)
+         counts.fill(0)
+         head = 0
+@@ -225,3 +237,29 @@ class RollingLeq(
+         filledBuckets = 0
+     }
+ }
++
++/** Calibration-only exact frame window; compensated sum avoids long-run drift. */
++private class ExactEnergyWindow(private val capacity: Int) {
++    private val powers = DoubleArray(capacity)
++    private var head = 0
++    private var size = 0
++    private var sum = 0.0
++    private var correction = 0.0
++    val isFull get() = size == capacity
++    private fun accumulate(delta: Double) {
++        val y = delta - correction
++        val next = sum + y
++        correction = (next - sum) - y
++        sum = next
++    }
++    fun add(sample: Double) {
++        if (size == capacity) accumulate(-powers[head]) else size++
++        val power = sample * sample
++        powers[head] = power
++        accumulate(power)
++        head = (head + 1) % capacity
++    }
++    fun dbfs(): Dbfs? = if (size == 0) null else
++        amplitudeToDbfs(kotlin.math.sqrt(sum.coerceAtLeast(0.0) / size))
++    fun reset() { head = 0; size = 0; sum = 0.0; correction = 0.0 }
++}
+diff --git a/dsp/src/main/kotlin/kr/joa/selahrta/dsp/SplEngine.kt b/dsp/src/main/kotlin/kr/joa/selahrta/dsp/SplEngine.kt
+index bfd6c3d..728de55 100644
+--- a/dsp/src/main/kotlin/kr/joa/selahrta/dsp/SplEngine.kt
++++ b/dsp/src/main/kotlin/kr/joa/selahrta/dsp/SplEngine.kt
+@@ -95,6 +95,7 @@ class SplEngine(
+     private val filter = weightingFilter(weighting, sampleRate)
+     private val timeWeighting = ExponentialTimeWeighting(timeWeight, sampleRate)
+     private val leqShort = RollingLeq(leqShortMs, sampleRate)
++    fun enableExactShortWindow() = leqShort.enableExactWindow()
+     private val leqLong = RollingLeq(leqLongMs, sampleRate)
+     private val leqSession = EnergyAverage()
+ 
+@@ -229,4 +230,4 @@ class SplEngine(
+         resetPeaks()
+         anyInput = false
+     }
+-}
++}
+diff --git a/dsp/src/main/kotlin/kr/joa/selahrta/dsp/MultiWeightEngine.kt b/dsp/src/main/kotlin/kr/joa/selahrta/dsp/MultiWeightEngine.kt
+index 30941cc..3173d1d 100644
+--- a/dsp/src/main/kotlin/kr/joa/selahrta/dsp/MultiWeightEngine.kt
++++ b/dsp/src/main/kotlin/kr/joa/selahrta/dsp/MultiWeightEngine.kt
+@@ -70,6 +70,9 @@ class MultiWeightEngine(
+             z = z.process(samples, frames, offset),
+         )
+ 
++    fun enableExactShortWindow() {
++        a.enableExactShortWindow(); c.enableExactShortWindow(); z.enableExactShortWindow()
++    }
+     val hasInput: Boolean get() = a.hasInput
+ 
+     /**
+@@ -119,4 +122,4 @@ enum class LowEnergyHint(val labelKo: String, val noteKo: String) {
+             else -> VeryBassHeavy
+         }
+     }
+-}
++}
+diff --git a/app/src/main/java/kr/joa/selahrta/ui/CaptureController.kt b/app/src/main/java/kr/joa/selahrta/ui/CaptureController.kt
+index dd28ac0..b89c4fd 100644
+--- a/app/src/main/java/kr/joa/selahrta/ui/CaptureController.kt
++++ b/app/src/main/java/kr/joa/selahrta/ui/CaptureController.kt
+@@ -163,7 +163,7 @@ class CaptureController(
+      */
+     fun inputWaitAgeMs(): Double? {
+         val owner = active ?: return null
+-        val since = owner.calibrationEvidence?.atMonotonicNs ?: owner.startedNs
++        val since = owner.lastValidInputNs ?: owner.startedNs
+         return ((nowNs() - since) / 1e6).coerceAtLeast(0.0)
+     }
+ 
+@@ -714,6 +714,7 @@ class CaptureController(
+         //
+         // **버린 덩어리도 넣는다.** 읽기 오류는 「그 자리를 모른다」는
+         // 뜻이라 세던 구간을 버려야 하고, 그 판단은 창이 한다.
++        if (block.frames > 0) session.lastValidInputNs = block.monotonicNs
+         session.cleanWindow.observe(
+             block.samples,
+             block.frames,
+@@ -878,4 +879,4 @@ class CaptureController(
+          * 말썽인 기기에서 끝없이 되풀이하지 않기 위한 것이다.
+          */
+     }
+-}
++}
+diff --git a/app/src/main/java/kr/joa/selahrta/ui/CaptureViewModel.kt b/app/src/main/java/kr/joa/selahrta/ui/CaptureViewModel.kt
+index bf5fc5b..e2b94a2 100644
+--- a/app/src/main/java/kr/joa/selahrta/ui/CaptureViewModel.kt
++++ b/app/src/main/java/kr/joa/selahrta/ui/CaptureViewModel.kt
+@@ -521,7 +521,11 @@ class CaptureSession(
+      * 남아, 새 세션이 첫 덩어리를 받기 전에 옛 근거가 나갔다.
+      */
+     @Volatile
+-    var calibrationEvidence: kr.joa.selahrta.calibration.CalibrationEvidence? = null
++    var calibrationEvidence: kr.joa.selahrta.calibration.CalibrationEvidence? = null
++
++    /** Last block with actual PCM, independently of calibration invalidation. */
++    @Volatile
++    var lastValidInputNs: Long? = null
+ 
+     /**
+      * 기록을 남기는 중이면 그 기록기(Phase 10). 아니면 null.
+@@ -2698,4 +2702,4 @@ private fun RtaFrame.toView(
+     curveExtrapolated = curve?.bandCovered()?.let { covered ->
+         BooleanArray(covered.size) { !covered[it] }
+     },
+-)
++)
