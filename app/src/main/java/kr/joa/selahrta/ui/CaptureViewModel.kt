@@ -3,6 +3,7 @@ package kr.joa.selahrta.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kr.joa.selahrta.audio.AudioInterruptions
 import kr.joa.selahrta.audio.AudioBlock
 import kr.joa.selahrta.audio.AudioSource
 import kr.joa.selahrta.audio.ChoiceReason
@@ -732,6 +733,10 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 // 처리하면 소리는 나는데 화면만 꺼진다(독립 검증 C02).
                 if (generation != playGeneration) return@onMainThread
                 playGeneration = SignalPlayer.NONE
+                // **스스로 끝난 길에서도 지킴이를 놓는다**(스윕이 다 훑었거나
+                // 오류로 끝났거나). 안 놓으면 방송 수신기가 남아, 다음에
+                // 이어폰을 뽑을 때 안 틀었는데 「멈췄습니다」가 뜬다.
+                interruptions.release()
                 controller.update { st -> st.copy(playingSignal = null, signalNoticeKo = reason) }
             }
         },
@@ -739,6 +744,26 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 지금 내보내고 있는 재생의 세대. 늦게 온 소식을 가린다. */
     private var playGeneration = SignalPlayer.NONE
+
+    /**
+     * 소리를 끊어야 할 바깥 사정 — 이어폰이 빠지거나 전화가 오거나
+     * (지시서 §5 `Interrupted`).
+     *
+     * **소리를 내는 주인이 여기만은 아니다.** 교정 마법사와 FR 측정도
+     * 제 손으로 핑크 잡음을 튼다(독립 검토 CA-05·UA-03). 그 둘은 짧고
+     * 화면이 붙들려 있으며 제 손으로 끝을 맺는다 — 여기 지킴이는
+     * **사람이 도구 화면에서 틀어 둔 신호**를 본다. 그것만이 화면을
+     * 떠난 뒤에도 계속 나간다.
+     */
+    private val interruptions = AudioInterruptions(app) { reason ->
+        onMainThread {
+            // 이미 멎었으면 조용히 지나간다 — 안 틀었는데 「멈췄습니다」가
+            // 뜨면 무슨 일이 난 줄 안다.
+            if (controller.baseState.value.playingSignal == null) return@onMainThread
+            stopSignal()
+            controller.update { st -> st.copy(signalNoticeKo = reason) }
+        }
+    }
 
     /** 지금 도는 FR 측정. 겹쳐 돌지 않게 붙들어 둔다. */
     private var responseJob: Job? = null
@@ -1254,6 +1279,10 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun playSignal(signal: TestSignal, amplitude: Double? = null) {
         val st0 = controller.baseState.value
+        // **소리를 내기 전에 지킴이를 건다**(지시서 §5). 얻지 못해도
+        // 막지 않는다 — 다른 앱 하나 때문에 예배 준비가 멈추면 안 된다.
+        // 걸어 두는 것만으로 이어폰이 빠질 때 멈출 수 있다.
+        interruptions.acquire()
         // 세기를 받으면 그것으로 튼다. 교정 측정은 사람이 고른 값이 아니라
         // 제 쓰임에 맞는 세기가 필요하다(독립 검토 뒤 실기기에서 조정).
         val gen = player.start(
@@ -1288,6 +1317,9 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     fun stopSignal() {
         player.stop()
         playGeneration = SignalPlayer.NONE
+        // **소리를 멈춘 뒤에 놓는다.** 먼저 놓으면 놓는 그 순간에 다른
+        // 앱이 소리를 시작해 마지막 30ms 램프와 겹친다.
+        interruptions.release()
         controller.update { st -> st.copy(playingSignal = null) }
     }
 
@@ -2578,6 +2610,9 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      */
     override fun onCleared() {
         player.stop()
+        // **여기서도 놓는다.** 방송 수신기는 `applicationContext` 에
+        // 걸려 있어, 안 떼면 ViewModel 이 사라진 뒤에도 남는다.
+        interruptions.release()
         controller.stop()
         CaptureService.stop(getApplication())
         super.onCleared()
