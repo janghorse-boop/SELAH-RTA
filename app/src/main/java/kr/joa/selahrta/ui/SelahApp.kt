@@ -571,6 +571,7 @@ fun SelahApp() {
                             onOpen = vm::openSession,
                             onClose = vm::closeSession,
                             onExport = { vm.exportSession(it) },
+                            onExportPdf = { vm.exportReportPdf(it) },
                             onDelete = vm::deleteSession,
                             onDismissNotice = vm::dismissHistoryNotice,
                             audioFileOf = { vm.audioFileOf(it) ?: java.io.File("") },

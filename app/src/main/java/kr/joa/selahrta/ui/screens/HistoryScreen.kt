@@ -15,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.LocalTextStyle
@@ -64,6 +65,8 @@ fun HistoryScreen(
     onOpen: (SessionMeta) -> Unit,
     onClose: () -> Unit,
     onExport: (SessionMeta) -> Unit,
+    /** 리포트를 PDF 한 장으로 보낸다. CSV 와 **쓰임이 다르다.** */
+    onExportPdf: (SessionMeta) -> Unit,
     onDelete: (SessionMeta) -> Unit,
     onDismissNotice: () -> Unit,
     /** 그 기록의 소리 파일이 어디 있는지. 없으면 없는 파일을 준다. */
@@ -98,6 +101,7 @@ fun HistoryScreen(
                 m = opened,
                 onClose = onClose,
                 onExport = onExport,
+                onExportPdf = onExportPdf,
                 onDelete = onDelete,
                 audioFileOf = audioFileOf,
                 onShareAudio = onShareAudio,
@@ -226,6 +230,7 @@ private fun SessionDetail(
     m: SessionMeta,
     onClose: () -> Unit,
     onExport: (SessionMeta) -> Unit,
+    onExportPdf: (SessionMeta) -> Unit,
     onDelete: (SessionMeta) -> Unit,
     audioFileOf: (SessionMeta) -> java.io.File,
     onShareAudio: (SessionMeta) -> Unit,
@@ -263,6 +268,15 @@ private fun SessionDetail(
     MemoCard(m, onMemo)
 
     buildReport(m).forEach { section -> Section(section) }
+
+    // **바로 위에 적힌 것을 그대로 한 장으로 보낸다.** 단추가 그 글 밑에
+    // 있어야 「이것이 나간다」가 보인다.
+    OutlinedButton(
+        onClick = { onExportPdf(m) },
+        modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+    ) {
+        Text("이 리포트를 PDF 한 장으로 보내기", fontSize = 13.sp)
+    }
 
     Row(
         Modifier.fillMaxWidth().padding(vertical = 16.dp),
