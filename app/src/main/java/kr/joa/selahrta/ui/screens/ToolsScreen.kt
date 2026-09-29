@@ -43,6 +43,8 @@ fun ToolsScreen(
     onSignalToneHz: (Double) -> Unit,
     onSignalChannels: (SignalChannels) -> Unit,
     onDismissSignalNotice: () -> Unit,
+    /** 소리를 켜 둔 채 RTA 화면으로 간다. 재생은 끊기지 않는다. */
+    onMeasureInRta: () -> Unit,
 ) {
     Column(
         Modifier
@@ -62,6 +64,7 @@ fun ToolsScreen(
             onToneHz = onSignalToneHz,
             onChannels = onSignalChannels,
             onDismissNotice = onDismissSignalNotice,
+            onMeasureInRta = onMeasureInRta,
             modifier = Modifier.padding(top = 4.dp, bottom = 16.dp),
         )
     }

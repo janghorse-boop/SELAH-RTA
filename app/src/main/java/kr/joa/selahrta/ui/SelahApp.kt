@@ -572,6 +572,13 @@ fun SelahApp() {
                         onSignalToneHz = vm::setSignalToneHz,
                         onSignalChannels = vm::setSignalChannels,
                         onDismissSignalNotice = vm::dismissSignalNotice,
+                        // **소리는 그대로 두고 화면만 옮긴다.** 재생은
+                        // 앱 전체가 함께 쓰는 ViewModel 이 들고 있으므로
+                        // 화면이 바뀌어도 끊기지 않는다.
+                        onMeasureInRta = {
+                            section = NavSection.Analyze
+                            mode = ViewMode.Rta
+                        },
                     )
                     // 캡처를 쓰지 않는다. 권한이 없어도 그대로 열린다.
                     ViewMode.InstrumentEq -> InstrumentGuideScreen()
