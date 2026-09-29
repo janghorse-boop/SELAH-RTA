@@ -20,7 +20,7 @@ import kotlin.random.Random
  */
 enum class TestSignal(val labelKo: String, val noteKo: String) {
     /** 방 응답을 보는 표준 신호. 옥타브마다 에너지가 고르다. */
-    Pink("핑크 잡음", "방의 주파수 응답을 봅니다. RTA 를 고를 때 쓰는 기본 신호입니다"),
+    Pink("핑크 노이즈", "방의 주파수 응답을 봅니다. RTA 를 고를 때 쓰는 기본 신호입니다"),
 
     /** 20Hz→20kHz 로그 스윕. 공진과 하울링 나는 자리를 찾는다. */
     Sweep("스윕 20Hz~20kHz", "30초에 한 번 훑습니다. 방이 울리는 자리와 하울링 나기 쉬운 자리를 찾습니다"),

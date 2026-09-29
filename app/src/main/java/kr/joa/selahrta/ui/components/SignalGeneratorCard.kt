@@ -16,6 +16,13 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.ImeAction
@@ -261,13 +268,9 @@ private fun CustomToneRow(
                 )
                 ToneHzField(toneHz, onToneHz)
             }
-            Text(
-                if (playing) "멈추기" else "내보내기",
-                color = if (playing) SelahColors.Accent else SelahColors.TextSecondary,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.SemiBold,
-                softWrap = false,
-                modifier = Modifier
+            PlayStopMark(
+                playing,
+                Modifier
                     .clickable { if (playing) onStop() else onPlay() }
                     .padding(horizontal = 8.dp, vertical = 6.dp),
             )
@@ -315,6 +318,56 @@ private fun CustomToneRow(
             fontSize = 10.sp,
             lineHeight = 14.sp,
         )
+    }
+}
+
+/**
+ * 내보내는 중인가를 **심볼로** 알린다(담당자 지시 2026-09-29).
+ *
+ * 예전에는 「내보내기」·「멈추기」라고 글자로 적었다. 신호가 열 줄
+ * 넘게 늘어서니 같은 글자가 반복돼 눈이 미끄러지고, 지금 무엇이 나고
+ * 있는지 한눈에 안 들어왔다.
+ *
+ * **색만으로 알리지 않는다**(명세 11장). 심볼 모양 자체가 다르다 —
+ * 멈춰 있으면 ▶, 나는 중이면 ■. 색맹인 사람도 모양으로 가른다.
+ *
+ * 그림 파일을 쓰지 않고 그린다. 두 모양뿐이라 리소스를 늘릴 까닭이 없고,
+ * 테마 색을 그대로 따라간다.
+ */
+@Composable
+private fun PlayStopMark(playing: Boolean, modifier: Modifier = Modifier) {
+    val tint = if (playing) SelahColors.Accent else SelahColors.TextSecondary
+    Canvas(
+        modifier
+            .size(18.dp)
+            .semantics { contentDescription = if (playing) "멈추기" else "내보내기" },
+    ) {
+        if (playing) {
+            // 정지 — 네모. 모서리를 살짝 둥글려 딱딱하지 않게.
+            val side = size.minDimension * 0.62f
+            val off = (size.minDimension - side) / 2f
+            drawRoundRect(
+                color = tint,
+                topLeft = Offset(off, off),
+                size = Size(side, side),
+                cornerRadius = CornerRadius(side * 0.18f),
+            )
+        } else {
+            // 재생 — 오른쪽을 보는 삼각형.
+            val w = size.minDimension * 0.58f
+            val h = size.minDimension * 0.64f
+            val left = (size.width - w) / 2f + w * 0.12f
+            val top = (size.height - h) / 2f
+            drawPath(
+                Path().apply {
+                    moveTo(left, top)
+                    lineTo(left + w, top + h / 2f)
+                    lineTo(left, top + h)
+                    close()
+                },
+                color = tint,
+            )
+        }
     }
 }
 
@@ -521,12 +574,6 @@ private fun SignalRow(
             )
             Text(signal.noteKo, color = SelahColors.TextMuted, fontSize = 10.sp, lineHeight = 14.sp)
         }
-        // 색만으로 알리지 않는다(명세 11장).
-        Text(
-            if (playing) "멈추기" else "내보내기",
-            color = if (playing) SelahColors.Accent else SelahColors.TextSecondary,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.SemiBold,
-        )
+        PlayStopMark(playing)
     }
 }
