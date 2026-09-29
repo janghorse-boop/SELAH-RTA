@@ -527,6 +527,7 @@ fun SelahApp() {
                         onMode = { mode = it },
                         onSaveRtaCurve = vm::startRtaCapture,
                         onCancelRtaCapture = vm::cancelRtaCapture,
+                        onStartRtaSequence = vm::startRtaSequence,
                         onRtaOverlayShown = vm::setRtaOverlayShown,
                         onRtaLiveVisible = vm::setRtaLiveVisible,
                         onRenameRtaSet = vm::renameRtaSet,

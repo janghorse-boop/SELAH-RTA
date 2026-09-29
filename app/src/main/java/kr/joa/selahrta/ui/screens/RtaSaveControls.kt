@@ -36,11 +36,14 @@ fun RtaSaveControls(
     capture: CaptureUiState,
     onSave: (String) -> Unit,
     onSaveNewSet: (String) -> Unit,
+    /** L → R → L+R 을 이어서 잰다. */
+    onStartSequence: (String) -> Unit,
     onCancel: () -> Unit,
     onOpenSaved: () -> Unit,
     onDismissNotice: () -> Unit,
 ) {
     var naming by remember { mutableStateOf<Boolean?>(null) }
+    var sequencing by remember { mutableStateOf(false) }
 
     val run = capture.rtaCapture
     // **한 줄만 낸다.** 이 자리는 `BandMeter` 가 `Box` 로 그리는 한 줄짜리
@@ -54,6 +57,11 @@ fun RtaSaveControls(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (run != null) {
+            // **차례대로 재는 중이면 몇 번째인지 먼저 적는다.**
+            // 세 번을 잇는 동안 화면이 똑같아 보이면 사람이 끝난 줄 안다.
+            capture.rtaSequenceKo?.let {
+                Text(it, color = SelahColors.TextSecondary, fontSize = 11.sp)
+            }
             Text(
                 // **무엇을 하는 중인지와 얼마나 남았는지.**
                 if (run.settling) "안정화 중" else "측정 중",
@@ -83,6 +91,12 @@ fun RtaSaveControls(
                 Text("이 곡선 저장", color = SelahColors.Accent, fontSize = 11.sp)
             }
             TextButton(
+                onClick = { sequencing = true },
+                modifier = Modifier.semantics { contentDescription = "순서대로 재기" },
+            ) {
+                Text("순서대로 재기", color = SelahColors.Accent, fontSize = 11.sp)
+            }
+            TextButton(
                 onClick = onOpenSaved,
                 modifier = Modifier.semantics { contentDescription = "저장된 측정" },
             ) {
@@ -109,6 +123,18 @@ fun RtaSaveControls(
         )
     }
 
+    if (sequencing) {
+        NameCurveDialog(
+            titleKo = "순서대로 재기",
+            hintKo = "자리 이름 (예: 본당 중앙)",
+            // 차례는 **늘 새 묶음**이다. 세 걸음이 한 벌이기 때문이다.
+            hasSets = false,
+            confirmKo = null,
+            onDone = { name, _ -> onStartSequence(name); sequencing = false },
+            onDismiss = { sequencing = false },
+        )
+    }
+
     if (naming != null) {
         NameCurveDialog(
             hasSets = capture.savedRtaSets.isNotEmpty(),
@@ -130,28 +156,34 @@ private fun NameCurveDialog(
     hasSets: Boolean,
     onDone: (String, Boolean) -> Unit,
     onDismiss: () -> Unit,
+    titleKo: String = "이 곡선 저장",
+    hintKo: String = "이름 (예: 본당 중앙 · L)",
+    /** null 이면 「지금 묶음에 더하기」를 아예 안 낸다(차례는 늘 새 묶음). */
+    confirmKo: String? = "지금 묶음에 더하기",
 ) {
     var text by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("이 곡선 저장", fontSize = 14.sp) },
+        title = { Text(titleKo, fontSize = 14.sp) },
         text = {
             OutlinedTextField(
                 value = text,
                 onValueChange = { text = it },
-                label = { Text("이름 (예: 본당 중앙 · L)") },
+                label = { Text(hintKo) },
                 singleLine = true,
             )
         },
         confirmButton = {
-            TextButton(
-                onClick = { onDone(text.ifBlank { "이름 없음" }, false) },
-                enabled = hasSets,
-            ) { Text("지금 묶음에 더하기") }
+            if (confirmKo != null) {
+                TextButton(
+                    onClick = { onDone(text.ifBlank { "이름 없음" }, false) },
+                    enabled = hasSets,
+                ) { Text(confirmKo) }
+            }
         },
         dismissButton = {
             TextButton(onClick = { onDone(text.ifBlank { "이름 없음" }, true) }) {
-                Text("새 묶음으로")
+                Text(if (confirmKo == null) "시작" else "새 묶음으로")
             }
         },
     )

@@ -88,6 +88,8 @@ fun RtaScreen(
     /** 한 곡선을 재어 저장한다(지시서 §7). 이름과 묶을 세트를 받는다. */
     onSaveRtaCurve: (String, String?) -> Unit = { _, _ -> },
     onCancelRtaCapture: () -> Unit = {},
+    /** L → R → L+R 을 이어서 잰다(지시서 §7 후속). */
+    onStartRtaSequence: (String) -> Unit = {},
     onRtaOverlayShown: (String, Boolean) -> Unit = { _, _ -> },
     onRtaLiveVisible: (Boolean) -> Unit = {},
     onRenameRtaSet: (String, String) -> Unit = { _, _ -> },
@@ -121,6 +123,7 @@ fun RtaScreen(
             capture = capture,
             onSave = { name -> onSaveRtaCurve(name, capture.savedRtaSets.lastOrNull()?.id) },
             onSaveNewSet = { name -> onSaveRtaCurve(name, null) },
+            onStartSequence = onStartRtaSequence,
             onCancel = onCancelRtaCapture,
             onOpenSaved = { sheetOpen = true },
             onDismissNotice = onDismissRtaNotice,
