@@ -1,0 +1,30 @@
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index 73322e0..1bd5d2b 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -186,10 +186,18 @@ val verifyReleaseSigning = tasks.register("verifyReleaseSigning") {
+ // AGP 8.13.0 기준 이름이다. **AGP 나 variant 를 올리면 이 목록을 다시
+ // 확인한다** — 이름이 바뀌면 조용히 안 막게 된다(`-x` 로 일부러 빼는
+ // 것까지 막는 보안 경계는 아니다).
+-val guardedReleaseTasks = setOf(
+-    "bundleRelease", "assembleRelease", "packageRelease", "packageReleaseBundle",
+-    "packageReleaseUniversalApk", "signReleaseBundle", "validateSigningRelease",
+-    "signingConfigWriterRelease",
+-)
+-tasks.matching { it.name in guardedReleaseTasks }
+-    .configureEach { dependsOn(verifyReleaseSigning) }
++// AGP 8.13.0: select release variants, then only their final packaging/signing tasks.
++// This covers flavor names, but AGP task-name changes still need graph regression tests.
++androidComponents {
++    onVariants(selector().withBuildType("release")) { variant ->
++        val suffix = variant.name.replaceFirstChar { it.uppercaseChar() }
++        val guardedTasks = setOf(
++            "bundle$suffix", "assemble$suffix", "package$suffix",
++            "package${suffix}Bundle", "package${suffix}UniversalApk",
++            "sign${suffix}Bundle", "validateSigning$suffix",
++            "signingConfigWriter$suffix",
++        )
++        tasks.matching { it.name in guardedTasks }
++            .configureEach { dependsOn(verifyReleaseSigning) }
++    }
++}
