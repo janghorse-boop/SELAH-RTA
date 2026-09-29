@@ -1,0 +1,31 @@
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index 94faf99..aa7b0a5 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -148,7 +148,7 @@ val verifyReleaseSigning = tasks.register("verifyReleaseSigning") {
+     )
+     val absent = missing.filter { !it.second.isPresent }.map { it.first }
+     val storePath = store.orNull
+-    val fileMissing = storePath != null && !File(storePath).isFile
++    val fileMissing = storePath != null && !file(storePath).isFile
+ 
+     doLast {
+         check(absent.isEmpty()) {
+@@ -164,9 +164,11 @@ val verifyReleaseSigning = tasks.register("verifyReleaseSigning") {
+ }
+ 
+ // release 로 묶거나 서명하는 일 **앞에** 세운다.
+-tasks.matching {
+-    it.name.startsWith("bundleRelease") ||
+-        it.name.startsWith("assembleRelease") ||
+-        it.name.startsWith("packageRelease") ||
+-        it.name.startsWith("signingConfigWriterRelease")
+-}.configureEach { dependsOn(verifyReleaseSigning) }
++// AGP 8.13.0: guard final release artifacts/signing, not classes or resources.
++val guardedReleaseTasks = setOf(
++    "bundleRelease", "assembleRelease", "packageRelease", "packageReleaseBundle",
++    "packageReleaseUniversalApk", "signReleaseBundle", "validateSigningRelease",
++    "signingConfigWriterRelease",
++)
++tasks.matching { it.name in guardedReleaseTasks }
++    .configureEach { dependsOn(verifyReleaseSigning) }
