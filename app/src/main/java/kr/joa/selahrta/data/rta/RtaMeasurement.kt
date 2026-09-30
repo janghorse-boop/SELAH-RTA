@@ -45,6 +45,24 @@ data class RtaMeasurement(
     val averagedFrames: Int,
     val conditions: RtaConditions,
     val measuredAtEpochMs: Long,
+    /**
+     * **이 평균이 실제로 얼마나 채워졌나**(0~1) — 독립 검토 PND-03.
+     *
+     * 분석이 낸 창들이 덮은 **입력 구간의 합집합**을 10초로 나눈 값이다.
+     * 창은 서로 겹치므로 **「창 수 × 창 길이」로 세면 이중으로 셀해진다.**
+     *
+     * **아직 판정에 쓰지 않는다**(설계 단계 A). 문턱값을 정할 근거가
+     * 없어 먼저 모으는 중이다.
+     *
+     * **조건이 아니라 진단값이다** — coverage 가 다르다고 두 측정을
+     * 견줄 수 없는 것은 아니다. 그래서 [RtaConditions] 에 안 넣었다.
+     */
+    val coverage: Double? = null,
+    /** 받아들인 창 수. 진단용 — **시간을 이것으로 세지 않는다.** */
+    val windows: Int? = null,
+    /** 분석이 건너뛰는 폭(표본). 나중에 다시 셀하려면 있어야 한다. */
+    val hopFrames: Int? = null,
+
     val memoKo: String = "",
 ) {
     // 배열을 든 data class 의 equals 는 참조 비교라 헷갈린다. 값으로 견준다.
@@ -153,6 +171,16 @@ data class RtaConditions(
      * 채우지 않는다.
      */
     val signalSpec: String? = null,
+    /**
+     * **평균을 어떻게 낸 것인가**의 이름(독립 검토 PND-03).
+     *
+     * 설계 단계 B 에서 평균 정의가 바뀜다 — 화면용으로 평활된 값을
+     * 다시 평균하던 것에서, 분석 스레드의 생값을 모으는 것으로.
+     *
+     * **그 앞뒤 값을 섞으면 안 된다.** 정의가 다른 두 곡선의 차이는
+     * 방의 차이가 아니다 — `signalSpec` 과 같은 까닭으로 조건에 둔다.
+     */
+    val averageVersion: String? = null,
 ) {
     /**
      * 겉장에 없던 것은 **null 로 남는다**(담당자 지시 2026-09-29 기준 5).
@@ -163,7 +191,7 @@ data class RtaConditions(
      * 그렇다.
      */
     val hasUnknown: Boolean
-        get() = signalSpec == null ||
+        get() = signalSpec == null || averageVersion == null ||
             analysisWeighting == null || offsetDb == null || curveHash == null ||
             inputSource == null || inputChannel == null ||
             inputKey == null || calibrationState == null ||

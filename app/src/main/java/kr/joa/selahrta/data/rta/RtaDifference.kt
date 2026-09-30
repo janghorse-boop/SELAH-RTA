@@ -138,6 +138,9 @@ class RtaDifference private constructor(
                 // 재 것과 2kHz 로 재 것은 같은 「주파수 지정」이지만 전혀 다른
                 // 소리다 — 그 차이를 방의 차이로 읽게 두면 안 된다.
                 a.signalSpec == b.signalSpec &&
+                // **평균을 낸 방식이 같아야 한다**(PND-03). 정의가 다른 두
+                // 곡선의 차이는 방의 차이가 아니라 **셀하는 법의 차이**다.
+                a.averageVersion == b.averageVersion &&
                 a.fftSize == b.fftSize &&
                 a.sampleRate == b.sampleRate
     }

@@ -294,6 +294,26 @@ class CaptureController(
     /** 기록 중인가. 화면이 단추 모양을 정한다. */
     val recordingId: String? get() = active?.recorder?.id
 
+    /**
+     * **평활 전 밴드 전력을 받을 곳을 붙인다**(독립 검토 PND-03).
+     *
+     * 붙이고 떼는 일은 **캐처 스레드에 줄을 세운다** — 분석이 도는
+     * 도중에 목록이 바뀌면 그 장이 어느 쪽에 속하는지 말할 수 없다.
+     *
+     * 열린 입력이 없으면 **조용히 아무 일도 안 한다** — 그때는 재는
+     * 일 자체가 없다.
+     */
+    fun attachBandPowerSink(sink: kr.joa.selahrta.dsp.RtaBandPowerSink) {
+        postToCapture { it.rta.addBandPowerSink(sink) }
+    }
+
+    fun detachBandPowerSink(sink: kr.joa.selahrta.dsp.RtaBandPowerSink) {
+        postToCapture { it.rta.removeBandPowerSink(sink) }
+    }
+
+    /** 지금 도는 분석의 **건너뛰는 폭**(표본). coverage 를 읽을 때 적는다. */
+    fun rtaHopFrames(): Int? = active?.rta?.hopFrames
+
     fun postToCapture(cmd: (CaptureSession) -> Unit) {
         val s = active ?: return
         s.commands.add { cmd(s) }

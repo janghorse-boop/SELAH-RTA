@@ -55,6 +55,7 @@ class RtaMeasurementStoreTest {
             inputSource = "Unprocessed",
             inputChannel = 0,
             signalSpec = "fixed",
+            averageVersion = "ui-smoothed-v1",
         ),
         measuredAtEpochMs = at,
         memoKo = "마이크 1.2m",

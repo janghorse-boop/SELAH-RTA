@@ -63,6 +63,30 @@ fun interface SpectrumSink {
     fun onSpectrum(power: DoubleArray)
 }
 
+/**
+ * **평활 전 31밴드 전력**을 분석 스레드에서 그대로 받는다
+ * (독립 검토 PND-03).
+ *
+ * 마이크 보정은 **이미 걸려 있다**(칸별 보정을 밴드로 묶기 전에
+ * 건다). 스칼라 SPL 오프셋은 **안 걸려 있다** — 그것은 재는 쪽이
+ * 붙박은 조건으로 마지막에 한 번 건다.
+ */
+interface RtaBandPowerSink {
+    /**
+     * @param seq 이 장의 번호. 같으면 같은 장이다.
+     * @param windowStartFrame 이 창이 덤은 입력 구간의 시작(표본 번호).
+     * @param windowEndFrame 그 끝(반열림).
+     * @param power **빌려주는 31칸 배열.** 보관하거나 다른 스레드로
+     *   넘기지 않는다 — 필요하면 그 자리에서 더한다.
+     */
+    fun onBandPower(
+        seq: Long,
+        windowStartFrame: Long,
+        windowEndFrame: Long,
+        power: DoubleArray,
+    )
+}
+
 class RtaEngine(
     /** 실제로 도는 샘플레이트. 교정 통로가 같은 값으로 묶여야 한다. */
     val sampleRateHz: Int,
@@ -171,6 +195,45 @@ class RtaEngine(
 
     /** 붙어 있는 수. 시험이 「정말 떨어졌는가」를 보는 데 쓴다. */
     val spectrumSinkCount: Int get() = sinks.size
+
+    /**
+     * **평활 전 31밴드 전력을 받아 갈 곳**(독립 검토 PND-03, 단계 A).
+     *
+     * ## 왜 스펙트럼 sink 로는 안 되나
+     *
+     * 저쪽은 **칸 2049개의 보정 전 스펙트럼**이다. 하울링 탐지가 쓰는 값이라
+     * 마이크 보정이 안 걸려 있고, 밴드로 묶이지도 않았다. 측정이 필요한
+     * 것은 **보정이 걸린 31칸 전력**이고, 그것은 이 다음 단계에서 나온다.
+     *
+     * ## 왜 화면 값으로는 안 되나
+     *
+     * 화면으로 나가는 `RtaFrame` 은 **평활을 거친 값**이고 **66ms 에 한 번만**
+     * 나간다. 그것을 다시 평균하면 **두 번 평균한 값**이 되고, 분석한 장의
+     * 3분의 1 이상은 아예 안 들어온다.
+     */
+    @Volatile
+    private var bandSinks: Array<RtaBandPowerSink> = emptyArray()
+
+    fun addBandPowerSink(sink: RtaBandPowerSink) = synchronized(sinkLock) {
+        if (bandSinks.none { it === sink }) bandSinks = bandSinks + sink
+    }
+
+    fun removeBandPowerSink(sink: RtaBandPowerSink) = synchronized(sinkLock) {
+        bandSinks = bandSinks.filter { it !== sink }.toTypedArray()
+    }
+
+    val bandPowerSinkCount: Int get() = bandSinks.size
+
+    /**
+     * 지금까지 넣은 입력 표본 수. **창이 덮은 구간**을 말하는 데 쓴다.
+     *
+     * 창은 서로 겹치므로 **「창 수 × 창 길이」로 시간을 세면 이중으로
+     * 셈해진다.** 그래서 창마다 「어디서 어디까지」를 함께 준다.
+     */
+    private var inputFrames = 0L
+
+    /** FFT 한 창의 길이(표본). 겹침을 뺀 **건너뛰는 폭**은 [hopFrames] 다. */
+    val hopFrames: Int get() = hop
 
     /** 마이크 보정 곡선의 칸별 계수. 곡선이 없으면 null. */
     private var curveCorrection: DoubleArray? = null
@@ -301,6 +364,9 @@ class RtaEngine(
             writePos = (writePos + 1) % fftSize
             if (filled < fftSize) filled++
             sinceLastFft++
+            // **표본마다 센다.** 덩어리 단위로 세면 창이 덤은 구간을
+            // 덩어리 경계로밖에 못 말한다.
+            inputFrames++
             if (filled >= fftSize && sinceLastFft >= hop) {
                 sinceLastFft = 0
                 runFft()
@@ -328,6 +394,18 @@ class RtaEngine(
 
         // 보정은 **밴드로 묶기 전에** 칸마다 건다(독립 검증 R05).
         bands.toBandPower(power, bandPower, binCorrection)
+
+        // **재는 쪽은 여기서 가져간다**(PND-03). 평활 바로 앞이다 —
+        // 화면은 떨리지 않게 평활해야 하고, 측정은 그걸 하면 안 된다.
+        val bandTaps = bandSinks
+        if (bandTaps.isNotEmpty()) {
+            val end = inputFrames
+            val start = end - fftSize
+            for (i in bandTaps.indices) {
+                bandTaps[i].onBandPower(frameSeq + 1, start, end, bandPower)
+            }
+        }
+
         val smoothed = smoothing.update(bandPower)
         bands.toBandDbfs(smoothed, bandDb)
         val held = peakHold.update(bandDb)

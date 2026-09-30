@@ -42,6 +42,7 @@ class SavedRtaSheetDifferenceTest {
         inputSource = "Unprocessed",
         inputChannel = 0,
         signalSpec = "fixed",
+        averageVersion = "ui-smoothed-v1",
     )
 
     private fun m(id: String, name: String, channel: String, bands: DoubleArray, c: RtaConditions) =
