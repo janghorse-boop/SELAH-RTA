@@ -91,21 +91,74 @@ class SessionReanalyzer(private val store: SessionStore) {
         //
         // 그래서 **옆에 다 만들어 놓고 검사한 뒤**, 표시 파일 하나를
         // 만드는 것으로 게시한다. 이름 바꾸기 한 번이라 쪼개지지 않는다.
+        publish(dir, next) { out ->
+            val w = TimelineWriter(
+                out,
+                TimelineHeader(
+                    nominalSampleRate = old.sampleRate,
+                    rowMillis = TimelineFormat.ROW_MILLIS,
+                ),
+            )
+            session.rows.forEach { w.write(it) }
+        }
+
+        // 여기서 죽어도 다음에 열 때 [SessionStore.recover] 가 마저 옮긴다.
+        store.recover(id)
+        store.readMeta(id).getOrThrow()
+    }
+
+    /**
+     * **처음 잰 것으로 되돌린다.**
+     *
+     * 원본을 남겨 두고도 **꺼낼 길이 없으면** 「그대로 남습니다」는 확인할
+     * 수 없는 말이다. 되돌릴 수 있어야 남겨 둔 뜻이 산다.
+     *
+     * **원본은 그대로 둔다** — 되돌린 뒤에 다시 분석할 수도 있다.
+     * 게시하는 길은 [run] 과 같아서, **되돌리다 죽어도 반쪽이 안 된다.**
+     */
+    fun restoreOriginal(id: String): Result<SessionMeta> = runCatching {
+        val dir = store.dirOf(id)
+        // **둘이 다 있어야 원본이다.** 겉장만으로는 행을 못 읽고,
+        // 타임라인만으로는 그 행이 무슨 보정의 것인지 모른다 — 그것이
+        // 이번 회차(R3-01)에 배운 것이다.
+        //
+        // 검사를 둘로 나눠 두었더니 **뒤엣것이 앞엣것을 가려** 변이가
+        // 안 잡혔다. 하나로 묻는다.
+        val originalMeta = store.readOriginalMeta(id)
+        val originalTimeline = store.originalTimelineFile(id)
+        if (originalMeta == null || !originalTimeline.isFile) {
+            throw IOException("이 기록에는 되돌릴 원본이 온전히 남아 있지 않습니다.")
+        }
+
+        publish(dir, originalMeta) { out ->
+            originalTimeline.inputStream().buffered().use { it.copyTo(out) }
+        }
+        store.recover(id)
+        store.readMeta(id).getOrThrow()
+    }
+
+    /**
+     * **타임라인과 겉장을 한 번에 게시한다**(독립 검토 R3-02).
+     *
+     * 옆에 다 만들어 **검사한 뒤**, 표시 파일 하나를 만드는 것으로
+     * 게시한다 — 이름 바꾸기 한 번이라 쪼개지지 않는다. 게시 전에
+     * 실패하면 **활성은 그대로**다.
+     *
+     * 다시 분석과 되돌리기가 **같은 길**을 쓴다. 게시하는 자리가 둘이면
+     * 하나만 고쳐져 어긋난다.
+     */
+    private fun publish(
+        dir: File,
+        meta: SessionMeta,
+        writeTimeline: (java.io.OutputStream) -> Unit,
+    ) {
         val staged = File(dir, SessionStore.STAGING_DIR)
         staged.deleteRecursively()
         if (!staged.mkdirs()) throw IOException("새 판을 놓을 자리를 만들지 못했습니다.")
         try {
-            File(staged, SessionStore.TIMELINE_NAME).outputStream().buffered().use { out ->
-                val w = TimelineWriter(
-                    out,
-                    TimelineHeader(
-                        nominalSampleRate = old.sampleRate,
-                        rowMillis = TimelineFormat.ROW_MILLIS,
-                    ),
-                )
-                session.rows.forEach { w.write(it) }
-            }
-            val text = encodeSessionMeta(next)
+            File(staged, SessionStore.TIMELINE_NAME).outputStream().buffered()
+                .use(writeTimeline)
+            val text = encodeSessionMeta(meta)
             // **다시 읽어 본 뒤에 게시한다.** 쓸 수는 있는데 못 읽는 겉장을
             // 게시하면 그 기록이 목록에서 사라진다(R2-01 과 같은 성질).
             decodeSessionMeta(text).getOrThrow()
@@ -113,20 +166,15 @@ class SessionReanalyzer(private val store: SessionStore) {
 
             val ready = File(dir, SessionStore.READY_NAME)
             val readyTmp = File(dir, "${SessionStore.READY_NAME}.tmp")
-            readyTmp.writeText(next.id)
+            readyTmp.writeText(meta.id)
             if (!readyTmp.renameTo(ready)) {
                 readyTmp.delete()
                 throw IOException("새 판을 게시하지 못했습니다. 기록을 그대로 두었습니다.")
             }
         } catch (e: Throwable) {
-            // **게시 전에 실패하면 활성은 그대로다.** 옆에 만들던 것만 치운다.
             staged.deleteRecursively()
             throw e
         }
-
-        // 여기서 죽어도 다음에 열 때 [SessionStore.recover] 가 마저 옮긴다.
-        store.recover(id)
-        store.readMeta(id).getOrThrow()
     }
 
     companion object {

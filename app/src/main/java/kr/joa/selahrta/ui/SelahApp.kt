@@ -591,6 +591,7 @@ fun SelahApp() {
                             rows = capture.openedRows,
                             onReanalyze = vm::reanalyzeSession,
                             reanalyzeProgress = capture.reanalyzeProgress,
+                            onRestoreOriginal = vm::restoreOriginalAnalysis,
                         )
                     }
                     ViewMode.Signal -> ToolsScreen(

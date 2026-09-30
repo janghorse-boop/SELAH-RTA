@@ -3598,6 +3598,38 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * **처음 잰 값으로 되돌린다**(명세 Recording-E 「원본 보존」).
+     *
+     * 원본을 남겨 두고도 **꺼낼 길이 없으면** 「그대로 남습니다」는
+     * 확인할 수 없는 말이다. 되돌린 뒤에 다시 분석할 수도 있다 —
+     * 원본은 그대로 남는다.
+     *
+     * **보정 소유권을 묻지 않는다.** 되돌리기는 새 잣대를 거는 일이
+     * 아니라 **그때 잰 것을 그대로 꺼내는 일**이라, 지금 어느 입력이
+     * 열려 있든 상관이 없다.
+     */
+    fun restoreOriginalAnalysis(meta: kr.joa.selahrta.recording.SessionMeta) {
+        if (controller.baseState.value.reanalyzeProgress != null) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val r = kr.joa.selahrta.recording.SessionReanalyzer(sessionStore)
+                .restoreOriginal(meta.id)
+            onMainThread {
+                controller.update {
+                    it.copy(
+                        historyNoticeKo = if (r.isSuccess) {
+                            "처음 잰 값으로 되돌렸습니다."
+                        } else {
+                            "되돌리지 못했습니다: ${r.exceptionOrNull()?.message}"
+                        },
+                    )
+                }
+            }
+            r.getOrNull()?.let { onMainThread { openSession(it) } }
+            refreshSessions()
+        }
+    }
+
     fun deleteSession(meta: kr.joa.selahrta.recording.SessionMeta) {
         viewModelScope.launch(Dispatchers.IO) {
             val ok = sessionStore.delete(meta.id).isSuccess

@@ -86,6 +86,8 @@ fun HistoryScreen(
     onReanalyze: (SessionMeta) -> Unit,
     /** 다시 분석하는 중의 진행(0~1). 아니면 null. */
     reanalyzeProgress: Float?,
+    /** 처음 잰 값으로 되돌린다. **기본값을 두지 않는 까닭은 위와 같다.** */
+    onRestoreOriginal: (SessionMeta) -> Unit,
     /** 열어 본 기록의 행들. 아직 못 읽었으면 비어 있다. */
     rows: List<kr.joa.selahrta.recording.TimelineRow> = emptyList(),
 ) {
@@ -121,6 +123,7 @@ fun HistoryScreen(
                 rows = rows,
                 onReanalyze = onReanalyze,
                 reanalyzeProgress = reanalyzeProgress,
+                onRestoreOriginal = onRestoreOriginal,
             )
         }
     }
@@ -252,6 +255,7 @@ private fun SessionDetail(
     rows: List<kr.joa.selahrta.recording.TimelineRow>,
     onReanalyze: (SessionMeta) -> Unit,
     reanalyzeProgress: Float?,
+    onRestoreOriginal: (SessionMeta) -> Unit,
 ) {
     var confirmDelete by remember { mutableStateOf(false) }
     var playMs by remember(m.id) { mutableStateOf(0) }
@@ -306,7 +310,7 @@ private fun SessionDetail(
     //
     // 소리를 들어 보고 「이거 보정 전에 잰 건데」가 떠오르는 자리가
     // 여기다. 리포트 아래에 묻어 두면 그때는 이미 지나쳐 있다.
-    m.audio?.let { ReanalyzeCard(m, onReanalyze, reanalyzeProgress) }
+    m.audio?.let { ReanalyzeCard(m, onReanalyze, reanalyzeProgress, onRestoreOriginal) }
 
     // **리포트 위에 둔다.** 적으려고 들어왔다가 표를 다 지나쳐야
     // 나오면 안 적게 된다.
@@ -461,6 +465,7 @@ private fun ReanalyzeCard(
     m: SessionMeta,
     onReanalyze: (SessionMeta) -> Unit,
     progress: Float?,
+    onRestoreOriginal: (SessionMeta) -> Unit,
 ) {
     Column(
         Modifier
@@ -488,6 +493,13 @@ private fun ReanalyzeCard(
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
             )
+            // **남겨 둔 것을 꺼낼 길을 준다.** 되돌릴 수 없으면
+            // 「처음 잰 값은 그대로 남습니다」는 **확인할 수 없는 말**이다.
+            if (progress == null) {
+                TextButton(onClick = { onRestoreOriginal(m) }) {
+                    Text("처음 잰 값으로 되돌리기", color = SelahColors.Accent, fontSize = 12.sp)
+                }
+            }
         }
 
         Text(
