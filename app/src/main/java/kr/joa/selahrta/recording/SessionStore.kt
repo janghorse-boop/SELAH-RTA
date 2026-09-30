@@ -96,10 +96,17 @@ class SessionStore(private val root: File) {
             File(dir, TIMELINE_NAME).writeBytes(timeline.readBytes())
             File(dir, META_NAME).writeBytes(meta.readBytes())
         }.onFailure {
-            // **여기서는 남겨 둔다.** 옮기다 실패한 것은 **온전한 판**이라,
-            // 다음에 다시 열 때 마저 옮길 여지가 있다(저장공간이 찼다가
-            // 비워지는 경우).
-            return
+            // **숨기지 않는다**(독립 검토 R4-01).
+            //
+            // 예전에는 그냥 돌아갔다. 그러면 **타임라인은 새것인데 겉장은
+            // 옛것**인 채로 `readMeta` 가 멀쩡히 값을 돌려주고, 다시 분석도
+            // 「성공」으로 끝난다 — **새 행을 옛 보정으로 읽으면서**
+            // 「다시 분석했습니다」라고 말하는 셈이다.
+            //
+            // 표시 파일은 **남겨 둔다.** 옮기다 실패한 것은 온전한 판이라
+            // 저장공간이 비워지면 다음에 마저 옮길 여지가 있다. 다만
+            // **그때까지 읽지 못하게** 막는다.
+            throw IOException("기록을 복구하지 못했습니다: $id", it)
         }
         ready.delete()
         staged.deleteRecursively()
@@ -172,6 +179,43 @@ class SessionStore(private val root: File) {
     }
 
     /**
+     * **겉장과 행을 한 판으로 읽는다**(독립 검토 R4-02).
+     *
+     * ## 왜 따로 읽으면 안 되나
+     *
+     * 예전에는 목록이 준 `meta` 를 그대로 들고 다니다가, 행은 나중에
+     * `timelineFile()` 로 읽었다. 그 사이에 복구가 일어나면 **겉장과
+     * 행이 서로 다른 판**이 된다 — 새 행에 옛 보정을 걸어 그리고,
+     * 보고서는 옛 요약을 적는다.
+     *
+     * 여기서는 **복구를 먼저 끝내고**, 그 뒤에 둘을 **이어서** 읽는다.
+     * 읽는 쪽은 이 한 덩어리만 쓴다.
+     *
+     * **이것으로 모든 경합이 닫히는 것은 아니다.** 읽는 동안 다른 곳에서
+     * 게시가 일어나면 여전히 갈릴 수 있다 — 잠금까지는 아직 안 걸었다.
+     * 지금 막은 것은 **재시작 뒤의 어긋남**이다.
+     */
+    fun readSnapshot(id: String): Result<SessionSnapshot> = runCatching {
+        recover(id)
+        val meta = readMetaAfterRecover(id).getOrThrow()
+        val table = EpochTable(max = maxOf(1, meta.epochs.size))
+            .also { t -> meta.epochs.forEach { t.add(it) } }
+        val rows = File(dirOf(id), TIMELINE_NAME).let { f ->
+            if (!f.isFile) emptyList() else f.inputStream().buffered().use {
+                TimelineReader(it, table).all()
+            }
+        }
+        SessionSnapshot(meta, rows)
+    }
+
+    /** 복구를 이미 끝낸 뒤에 겉장만. [readSnapshot] 안에서만 쓴다. */
+    private fun readMetaAfterRecover(id: String): Result<SessionMeta> = runCatching {
+        val f = File(dirOf(id), META_NAME)
+        if (!f.isFile) throw IOException("기록이 없습니다: $id")
+        decodeSessionMeta(f.readText()).getOrThrow()
+    }
+
+    /**
      * 기록 목록. **새것부터**.
      *
      * 읽을 수 없는 기록은 **건너뛰되 세어 둔다**([SessionList.broken]).
@@ -183,6 +227,19 @@ class SessionStore(private val root: File) {
         val ok = ArrayList<SessionMeta>(dirs.size)
         var broken = 0
         for (d in dirs) {
+            // **목록도 먼저 복구한다**(독립 검토 R4-02).
+            //
+            // 예전에는 목록만 `meta.txt` 를 곧바로 읽었다. 그래서 게시
+            // 직후에 죽었다면 **목록은 옛 겉장, 상세는 새 타임라인**이
+            // 되었다 — 상세 화면이 뒤늦게 복구하기 때문이다.
+            // **동시에 여럿이 돌지 않아도** 일어난다.
+            //
+            // 복구가 실패하면 **그 기록만 「못 읽음」으로 센다.** 한 기록
+            // 때문에 목록 전체가 막히면 멀쩡한 기록까지 못 보게 된다.
+            if (runCatching { recover(d.name) }.isFailure) {
+                broken++
+                continue
+            }
             val f = File(d, META_NAME)
             // 겉장이 없으면 **아직 안 끝난 기록**이다. 깨진 것과 다르다.
             if (!f.isFile) continue
@@ -272,4 +329,16 @@ class SessionStore(private val root: File) {
 data class SessionList(
     val sessions: List<SessionMeta>,
     val broken: Int,
+)
+
+/**
+ * **한 판**의 겉장과 행(독립 검토 R4-02).
+ *
+ * 둘을 따로 들고 다니면 **서로 다른 판**이 섞인다. 읽는 쪽은 이
+ * 덩어리만 쓴다.
+ */
+data class SessionSnapshot(
+    val meta: SessionMeta,
+    /** 타임라인이 아직 없으면 빈 목록. **없는 것과 못 읽는 것은 다르다.** */
+    val rows: List<TimelineRow>,
 )

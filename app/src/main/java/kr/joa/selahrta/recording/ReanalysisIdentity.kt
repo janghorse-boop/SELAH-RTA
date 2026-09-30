@@ -43,6 +43,15 @@ object ReanalysisIdentity {
         openedMicKind: MicKind?,
         openedChannelIndex: Int?,
         routeConfirmed: Boolean,
+        /**
+         * 지금 열린 **입력 경로**(독립 검토 R4-03).
+         *
+         * 보정의 주인은 `기기 + 입력 경로 + 채널` 이다
+         * ([kr.joa.selahrta.calibration.CalibrationKey]). 기기와 채널만
+         * 견주면 **같은 기기의 「가공 없음」과 「음성인식 경로」가 같은
+         * 것으로 통과한다** — 둘은 감도가 다른 별개의 보정이다.
+         */
+        openedAudioSource: kr.joa.selahrta.audio.CaptureSource?,
     ): String? {
         if (openedDeviceKey.isNullOrBlank()) {
             return "지금 열린 입력이 없어 어느 마이크의 보정인지 알 수 없습니다. " +
@@ -70,6 +79,24 @@ object ReanalysisIdentity {
         if (openedMicKind != null && meta.micKind != openedMicKind) {
             return "이 기록은 ${meta.micKind.name} 마이크로 쟀는데 지금은 " +
                 "${openedMicKind.name} 이 열려 있습니다."
+        }
+        // **입력 경로가 다르면 다른 보정이다**(독립 검토 R4-03).
+        //
+        // 같은 기기·같은 채널이라도 「가공 없음」과 「음성인식 경로」는
+        // 감도가 다르다. 보정 열쇠가 그 셋을 다 보는데, 이 검사만 둘을
+        // 보고 있었다.
+        //
+        // **모르면 막는다.** 옛 기록에는 이 줄이 없을 수 있고, 없는 것을
+        // 「아마 같겠지」로 넘기면 틀렸을 때 표시가 없다.
+        val recordedSource = meta.conditions.audioSource
+        if (recordedSource == null || openedAudioSource == null) {
+            return "기록 당시와 지금의 입력 경로가 같다는 근거가 없습니다. " +
+                "(기록: ${recordedSource?.labelKo ?: "안 적힘"} · " +
+                "지금: ${openedAudioSource?.labelKo ?: "모름"})"
+        }
+        if (recordedSource != openedAudioSource) {
+            return "이 기록은 ${recordedSource.labelKo} 로 쟀는데 지금은 " +
+                "${openedAudioSource.labelKo} 가 열려 있습니다 — **다른 보정**입니다."
         }
         return null
     }

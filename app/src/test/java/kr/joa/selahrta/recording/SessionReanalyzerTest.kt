@@ -413,4 +413,81 @@ class SessionReanalyzerTest {
         assertTrue(r.isFailure)
         assertTrue("${r.exceptionOrNull()?.message}", r.exceptionOrNull()!!.message!!.contains("온전히"))
     }
+
+    // ── 4회차 검토(R4-04)로 더한 것 ────────────────────
+
+    /**
+     * **곡선의 이름과 확인 근거가 새것을 따라간다**(독립 검토 R4-04).
+     *
+     * 값만 바꾸고 이름을 두면 **새 곡선으로 셈해 놓고 보고서는 옛 마이크
+     * 이름**을 적는다. 「사람이 확인했다」도 **다른 곡선의 확인**이 된다.
+     */
+    @Test
+    fun `곡선의 신원이 새것을 따라간다`() {
+        val (meta, audio) = seed()
+        // 옛 기록에는 옛 곡선의 흔적이 있다.
+        store.writeMeta(
+            meta.copy(
+                curveApplied = true,
+                curveLabel = "old-mic.cal",
+                conditions = meta.conditions.copy(
+                    curveReading = kr.joa.selahrta.dsp.CurveReading.Correction,
+                    curveReadingConfirmed = true,
+                ),
+            ),
+        ).getOrThrow()
+
+        val curve = kr.joa.selahrta.dsp.CalibrationCurve.of(
+            listOf(
+                kr.joa.selahrta.dsp.CurvePoint(20.0, 0.0),
+                kr.joa.selahrta.dsp.CurvePoint(20_000.0, 0.0),
+            ),
+        ).getOrThrow()
+        val next = SessionReanalyzer(store).run(
+            meta.id,
+            audio,
+            settings(120.0).copy(
+                curve = curve,
+                curveLabel = "new-mic.cal",
+                curveReading = kr.joa.selahrta.dsp.CurveReading.Response,
+                curveReadingConfirmed = false,
+            ),
+            1L,
+        ).getOrThrow()
+
+        assertEquals("옛 곡선 이름이 남았다", "new-mic.cal", next.curveLabel)
+        assertEquals(
+            "옛 읽는 법이 남았다",
+            kr.joa.selahrta.dsp.CurveReading.Response,
+            next.conditions.curveReading,
+        )
+        assertTrue(
+            "옛 「사람이 확인했다」가 새 곡선에 그대로 붙었다",
+            !next.conditions.curveReadingConfirmed,
+        )
+    }
+
+    /** 곡선을 **끄면** 이름과 읽는 법이 함께 사라진다. */
+    @Test
+    fun `곡선을 끄면 그 흔적도 지운다`() {
+        val (meta, audio) = seed()
+        store.writeMeta(
+            meta.copy(
+                curveApplied = true,
+                curveLabel = "old-mic.cal",
+                conditions = meta.conditions.copy(
+                    curveReading = kr.joa.selahrta.dsp.CurveReading.Response,
+                    curveReadingConfirmed = true,
+                ),
+            ),
+        ).getOrThrow()
+
+        val next = SessionReanalyzer(store)
+            .run(meta.id, audio, settings(120.0), 1L).getOrThrow()
+
+        assertTrue("곡선을 껐는데 걸렸다고 적혔다", !next.curveApplied)
+        assertEquals("", next.curveLabel)
+        assertNull(next.conditions.curveReading)
+        assertTrue(!next.conditions.curveReadingConfirmed)
+    }
 }

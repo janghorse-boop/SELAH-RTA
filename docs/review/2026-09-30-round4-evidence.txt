@@ -1,0 +1,10 @@
+Fixed commit: 1cbcb230685d243889e90d0b7b314092a0adeb23
+Baseline JVM: DSP 633 + app 1075 = 1708; failures 0; skipped 0; assembleDebug success
+Independent regression: 5 tests; 4 failed; 1 passed
+R4_RECOVERY success=true returnedOffset=100.0 readable=true timelineChanged=true ready=true
+R4_LIST listedOffset=100.0 activeOffset=120.0 newTimeline=true
+R4_IDENTITY saved=cal|k|VoiceRecognition current=cal|k|Unprocessed blocked=null
+R4_DESCRIPTOR curveApplied=true curveLabel=old-mic.cal
+R4_RESTORE originalPair=true restored=true peakLabel=Z
+Mitigation: recoveryFailureMustNotReturnReadableMixedPair passed after proposed guard
+No device instrumentation or lint executed this round

@@ -22,6 +22,8 @@ class ReanalysisIdentityTest {
         deviceKey: String = "builtin:0",
         micKind: MicKind = MicKind.BuiltIn,
         channelIndex: Int = 0,
+        source: kr.joa.selahrta.audio.CaptureSource? =
+            kr.joa.selahrta.audio.CaptureSource.Unprocessed,
     ) = SessionMeta(
         id = "s1",
         startedAtEpochMs = 0L,
@@ -41,6 +43,7 @@ class ReanalysisIdentityTest {
         timeWeight = TimeWeight.Fast,
         leqWindowMs = 10_000L,
         leqDb = 60.0, minDb = 50.0, maxDb = 80.0, peakDb = 90.0,
+        conditions = MeasurementConditions(audioSource = source),
     )
 
     private fun reason(
@@ -49,7 +52,9 @@ class ReanalysisIdentityTest {
         kind: MicKind? = MicKind.BuiltIn,
         channel: Int? = 0,
         confirmed: Boolean = true,
-    ) = ReanalysisIdentity.blockedReasonKo(m, key, kind, channel, confirmed)
+        source: kr.joa.selahrta.audio.CaptureSource? =
+            kr.joa.selahrta.audio.CaptureSource.Unprocessed,
+    ) = ReanalysisIdentity.blockedReasonKo(m, key, kind, channel, confirmed, source)
 
     @Test
     fun `같은 입력이면 걸어도 된다`() {
@@ -116,5 +121,43 @@ class ReanalysisIdentityTest {
     @Test
     fun `막는 까닭이 무엇을 하라고 말한다`() {
         assertTrue(reason(key = null)!!.contains("측정을 시작"))
+    }
+
+    // ── 4회차 검토(R4-03)로 더한 것 ────────────────────
+
+    /**
+     * **같은 기기·같은 채널이라도 입력 경로가 다르면 다른 보정이다.**
+     *
+     * 보정의 주인은 `기기 + 입력 경로 + 채널` 인데, 검사는 기기와
+     * 채널만 보고 있었다 — 「가공 없음」과 「음성인식 경로」가 같은
+     * 것으로 통과했다. 둘은 **감도가 다르다.**
+     */
+    @Test
+    fun `입력 경로가 다르면 막는다`() {
+        val why = reason(
+            m = meta(source = kr.joa.selahrta.audio.CaptureSource.VoiceRecognition),
+            source = kr.joa.selahrta.audio.CaptureSource.Unprocessed,
+        )
+        assertNotNull(why)
+        assertTrue("$why", why!!.contains("다른 보정"))
+    }
+
+    /** 같은 경로면 통과한다 — 위 시험이 아무거나 막지 않게 못박는다. */
+    @Test
+    fun `같은 입력 경로면 걸어도 된다`() {
+        assertNull(reason(source = kr.joa.selahrta.audio.CaptureSource.Unprocessed))
+    }
+
+    /** **안 적힌 것을 「아마 같겠지」로 넘기지 않는다.** */
+    @Test
+    fun `기록에 입력 경로가 없으면 막는다`() {
+        val why = reason(m = meta(source = null))
+        assertNotNull(why)
+        assertTrue("$why", why!!.contains("근거가 없습니다"))
+    }
+
+    @Test
+    fun `지금 입력 경로를 모르면 막는다`() {
+        assertNotNull(reason(source = null))
     }
 }
