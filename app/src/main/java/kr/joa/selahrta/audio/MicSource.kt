@@ -102,7 +102,7 @@ class MicSource(
         // 가공 없는 입력을 먼저 시도하고, 안 되면 덜 가공된 쪽으로 내려간다.
         // 그리고 **무엇으로 열렸는지 반드시 남긴다** — 숨기면 담당자가
         // 자동 게인이 걸린 숫자를 그대로 믿는다.
-        val unprocessedOk = unprocessedSupported()
+        val unprocessedOk = shouldTryUnprocessed(unprocessedSupported(), target?.kind)
         val sources = buildList {
             if (unprocessedOk) add(CaptureSource.Unprocessed)
             add(CaptureSource.VoiceRecognition)
@@ -572,3 +572,30 @@ class MicSource(
         opened = null
     }
 }
+
+/**
+ * **USB 입력에서는 폰 속성이 「안 된다」고 해도 시도한다.**
+ *
+ * `PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED` 는 **이 폰의 내장
+ * 경로**에 대한 답이다. 소리가 **USB 인터페이스에서 오는** 경우는
+ * 다른 이야기인데, 그 값 하나로 **시도조차 안 하고** 음성인식 경로로
+ * 내려가고 있었다.
+ *
+ * **재서 알았다**(2026-09-30, SM-S918N + UMC404HD). 폰 속성은
+ * `false` 인데 USB 입력에서 `UNPROCESSED` 가 **열리고 데이터도
+ * 들어왔다**(81,920프레임, 실제 경로도 그 인터페이스).
+ *
+ * ## 열린다고 「가공이 없다」는 뜻은 아니다
+ *
+ * 상수를 받아 주었다는 것뿐이다. 실제로 가공이 도는지는 **신호로
+ * 재야** 알고, 그 일은 교정 마법사 2단계(입력·DSP 점검)가 한다.
+ * 여기서 하는 일은 **쓸 수 있는 경로를 안 써 보고 포기하지 않는
+ * 것**까지다.
+ *
+ * 안 열리면 그대로 다음 후보로 내려간다 — **무엇으로 열렸는지는
+ * 언제나 남는다**([OpenedFormat.audioSource]).
+ */
+internal fun shouldTryUnprocessed(
+    phoneProperty: Boolean,
+    targetKind: kr.joa.selahrta.domain.MicKind?,
+): Boolean = phoneProperty || targetKind == kr.joa.selahrta.domain.MicKind.Usb
