@@ -3342,23 +3342,39 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * 기록 하나를 연다.
+     *
+     * **목록이 준 겉장을 그대로 쓰지 않는다**(독립 검토 R4-02). 그 겉장은
+     * 목록을 그릴 때의 것이라, 그 사이에 복구가 일어났으면 **행과 다른
+     * 판**이 된다. 겉장과 행을 **한 번에** 다시 읽는다.
+     */
     fun openSession(meta: kr.joa.selahrta.recording.SessionMeta) {
+        // 먼저 목록의 것으로 화면을 연다 — 읽는 동안 빈 화면을 보이지
+        // 않으려는 것이다. 행은 아직 비워 둔다.
         controller.update { it.copy(openedSession = meta, openedRows = emptyList()) }
-        // **행은 열 때만 읽는다.** 소리를 들으며 그 자리의 값을 보여
-        // 주려면 있어야 하고, 목록에는 필요 없다.
         viewModelScope.launch(Dispatchers.IO) {
-            val rows = runCatching {
-                val table = kr.joa.selahrta.recording.EpochTable(
-                    max = maxOf(1, meta.epochs.size),
-                ).also { t -> meta.epochs.forEach { t.add(it) } }
-                sessionStore.timelineFile(meta.id).inputStream().buffered().use { input ->
-                    kr.joa.selahrta.recording.TimelineReader(input, table).all()
-                }
-            }.getOrElse { emptyList() }
+            val snapshot = sessionStore.readSnapshot(meta.id)
             onMainThread {
                 // 그 사이에 다른 기록을 열었으면 버린다.
                 controller.update { st ->
-                    if (st.openedSession?.id == meta.id) st.copy(openedRows = rows) else st
+                    if (st.openedSession?.id != meta.id) {
+                        st
+                    } else {
+                        snapshot.fold(
+                            onSuccess = { s ->
+                                st.copy(openedSession = s.meta, openedRows = s.rows)
+                            },
+                            onFailure = { e ->
+                                // **못 읽으면 말한다.** 옛 겉장으로 그린
+                                // 화면을 그대로 두면 「읽혔다」로 보인다.
+                                st.copy(
+                                    openedRows = emptyList(),
+                                    historyNoticeKo = "이 기록을 읽지 못했습니다: ${e.message}",
+                                )
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -3396,11 +3412,16 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 val uris = ArrayList<android.net.Uri>(2)
                 val dir = java.io.File(app.cacheDir, "export").apply { mkdirs() }
                 val csv = java.io.File(dir, kr.joa.selahrta.recording.SessionExport.fileName(meta))
+                // **겉장과 행을 한 판으로 읽는다**(독립 검토 R4-02).
+                // 목록이 준 겉장에 나중에 읽은 행을 붙이면 **서로 다른
+                // 판**이 섞여, 새 행을 옛 보정으로 내보낸다.
+                sessionStore.recover(meta.id)
+                val fresh = sessionStore.readMeta(meta.id).getOrThrow()
                 sessionStore.timelineFile(meta.id).inputStream().buffered().use { input ->
                     // **UTF-8 로 못박는다.** 기본값이 UTF-8 이지만,
                     // 여기서 인코딩이 달라지면 BOM 만 맞고 본문이 깨진다.
                     csv.bufferedWriter(Charsets.UTF_8).use { out ->
-                        kr.joa.selahrta.recording.SessionExport.writeCsv(meta, input, out)
+                        kr.joa.selahrta.recording.SessionExport.writeCsv(fresh, input, out)
                     }
                 }
                 uris += uriFor(csv)
@@ -3554,6 +3575,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             openedMicKind = st.opened?.micKind,
             openedChannelIndex = st.opened?.channelIndex,
             routeConfirmed = st.routeConfirmed,
+            openedAudioSource = st.opened?.audioSource,
         )?.let { why ->
             controller.update { it.copy(historyNoticeKo = why) }
             return
@@ -3568,6 +3590,15 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             fftSize = st.meterSettings.fftSize,
             curve = st.curve?.takeIf { it.enabled }?.curve,
             channelIndex = meta.channelIndex,
+            // **곡선의 신원도 함께 넘긴다**(독립 검토 R4-04). 값만 넘기면
+            // 겉장에 옛 이름과 옛 확인 근거가 그대로 남는다.
+            curveLabel = st.curve?.takeIf { it.enabled }?.fileName.orEmpty(),
+            curveReading = st.curve?.takeIf { it.enabled }?.reading,
+            curveReadingConfirmed = st.curve?.readingConfirmed == true,
+            // **걸린 값의 출처만 적는다** — 라이브와 같은 규칙이다.
+            // 미보정이면 그 값은 이 측정에 안 걸렸다.
+            calibrationSource = st.calibration.saved?.source
+                ?.takeIf { !st.calibration.isReferenceOnly },
         )
         controller.update { it.copy(reanalyzeProgress = 0f, historyNoticeKo = null) }
 

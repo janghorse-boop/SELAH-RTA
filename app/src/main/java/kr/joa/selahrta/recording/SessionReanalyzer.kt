@@ -216,6 +216,9 @@ private fun SessionMeta.merged(
     events = session.events,
     clippedRows = session.rows.count { it.clipped },
     curveApplied = settings.curve != null,
+    // **곡선의 이름도 따라간다**(독립 검토 R4-04). 값만 바꾸고 이름을
+    // 두면 **새 곡선으로 셈해 놓고 옛 마이크 이름을 적는다.**
+    curveLabel = if (settings.curve != null) settings.curveLabel else "",
     // **셈에 실제로 건 가중을 적는다**(독립 검토 R3-04).
     //
     // 예전에는 옛 값이 그대로 남아, **새 C 분석인데 겉장은 A** 라고
@@ -234,6 +237,11 @@ private fun SessionMeta.merged(
             settings.curve != null -> kr.joa.selahrta.domain.CalibrationState.FrequencyCalibrated
             else -> kr.joa.selahrta.domain.CalibrationState.GlobalCalibrated
         },
+        // **곡선의 출처와 확인 근거도 새것으로**(독립 검토 R4-04).
+        // 남겨 두면 「사람이 확인했다」가 **다른 곡선의 확인**이 된다.
+        curveReading = if (settings.curve != null) settings.curveReading else null,
+        curveReadingConfirmed = settings.curve != null && settings.curveReadingConfirmed,
+        calibrationSource = settings.calibrationSource,
     ),
     reanalyzedAtEpochMs = nowMs,
     originalTimelineName = SessionReanalyzer.ORIGINAL_DIR,

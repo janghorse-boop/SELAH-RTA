@@ -155,6 +155,20 @@ data class ReanalysisSettings(
      * 깨졌다 — 이 저장소에서 두 번째로 같은 자리다.
      */
     val analysisWeighting: Weighting = Weighting.Z,
+    /**
+     * **이 곡선이 무엇인가**(독립 검토 R4-04).
+     *
+     * 값만 넘기면 겉장에 **옛 곡선 이름**이 그대로 남는다 — 새 곡선으로
+     * 셈해 놓고 보고서는 옛 마이크 이름을 적는다. 사람이 「어느 곡선으로
+     * 낸 값인가」를 되짚을 근거가 사라진다.
+     */
+    val curveLabel: String = "",
+    /** 둘째 열을 무엇으로 읽었나. 곡선이 없으면 null. */
+    val curveReading: kr.joa.selahrta.dsp.CurveReading? = null,
+    /** 사람이 그 읽는 법을 확인했는가. */
+    val curveReadingConfirmed: Boolean = false,
+    /** 지금 보정이 **무엇에 맞춘** 것인가(교정기·소음계). */
+    val calibrationSource: kr.joa.selahrta.calibration.CalibrationSource? = null,
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -164,6 +178,10 @@ data class ReanalysisSettings(
             leqWindowMs == other.leqWindowMs &&
             weighting == other.weighting &&
             analysisWeighting == other.analysisWeighting &&
+            curveLabel == other.curveLabel &&
+            curveReading == other.curveReading &&
+            curveReadingConfirmed == other.curveReadingConfirmed &&
+            calibrationSource == other.calibrationSource &&
             timeWeight == other.timeWeight &&
             fftSize == other.fftSize &&
             channelIndex == other.channelIndex &&
