@@ -282,7 +282,19 @@ fun BandMeter(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Box { controls?.invoke() }
+                    // **고르개의 자리를 먼저 뗀다**(2026-10-01).
+                    //
+                    // 예전에는 상자 둘을 그냥 두었다. 그런데 `controls` 안의
+                    // 저장 단추 줄이 `fillMaxWidth()` 라 **왼쪽 상자가 폭을
+                    // 다 먹었고**, 오른쪽에 남는 자리가 없어 **고르개가
+                    // 통째로 화면 밖으로 밀렸다** — 「RTA 만 있고 Spectrum·
+                    // Spectrogram 이 사라졌다」(담당자 신고). 칩이 지워진 것이
+                    // 아니라 **갈 길이 없어진 것**이라, 다른 화면으로 돌아올
+                    // 문이 아예 닫혔다.
+                    //
+                    // `weight` 는 **안 붙은 것을 먼저 재고 남는 것을 준다.**
+                    // 그래서 고르개가 제 폭을 갖고, 왼쪽이 나머지를 쓴다.
+                    Box(Modifier.weight(1f)) { controls?.invoke() }
                     Box { modes?.invoke() }
                 }
             }

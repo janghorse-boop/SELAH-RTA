@@ -113,7 +113,11 @@ fun SpectrogramChart(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Box { controls?.invoke() }
+                    // **고르개의 자리를 먼저 뗀다**([kr.joa.selahrta.ui.components.BandMeter]
+                    // 의 같은 자리에 까닭을 적어 두었다). 왼쪽 상자에 폭을 다
+                    // 채우는 줄이 하나라도 들어오면 **고르개가 통째로 화면 밖으로
+                    // 밀린다** — 지금은 그런 줄이 없지만, 없다는 것에 기대지 않는다.
+                    Box(Modifier.weight(1f)) { controls?.invoke() }
                     Box { modes?.invoke() }
                 }
             }
