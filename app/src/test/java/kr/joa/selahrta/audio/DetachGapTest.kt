@@ -96,12 +96,12 @@ class DetachGapTest {
             )
 
             // A — 곧바로 오류로 끝나고 놓기도 실패한다.
-            p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
+            p.start(SignalRequest(TestSignal.Custom, DEFAULT_AMPLITUDE))
             check(firstEnded.await(5, TimeUnit.SECONDS))
             assertEquals("A 가 자리를 하나 차지해야 한다", 1, p.pendingCount)
 
             // B — 게이트를 풀면 오류로 끝난다.
-            p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
+            p.start(SignalRequest(TestSignal.Custom, DEFAULT_AMPLITUDE))
             check(sinks[1].entered.await(5, TimeUnit.SECONDS))
             sinks[1].gate.countDown()
 
@@ -110,7 +110,7 @@ class DetachGapTest {
             while (p.playing != null && System.nanoTime() < until) Thread.onSpinWait()
             check(p.playing == null) { "B 가 끝나지 않았다" }
 
-            val third = p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
+            val third = p.start(SignalRequest(TestSignal.Custom, DEFAULT_AMPLITUDE))
             check(secondEnded.await(5, TimeUnit.SECONDS))
 
             if (third != SignalPlayer.NONE) {

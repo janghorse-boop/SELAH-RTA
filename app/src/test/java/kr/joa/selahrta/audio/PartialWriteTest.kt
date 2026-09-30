@@ -129,7 +129,7 @@ class PartialWriteTest {
             }
         }
         val p = SignalPlayer(openSink = { sink }, warn = {})
-        p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
+        p.start(SignalRequest(TestSignal.Custom, DEFAULT_AMPLITUDE))
         assertTrue("두 덩어리는 나가야 한다", sink.enough.await(5, TimeUnit.SECONDS))
         p.stop()
 
@@ -159,7 +159,7 @@ class PartialWriteTest {
             openSink = { sink },
             warn = {},
         )
-        p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
+        p.start(SignalRequest(TestSignal.Custom, DEFAULT_AMPLITUDE))
 
         assertTrue("끝났다고 알려야 한다", ended.await(5, TimeUnit.SECONDS))
         assertNull("내보내는 중이 아니어야 한다", p.playing)
@@ -187,7 +187,7 @@ class PartialWriteTest {
         }
         val ended = java.util.concurrent.atomic.AtomicInteger(0)
         val p = SignalPlayer(onEnded = { _, _ -> ended.incrementAndGet() }, openSink = { sink }, warn = {})
-        p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
+        p.start(SignalRequest(TestSignal.Custom, DEFAULT_AMPLITUDE))
         assertTrue("두 덩어리는 나가야 한다", sink.enough.await(10, TimeUnit.SECONDS))
         p.stop()
 
@@ -212,7 +212,7 @@ class PartialWriteTest {
             openSink = { sink },
             warn = {},
         )
-        p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
+        p.start(SignalRequest(TestSignal.Custom, DEFAULT_AMPLITUDE))
         assertTrue(latch.await(5, TimeUnit.SECONDS))
         Thread.sleep(100)
         p.stop()
@@ -227,7 +227,7 @@ class PartialWriteTest {
         val sink = RecordingSink { _, _ -> started.countDown(); 0 }
         val count = java.util.concurrent.atomic.AtomicInteger(0)
         val p = SignalPlayer(onEnded = { _, _ -> count.incrementAndGet() }, openSink = { sink }, warn = {})
-        p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
+        p.start(SignalRequest(TestSignal.Custom, DEFAULT_AMPLITUDE))
         assertTrue(started.await(5, TimeUnit.SECONDS))
 
         p.stop()
@@ -256,7 +256,7 @@ class PartialWriteTest {
             openSink = { sink },
             warn = {},
         )
-        p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
+        p.start(SignalRequest(TestSignal.Custom, DEFAULT_AMPLITUDE))
 
         assertTrue("끝났다고 알려야 한다", ended.await(5, TimeUnit.SECONDS))
         assertTrue(
@@ -328,7 +328,7 @@ class PartialWriteTest {
             }
         }
         val p = SignalPlayer(openSink = { sink }, warn = {})
-        p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
+        p.start(SignalRequest(TestSignal.Custom, DEFAULT_AMPLITUDE))
         assertTrue(entered.await(5, TimeUnit.SECONDS))
 
         p.stop() // stop() 이 hold 를 풀고, write 는 128 만 받고 돌아온다

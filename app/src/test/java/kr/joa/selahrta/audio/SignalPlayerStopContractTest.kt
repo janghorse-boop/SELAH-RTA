@@ -75,7 +75,7 @@ class SignalPlayerStopContractTest {
         repeat(rounds) {
             val sink = Sink()
             val player = SignalPlayer(onEnded = { _, _ -> }, openSink = { sink }, warn = {})
-            player.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
+            player.start(SignalRequest(TestSignal.Custom, DEFAULT_AMPLITUDE))
             // 스레드가 실제로 돌기 시작할 틈만 준다. 길게 자면 늘 같은
             // 순서로만 끝나 경합이 드러나지 않는다.
             Thread.sleep(2)
@@ -142,7 +142,7 @@ class SignalPlayerStopContractTest {
 
         val sink = IdleSink()
         val player = SignalPlayer(onEnded = { _, _ -> }, openSink = { sink }, warn = {})
-        player.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
+        player.start(SignalRequest(TestSignal.Custom, DEFAULT_AMPLITUDE))
 
         assertTrue("재생이 스스로 끝나야 한다", releasedLatch.await(10, TimeUnit.SECONDS))
         assertTrue("끝났으면 놓았어야 한다", sink.released)

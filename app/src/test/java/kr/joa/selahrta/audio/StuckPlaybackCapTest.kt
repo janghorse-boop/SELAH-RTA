@@ -70,7 +70,7 @@ class StuckPlaybackCapTest {
         var starts = 0
         try {
             repeat(cap + 3) {
-                val id = p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
+                val id = p.start(SignalRequest(TestSignal.Custom, DEFAULT_AMPLITUDE))
                 if (id != SignalPlayer.NONE) {
                     starts++
                     check(sinks.last().writing.await(10, TimeUnit.SECONDS))
@@ -96,7 +96,7 @@ class StuckPlaybackCapTest {
 
         // 놓기가 끝나면 **다시 시작할 수 있어야** 한다.
         assertTrue("모두 정확히 한 번씩 놓여야 한다", sinks.all { it.releaseCalls.get() == 1 })
-        val again = p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
+        val again = p.start(SignalRequest(TestSignal.Custom, DEFAULT_AMPLITUDE))
         assertNotEquals("풀린 뒤에는 다시 열려야 한다", SignalPlayer.NONE, again)
         sinks.last().writeGate.countDown()
         sinks.last().releaseGate.countDown()
@@ -149,13 +149,13 @@ class StuckPlaybackCapTest {
 
         try {
             // A — 쓰기 안에서 붙들린다.
-            check(p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE)) != SignalPlayer.NONE)
+            check(p.start(SignalRequest(TestSignal.Custom, DEFAULT_AMPLITUDE)) != SignalPlayer.NONE)
             check(a.writing.await(10, TimeUnit.SECONDS))
             p.stop()
             assertEquals("A 는 아직 write 안이라 놓이지 않았다", 1L, a.released.count)
 
             // B — 쓰기는 풀리지만 놓기에서 멈춘다.
-            check(p.start(SignalRequest(TestSignal.Sine2k, DEFAULT_AMPLITUDE)) != SignalPlayer.NONE)
+            check(p.start(SignalRequest(TestSignal.Custom, DEFAULT_AMPLITUDE)) != SignalPlayer.NONE)
             check(b.writing.await(10, TimeUnit.SECONDS))
             p.stop()
             check(b.releaseEntered.await(10, TimeUnit.SECONDS))
@@ -167,7 +167,7 @@ class StuckPlaybackCapTest {
             assertEquals(
                 "상한에 닿으면 열지 않는다",
                 SignalPlayer.NONE,
-                p.start(SignalRequest(TestSignal.Sine4k, DEFAULT_AMPLITUDE)),
+                p.start(SignalRequest(TestSignal.Custom, DEFAULT_AMPLITUDE)),
             )
             assertEquals("새 출력을 만들지도 않는다", 2, made.size)
 
@@ -188,7 +188,7 @@ class StuckPlaybackCapTest {
         assertNotEquals(
             "다시 시작할 수 있어야 한다",
             SignalPlayer.NONE,
-            p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE)),
+            p.start(SignalRequest(TestSignal.Custom, DEFAULT_AMPLITUDE)),
         )
         p.stop()
     }
