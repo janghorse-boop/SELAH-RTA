@@ -50,61 +50,74 @@ class SessionReanalyzer(private val store: SessionStore) {
         nowMs: Long,
         onProgress: ((Float) -> Unit)? = null,
     ): Result<SessionMeta> = runCatching {
-        val old = store.readMeta(id).getOrThrow()
-        val session = Reanalysis.run(audioFile, id, settings, onProgress).getOrThrow()
-        if (session.rows.isEmpty()) {
-            throw IOException("소리에서 잴 것이 없습니다. 기록을 그대로 두었습니다.")
-        }
 
-        val dir = store.dirOf(id)
-
-        // **원본은 겉장까지 함께 남긴다**(독립 검토 R3-01).
+        // **옛 겉장을 읽는 순간부터 게시가 끝날 때까지 한 잠금**
+        // (독립 검토 R5-01).
         //
-        // 예전에는 `timeline.bin` 만 복사했다. 그런데 행에 든 것은 **보정
-        // 전 raw 값과 epoch 번호**다 — 그 번호를 풀 표(겉장의 `epochs`)가
-        // 새 값으로 덮이면 **바이트는 남아도 원래 SPL 을 복원할 근거가
-        // 사라진다.** 「처음 잰 값도 그대로 남아 있습니다」가 거짓이 된다.
+        // 이 사이가 몇 분이다. 예전에는 열려 있어서, 그 사이에 저장된 메모가
+        // 게시에 덮여 **저장 성공이라고 답해 놓고 사라졌다**
+        // (`R5_MEMO saveAcknowledged=true finalMemo=`).
         //
-        // **한 번만 만든다.** 두 번째 재분석이 첫 번째 결과를 「원본」으로
-        // 만들면 처음 잰 것이 사라진다.
-        val original = store.originalDir(id)
-        if (!original.isDirectory) {
-            val tmp = File(dir, "$ORIGINAL_DIR.tmp")
-            tmp.deleteRecursively()
-            if (!tmp.mkdirs()) throw IOException("원본 자리를 만들지 못했습니다.")
-            File(dir, SessionStore.TIMELINE_NAME).copyTo(File(tmp, SessionStore.TIMELINE_NAME))
-            File(tmp, SessionStore.META_NAME).writeText(encodeSessionMeta(old))
-            if (!tmp.renameTo(original)) {
-                tmp.deleteRecursively()
-                throw IOException("원본을 남기지 못했습니다. 기록을 그대로 두었습니다.")
+        // **분석까지 잠금 안에 둔다.** 분석을 밖에 두면 게시 때 판 번호를
+        // 견주고 다시 셈하는 규칙이 따로 필요하다 — 그쪽이 더 복잡하고,
+        // 기다리는 쪽은 같은 기록을 만지려던 사람뿐이다.
+        store.withSession(id) {
+            val old = store.readMeta(id).getOrThrow()
+            val session = Reanalysis.run(audioFile, id, settings, onProgress).getOrThrow()
+            if (session.rows.isEmpty()) {
+                throw IOException("소리에서 잴 것이 없습니다. 기록을 그대로 두었습니다.")
             }
+
+            val dir = store.dirOf(id)
+
+            // **원본은 겉장까지 함께 남긴다**(독립 검토 R3-01).
+            //
+            // 예전에는 `timeline.bin` 만 복사했다. 그런데 행에 든 것은 **보정
+            // 전 raw 값과 epoch 번호**다 — 그 번호를 풀 표(겉장의 `epochs`)가
+            // 새 값으로 덮이면 **바이트는 남아도 원래 SPL 을 복원할 근거가
+            // 사라진다.** 「처음 잰 값도 그대로 남아 있습니다」가 거짓이 된다.
+            //
+            // **한 번만 만든다.** 두 번째 재분석이 첫 번째 결과를 「원본」으로
+            // 만들면 처음 잰 것이 사라진다.
+            val original = store.originalDir(id)
+            if (!original.isDirectory) {
+                val tmp = File(dir, "$ORIGINAL_DIR.tmp")
+                tmp.deleteRecursively()
+                if (!tmp.mkdirs()) throw IOException("원본 자리를 만들지 못했습니다.")
+                File(dir, SessionStore.TIMELINE_NAME).copyTo(File(tmp, SessionStore.TIMELINE_NAME))
+                File(tmp, SessionStore.META_NAME).writeText(encodeSessionMeta(old))
+                if (!tmp.renameTo(original)) {
+                    tmp.deleteRecursively()
+                    throw IOException("원본을 남기지 못했습니다. 기록을 그대로 두었습니다.")
+                }
+            }
+
+            val next = old.merged(session, settings, nowMs)
+
+            // **둘을 함께 게시한다**(독립 검토 R3-02).
+            //
+            // 타임라인을 먼저 바꾸고 겉장을 나중에 쓰면, 그 사이에 실패했을 때
+            // **새 행과 옛 겉장이 함께 남는다** — 그래프·CSV·PDF 가 서로 맞지
+            // 않는 설정으로 값을 해석한다. 실패를 돌려주면서 기록은 이미
+            // 바뀌어 있는 셈이다.
+            //
+            // 그래서 **옆에 다 만들어 놓고 검사한 뒤**, 표시 파일 하나를
+            // 만드는 것으로 게시한다. 이름 바꾸기 한 번이라 쪼개지지 않는다.
+            publish(dir, next) { out ->
+                val w = TimelineWriter(
+                    out,
+                    TimelineHeader(
+                        nominalSampleRate = old.sampleRate,
+                        rowMillis = TimelineFormat.ROW_MILLIS,
+                    ),
+                )
+                session.rows.forEach { w.write(it) }
+            }
+
+            // 여기서 죽어도 다음에 열 때 [SessionStore.recover] 가 마저 옮긴다.
+            store.recover(id)
+            store.readMeta(id).getOrThrow()
         }
-
-        val next = old.merged(session, settings, nowMs)
-
-        // **둘을 함께 게시한다**(독립 검토 R3-02).
-        //
-        // 타임라인을 먼저 바꾸고 겉장을 나중에 쓰면, 그 사이에 실패했을 때
-        // **새 행과 옛 겉장이 함께 남는다** — 그래프·CSV·PDF 가 서로 맞지
-        // 않는 설정으로 값을 해석한다. 실패를 돌려주면서 기록은 이미
-        // 바뀌어 있는 셈이다.
-        //
-        // 그래서 **옆에 다 만들어 놓고 검사한 뒤**, 표시 파일 하나를
-        // 만드는 것으로 게시한다. 이름 바꾸기 한 번이라 쪼개지지 않는다.
-        publish(dir, next) { out ->
-            val w = TimelineWriter(
-                out,
-                TimelineHeader(
-                    nominalSampleRate = old.sampleRate,
-                    rowMillis = TimelineFormat.ROW_MILLIS,
-                ),
-            )
-            session.rows.forEach { w.write(it) }
-        }
-
-        // 여기서 죽어도 다음에 열 때 [SessionStore.recover] 가 마저 옮긴다.
-        store.recover(id)
-        store.readMeta(id).getOrThrow()
     }
 
     /**
@@ -117,24 +130,38 @@ class SessionReanalyzer(private val store: SessionStore) {
      * 게시하는 길은 [run] 과 같아서, **되돌리다 죽어도 반쪽이 안 된다.**
      */
     fun restoreOriginal(id: String): Result<SessionMeta> = runCatching {
-        val dir = store.dirOf(id)
-        // **둘이 다 있어야 원본이다.** 겉장만으로는 행을 못 읽고,
-        // 타임라인만으로는 그 행이 무슨 보정의 것인지 모른다 — 그것이
-        // 이번 회차(R3-01)에 배운 것이다.
-        //
-        // 검사를 둘로 나눠 두었더니 **뒤엣것이 앞엣것을 가려** 변이가
-        // 안 잡혔다. 하나로 묻는다.
-        val originalMeta = store.readOriginalMeta(id)
-        val originalTimeline = store.originalTimelineFile(id)
-        if (originalMeta == null || !originalTimeline.isFile) {
-            throw IOException("이 기록에는 되돌릴 원본이 온전히 남아 있지 않습니다.")
-        }
 
-        publish(dir, originalMeta) { out ->
-            originalTimeline.inputStream().buffered().use { it.copyTo(out) }
+        // 되돌리기도 **읽고-게시-복구가 한 판**이다(독립 검토 R5-01).
+        store.withSession(id) {
+            val dir = store.dirOf(id)
+            // **둘이 다 있어야 원본이다.** 겉장만으로는 행을 못 읽고,
+            // 타임라인만으로는 그 행이 무슨 보정의 것인지 모른다 — 그것이
+            // 이번 회차(R3-01)에 배운 것이다.
+            //
+            // 검사를 둘로 나눠 두었더니 **뒤엣것이 앞엣것을 가려** 변이가
+            // 안 잡혔다. 하나로 묻는다.
+            val originalMeta = store.readOriginalMeta(id)
+            val originalTimeline = store.originalTimelineFile(id)
+            if (originalMeta == null || !originalTimeline.isFile) {
+                throw IOException("이 기록에는 되돌릴 원본이 온전히 남아 있지 않습니다.")
+            }
+
+            // **메모는 사람의 것이지 분석의 것이 아니다.**
+            //
+            // 「처음 잰 **값**으로 되돌리기」인데 원본 겉장을 통째로 게시하면
+            // **다시 분석한 뒤에 적은 메모가 조용히 사라진다.** 다시 분석
+            // 쪽은 `merged()` 가 메모를 그대로 두고 있었으니, 되돌리기만
+            // 어긋나 있던 셈이다.
+            //
+            // 검토가 짚은 자리는 아니지만 **같은 결의 결함**이라 여기서 함께
+            // 고친다(잃는 자리는 잠금으로 막을 수 없다 — 제 손으로 지운다).
+            val keepMemo = store.readMeta(id).getOrNull()?.memo ?: originalMeta.memo
+            publish(dir, originalMeta.copy(memo = keepMemo)) { out ->
+                originalTimeline.inputStream().buffered().use { it.copyTo(out) }
+            }
+            store.recover(id)
+            store.readMeta(id).getOrThrow()
         }
-        store.recover(id)
-        store.readMeta(id).getOrThrow()
     }
 
     /**
