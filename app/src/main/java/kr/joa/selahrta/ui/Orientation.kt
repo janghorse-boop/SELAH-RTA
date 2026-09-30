@@ -10,37 +10,35 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 
 /**
- * 이 앱의 **기본** 화면 방향.
+ * 이 앱의 **기본** 화면 방향 — **세로다. 기기를 가리지 않는다.**
  *
- * ## 폰은 세로로 잠그고 태블릿은 놓아 둔다
+ * ## 규칙 한 줄
  *
- * 계측 화면은 큰 숫자 하나와 그 아래 값들을 세로로 쌓는다. 폰을 눕히면
- * 세로가 좁아져 계기와 값이 서로를 밀어내고, 스크롤해야 버튼이 나온다.
- * 태블릿은 눕혀도 세로가 넉넉해 그럴 일이 없다.
+ * **분석 구역만 가로, 나머지는 모두 세로**(2026-10-01 담당자 지시:
+ * 「분석탭을 제외하고는 모두 세로모드에서만 작동해야 합니다. 분석탭은
+ * 모두 가로모드입니다」).
  *
- * 매니페스트에 적으면 둘을 가를 수 없어 **실행할 때 화면 크기로** 정한다.
- * `smallestScreenWidthDp` 는 돌려도 변하지 않는 값이라 기기의 크기 자체를
- * 말한다 — 지금 가로인지 세로인지가 아니다. 600 은 안드로이드가 태블릿을
- * 가르는 데 쓰는 선이다(sw600dp).
+ * ## 예전에는 태블릿을 놓아 두었다
  *
- * RTA 처럼 **가로가 필요한 화면은 잠시 이 값을 벗어났다가 돌아온다**
+ * 2026-09-25 에는 폰만 세로로 잠그고 태블릿(`sw600dp` 이상)은
+ * `UNSPECIFIED` 로 두었다 — 「태블릿은 눕혀도 세로가 넉넉하다」는
+ * 까닭이었다. **재어 보니 그렇지 않았다.** 갤럭시탭 S8(753dp)을 눕히고
+ * 계측 화면을 보면:
+ *
+ * - MIN·LAeq·MAX 카드가 **2.5배로 늘어나** 그 안의 글자만 조그맣게 뜬다.
+ *   카드가 카드로 안 보이고 띠가 된다.
+ * - 계기는 가운데에 그대로라 **양옆이 텅 빈다.**
+ *
+ * 세로로 두면 폰에서 맞춰 둔 비례가 그대로 산다. 그래서 **기기로 가르지
+ * 않는다** — 가르는 줄이 하나 줄면 어긋날 자리도 하나 줄어든다.
+ *
+ * 분석 화면처럼 **가로가 필요한 자리는 잠시 이 값을 벗어났다가 돌아온다**
  * ([LockLandscape]).
- */
-fun defaultOrientation(context: Context): Int =
-    if (context.resources.configuration.smallestScreenWidthDp < TABLET_SW_DP) {
-        ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-    } else {
-        ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-    }
-
-/**
- * 여기부터 태블릿으로 본다(dp).
  *
- * 안드로이드가 `sw600dp` 를 태블릿 자원의 경계로 쓰는 값 그대로다.
- * 갤럭시탭 S8 이 752dp, 갤럭시 S23 이 384dp 로 양쪽에 넉넉히 떨어져
- * 있다(두 기기에서 확인).
+ * **남은 것**: 태블릿 세로는 아래쪽이 넓게 빈다. 눕힌 것보다는 낫지만
+ * 좋지는 않다 — 내용 폭을 재거나 가운데로 모으는 일은 아직 안 했다.
  */
-private const val TABLET_SW_DP = 600
+fun defaultOrientation(): Int = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
 
 /**
  * 이 화면이 보이는 동안 **가로로 눕힌다.** 떠나면 원래대로 돌려놓는다.
@@ -72,7 +70,7 @@ fun LockLandscape() {
         if (target == null) {
             onDispose {}
         } else {
-            val restore = defaultOrientation(target)
+            val restore = defaultOrientation()
             target.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             onDispose { target.requestedOrientation = restore }
         }
