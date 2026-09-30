@@ -120,8 +120,12 @@ class ReportPdfTest {
      * 보이므로 열어 보는 것으로는 못 잡는다.
      *
      * 안드로이드는 글자마다 **그리는 절차**를 박는다(`Type3`·`CharProcs`).
-     * 그래서 받는 쪽에 한글 글꼴이 없어도 똑같이 보인다. 대신 **그 글자를
-     * 복사하거나 검색할 수는 없다** — 글이 아니라 그림이기 때문이다.
+     * 그래서 받는 쪽에 한글 글꼴이 없어도 똑같이 보인다.
+     *
+     * **「그러니 복사·검색은 안 된다」고 적었던 것은 틀렸다**(독립 검토
+     * PND-06). 같은 파일에 `ToUnicode` 지도가 함께 들어간다 — 아래
+     * [한글이_글로도_읽히게_박힌다] 가 그것을 본다. 그림으로 그린다는
+     * 사실과 「글 정보가 없다」는 **전혀 다른 말**인데 한 묶음으로 적었다.
      */
     @Test
     fun 한글이_그림으로_파일_안에_박힌다() {
@@ -131,6 +135,70 @@ class ReportPdfTest {
             "글자를 그리는 절차가 파일에 없다 — 받는 쪽에서 한글이 네모로 뜬다",
             bytes.contains("/Type3") && bytes.contains("CharProcs"),
         )
+    }
+
+    /**
+     * **글자를 되읽을 수 있는 지도가 함께 들어간다**(독립 검토 PND-06).
+     *
+     * `ToUnicode` 가 없으면 받는 쪽에서 **보이기는 해도 고르거나 찾을 수
+     * 없다.** 있으면 된다 — 그 사실을 짐작으로 적지 않고 **파일에서 직접
+     * 꺼내 본다.**
+     *
+     * 지도는 눌려 있으므로(Flate) 풀어서 읽고, 매핑된 글자에 **한글이
+     * 있는지**까지 본다. 지도만 있고 한글이 안 들어 있으면 소용이 없다.
+     *
+     * **읽개마다 고르고 찾는 품질이 같다는 뜻은 아니다** — 줄바꿈과 읽는
+     * 차례는 끊겨 나온다. 여기서 보는 것은 「글 정보가 들어 있는가」뿐이다.
+     */
+    @Test
+    fun 한글이_글로도_읽히게_박힌다() {
+        val (f, _) = write(meta(), "unicode.pdf")
+        val bytes = f.readBytes()
+        val maps = inflatedStreams(bytes).filter {
+            it.contains("beginbfchar") || it.contains("beginbfrange")
+        }
+        assertTrue("ToUnicode 지도가 하나도 없다", maps.isNotEmpty())
+
+        val hangul = Regex("<[0-9A-Fa-f]{2,4}>\\s*<([0-9A-Fa-f]{4,})>")
+            .findAll(maps.joinToString("\n"))
+            .flatMap { m ->
+                m.groupValues[1].chunked(4).mapNotNull { it.toIntOrNull(16)?.toChar() }
+            }
+            .filter { it in '가'..'힣' }
+            .toSet()
+        assertTrue("지도에 한글이 없다(${maps.size}개 지도)", hangul.size >= 20)
+    }
+
+    /** 눌린 스트림을 풀어서 글로 돌려준다. 못 푸는 것은 건너뛴다. */
+    private fun inflatedStreams(bytes: ByteArray): List<String> {
+        val text = bytes.toString(Charsets.ISO_8859_1)
+        val out = ArrayList<String>()
+        var i = text.indexOf("stream")
+        while (i >= 0) {
+            var s = i + "stream".length
+            if (s < text.length && text[s] == '\r') s++
+            if (s < text.length && text[s] == '\n') s++
+            val e = text.indexOf("endstream", s)
+            if (e < 0) break
+            runCatching {
+                val raw = bytes.copyOfRange(s, e)
+                val inf = java.util.zip.Inflater()
+                inf.setInput(raw)
+                val buf = ByteArray(1 shl 16)
+                val sb = StringBuilder()
+                while (!inf.finished()) {
+                    val n = inf.inflate(buf)
+                    if (n == 0) break
+                    sb.append(String(buf, 0, n, Charsets.ISO_8859_1))
+                }
+                inf.end()
+                out += sb.toString()
+            }
+            // **"endstream" 안의 "stream" 을 다시 잡으면 어긋난 데를 읽어
+            // 그 뒤가 통째로 어긋난다. 끝표 뒤로 넘긴다.
+            i = text.indexOf("stream", e + "endstream".length)
+        }
+        return out
     }
 
     // ── 경고가 종이에 남는가 ────────────────────────────

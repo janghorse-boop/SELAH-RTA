@@ -1,0 +1,49 @@
+diff --git a/app/src/main/java/kr/joa/selahrta/ui/CaptureViewModel.kt b/app/src/main/java/kr/joa/selahrta/ui/CaptureViewModel.kt
+--- a/app/src/main/java/kr/joa/selahrta/ui/CaptureViewModel.kt
++++ b/app/src/main/java/kr/joa/selahrta/ui/CaptureViewModel.kt
+@@ -1876,6 +1876,15 @@
+                     controller.update { st -> st.copy(rtaCapture = null) }
+                 }
+             }
++            // A completed run cannot be cancelled. Reject before committing instead.
++            val outputAtCommit = if (outputGeneration != null) awaitSignalGeneration() else null
++            val invalidAtCommit = rtaContextChangeKo(context, rtaContextNow())
++                ?: if (outputGeneration != null && outputAtCommit != outputGeneration)
++                    "테스트 신호가 멈춰 측정을 저장하지 않았습니다." else null
++            if (invalidAtCommit != null) {
++                controller.update { it.copy(rtaSaveNoticeKo = invalidAtCommit) }
++                return@coroutineScope false
++            }
+             finishRtaCapture(run, nameKo, setId, context)
+         }
+     }
+@@ -1915,6 +1924,7 @@
+         val fftSize: Int?,
+         val sampleRate: Int?,
+         val signal: String,
++        val signalToneHz: Double?,
+         val channel: String,
+         val outputDbfs: Double,
+     )
+@@ -1938,6 +1948,9 @@
+             fftSize = spec?.first,
+             sampleRate = spec?.second,
+             signal = st.playingSignal?.name ?: "",
++            signalToneHz = st.signalToneHz.takeIf {
++                st.playingSignal == TestSignal.Custom || st.playingSignal == TestSignal.Band
++            },
+             channel = st.signalChannels.name,
+             outputDbfs = 20.0 * kotlin.math.log10(st.signalAmplitude.coerceAtLeast(1e-6)),
+         )
+diff --git a/app/src/main/java/kr/joa/selahrta/ui/instrument/InstrumentGuideScreen.kt b/app/src/main/java/kr/joa/selahrta/ui/instrument/InstrumentGuideScreen.kt
+--- a/app/src/main/java/kr/joa/selahrta/ui/instrument/InstrumentGuideScreen.kt
++++ b/app/src/main/java/kr/joa/selahrta/ui/instrument/InstrumentGuideScreen.kt
+@@ -94,7 +94,7 @@
+     // **고른 것이 이 악기에 없으면 첫 칸으로 돌아간다.** 악기를 바꾸면
+     // 영역 id 도 함께 바뀌므로, 안 그러면 아무 카드도 안 고른 상태가 된다.
+     val region = profile.regions.firstOrNull { it.id == regionId } ?: profile.regions.first()
+-    val highlight = remember(region.id) { EqBandHighlight.bandsOf(region.range) }
++    val highlight = remember(region.range) { EqBandHighlight.bandsOf(region.range) }
+ 
+     BoxWithConstraints(modifier.fillMaxSize()) {
+         // **화면 높이의 3할 안팎**(지시서 §6). 고정 높이로 못박으면 작은
