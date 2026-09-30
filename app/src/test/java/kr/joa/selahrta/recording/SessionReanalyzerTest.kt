@@ -111,7 +111,7 @@ class SessionReanalyzerTest {
         SessionReanalyzer(store).run(meta.id, audio, settings(120.0), 1_700_000_100_000L)
             .getOrThrow()
 
-        val original = File(store.dirOf(meta.id), SessionReanalyzer.ORIGINAL_TIMELINE_NAME)
+        val original = store.originalTimelineFile(meta.id)
         assertTrue("원본이 없다", original.isFile)
         assertTrue("원본이 처음 것과 다르다", before.contentEquals(original.readBytes()))
     }
@@ -131,7 +131,7 @@ class SessionReanalyzerTest {
         r.run(meta.id, audio, settings(120.0), 1L).getOrThrow()
         r.run(meta.id, audio, settings(130.0), 2L).getOrThrow()
 
-        val original = File(store.dirOf(meta.id), SessionReanalyzer.ORIGINAL_TIMELINE_NAME)
+        val original = store.originalTimelineFile(meta.id)
         assertTrue("두 번째가 원본을 덮었다", first.contentEquals(original.readBytes()))
     }
 
@@ -144,11 +144,11 @@ class SessionReanalyzerTest {
         val next = SessionReanalyzer(store)
             .run(meta.id, audio, settings(120.0), 1_700_000_100_000L).getOrThrow()
 
-        assertEquals(SessionReanalyzer.ORIGINAL_TIMELINE_NAME, next.originalTimelineName)
+        assertEquals(SessionReanalyzer.ORIGINAL_DIR, next.originalTimelineName)
         assertEquals(1_700_000_100_000L, next.reanalyzedAtEpochMs)
         // 다시 읽어도 남아 있어야 한다 — 겉장에 실제로 적혔는가.
         val reopened = store.readMeta(meta.id).getOrThrow()
-        assertEquals(SessionReanalyzer.ORIGINAL_TIMELINE_NAME, reopened.originalTimelineName)
+        assertEquals(SessionReanalyzer.ORIGINAL_DIR, reopened.originalTimelineName)
         assertEquals(1_700_000_100_000L, reopened.reanalyzedAtEpochMs)
     }
 
@@ -228,7 +228,7 @@ class SessionReanalyzerTest {
         assertNull("실패했는데 겉장이 바뀌었다", store.readMeta(meta.id).getOrThrow().reanalyzedAtEpochMs)
         assertTrue(
             "실패했는데 원본 사본이 생겼다",
-            !File(store.dirOf(meta.id), SessionReanalyzer.ORIGINAL_TIMELINE_NAME).isFile,
+            !store.originalTimelineFile(meta.id).isFile,
         )
     }
 
@@ -257,5 +257,108 @@ class SessionReanalyzerTest {
         val (meta, audio) = seed(offset = 100.0)
         val next = SessionReanalyzer(store).run(meta.id, audio, settings(120.0), 1L).getOrThrow()
         assertNotEquals(meta.maxDb, next.maxDb, 1e-9)
+    }
+
+    // ── 3회차 검토(R3-01·02·04)로 더한 것 ──────────────
+
+    /**
+     * **게시 도중에 죽어도 반쪽으로 남지 않는다**(독립 검토 R3-02).
+     *
+     * 표시 파일이 생긴 뒤에 죽은 상황을 손으로 만든다. 다음에 열 때
+     * **타임라인과 겉장이 함께** 활성이 되어야 한다 — 하나만 옮겨지면
+     * 그래프·CSV·PDF 가 서로 맞지 않는 설정으로 값을 해석한다.
+     */
+    @Test
+    fun `게시 도중 죽어도 다음에 열 때 마저 옮긴다`() {
+        val (meta, _) = seed(offset = 100.0)
+        val dir = store.dirOf(meta.id)
+
+        // 새 판을 옆에 만들어 둔 상태(= 게시 직전에 죽음).
+        val staged = File(dir, SessionStore.STAGING_DIR).apply { mkdirs() }
+        val newMeta = meta.copy(calibrationOffsetDb = 150.0, maxDb = 130.0)
+        File(staged, SessionStore.META_NAME).writeText(encodeSessionMeta(newMeta))
+        val marker = byteArrayOf(1, 2, 3)
+        File(staged, SessionStore.TIMELINE_NAME).writeBytes(marker)
+        File(dir, SessionStore.READY_NAME).writeText(meta.id)
+
+        // 다음에 열면 마저 옮긴다.
+        val after = store.readMeta(meta.id).getOrThrow()
+        assertEquals(150.0, after.calibrationOffsetDb, 1e-9)
+        assertTrue(
+            "겉장만 옮기고 타임라인은 두었다",
+            marker.contentEquals(store.timelineFile(meta.id).readBytes()),
+        )
+        assertTrue("치우지 않았다", !File(dir, SessionStore.READY_NAME).exists())
+    }
+
+    /**
+     * **반쪽만 놓였으면 밀어 넣지 않는다.**
+     *
+     * 겉장만 있고 타임라인이 없는데 옮기면 **새 잣대로 옛 행을 읽는다** —
+     * 이번 회차가 지적한 바로 그 어긋남이다. 표시 파일이 있어도
+     * **둘 다 있어야** 옮긴다.
+     */
+    @Test
+    fun `겉장만 놓였으면 옮기지 않는다`() {
+        val (meta, _) = seed(offset = 100.0)
+        val dir = store.dirOf(meta.id)
+        val staged = File(dir, SessionStore.STAGING_DIR).apply { mkdirs() }
+        File(staged, SessionStore.META_NAME)
+            .writeText(encodeSessionMeta(meta.copy(calibrationOffsetDb = 999.0)))
+        // 타임라인은 일부러 안 놓는다.
+        File(dir, SessionStore.READY_NAME).writeText(meta.id)
+
+        assertEquals(
+            "반쪽을 밀어 넣었다",
+            100.0,
+            store.readMeta(meta.id).getOrThrow().calibrationOffsetDb,
+            1e-9,
+        )
+        // **그리고 치운다.** 남겨 두면 열 때마다 같은 반쪽을 다시 보려 든다.
+        assertTrue("표시 파일이 남았다", !File(dir, SessionStore.READY_NAME).exists())
+        assertTrue("반쪽 판이 남았다", !staged.exists())
+    }
+
+    /** 표시 파일이 없으면 **아무 일도 안 한다.** 만들다 만 것을 밀어 넣지 않는다. */
+    @Test
+    fun `표시 파일이 없으면 옆의 것을 밀어 넣지 않는다`() {
+        val (meta, _) = seed(offset = 100.0)
+        val dir = store.dirOf(meta.id)
+        File(dir, SessionStore.STAGING_DIR).apply { mkdirs() }
+            .let { File(it, SessionStore.META_NAME).writeText(encodeSessionMeta(meta.copy(calibrationOffsetDb = 999.0))) }
+
+        assertEquals(100.0, store.readMeta(meta.id).getOrThrow().calibrationOffsetDb, 1e-9)
+    }
+
+    /**
+     * **분석 가중이 실제로 걸리고, 겉장이 그것을 말한다**(독립 검토 R3-04).
+     *
+     * 예전에는 겉장에 옛 값을 남기면서 엔진은 기본값(Z)으로 돌았다 —
+     * **적힌 것과 셈한 것이 달랐다.**
+     */
+    @Test
+    fun `분석 가중이 겉장을 따라간다`() {
+        val (meta, audio) = seed()
+        val next = SessionReanalyzer(store).run(
+            meta.id,
+            audio,
+            settings(120.0).copy(analysisWeighting = Weighting.C),
+            1L,
+        ).getOrThrow()
+        assertEquals(Weighting.C, next.analysisWeighting)
+    }
+
+    /** 그리고 **숫자도 따라간다** — 라벨만 바뀌면 고친 것이 아니다. */
+    @Test
+    fun `분석 가중을 바꾸면 대역 값이 달라진다`() {
+        val (meta, audio) = seed()
+        val r = SessionReanalyzer(store)
+        r.run(meta.id, audio, settings(120.0).copy(analysisWeighting = Weighting.Z), 1L).getOrThrow()
+        val z = rowsOf(meta.id)[1].bands.copyOf()
+        r.run(meta.id, audio, settings(120.0).copy(analysisWeighting = Weighting.A), 2L).getOrThrow()
+        val a = rowsOf(meta.id)[1].bands
+
+        val gaps = z.indices.map { kotlin.math.abs(z[it] - a[it]).toDouble() }
+        assertTrue("가중을 바꿔도 대역이 그대로다 — 엔진에 안 걸린 것 같다", gaps.max() > 1.0)
     }
 }

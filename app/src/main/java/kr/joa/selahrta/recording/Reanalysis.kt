@@ -81,6 +81,10 @@ object Reanalysis {
             )
             val spl = MultiWeightEngine(fmt.sampleRate, settings.timeWeight)
             val rta = RtaEngine(fmt.sampleRate, settings.fftSize)
+            // **분석 가중을 실제로 건다**(독립 검토 R3-04). 예전에는 겉장에
+            // 옛 값을 남기면서 엔진은 기본값(Z)으로 돌았다 — **적힌 것과
+            // 셈한 것이 달랐다.**
+            rta.setAnalysisWeighting(settings.analysisWeighting)
             rta.setCurve(settings.curve)
 
             val buf = FloatArray(BLOCK_FRAMES * fmt.channels)
@@ -136,6 +140,7 @@ data class ReanalysisSettings(
     /** 그 보정이 짐작한 눈금인가. 미보정 구간의 숫자를 「음압」이라 부르지 않으려고 따라다닌다. */
     val referenceOnly: Boolean,
     val leqWindowMs: Long,
+    /** 음압·Leq·MIN·MAX 에 걸 가중. **PEAK 에는 안 걸린다**(가중 전에 잰다). */
     val weighting: Weighting,
     val timeWeight: TimeWeight,
     val fftSize: Int,
@@ -143,6 +148,13 @@ data class ReanalysisSettings(
     val curve: kr.joa.selahrta.dsp.CalibrationCurve? = null,
     /** 여러 채널이면 어느 쪽을 볼 것인가. */
     val channelIndex: Int = 0,
+    /**
+     * RTA 대역에 걸 가중. 안 주면 **Z**(안 걸림).
+     *
+     * **맨 뒤에 둔다.** 가운데 넣었더니 위치 인자로 부르던 시험이
+     * 깨졌다 — 이 저장소에서 두 번째로 같은 자리다.
+     */
+    val analysisWeighting: Weighting = Weighting.Z,
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -151,6 +163,7 @@ data class ReanalysisSettings(
             referenceOnly == other.referenceOnly &&
             leqWindowMs == other.leqWindowMs &&
             weighting == other.weighting &&
+            analysisWeighting == other.analysisWeighting &&
             timeWeight == other.timeWeight &&
             fftSize == other.fftSize &&
             channelIndex == other.channelIndex &&

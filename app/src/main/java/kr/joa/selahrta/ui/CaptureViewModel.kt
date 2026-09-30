@@ -3243,9 +3243,20 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                         // 측정 전체를 재고 있어, 기록 시작 전의 소리까지
                         // 겉장에 섞여 들어갔다(2026-09-26 기기에서 확인).
                         weighting = rec.summary.weighting,
-                        // PEAK·분석 가중은 기록기가 세지 않는다 — 요약
-                        // 숫자와 달리 재는 동안 바뀌지 않는 설정이다.
-                        peakWeighting = st.meterSettings.peakWeighting,
+                        // **PEAK 에는 가중이 안 걸린다**(독립 검토 R3-04 를
+                        // 따라가다 라이브에서도 찾았다).
+                        //
+                        // 예전에는 **화면 설정값**(기본 C)을 그대로 적었다.
+                        // 그런데 기록에 남는 peak 는 `blockPeakDbfs` 이고
+                        // 그 값은 **A·C·Z 가 모두 같다** — 재서 확인했고,
+                        // `SplEngine` 도 「Peak 는 가중 전에 잰다」고 적어
+                        // 두었다. 설정값을 적으면 **걸지 않은 가중을
+                        // 걸었다고 말하는 것**이다.
+                        //
+                        // 화면의 PEAK 는 `weightedPeakDbfs` 라 설정을
+                        // 따른다 — **화면과 기록이 다른 값**이라는 뜻이고,
+                        // 그쪽은 따로 볼 일이다(요청서에 적었다).
+                        peakWeighting = kr.joa.selahrta.dsp.Weighting.Z,
                         analysisWeighting = st.meterSettings.analysisWeighting,
                         timeWeight = st.meterSettings.timeWeight,
                         leqWindowMs = st.meterSettings.leqWindow.millis,
@@ -3530,11 +3541,29 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         if (controller.baseState.value.reanalyzeProgress != null) return
 
         val st = controller.baseState.value
+
+        // **이 보정이 이 기록의 것인가**(독립 검토 R3-03).
+        //
+        // 지금 걸린 보정은 **지금 열린 입력**의 것이다. 내장 마이크로 담은
+        // 기록에 USB 마이크의 감도·곡선을 걸면 과거 기록이 **다른 마이크의
+        // 잣대**로 바뀌고, 그것이 「보정 완료된 수치」처럼 보인다.
+        // 오프셋은 숫자 하나라 **값만 봐서는 알 길이 없다.**
+        kr.joa.selahrta.recording.ReanalysisIdentity.blockedReasonKo(
+            meta = meta,
+            openedDeviceKey = st.opened?.deviceKey,
+            openedMicKind = st.opened?.micKind,
+            openedChannelIndex = st.opened?.channelIndex,
+            routeConfirmed = st.routeConfirmed,
+        )?.let { why ->
+            controller.update { it.copy(historyNoticeKo = why) }
+            return
+        }
         val settings = kr.joa.selahrta.recording.ReanalysisSettings(
             offsetDb = st.calibration.offset.db,
             referenceOnly = st.calibration.isReferenceOnly,
             leqWindowMs = st.meterSettings.leqWindow.millis,
             weighting = st.meterSettings.splWeighting,
+            analysisWeighting = st.meterSettings.analysisWeighting,
             timeWeight = st.meterSettings.timeWeight,
             fftSize = st.meterSettings.fftSize,
             curve = st.curve?.takeIf { it.enabled }?.curve,
