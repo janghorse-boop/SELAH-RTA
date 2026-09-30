@@ -1817,9 +1817,10 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         rtaRun = run
         publishRtaCapture(run, nameKo)
 
-        // **분석 스레드에서 직접 모으는 곳을 붙인다**(독립 검토 PND-03,
-        // 단계 A). **이번에는 적기만 한다** — 평균도 판정도 그대로 두고,
-        // 저장 기록에 coverage 를 함께 남긴다.
+        // **분석 스레드에서 직접 모으는 곳을 붙인다**(독립 검토 PND-03).
+        //
+        // **평균이 여기서 나온다**(단계 B). coverage 수치는 적어 두기만
+        // 하고 **아직 판정에 쓰지 않는다**(단계 C 에서 분포를 모으는 중).
         //
         // 한 번에 다 바꾸면 「측정이 갑자기 안 된다」가 되고, 그것은 쓰는
         // 사람에게 고장이다(설계 3장).
@@ -1868,8 +1869,15 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                     // 드러났다.
                     //
                     // 지금은 **재는 중이면 그냥 켠다.** 두 번 켜도 같다.
+                    //
+                    // **켜는 일은 분석 스레드에서 한다**(독립 검토 R2-02).
+                    // 원점을 거기서 박아야 **첫 창이 늦게 오는 만큼 앞이
+                    // 비어 보인다.** 여기서 켜고 첫 창에서 원점을 잡으면
+                    // 그 지연이 원점째로 밀려 사라진다.
                     if (run.phase is kr.joa.selahrta.data.rta.RtaCapturePhase.Measuring) {
-                        coverage?.arm()
+                        coverage?.let { c ->
+                            controller.postRtaFramePosition { c.armAt(it) }
+                        }
                     }
                     // **조건이 바뀌면 그만둔다**(RMS-01). 앞뒤가 다른 잣대로
                     // 잰 값을 한 곡선에 담으면 나중에 가릴 길이 없다.
@@ -2163,7 +2171,12 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         setId: String?,
         /** 잴 때 붙박아 둔 조건. **끝나고 화면을 다시 읽지 않는다**(RMS-01). */
         context: RtaCaptureContext,
-        /** 분석 스레드에서 모은 것. **이번에는 적기만 한다**(PND-03 단계 A). */
+        /**
+         * 분석 스레드에서 모은 것. **평균이 여기서 나온다**(PND-03 단계 B).
+         *
+         * coverage 수치 자체는 **아직 판정에 쓰지 않는다** — 적어 두고
+         * 분포를 모으는 중이다(단계 C).
+         */
         coverage: kr.joa.selahrta.data.rta.RtaCoverage?,
     ): Boolean {
         if (rtaRun === run) {
@@ -2192,7 +2205,14 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         // **못 받았으면 저장하지 않는다.** 옛 길로 슬그머니 돌아가면 같은
         // 이름(`averageVersion`)을 단 두 가지 값이 섞이고, 나중에 어느
         // 쪽이었는지 가릴 길이 없다.
-        val mean = coverage?.meanDb(context.offsetDb) ?: run {
+        // **여기서 닫고 한 번에 떠 온다**(독립 검토 R2-02·R2-03).
+        //
+        // 예전에는 평균·창 수·coverage 를 **따로** 읽었다. 그 사이에 분석
+        // 스레드가 한 장을 더하면 **서로 다른 시점의 값**이 한 기록에
+        // 적힌다. 떼어 내는 명령은 줄에 들어갈 뿐 곧바로 듣지 않으므로,
+        // 「끝났다」와 「더는 안 들어온다」는 같은 순간이 아니다.
+        val closed = coverage?.close(context.offsetDb)
+        val mean = closed?.meanDb ?: run {
             controller.update { st ->
                 st.copy(
                     rtaSaveNoticeKo = if (coverage == null) {
@@ -2220,10 +2240,18 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             signal = context.signal,
             channel = context.channel,
             outputDbfs = context.outputDbfs,
+            // **이 값은 평균과 상관이 없다**(독립 검토 R2-03).
+            //
+            // 단계 B 뒤로 평균은 분석 스레드에서 나온다. 이 칸은 **화면에
+            // 올라온 장 수**이고, `averageVersion` 이 `analysis-tap-v1` 인
+            // 기록에서는 **평균에 들어간 창 수가 아니다.** 그 수는
+            // 아래 `windows` 다. 남겨 두는 까닭은 **둘의 차이가 곧 화면
+            // 발행이 얼마나 성글었나**이기 때문이다 — 옛 평균이 무엇을
+            // 놓쳤는지 그 기록 안에서 셈할 수 있다.
             averagedFrames = run.average.frames,
-            // **이번에는 적기만 한다**(PND-03 단계 A). 평균도 판정도 그대로다.
-            coverage = coverage?.coverage,
-            windows = coverage?.windows,
+            // **평균과 같은 순간에 뜬 값이다.** 따로 읽지 않는다(R2-03).
+            coverage = closed.coverage,
+            windows = closed.windows,
             hopFrames = controller.rtaHopFrames(),
             conditions = kr.joa.selahrta.data.rta.RtaConditions(
                 inputKey = context.inputKey,

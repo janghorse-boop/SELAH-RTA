@@ -421,4 +421,28 @@ class RtaMeasurementStoreTest {
         assertEquals(1, listing.items.size)
         assertEquals(1, listing.unreadable)
     }
+
+    /**
+     * **쓰는 쪽과 읽는 쪽이 같은 것을 받는다**(독립 검토 R2-01).
+     *
+     * 읽는 쪽은 유한하지 않은 값을 거절한다. 쓰는 쪽만 받아 주면 `save`
+     * 가 **성공을 돌려준 뒤 목록에서 말없이 빠진다** — 쓰는 사람에게는
+     * 잰 것이 통째로 없어진 일이다. 「저장 실패」가 **더 나은 결과**다.
+     */
+    @Test
+    fun `유한하지 않은 밴드는 저장을 거절한다`() {
+        val bad = DoubleArray(31) { 60.0 }.also { it[3] = Double.NEGATIVE_INFINITY }
+        val r = store().save(sample(bands = bad))
+        assertTrue("무한대가 저장됐다", r.isFailure)
+        // 저장이 실패했으므로 목록도 **깨끗하다** — 못 읽는 것이 남지 않는다.
+        val listing = store().listing()
+        assertEquals(0, listing.items.size)
+        assertEquals(0, listing.unreadable)
+    }
+
+    @Test
+    fun `NaN 도 거절한다`() {
+        val bad = DoubleArray(31) { 60.0 }.also { it[0] = Double.NaN }
+        assertTrue(store().save(sample(bands = bad)).isFailure)
+    }
 }

@@ -47,6 +47,15 @@ class RtaMeasurementStore(
         require(m.bandsSpl.size == ThirdOctave.BAND_COUNT) {
             "밴드가 ${m.bandsSpl.size}칸이다. ${ThirdOctave.BAND_COUNT}칸이어야 한다."
         }
+        // **여기서 막지 않으면 저장은 성공하고 기록은 사라진다**
+        // (독립 검토 R2-01). 읽는 쪽([decode])은 유한하지 않은 값을 거절
+        // 한다. 쓰는 쪽만 받아 주면 `save` 가 성공을 돌려준 뒤 목록에서
+        // **말없이 빠진다** — 쓰는 사람에게는 잰 것이 통째로 없어진 일이다.
+        // 쓰기와 읽기가 **같은 것을 받아야** 한다.
+        require(m.bandsSpl.all { it.isFinite() }) {
+            "밴드에 유한하지 않은 값이 있다: " +
+                m.bandsSpl.withIndex().first { !it.value.isFinite() }
+        }
         val dir = dirOf(m.id)
         if (!dir.isDirectory && !dir.mkdirs()) throw IOException("폴더를 만들지 못했습니다: ${m.id}")
         writeAtomically(File(dir, META_NAME), encode(m))
