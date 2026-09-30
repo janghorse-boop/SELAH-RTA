@@ -53,6 +53,14 @@ import java.io.File
  * 겉장에는 소리가 있다고 적혀 있는데 파일이 없을 수 있다 — 지우다
  * 말았거나 옮기다 깨진 경우다. 빈 재생기를 띄우지 않고 말한다.
  */
+/**
+ * **밖에서 시키는 재생 위치.**
+ *
+ * [nonce] 를 함께 지니는 까닭은 [AudioPlayerCard] 의 `seek` 설명에 있다 —
+ * 한마디로 **같은 자리를 두 번 눌러도 먹혀야** 하기 때문이다.
+ */
+data class PlaybackSeek(val ms: Int, val nonce: Long)
+
 @Composable
 fun AudioPlayerCard(
     audio: RecordedAudio,
@@ -65,6 +73,13 @@ fun AudioPlayerCard(
      * 소리를 같은 시각으로 묶어야 「이 자리가 그 자리」라고 말할 수 있다.
      */
     onPosition: (Int) -> Unit = {},
+    /**
+     * **밖에서 「이 자리로 가라」고 시킬 때.** 안 쓰면 null.
+     *
+     * 그래프를 눌러 그 시점으로 가는 쪽이 여기로 들어온다
+     * (명세 Recording-D 「양방향」).
+     */
+    seek: PlaybackSeek? = null,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -109,7 +124,7 @@ fun AudioPlayerCard(
             return@Column
         }
 
-        Player(file, onPosition)
+        Player(file, onPosition, seek)
 
         TextButton(onClick = onShare) {
             Text("소리 파일 보내기", color = SelahColors.Accent, fontSize = 12.sp)
@@ -118,7 +133,7 @@ fun AudioPlayerCard(
 }
 
 @Composable
-private fun Player(file: File, onPosition: (Int) -> Unit) {
+private fun Player(file: File, onPosition: (Int) -> Unit, seek: PlaybackSeek?) {
     var playing by remember { mutableStateOf(false) }
     var positionMs by remember { mutableIntStateOf(0) }
     var durationMs by remember { mutableIntStateOf(0) }
@@ -141,6 +156,18 @@ private fun Player(file: File, onPosition: (Int) -> Unit) {
             runCatching { player?.stop() }
             runCatching { player?.release() }
         }
+    }
+
+    // **밖에서 시킨 자리로 옮긴다.**
+    //
+    // `nonce` 가 열쇠다. 시각만 보면 **같은 자리를 두 번 눌렀을 때 두
+    // 번째가 먹지 않는다** — 값이 안 바뀌어 다시 돌지 않기 때문이다.
+    // 그래프에서 같은 봉우리를 두 번 누르는 것은 흔한 일이다.
+    LaunchedEffect(seek) {
+        val to = seek?.ms ?: return@LaunchedEffect
+        positionMs = to
+        onPosition(to)
+        runCatching { player?.seekTo(to) }
     }
 
     // 돌아가는 동안만 자리를 읽는다. 멈춰 있으면 읽을 까닭이 없다.
