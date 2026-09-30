@@ -37,10 +37,38 @@ object ReportPageLayout {
         var y = metrics.marginPt
         val bottom = metrics.pageHeightPt - metrics.marginPt
 
+        // **경고는 쪽마다 되풀이한다**(독립 검토 PND-05).
+        //
+        // 처음에는 맨 앞에 한 번만 두었다. 그런데 메모가 길어 숫자가 뒤쪽
+        // 쪽으로 밀리면, **그 쪽만 인쇄하거나 전달했을 때 해석할 단서가
+        // 통째로 떨어져 나간다** — 「미보정이라 참고값」이라는 말이 없는
+        // 숫자 한 장이 된다. 종이는 한 장씩 돌아다닌다.
+        //
+        // **미리 잘라 둔다.** 쪽을 넘길 때마다 다시 줄바꿈하면 같은 일을
+        // 쪽수만큼 되풀이한다.
+        val warnLines = warningsKo.flatMap { wrap(it, metrics.contentWidthPt) }
+            // 경고가 종이의 절반을 넘기면 본문이 들어갈 자리가 없다.
+            // 그럴 때는 **앞쪽부터 남기고** 잘렸다고 적는다 — 잘린 줄
+            // 모르고 「이게 전부」라고 읽는 것이 더 나쁘다.
+            .let { lines ->
+                val room = ((bottom - metrics.marginPt) / 2) / metrics.warningLineHeightPt
+                if (lines.size <= room) lines else lines.take(room - 1) + "(경고가 더 있습니다)"
+            }
+
+        fun seedWarnings() {
+            if (warnLines.isEmpty()) return
+            warnLines.forEach { line ->
+                y += metrics.warningLineHeightPt
+                current += PlacedItem(ReportItem.Warning(line), y)
+            }
+            y += metrics.warningGapPt
+        }
+
         fun newPage() {
             pages += current
             current = mutableListOf()
             y = metrics.marginPt
+            seedWarnings()
         }
 
         /**
@@ -57,15 +85,7 @@ object ReportPageLayout {
 
         place(ReportItem.Heading(titleKo), metrics.headingHeightPt)
         y += metrics.headingGapPt
-
-        if (warningsKo.isNotEmpty()) {
-            warningsKo.forEach { warning ->
-                wrap(warning, metrics.contentWidthPt).forEach { line ->
-                    place(ReportItem.Warning(line), metrics.warningLineHeightPt)
-                }
-            }
-            y += metrics.warningGapPt
-        }
+        seedWarnings()
 
         sections.forEach { section ->
             // 제목과 **첫 줄**이 같은 쪽에 함께 들어가야 앉힌다.
