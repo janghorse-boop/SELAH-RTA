@@ -59,6 +59,24 @@ data class DspProbePolicy(
      * 2.0 으로 두면 멀쩡한 측정이 「NS 가 있다」로 뜬다.
      */
     val maxBandShapeDriftDb: Double = 4.0,
+    /**
+     * **이보다 조용하면 잰 것이 없다고 본다**(dBFS).
+     *
+     * ## 왜 필요한가
+     *
+     * 2026-09-30 에 USB 인터페이스로 재다 알았다. 소리를 틀면 입력이
+     * **완전한 디지털 무음**이 되는 조합이 있는데(이 폰 + UMC404HD),
+     * 그때 이 검사가 **「변하는 처리를 찾지 못했다」**로 통과했다.
+     * 무음은 앞창도 뒤창도 바닥값이라 **흔들림이 정확히 0** 이기 때문이다.
+     *
+     * **아무것도 안 들어온 것을 「깨끗하다」로 읽으면**, 그 위에서 만든
+     * 교정 프로파일이 아무 근거 없이 「검증됨」이 된다. 저장은 성공인데
+     * 자료가 없던 R2-01 과 같은 성질이다.
+     *
+     * 값은 넉넉히 잡는다 — 조용한 방의 마이크도 이보다는 크다.
+     */
+    val silenceFloorDbfs: Double = -120.0,
+
     /** 반복 사이 광대역 레벨의 벌어짐 한도. */
     val maxRepeatSpreadDb: Double = 1.0,
     /** 앞창·뒤창에 각각 쓸 장 수. 둘을 합친 것보다 장이 적으면 판정하지 않는다. */
@@ -105,6 +123,14 @@ enum class DspVerdict {
 
     /** 판정할 만큼 재지 못했다. **통과도 실패도 아니다.** */
     NotEnoughData,
+
+    /**
+     * **들어온 소리가 없다.** 통과도 실패도 아니다.
+     *
+     * [NotEnoughData] 와 가른다 — 저쪽은 「짧다」이고 이쪽은
+     * 「길게 쟀는데 아무것도 없다」라, 사람이 할 일이 다르다.
+     */
+    Silent,
 }
 
 /**
@@ -174,6 +200,28 @@ fun probeResidualDsp(
     }
     val bandCount = frames.first().size
     require(frames.all { it.size == bandCount }) { "장마다 밴드 수가 다르다" }
+
+    // **무음을 「깨끗하다」로 읽지 않는다**(2026-09-30).
+    //
+    // 앞창도 뒤창도 바닥값이면 흔들림이 **정확히 0** 이라, 아무것도 안
+    // 들어왔는데 통과한다. 실제로 USB 인터페이스에서 그렇게 나왔다.
+    val loudest = frames.maxOf { broadbandDb(it) }
+    if (loudest < policy.silenceFloorDbfs) {
+        return DspProbeResult(
+            verdict = DspVerdict.Silent,
+            broadbandDriftDb = null,
+            bandShapeDriftDb = null,
+            worstBand = null,
+            repeatSpreadDb = null,
+            bandsConsidered = 0,
+            framesUsed = frames.size,
+            reasonsKo = listOf(
+                "재는 동안 소리가 들어오지 않았습니다(가장 큰 값 " +
+                    "%.1f dBFS). 무엇이 도는지 알 수 없어 판정하지 않습니다 — ".format(loudest) +
+                    "입력이 제대로 열렸는지, 소리가 실제로 나고 있는지 보십시오.",
+            ),
+        )
+    }
 
     val head = frames.take(w)
     val tail = frames.takeLast(w)

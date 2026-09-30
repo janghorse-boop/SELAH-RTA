@@ -401,6 +401,16 @@ private fun inputCheckGate(state: WizardState): StepGate {
         // **재지 못한 것은 막는다.** 통과가 아니다.
         DspVerdict.NotEnoughData -> StepGate.Blocked(dsp.reasonsKo)
 
+        // **소리가 안 들어왔으면 막는다**(2026-09-30).
+        //
+        // 무음은 앞창도 뒤창도 바닥값이라 흔들림이 **정확히 0** 이고,
+        // 예전에는 그것이 「변하는 처리를 찾지 못했다」로 통과했다 —
+        // **아무것도 안 잰 것을 「깨끗하다」로** 읽은 셈이다.
+        //
+        // USB 인터페이스에서 실제로 그렇게 나왔다: 소리를 틀면 입력이
+        // 완전한 디지털 무음이 되는 조합이 있다.
+        DspVerdict.Silent -> StepGate.Blocked(dsp.reasonsKo + SILENT_INPUT_KO)
+
         // **막지 않는다**(지시서 3장). 「제한적 정확도」로 적고 자동 적용만
         // 막는다 — 그 처리는 판정([judgeCalibration])이 한다.
         DspVerdict.Suspect -> StepGate.AllowedWithWarning(dsp.reasonsKo + LIMITED_ACCURACY_KO)
@@ -521,6 +531,11 @@ const val EFFECTS_STILL_ON_KO: String =
 const val INDISTINGUISHABLE_KO: String =
     "이 폰에서는 내장 마이크를 하나하나 따로 열 수 없어 마이크별 교정을 만들지 않습니다. " +
         "둘을 임의로 나누면 서로 다른 마이크의 보정이 섞이고, 그건 화면에 보이지 않습니다."
+
+const val SILENT_INPUT_KO: String =
+    "USB 오디오 인터페이스를 쓰신다면, 앱이 소리를 그 인터페이스로 내보낼 때 " +
+        "입력이 함께 멎는 기기가 있습니다(2026-09-30 확인). 소리를 폰 스피커나 " +
+        "다른 기기로 내보내 보십시오."
 
 const val LOGICAL_ONLY_KO: String =
     "입력 경로는 갈리지만 실제 물리 마이크가 갈린다는 확인은 없습니다. " +
