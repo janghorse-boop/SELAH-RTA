@@ -41,6 +41,7 @@ class SavedRtaSheetDifferenceTest {
         curveHash = "",
         inputSource = "Unprocessed",
         inputChannel = 0,
+        signalSpec = "fixed",
     )
 
     private fun m(id: String, name: String, channel: String, bands: DoubleArray, c: RtaConditions) =

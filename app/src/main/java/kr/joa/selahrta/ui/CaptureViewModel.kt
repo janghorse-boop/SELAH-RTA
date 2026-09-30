@@ -1876,6 +1876,30 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                     controller.update { st -> st.copy(rtaCapture = null) }
                 }
             }
+
+            // **저장을 승인하기 직전에 한 번 더 본다**(독립 검토 PND-01).
+            //
+            // 틱마다 보는 것으로는 모자랐다. `tick` 이 먼저 `Done` 으로
+            // 바꾸고 나면 **`cancel()` 은 아무 일도 하지 않는다** — 그
+            // 함수가 「도는 중일 때만」 멈추기 때문이다. 그래서 **완료
+            // 경계에서 바뀐 조건**은 걸리지 않고 그대로 저장됐다.
+            //
+            // 여기서는 멈추라고 부탁하지 않는다. **저장 함수를 아예
+            // 부르지 않는다** — 끝났다는 사실보다 **조건이 성립하지
+            // 않는다는 사실이 앞선다.**
+            //
+            // 출력 확인은 기다리는 일이므로 **그 뒤에** 다시 본다. 기다리는
+            // 동안에도 사람이 채널을 바꿀 수 있다.
+            val outputAtCommit = if (outputGeneration != null) awaitSignalGeneration() else null
+            val invalid = rtaContextChangeKo(context, rtaContextNow())
+                ?: "테스트 신호가 멈춰 측정을 저장하지 않았습니다."
+                    .takeIf { outputGeneration != null && outputAtCommit != outputGeneration }
+            if (invalid != null) {
+                if (rtaRun === run) rtaRun = null
+                controller.update { st -> st.copy(rtaCapture = null, rtaSaveNoticeKo = invalid) }
+                return@coroutineScope false
+            }
+
             finishRtaCapture(run, nameKo, setId, context)
         }
     }
@@ -1915,6 +1939,8 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         val fftSize: Int?,
         val sampleRate: Int?,
         val signal: String,
+        /** 어떤 소리였는가 — 주파수·대역 모양까지(독립 검토 PND-02). */
+        val signalSpec: String,
         val channel: String,
         val outputDbfs: Double,
     )
@@ -1938,9 +1964,29 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             fftSize = spec?.first,
             sampleRate = spec?.second,
             signal = st.playingSignal?.name ?: "",
+            signalSpec = signalSpecOf(st.playingSignal, st.signalToneHz),
             channel = st.signalChannels.name,
             outputDbfs = 20.0 * kotlin.math.log10(st.signalAmplitude.coerceAtLeast(1e-6)),
         )
+    }
+
+    /**
+     * **무슨 소리를 넣었는가** — 이름만으로 모자란 몫을 적는다(PND-02).
+     *
+     * 「주파수 지정」은 1kHz 일 수도 2kHz 일 수도 있고, 「1/3 옥타브 대역」은
+     * 중심이 어디냐에 따라 전혀 다른 소리다. 그것이 안 적히면 **다른
+     * 주파수로 잰 두 곡선이 같은 조건**이 되고, 그 차이가 방의 차이로 읽힌다.
+     *
+     * **대역의 폭은 사람이 고르는 값이 아니라 규칙**이라, 숫자 대신 그
+     * 규칙의 이름을 적는다 — 없는 사용자 설정을 있는 것처럼 만들지 않는다.
+     */
+    private fun signalSpecOf(signal: TestSignal?, toneHz: Double): String = when {
+        signal == null -> "none"
+        signal == TestSignal.Band ->
+            "band:$toneHz:${kr.joa.selahrta.dsp.BandNoiseFilter.SPEC_VERSION}"
+        signal.usesPickedHz -> "hz:$toneHz"
+        // 핑크·화이트·정해진 순음은 **이름이 곧 조건**이다.
+        else -> "fixed"
     }
 
     /**
@@ -1975,6 +2021,9 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             fixed.analysisWeighting != now.analysisWeighting -> "분석 가중"
             fixed.channel != now.channel -> "출력 채널"
             fixed.signal != now.signal -> "테스트 신호"
+            // 이름은 그대로인데 **속이 바뀐** 경우다 — 순음 주파수,
+            // 대역 중심. 「측정 조건」이라고만 적으면 무엇을 되돌려야 할지 모른다.
+            fixed.signalSpec != now.signalSpec -> "신호 주파수"
             fixed.outputDbfs != now.outputDbfs -> "출력 세기"
             fixed.inputKey != now.inputKey || fixed.inputSource != now.inputSource ||
                 fixed.inputChannel != now.inputChannel -> "입력 마이크"
@@ -2141,6 +2190,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 curveHash = context.curveHash,
                 inputSource = context.inputSource,
                 inputChannel = context.inputChannel,
+                signalSpec = context.signalSpec,
             ),
             measuredAtEpochMs = System.currentTimeMillis(),
         )

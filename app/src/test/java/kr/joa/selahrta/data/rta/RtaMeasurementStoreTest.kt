@@ -54,6 +54,7 @@ class RtaMeasurementStoreTest {
             curveHash = "abcd1234",
             inputSource = "Unprocessed",
             inputChannel = 0,
+            signalSpec = "fixed",
         ),
         measuredAtEpochMs = at,
         memoKo = "마이크 1.2m",
