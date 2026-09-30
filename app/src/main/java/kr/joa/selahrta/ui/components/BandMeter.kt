@@ -50,6 +50,19 @@ import kr.joa.selahrta.dsp.ThirdOctave
 import kr.joa.selahrta.ui.RtaView
 import kr.joa.selahrta.ui.theme.SelahColors
 
+/**
+ * **못 가르는 밴드를 얼마나 흐리게 그릴 것인가.**
+ *
+ * FFT 창이 그 밴드를 한 칸 안에 담지 못하면 값이 **이웃에서 새어 온
+ * 것**이라 믿을 수 없다. 그렇다고 안 그리면 「거기 소리가 없다」로
+ * 읽히므로, **그리되 흐리게** 한다.
+ *
+ * **색으로 가르지 않는다**(2026-09-26 담당자 지시). 색을 바꾸면
+ * 하울링 후보 색과 뒤섞이고, 색을 못 가리는 사람에게는 아무 표시도
+ * 아니다. 흐림은 색과 **따로** 얹힌다.
+ */
+const val UNRESOLVED_ALPHA = 0.35f
+
 /** 1kHz 아래는 Hz, 위는 kHz 로 적는다. 자릿수가 너무 길어지지 않게. */
 /**
  * 그래프에 겹쳐 그릴 저장 곡선 하나.
@@ -362,6 +375,17 @@ fun BandMeter(
 
                     if (h > 0.5f) {
                         val tone = bandTone[i]
+                        // **못 가르는 밴드는 흐리게 그린다.**
+                        //
+                        // 화면은 「○○Hz 아래 밴드는 흐리게 그립니다」라고
+                        // 적어 두었고 이 파일 머리말도 그렇게 적혀 있었는데,
+                        // **실제로는 안 흐렸다**(2026-09-30 기기에서 픽셀로
+                        // 확인). 참조하던 `UNRESOLVED_ALPHA` 는 **아예 없는
+                        // 상수**였다.
+                        //
+                        // 44.1kHz 에서는 **맨 위 20kHz 대역**도 여기 든다 —
+                        // 위 경계가 나이퀴스트를 넘어 폭이 잘린다.
+                        val alpha = if (rta.resolved[i]) 1f else UNRESOLVED_ALPHA
                         drawRect(
                             color = when {
                                 // 후보가 앉은 밴드. 흐린 밴드라도 물들인다 —
@@ -371,7 +395,7 @@ fun BandMeter(
                                 // 담당자 지시). 까닭은 [UNRESOLVED_ALPHA] 참고.
                                 tone != null -> feedbackTone(tone)
                                 else -> SelahColors.Accent
-                            },
+                            }.copy(alpha = alpha),
                             topLeft = Offset(x, size.height - h),
                             size = Size(barW, h),
                         )
