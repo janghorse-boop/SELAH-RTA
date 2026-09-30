@@ -149,6 +149,15 @@ data class MeterSettings(
      */
     val audioFormat: kr.joa.selahrta.recording.AudioFileFormat =
         kr.joa.selahrta.recording.AudioFileFormat.M4a,
+    /**
+     * **시험 신호를 어디로 내보낼지**(독립 검토 R5-04).
+     *
+     * 기본값은 자동이고, 자동은 **USB 로 재는 동안에만** 폰 스피커로
+     * 돌린다. 왜 고르게 하는지는 [kr.joa.selahrta.audio.SignalOutput] 에
+     * 적어 두었다 — 요점은 **사람이 고른 출력을 조용히 덮지 않는다**는 것.
+     */
+    val signalOutput: kr.joa.selahrta.audio.SignalOutput =
+        kr.joa.selahrta.audio.SignalOutput.Auto,
     /** 사용자가 고른 입력 기기의 열쇠. null 이면 자동. */
     val preferredInputKey: String? = null,
     /**
@@ -262,6 +271,7 @@ class MeterSettingsStore(private val context: Context) {
     private val fftSizeKey = intPreferencesKey("fftSize")
     private val leqWindowKey = longPreferencesKey("leqWindowMs")
     private val audioFormatKey = stringPreferencesKey("audioFormat")
+    private val signalOutputKey = stringPreferencesKey("signalOutput")
     private val preferredInputKey = stringPreferencesKey("preferredInput")
 
     /** 기기 열쇠가 길고 임의라 접두어로 모아 둔다. */
@@ -318,6 +328,12 @@ class MeterSettingsStore(private val context: Context) {
                             .firstOrNull { it.name == n }
                     }
                     ?: kr.joa.selahrta.recording.AudioFileFormat.M4a,
+                // **모르는 이름이면 기본값이다.**
+                signalOutput = p[signalOutputKey]
+                    ?.let { n ->
+                        kr.joa.selahrta.audio.SignalOutput.entries.firstOrNull { it.name == n }
+                    }
+                    ?: kr.joa.selahrta.audio.SignalOutput.Auto,
                 leqWindow = p[leqWindowKey]?.let { ms ->
                     LeqWindow.entries.firstOrNull { it.millis == ms }
                 } ?: LeqWindow.ThirtySeconds,
@@ -412,6 +428,9 @@ class MeterSettingsStore(private val context: Context) {
      */
     suspend fun setAudioFormat(f: kr.joa.selahrta.recording.AudioFileFormat) =
         write { it[audioFormatKey] = f.name }
+    suspend fun setSignalOutput(o: kr.joa.selahrta.audio.SignalOutput) =
+        write { it[signalOutputKey] = o.name }
+
     suspend fun setPreferredInput(key: String?) = write { it[preferredInputKey] = key ?: "" }
 
     /**

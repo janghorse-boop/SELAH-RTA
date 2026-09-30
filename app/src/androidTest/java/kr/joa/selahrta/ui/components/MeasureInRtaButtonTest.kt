@@ -56,6 +56,7 @@ class MeasureInRtaButtonTest {
                     onSignalLevel = {},
                     onSignalToneHz = {},
                     onSignalChannels = {},
+                    onSignalOutput = {},
                     onDismissSignalNotice = {},
                     onMeasureInRta = onMeasureInRta,
                 )

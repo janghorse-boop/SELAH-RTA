@@ -42,6 +42,10 @@ fun ToolsScreen(
     onSignalLevel: (Double) -> Unit,
     onSignalToneHz: (Double) -> Unit,
     onSignalChannels: (SignalChannels) -> Unit,
+    /** 어디로 내보낼지(독립 검토 R5-04). **기본값을 두지 않는다** — 빠뜨리면
+     * 컴파일이 막혀야 한다. 예전에 콜백에 기본값을 두었다가 화면이 조용히
+     * 아무 일도 안 한 적이 있다. */
+    onSignalOutput: (kr.joa.selahrta.audio.SignalOutput) -> Unit,
     onDismissSignalNotice: () -> Unit,
     /** 소리를 켜 둔 채 RTA 화면으로 간다. 재생은 끊기지 않는다. */
     onMeasureInRta: () -> Unit,
@@ -63,6 +67,9 @@ fun ToolsScreen(
             onLevel = onSignalLevel,
             onToneHz = onSignalToneHz,
             onChannels = onSignalChannels,
+            output = capture.meterSettings.signalOutput,
+            onOutput = onSignalOutput,
+            routeKo = capture.signalRouteKo,
             onDismissNotice = onDismissSignalNotice,
             onMeasureInRta = onMeasureInRta,
             modifier = Modifier.padding(top = 4.dp, bottom = 16.dp),

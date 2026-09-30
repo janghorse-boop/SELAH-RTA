@@ -46,7 +46,13 @@ class UsbDuplexAppPathTest {
             openSink = {
                 AudioTrackSink(
                     preferredOutput = {
-                        val want = SignalOutputChoice.preferBuiltInSpeaker(usb!!.kind)
+                        // 앱의 기본값(자동)으로 재현한다 — 사람이 바꿀 수
+                        // 있게 된 뒤에도 **기본값에서 우회가 걸리는지**가
+                        // 이 시험이 보는 것이다(독립 검토 R5-04).
+                        val want = SignalOutputChoice.preferBuiltInSpeaker(
+                            SignalOutput.Auto,
+                            usb!!.kind,
+                        )
                         Log.i("DUPLEXAPP", "폰 스피커로 돌릴까=$want")
                         if (want) speaker else null
                     },

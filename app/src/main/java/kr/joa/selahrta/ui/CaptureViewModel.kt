@@ -338,6 +338,14 @@ data class CaptureUiState(
     val signalChannels: SignalChannels = SignalChannels.Both,
     /** 신호 발생기에 관해 알릴 것. */
     val signalNoticeKo: String? = null,
+    /**
+     * **소리가 실제로 어디로 나갔는가**(독립 검토 R5-04).
+     *
+     * `setPreferredDevice` 는 요청이라 거절될 수 있다. 거절되면 우회가
+     * 안 걸린 것이고, 그때 USB 입력이 무음이 된다 — **그 사실이 화면에
+     * 보여야** 사람이 알아챈다. 안 틀고 있으면 null.
+     */
+    val signalRouteKo: String? = null,
 
     // ── RTA 측정 저장 (지시서 §7) ───────────────────────
     /** 지금 재는 중이면 그 상태. 안 재면 null. */
@@ -760,12 +768,21 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         openSink = {
             kr.joa.selahrta.audio.AudioTrackSink(
                 preferredOutput = {
-                    val kind = controller.baseState.value.opened?.micKind
-                    if (kr.joa.selahrta.audio.SignalOutputChoice.preferBuiltInSpeaker(kind)) {
+                    val st = controller.baseState.value
+                    if (
+                        kr.joa.selahrta.audio.SignalOutputChoice.preferBuiltInSpeaker(
+                            st.meterSettings.signalOutput,
+                            st.opened?.micKind,
+                        )
+                    ) {
                         builtInSpeaker()
                     } else {
                         null
                     }
+                },
+                // **요청이 그대로 됐는지 화면까지 올린다**(독립 검토 R5-04).
+                onRoute = { note ->
+                    onMainThread { controller.update { it.copy(signalRouteKo = note) } }
                 },
             )
         },
@@ -1720,6 +1737,19 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     /** 어느 쪽 스피커로 낼지 바꾼다. 내보내는 중이면 그 자리에서 바꿔 끼운다. */
     fun setSignalChannels(channels: SignalChannels) {
         controller.update { st -> st.copy(signalChannels = channels) }
+        controller.baseState.value.playingSignal?.let { playSignal(it) }
+    }
+
+    /**
+     * **어디로 내보낼지 사람이 고른다**(독립 검토 R5-04).
+     *
+     * 틀고 있는 중에 바꾸면 **다시 연다** — `setPreferredDevice` 는 열 때
+     * 한 번 걸리는 것이라, 안 다시 열면 고른 것이 다음 재생부터 먹는다.
+     * 화면에는 바뀐 것처럼 보이는데 소리는 그대로인 **조용한 어긋남**이다.
+     */
+    fun setSignalOutput(output: kr.joa.selahrta.audio.SignalOutput) {
+        viewModelScope.launch { settingsStore.setSignalOutput(output) }
+        controller.update { st -> st.copy(signalRouteKo = null) }
         controller.baseState.value.playingSignal?.let { playSignal(it) }
     }
 
@@ -3441,13 +3471,20 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 // **겉장과 행을 한 판으로 읽는다**(독립 검토 R4-02).
                 // 목록이 준 겉장에 나중에 읽은 행을 붙이면 **서로 다른
                 // 판**이 섞여, 새 행을 옛 보정으로 내보낸다.
-                sessionStore.recover(meta.id)
-                val fresh = sessionStore.readMeta(meta.id).getOrThrow()
-                sessionStore.timelineFile(meta.id).inputStream().buffered().use { input ->
-                    // **UTF-8 로 못박는다.** 기본값이 UTF-8 이지만,
-                    // 여기서 인코딩이 달라지면 BOM 만 맞고 본문이 깨진다.
-                    csv.bufferedWriter(Charsets.UTF_8).use { out ->
-                        kr.joa.selahrta.recording.SessionExport.writeCsv(fresh, input, out)
+                //
+                // **직렬화가 끝날 때까지 잠금을 쥔다**(독립 검토 R5-01).
+                // 겉장만 잠금 안에서 읽고 행을 밖에서 흘려 보내면, 쓰는
+                // 도중에 게시가 일어나 **표 한 장 안에서 판이 갈린다.**
+                // 행을 통째로 메모리에 올리지 않으려고 스트림은 그대로 둔다.
+                sessionStore.withSession(meta.id) {
+                    sessionStore.recover(meta.id)
+                    val fresh = sessionStore.readMeta(meta.id).getOrThrow()
+                    sessionStore.timelineFile(meta.id).inputStream().buffered().use { input ->
+                        // **UTF-8 로 못박는다.** 기본값이 UTF-8 이지만,
+                        // 여기서 인코딩이 달라지면 BOM 만 맞고 본문이 깨진다.
+                        csv.bufferedWriter(Charsets.UTF_8).use { out ->
+                            kr.joa.selahrta.recording.SessionExport.writeCsv(fresh, input, out)
+                        }
                     }
                 }
                 uris += uriFor(csv)

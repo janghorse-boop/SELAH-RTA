@@ -95,6 +95,18 @@ class AudioTrackSink(
      * **입력이 죽는 것보다는 낫다.**
      */
     private val preferredOutput: (() -> android.media.AudioDeviceInfo?)? = null,
+    /**
+     * **실제로 어디로 나갔는지** 알린다(독립 검토 R5-04).
+     *
+     * `setPreferredDevice` 는 **요청**이지 확정이 아니다. 실패하면 예전에는
+     * 경고 로그 한 줄만 남아, **우회가 안 걸렸는데도 사람은 알 길이
+     * 없었다** — 그리고 그때 입력은 무음이 된다.
+     *
+     * 그래서 연 뒤에 `routedDevice` 를 물어 **요청과 다르면 그것까지**
+     * 적어 보낸다. 안드로이드는 재생이 실제로 시작된 뒤에야 경로를 알려
+     * 주므로, `play()` 뒤에 한 번 묻고 **바뀔 때마다** 다시 알린다.
+     */
+    private val onRoute: ((String) -> Unit)? = null,
 ) : SignalSink {
 
     private var track: AudioTrack? = null
@@ -147,9 +159,15 @@ class AudioTrackSink(
 
         // **고른 자리가 있으면 그리로 못박는다.** 실패해도 그냥 간다 —
         // 안드로이드가 고른 자리로 나가고, 그것은 예전 동작이다.
-        preferredOutput?.invoke()?.let { dev ->
-            val ok = runCatching { t.setPreferredDevice(dev) }.getOrDefault(false)
-            if (!ok) Log.w(SINK_TAG, "출력을 ${dev.productName} 로 못박지 못했다")
+        // 다만 **그 사실을 화면까지 올린다**(독립 검토 R5-04).
+        val wanted = preferredOutput?.invoke()
+        var requestRejected = false
+        if (wanted != null) {
+            val ok = runCatching { t.setPreferredDevice(wanted) }.getOrDefault(false)
+            if (!ok) {
+                requestRejected = true
+                Log.w(SINK_TAG, "출력을 ${wanted.productName} 로 못박지 못했다")
+            }
         }
 
         // **play() 도 실패할 수 있다.** 생성자만 감싸고 여기를 빼 두면,
@@ -161,7 +179,44 @@ class AudioTrackSink(
         }
 
         track = t
+        reportRoute(t, wanted, requestRejected)
         return true
+    }
+
+    /**
+     * 실제 경로를 **재서 알린다.**
+     *
+     * `routedDevice` 는 재생이 붙기 전에는 null 이라, 한 번 물어보고
+     * 끝내면 거의 늘 「모름」이다. 그래서 바뀔 때마다 다시 알리도록
+     * 귀를 달아 둔다. 귀를 못 달아도 **한 번 물어본 값은 보낸다.**
+     */
+    private fun reportRoute(
+        t: AudioTrack,
+        wanted: android.media.AudioDeviceInfo?,
+        requestRejected: Boolean,
+    ) {
+        val report = onRoute ?: return
+        fun say() {
+            val actual = runCatching { t.routedDevice }.getOrNull()
+            val actualKo = actual?.productName?.toString() ?: "확인 전"
+            report(
+                when {
+                    requestRejected ->
+                        "출력 $actualKo — 고른 곳(${wanted?.productName})으로 " +
+                            "보내 달라는 요청이 거절됐습니다."
+                    wanted != null && actual != null && actual.id != wanted.id ->
+                        "출력 $actualKo — 고른 곳(${wanted.productName})과 다릅니다."
+                    else -> "출력 $actualKo"
+                },
+            )
+        }
+        say()
+        runCatching {
+            t.addOnRoutingChangedListener(
+                { _ -> say() },
+                android.os.Handler(android.os.Looper.getMainLooper()),
+            )
+        }
     }
 
     override fun write(buf: FloatArray, offset: Int, frames: Int): Int =
