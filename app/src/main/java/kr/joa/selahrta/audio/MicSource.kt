@@ -102,7 +102,14 @@ class MicSource(
         // 가공 없는 입력을 먼저 시도하고, 안 되면 덜 가공된 쪽으로 내려간다.
         // 그리고 **무엇으로 열렸는지 반드시 남긴다** — 숨기면 담당자가
         // 자동 게인이 걸린 숫자를 그대로 믿는다.
-        val unprocessedOk = shouldTryUnprocessed(unprocessedSupported(), target?.kind)
+        // **「해 본다」와 「기기가 지원한다고 알린다」를 섞지 않는다**
+        // (독립 검토 R5-03).
+        //
+        // USB 면 폰 속성이 false 여도 시도한다. 그런데 예전에는 그
+        // **시도 여부**를 그대로 기록에 남겨, 속성이 false 인데 보고서가
+        // **「가공 없는 입력 지원: 예」**라고 적었다. 둘은 다른 사실이다.
+        val deviceReportsUnprocessed = unprocessedSupported()
+        val unprocessedOk = shouldTryUnprocessed(deviceReportsUnprocessed, target?.kind)
         val sources = buildList {
             if (unprocessedOk) add(CaptureSource.Unprocessed)
             add(CaptureSource.VoiceRecognition)
@@ -114,7 +121,7 @@ class MicSource(
         var lastDetail: String? = null
         for (src in sources) {
             for (enc in encodings) {
-                val r = tryOpen(requested, src, enc, unprocessedOk)
+                val r = tryOpen(requested, src, enc, deviceReportsUnprocessed)
                 when (r) {
                     is OpenResult.Opened -> return r
                     is OpenResult.Failed -> lastDetail = r.detail
@@ -150,7 +157,13 @@ class MicSource(
         requested: RequestedFormat,
         source: CaptureSource,
         encoding: PcmEncoding,
-        unprocessedSupported: Boolean,
+        /**
+         * **기기가 스스로 알린 값만** 넣는다(독립 검토 R5-03).
+         *
+         * 「우리가 시도했는가」를 여기 넣으면 기록이 **지원한다고 거짓말**을
+         * 한다. 이름을 시도 쪽과 다르게 둔 까닭이다.
+         */
+        deviceReportsUnprocessed: Boolean,
     ): OpenResult {
         val want = requested.channelCount
         val positionalMask = when (want) {
@@ -265,7 +278,7 @@ class MicSource(
             bufferSizeBytes = bufferBytes,
             deviceLabel = target?.displayName ?: "시스템 기본 입력",
             deviceKey = target?.stableKey ?: "default",
-            unprocessedSupported = unprocessedSupported,
+            unprocessedSupported = deviceReportsUnprocessed,
             effects = effectsReport,
             requestedDeviceLabel = target?.productName,
             // 요청이 받아들여졌는지까지만 안다. 실제로 그리 붙었는지는 아직 모른다.

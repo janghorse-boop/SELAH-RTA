@@ -73,9 +73,12 @@ private fun inputSection(m: SessionMeta): ReportSection {
             // **「확인 불가」는 「마이크가 없다」가 아니다.**
             add(ReportLine("활성 마이크", c.activeMicCombo.ifEmpty { UNKNOWN_KO }))
             add(ReportLine("입력 경로", c.audioSource?.labelKo ?: NOT_RECORDED_KO))
+            // **기기가 스스로 알린 값이다 — 우리가 시도했는지가 아니다**
+            // (독립 검토 R5-03). 이름표에 그 출처를 적어 둔다. 예전에는
+            // 시도 여부가 여기 들어와, 속성이 false 인데 「예」로 적혔다.
             add(
                 ReportLine(
-                    "가공 없는 입력 지원",
+                    "가공 없는 입력 지원(기기 알림)",
                     when (c.unprocessedSupported) {
                         true -> "예"
                         false -> "아니요"
@@ -83,6 +86,16 @@ private fun inputSection(m: SessionMeta): ReportSection {
                     },
                 ),
             )
+            // **지원한다고 알리지 않았는데 그 경로로 열린 경우**를 따로 적는다.
+            // 열렸다는 것이 가공이 없다는 뜻은 아니다.
+            if (c.unprocessedSupported == false && c.audioSource?.trustworthy == true) {
+                add(
+                    ReportLine(
+                        "무가공 근거",
+                        "열리기는 했으나 기기가 지원을 알리지 않음 — 확인되지 않음",
+                    ),
+                )
+            }
             add(ReportLine("신호 가공", processingKo(c)))
             add(
                 ReportLine(

@@ -33,14 +33,42 @@ import java.io.IOException
  */
 class SessionStore(private val root: File) {
 
+    /**
+     * **이 기록을 만지는 동안 다른 곳이 못 만지게 한다**(독립 검토 R5-01).
+     *
+     * 까닭과 열쇠 규칙은 [SessionLocks] 머리말에 있다. 여기서 알아야 할
+     * 것은 둘이다.
+     *
+     * 1. **읽고-고쳐-쓰기는 통째로 감싼다.** 읽기만·쓰기만 감싸면 그 사이가
+     *    그대로 틈이다 — 이번 결함이 정확히 그것이었다.
+     * 2. **주 스레드에서 부르지 않는다.** 다시 분석이 잠금을 몇 분 쥔다.
+     *    부르는 쪽은 모두 `Dispatchers.IO` 위에 있다.
+     */
+    fun <T> withSession(id: String, block: () -> T): T {
+        val lock = SessionLocks.of(root, id)
+        lock.lock()
+        return try {
+            block()
+        } finally {
+            lock.unlock()
+        }
+    }
+
     /** 세션 하나가 들어앉을 폴더. */
     fun dirOf(id: String): File = File(root, id)
 
+    /**
+     * **돌려준 경로는 잠금 밖이다.** 복구까지만 잠금 안에서 하고, 그 파일을
+     * 열어 읽는 동안 다른 곳이 게시할 수 있다. 겉장과 행이 **함께** 필요한
+     * 자리는 [readSnapshot] 을, 길게 읽어야 하는 자리는 [withSession] 으로
+     * 직접 감싼다(CSV 내보내기가 그렇게 한다).
+     */
     fun metaFile(id: String): File {
         recover(id)
         return File(dirOf(id), META_NAME)
     }
 
+    /** 잠금 범위는 [metaFile] 과 같다. */
     fun timelineFile(id: String): File {
         recover(id)
         return File(dirOf(id), TIMELINE_NAME)
@@ -72,8 +100,13 @@ class SessionStore(private val root: File) {
      * 그 순간이 경계다. 그 뒤에 죽어도 다음에 열 때 여기서 마저 옮긴다.
      *
      * 읽는 자리마다 먼저 부른다. 값이 싸다 — 파일 하나가 있는지 볼 뿐이다.
+     *
+     * **잠금 안에서 한다**(독립 검토 R5-01). 옮기는 도중에 다른 곳이
+     * 읽으면 겉장과 행이 서로 다른 판으로 잡힌다.
      */
-    fun recover(id: String) {
+    fun recover(id: String) = withSession(id) { recoverLocked(id) }
+
+    private fun recoverLocked(id: String) {
         val dir = dirOf(id)
         val ready = File(dir, READY_NAME)
         if (!ready.isFile) return
@@ -120,11 +153,15 @@ class SessionStore(private val root: File) {
      * 죽어도 목록에 반쪽짜리가 뜨지 않는다.
      */
     fun create(id: String): Result<File> = runCatching {
+        withSession(id) { createLocked(id) }
+    }
+
+    private fun createLocked(id: String): File {
         val dir = dirOf(id)
         if (!dir.mkdirs() && !dir.isDirectory) {
             throw IOException("기록 폴더를 만들지 못했습니다: $id")
         }
-        dir
+        return dir
     }
 
     /**
@@ -135,6 +172,10 @@ class SessionStore(private val root: File) {
      * 상태로 남아, 반쯤 쓰인 겉장을 읽는 일이 없다.
      */
     fun writeMeta(meta: SessionMeta): Result<Unit> = runCatching {
+        withSession(meta.id) { writeMetaLocked(meta) }
+    }
+
+    private fun writeMetaLocked(meta: SessionMeta) {
         val dir = dirOf(meta.id)
         if (!dir.isDirectory) throw IOException("기록 폴더가 없습니다: ${meta.id}")
         val tmp = File(dir, "$META_NAME.tmp")
@@ -167,15 +208,24 @@ class SessionStore(private val root: File) {
      * @return 없는 기록이면 실패. **조용히 새로 만들지 않는다.**
      */
     fun setMemo(id: String, memo: String): Result<Unit> = runCatching {
-        val meta = readMeta(id).getOrThrow()
-        writeMeta(meta.copy(memo = memo.trim().take(MEMO_MAX))).getOrThrow()
+        // **읽기와 쓰기를 한 잠금 안에 둔다**(독립 검토 R5-01).
+        //
+        // 둘을 따로 두면 그 사이에 다시 분석이 게시한다 — 저장은 성공했다고
+        // 답하고 메모는 사라진다. 반례가 그대로 그랬다:
+        // `R5_MEMO saveAcknowledged=true finalMemo=`
+        withSession(id) {
+            val meta = readMeta(id).getOrThrow()
+            writeMeta(meta.copy(memo = memo.trim().take(MEMO_MAX))).getOrThrow()
+        }
     }
 
     /** 겉장 하나를 읽는다. */
     fun readMeta(id: String): Result<SessionMeta> = runCatching {
-        val f = metaFile(id)
-        if (!f.isFile) throw IOException("기록이 없습니다: $id")
-        decodeSessionMeta(f.readText()).getOrThrow()
+        withSession(id) {
+            val f = metaFile(id)
+            if (!f.isFile) throw IOException("기록이 없습니다: $id")
+            decodeSessionMeta(f.readText()).getOrThrow()
+        }
     }
 
     /**
@@ -196,7 +246,11 @@ class SessionStore(private val root: File) {
      * 지금 막은 것은 **재시작 뒤의 어긋남**이다.
      */
     fun readSnapshot(id: String): Result<SessionSnapshot> = runCatching {
-        recover(id)
+        withSession(id) { readSnapshotLocked(id) }
+    }
+
+    private fun readSnapshotLocked(id: String): SessionSnapshot {
+        recoverLocked(id)
         val meta = readMetaAfterRecover(id).getOrThrow()
         val table = EpochTable(max = maxOf(1, meta.epochs.size))
             .also { t -> meta.epochs.forEach { t.add(it) } }
@@ -205,7 +259,7 @@ class SessionStore(private val root: File) {
                 TimelineReader(it, table).all()
             }
         }
-        SessionSnapshot(meta, rows)
+        return SessionSnapshot(meta, rows)
     }
 
     /** 복구를 이미 끝낸 뒤에 겉장만. [readSnapshot] 안에서만 쓴다. */
@@ -236,15 +290,24 @@ class SessionStore(private val root: File) {
             //
             // 복구가 실패하면 **그 기록만 「못 읽음」으로 센다.** 한 기록
             // 때문에 목록 전체가 막히면 멀쩡한 기록까지 못 보게 된다.
-            if (runCatching { recover(d.name) }.isFailure) {
+            //
+            // **복구와 겉장 읽기를 한 잠금 안에 둔다**(독립 검토 R5-01).
+            // 목록 전체를 잠그지는 않는다 — 다른 기록의 재분석이 목록을
+            // 통째로 세우면 화면이 멎는다.
+            val r = runCatching {
+                withSession(d.name) {
+                    recoverLocked(d.name)
+                    val f = File(d, META_NAME)
+                    // 겉장이 없으면 **아직 안 끝난 기록**이다. 깨진 것과 다르다.
+                    if (!f.isFile) null else decodeSessionMeta(f.readText()).getOrThrow()
+                }
+            }
+            if (r.isFailure) {
                 broken++
                 continue
             }
-            val f = File(d, META_NAME)
-            // 겉장이 없으면 **아직 안 끝난 기록**이다. 깨진 것과 다르다.
-            if (!f.isFile) continue
-            val r = runCatching { decodeSessionMeta(f.readText()).getOrThrow() }
-            if (r.isSuccess) ok += r.getOrThrow() else broken++
+            val meta = r.getOrThrow() ?: continue
+            ok += meta
         }
         ok.sortByDescending { it.startedAtEpochMs }
         return SessionList(ok, broken)
@@ -256,9 +319,14 @@ class SessionStore(private val root: File) {
      * 파일 하나만 지우면 목록에 안 뜨는 채로 자리만 차지한다.
      */
     fun delete(id: String): Result<Unit> = runCatching {
-        val dir = dirOf(id)
-        if (!dir.exists()) return@runCatching
-        if (!dir.deleteRecursively()) throw IOException("기록을 지우지 못했습니다: $id")
+        // **지우는 것도 잠금 안에서**(독립 검토 R5-01). 다시 분석이 게시하는
+        // 도중에 폴더를 치우면 반쪽만 남는다.
+        withSession(id) {
+            val dir = dirOf(id)
+            if (dir.exists() && !dir.deleteRecursively()) {
+                throw IOException("기록을 지우지 못했습니다: $id")
+            }
+        }
     }
 
     /**
@@ -274,8 +342,12 @@ class SessionStore(private val root: File) {
         var removed = 0
         for (d in dirs) {
             if (d.name == keepId) continue
-            if (File(d, META_NAME).isFile) continue
-            if (d.deleteRecursively()) removed++
+            // **겉장 확인과 지우기 사이를 벌리지 않는다**(독립 검토 R5-01).
+            // 그 틈에 측정이 끝나 겉장이 쓰이면 **막 끝낸 기록을 지운다.**
+            val gone = withSession(d.name) {
+                if (File(d, META_NAME).isFile) false else d.deleteRecursively()
+            }
+            if (gone) removed++
         }
         return removed
     }

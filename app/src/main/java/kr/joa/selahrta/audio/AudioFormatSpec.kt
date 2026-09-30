@@ -165,6 +165,18 @@ data class OpenedFormat(
                 "${effects.stillOn.joinToString(" · ")} 이(가) 켜진 채입니다. " +
                     "소리를 건드리고 있어 절대값을 믿기 어렵습니다."
 
+            // **열렸다는 것과 가공이 없다는 것은 다른 말이다**(독립 검토 R5-03).
+            //
+            // USB 에서는 폰이 지원한다고 알리지 않아도 시도해 본다. 그리고
+            // 실제로 열린다 — 실기기에서 `상태=3 읽음=81920` 까지 봤다.
+            // 그러나 안드로이드 문서는 **지원하지 않으면 보통 입력처럼
+            // 동작할 수 있다**고 적고 있다. 그러니 이때는 **단정하지 않는다.**
+            audioSource.trustworthy && !unprocessedSupported ->
+                "가공 없는 입력(UNPROCESSED)으로 **열렸지만**, 이 기기는 그것을 " +
+                    "지원한다고 알리지 않았습니다. 열렸다는 것이 가공이 없다는 " +
+                    "뜻은 아닙니다 — 실제로 가공이 도는지는 교정 마법사의 " +
+                    "입력·DSP 점검으로만 가립니다."
+
             audioSource.trustworthy ->
                 "가공 없는 입력(UNPROCESSED)으로 재고 있습니다."
 
@@ -187,6 +199,9 @@ data class OpenedFormat(
         get() = when {
             effects.stillOn.isNotEmpty() ->
                 "${effects.stillOn.joinToString(" · ")} 이(가) 켜진 채입니다."
+
+            audioSource.trustworthy && !unprocessedSupported ->
+                "가공 없는 입력으로 열렸지만 기기가 지원한다고 알리지는 않았습니다."
 
             audioSource.trustworthy ->
                 "가공 없는 입력(UNPROCESSED)으로 재고 있습니다."

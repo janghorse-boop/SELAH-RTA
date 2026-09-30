@@ -1,0 +1,27 @@
+--- a/dsp/src/main/kotlin/kr/joa/selahrta/dsp/DspProbe.kt
++++ b/dsp/src/main/kotlin/kr/joa/selahrta/dsp/DspProbe.kt
+@@ -205,8 +205,11 @@
+     //
+     // 앞창도 뒤창도 바닥값이면 흔들림이 **정확히 0** 이라, 아무것도 안
+     // 들어왔는데 통과한다. 실제로 USB 인터페이스에서 그렇게 나왔다.
+-    val loudest = frames.maxOf { broadbandDb(it) }
+-    if (loudest < policy.silenceFloorDbfs) {
++    val comparisonLevel = minOf(
++        medianOf(frames.take(w).map { broadbandDb(it) }),
++        medianOf(frames.takeLast(w).map { broadbandDb(it) }),
++    )
++    if (comparisonLevel < policy.silenceFloorDbfs) {
+         return DspProbeResult(
+             verdict = DspVerdict.Silent,
+             broadbandDriftDb = null,
+@@ -216,8 +219,8 @@
+             bandsConsidered = 0,
+             framesUsed = frames.size,
+             reasonsKo = listOf(
+-                "재는 동안 소리가 들어오지 않았습니다(가장 큰 값 " +
+-                    "%.1f dBFS). 무엇이 도는지 알 수 없어 판정하지 않습니다 — ".format(loudest) +
++                "비교 창에 충분한 소리가 들어오지 않았습니다(가장 조용한 창의 중앙값 " +
++                    "%.1f dBFS). 무엇이 도는지 알 수 없어 판정하지 않습니다 — ".format(comparisonLevel) +
+                     "입력이 제대로 열렸는지, 소리가 실제로 나고 있는지 보십시오.",
+             ),
+         )

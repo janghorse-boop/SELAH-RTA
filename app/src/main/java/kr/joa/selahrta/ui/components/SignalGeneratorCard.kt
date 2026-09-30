@@ -74,6 +74,11 @@ fun SignalGeneratorCard(
     onLevel: (Double) -> Unit,
     onToneHz: (Double) -> Unit,
     onChannels: (SignalChannels) -> Unit,
+    /** 어디로 내보낼지 고른 것(독립 검토 R5-04). */
+    output: kr.joa.selahrta.audio.SignalOutput,
+    onOutput: (kr.joa.selahrta.audio.SignalOutput) -> Unit,
+    /** **실제로** 어디로 나갔는가. 안 틀고 있으면 null. */
+    routeKo: String?,
     onDismissNotice: () -> Unit,
     /** 소리를 켜 둔 채 RTA 화면으로 간다. 재생은 끊기지 않는다. */
     onMeasureInRta: () -> Unit,
@@ -163,6 +168,7 @@ fun SignalGeneratorCard(
         )
 
         ChannelPicker(channels, onChannels)
+        OutputPicker(output, routeKo, onOutput)
 
         // 신호 목록. **주파수를 쓰는 둘은 따로 뺀다** — 슬라이더와
         // 입력칸을 함께 그려야 하고, 둘이 같은 주파수를 쓰므로 고르개를
@@ -198,6 +204,75 @@ fun SignalGeneratorCard(
  * 적지 않으면 폰으로 시험하고 「좌우가 같다」는 잘못된 결론을 얻는다 —
  * 그리고 그 결론으로 케이블을 안 본다.
  */
+/**
+ * **어디로 내보낼지 고르고, 실제로 어디로 나갔는지 본다**(독립 검토 R5-04).
+ *
+ * 예전에는 「USB 로 재면 폰 스피커」를 코드가 조용히 못박았다. 그러면
+ * **PA 로 신호를 넣고 USB 마이크로 재려던** 사람에게는 고장으로 보인다.
+ *
+ * 그리고 `setPreferredDevice` 는 **요청**이라 거절될 수 있는데, 거절되면
+ * 경고 로그 한 줄만 남았다 — 우회가 안 걸렸고 그때 입력은 무음이 되는데
+ * **화면에는 아무 표시도 없었다.** 그래서 실제 경로를 여기 적는다.
+ */
+@Composable
+private fun OutputPicker(
+    selected: kr.joa.selahrta.audio.SignalOutput,
+    routeKo: String?,
+    onPick: (kr.joa.selahrta.audio.SignalOutput) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("내보낼 곳", color = SelahColors.TextMuted, fontSize = 11.sp)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            for (o in kr.joa.selahrta.audio.SignalOutput.entries) {
+                val on = o == selected
+                Text(
+                    o.shortLabelKo,
+                    color = if (on) SelahColors.Accent else SelahColors.TextSecondary,
+                    fontSize = 11.sp,
+                    fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
+                    softWrap = false,
+                    modifier = Modifier
+                        .background(
+                            if (on) {
+                                SelahColors.Accent.copy(alpha = 0.16f)
+                            } else {
+                                SelahColors.SurfaceVariant
+                            },
+                            RoundedCornerShape(999.dp),
+                        )
+                        .border(
+                            1.dp,
+                            if (on) SelahColors.Accent else Color.Transparent,
+                            RoundedCornerShape(999.dp),
+                        )
+                        .clickable { onPick(o) }
+                        .padding(horizontal = 12.dp, vertical = 7.dp)
+                        .semantics { stateDescription = if (on) "선택됨" else "선택 안 됨" },
+                )
+            }
+        }
+        Text(
+            selected.helpKo,
+            color = SelahColors.TextMuted,
+            fontSize = 10.sp,
+            lineHeight = 14.sp,
+        )
+        // **요청이 아니라 결과를 적는다.** 고른 것과 다르면 그 말도 함께 온다.
+        if (routeKo != null) {
+            Text(
+                routeKo,
+                color = if (routeKo.contains("다릅니다") || routeKo.contains("거절")) {
+                    SelahColors.Warn
+                } else {
+                    SelahColors.TextSecondary
+                },
+                fontSize = 10.sp,
+                lineHeight = 14.sp,
+            )
+        }
+    }
+}
+
 @Composable
 private fun ChannelPicker(
     selected: SignalChannels,

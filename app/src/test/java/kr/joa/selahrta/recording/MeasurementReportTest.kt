@@ -101,7 +101,7 @@ class MeasurementReportTest {
         assertEquals("bottom", value(m, "마이크 자리"))
         assertEquals("22", value(m, "활성 마이크"))
         assertEquals(CaptureSource.VoiceRecognition.labelKo, value(m, "입력 경로"))
-        assertEquals("아니요", value(m, "가공 없는 입력 지원"))
+        assertEquals("아니요", value(m, "가공 없는 입력 지원(기기 알림)"))
         assertEquals("48000 Hz · Float", value(m, "격자"))
         assertEquals("1개(모노)", value(m, "채널"))
     }
@@ -131,7 +131,7 @@ class MeasurementReportTest {
     fun `옛 기록의 빈 칸은 기록 없음이다`() {
         val m = meta()
         assertEquals(NOT_RECORDED_KO, value(m, "입력 경로"))
-        assertEquals(NOT_RECORDED_KO, value(m, "가공 없는 입력 지원"))
+        assertEquals(NOT_RECORDED_KO, value(m, "가공 없는 입력 지원(기기 알림)"))
         assertEquals(NOT_RECORDED_KO, value(m, "신호 가공"))
         assertEquals(NOT_RECORDED_KO, value(m, "무엇에 맞췄나"))
     }
@@ -332,5 +332,70 @@ class MeasurementReportTest {
         assertEquals(1, back.schemaVersion)
         assertFalse("옛 기록에 조건이 있다고 말한다", back.conditions.recorded)
         assertEquals(NOT_RECORDED_KO, value(back, "입력 경로"))
+    }
+
+    // ── 5회차 검토(R5-03): 시도와 지원을 가른다 ───────────
+
+    /**
+     * **「가공 없는 입력 지원」은 기기가 스스로 알린 값이다.**
+     *
+     * USB 에서는 폰이 지원한다고 알리지 않아도 시도한다. 그런데 그
+     * **시도 여부**가 기록으로 흘러들어, 실기기에서 속성이 false 인데
+     * 보고서가 **「예」**라고 적었다:
+     *
+     * ```
+     * 기기 속성 SUPPORT_AUDIO_SOURCE_UNPROCESSED=false
+     * source=9(UNPROCESSED) 상태=3 읽음=81920 실제기기=UMC404HD
+     * ```
+     *
+     * 둘은 다른 사실이다 — **열렸다는 것이 가공이 없다는 뜻은 아니다.**
+     */
+    @Test
+    fun `지원은 기기가 알린 값으로 적는다`() {
+        val m = meta(
+            conditions = s23.copy(
+                audioSource = CaptureSource.Unprocessed,
+                unprocessedSupported = false,
+            ),
+        )
+        assertEquals("아니요", value(m, "가공 없는 입력 지원(기기 알림)"))
+        assertEquals("가공 없음 (UNPROCESSED)", value(m, "입력 경로"))
+    }
+
+    /** **지원을 안 알렸는데 그 경로로 열렸으면 그 사실을 따로 적는다.** */
+    @Test
+    fun `확인되지 않은 무가공은 그렇게 적는다`() {
+        val m = meta(
+            conditions = s23.copy(
+                audioSource = CaptureSource.Unprocessed,
+                unprocessedSupported = false,
+            ),
+        )
+        assertTrue(
+            value(m, "무가공 근거").contains("확인되지 않음"),
+        )
+    }
+
+    /** **아무 때나 붙이지 않는다.** 기기가 지원한다고 알렸으면 그 줄이 없다. */
+    @Test
+    fun `지원을 알린 경우에는 그 줄이 없다`() {
+        val m = meta(
+            conditions = s23.copy(
+                audioSource = CaptureSource.Unprocessed,
+                unprocessedSupported = true,
+            ),
+        )
+        assertTrue(
+            buildReport(m).flatMap { it.lines }.none { it.labelKo == "무가공 근거" },
+        )
+    }
+
+    /** 가공 없는 경로가 아니면 **그 줄을 붙일 까닭이 없다.** */
+    @Test
+    fun `가공 없는 경로가 아니면 그 줄이 없다`() {
+        assertTrue(
+            buildReport(meta(conditions = s23)).flatMap { it.lines }
+                .none { it.labelKo == "무가공 근거" },
+        )
     }
 }

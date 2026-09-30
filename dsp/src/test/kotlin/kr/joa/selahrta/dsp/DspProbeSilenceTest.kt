@@ -79,4 +79,81 @@ class DspProbeSilenceTest {
             probeResidualDsp(quiet, policy = DspProbePolicy(silenceFloorDbfs = -40.0)).verdict,
         )
     }
+
+    // ── 5회차 검토(R5-02)로 더한 것 ──────────────────────
+    //
+    // **재는 자리가 틀렸다.** 「전체 장 가운데 가장 큰 값」으로 갈랐는데,
+    // 판정이 보는 것은 **앞창과 뒤창뿐**이다. 그래서 두 창이 다 무음이어도
+    // **가운데 한 장만 크면 통과**했다:
+    //
+    // ```
+    // R5_TRANSIENT verdict=NoTimeVaryingFound verified=true drift=0.0 shape=0.0
+    // ```
+
+    /** 창 밖의 소리 한 장은 **판정의 근거가 아니다.** */
+    @Test
+    fun `가운데 한 장이 커도 비교 창이 무음이면 막는다`() {
+        val f = frames(60, SILENCE_DBFS).toMutableList()
+        f[30] = DoubleArray(ThirdOctave.BAND_COUNT) { -30.0 }
+        val r = probeResidualDsp(f)
+        assertEquals(DspVerdict.Silent, r.verdict)
+        assertTrue("창 밖 한 장으로 검증되면 안 된다", !r.verifiedBySignal)
+    }
+
+    /**
+     * **앞뒤 창 안에 있어도 한두 장으로는 못 산다.**
+     *
+     * 중앙값으로 모으므로 여덟 장 가운데 한 장만 커서는 바닥 그대로다.
+     * 문지방을 올려 가리는 대신 **재는 자리를 옳게 잡았다**는 것을 못박는다.
+     */
+    @Test
+    fun `앞뒤 창에 소수 transient 가 있어도 막는다`() {
+        val f = frames(60, SILENCE_DBFS).toMutableList()
+        f[1] = DoubleArray(ThirdOctave.BAND_COUNT) { -20.0 }
+        f[58] = DoubleArray(ThirdOctave.BAND_COUNT) { -20.0 }
+        val r = probeResidualDsp(f)
+        assertEquals(DspVerdict.Silent, r.verdict)
+        assertTrue(!r.verifiedBySignal)
+    }
+
+    /**
+     * **한쪽 창만 소리가 있으면 견줄 수 없다.**
+     *
+     * 뒤가 완전한 무음이면 「이득이 변했다」로도 읽히지만, 우리가 실제로
+     * 만난 자리는 **입력이 죽은 것**이었다(USB 동시 입출력). 그래서
+     * 사람에게 **입력을 보라**고 말한다 — 어느 쪽이든 **검증은 아니다.**
+     */
+    @Test
+    fun `한쪽 창만 소리가 있으면 막는다`() {
+        val f = (List(8) { DoubleArray(ThirdOctave.BAND_COUNT) { -40.0 } } +
+            frames(52, SILENCE_DBFS))
+        val r = probeResidualDsp(f)
+        assertEquals(DspVerdict.Silent, r.verdict)
+        assertTrue(!r.verifiedBySignal)
+    }
+
+    /** **아무거나 막지는 않는다.** 두 창에 꾸준히 소리가 있으면 판정한다. */
+    @Test
+    fun `두 창에 꾸준히 소리가 있으면 판정한다`() {
+        val r = probeResidualDsp(frames(60, -60.0))
+        assertNotEquals(DspVerdict.Silent, r.verdict)
+        assertTrue("꾸준한 신호는 검증으로 세야 한다", r.verifiedBySignal)
+    }
+
+    /** 잡음 바닥을 **줘도 안 줘도** 창 밖 한 장은 검증이 아니다. */
+    @Test
+    fun `잡음 바닥을 줘도 창 밖 한 장은 검증이 아니다`() {
+        val f = frames(60, SILENCE_DBFS).toMutableList()
+        f[30] = DoubleArray(ThirdOctave.BAND_COUNT) { -30.0 }
+        val withFloor = probeResidualDsp(f, noiseFloorDb = DoubleArray(ThirdOctave.BAND_COUNT) { SILENCE_DBFS })
+        assertTrue(!withFloor.verifiedBySignal)
+        assertTrue(!probeResidualDsp(f).verifiedBySignal)
+    }
+
+    /** 막을 때는 **어디가 조용했는지**를 말한다. 「소리가 없다」만으로는 못 고친다. */
+    @Test
+    fun `막는 까닭이 견주는 구간을 가리킨다`() {
+        val r = probeResidualDsp(frames(60, SILENCE_DBFS))
+        assertTrue("$r", r.reasonsKo.first().contains("견주는 구간"))
+    }
 }

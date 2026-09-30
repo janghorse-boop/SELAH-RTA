@@ -126,6 +126,7 @@ class A11yLabelsTest {
                 onSignalLevel = {},
                 onSignalToneHz = {},
                 onSignalChannels = {},
+                onSignalOutput = {},
                 onDismissSignalNotice = {},
                 onMeasureInRta = {},
             )

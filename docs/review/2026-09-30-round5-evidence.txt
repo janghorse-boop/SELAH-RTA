@@ -1,0 +1,8 @@
+Pinned aafd85db222947745ed543574cdf5cb6577f44a1
+Baseline DSP 638 + app 1093 = 1731; failure 0; skipped 0; debug build success
+Independent 3 tests: 2 failed, 1 passed
+R5_MEMO saveAcknowledged=true finalMemo=
+R5_TRANSIENT verdict=NoTimeVaryingFound verified=true drift=0.0 shape=0.0 bands=31
+R5_NOISE_CONTROL verdict=NotEnoughData verified=false
+Proposed patches: DSP tests=640 failures=0; assembleDebug success; git apply --check success
+No Android instrumentation, physical audio test, or lint this round; production unchanged

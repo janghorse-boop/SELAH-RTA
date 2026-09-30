@@ -601,6 +601,7 @@ fun SelahApp() {
                         onSignalLevel = vm::setSignalLevel,
                         onSignalToneHz = vm::setSignalToneHz,
                         onSignalChannels = vm::setSignalChannels,
+                        onSignalOutput = vm::setSignalOutput,
                         onDismissSignalNotice = vm::dismissSignalNotice,
                         // **소리는 그대로 두고 화면만 옮긴다.** 재생은
                         // 앱 전체가 함께 쓰는 ViewModel 이 들고 있으므로

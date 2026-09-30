@@ -201,12 +201,33 @@ fun probeResidualDsp(
     val bandCount = frames.first().size
     require(frames.all { it.size == bandCount }) { "장마다 밴드 수가 다르다" }
 
+    val head = frames.take(w)
+    val tail = frames.takeLast(w)
+
+    // **중앙값으로 모은다.** 문 닫히는 소리 한 장이 평균을 끌고 가면
+    // 그 자체가 「이득이 변했다」로 읽힌다([keepStableFrames] 와 같은 까닭).
+    val headBroadband = medianOf(head.map { broadbandDb(it) })
+    val tailBroadband = medianOf(tail.map { broadbandDb(it) })
+
     // **무음을 「깨끗하다」로 읽지 않는다**(2026-09-30).
     //
     // 앞창도 뒤창도 바닥값이면 흔들림이 **정확히 0** 이라, 아무것도 안
     // 들어왔는데 통과한다. 실제로 USB 인터페이스에서 그렇게 나왔다.
-    val loudest = frames.maxOf { broadbandDb(it) }
-    if (loudest < policy.silenceFloorDbfs) {
+    //
+    // **판정에 실제로 쓰는 두 창을 본다**(독립 검토 R5-02).
+    //
+    // 처음에는 「전체 장 가운데 가장 큰 값」으로 갈랐다. 그런데 판정이
+    // 보는 것은 **앞창과 뒤창뿐**이라, 두 창이 다 무음이어도 **가운데
+    // 한 장만 크면 통과했다.** 반례를 그대로 돌려 봤다:
+    //
+    // ```
+    // R5_TRANSIENT verdict=NoTimeVaryingFound verified=true drift=0.0 shape=0.0
+    // ```
+    //
+    // 문지방(`silenceFloorDbfs`)은 그대로 둔다. **문지방을 올려 반례를
+    // 가리는 것**과 **재는 자리를 옳게 잡는 것**은 다른 일이다.
+    val quietestWindow = minOf(headBroadband, tailBroadband)
+    if (quietestWindow < policy.silenceFloorDbfs) {
         return DspProbeResult(
             verdict = DspVerdict.Silent,
             broadbandDriftDb = null,
@@ -216,20 +237,15 @@ fun probeResidualDsp(
             bandsConsidered = 0,
             framesUsed = frames.size,
             reasonsKo = listOf(
-                "재는 동안 소리가 들어오지 않았습니다(가장 큰 값 " +
-                    "%.1f dBFS). 무엇이 도는지 알 수 없어 판정하지 않습니다 — ".format(loudest) +
-                    "입력이 제대로 열렸는지, 소리가 실제로 나고 있는지 보십시오.",
+                "견주는 구간에 소리가 들어오지 않았습니다(조용한 쪽 창의 중앙값 " +
+                    "%.1f dBFS). 무엇이 도는지 알 수 없어 판정하지 않습니다 — ".format(
+                        quietestWindow,
+                    ) +
+                    "입력이 제대로 열렸는지, 소리가 재는 내내 나고 있었는지 보십시오.",
             ),
         )
     }
 
-    val head = frames.take(w)
-    val tail = frames.takeLast(w)
-
-    // **중앙값으로 모은다.** 문 닫히는 소리 한 장이 평균을 끌고 가면
-    // 그 자체가 「이득이 변했다」로 읽힌다([keepStableFrames] 와 같은 까닭).
-    val headBroadband = medianOf(head.map { broadbandDb(it) })
-    val tailBroadband = medianOf(tail.map { broadbandDb(it) })
     val broadbandDrift = tailBroadband - headBroadband
 
     // 어느 대역을 볼 것인가 — 묻힌 대역은 뺀다.
