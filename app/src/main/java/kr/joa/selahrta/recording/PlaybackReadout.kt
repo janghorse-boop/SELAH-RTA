@@ -75,6 +75,17 @@ fun playbackValuesAt(
     // **행 번호로 찾지 않고 자리로 찾는다.** 놓친 구간이 있으면 행
     // 번호와 자리가 어긋난다.
     val row = rows.getOrNull(index) ?: return null
+    return rowValues(meta, row)
+}
+
+/**
+ * 행 하나의 값. **보정을 거는 자리는 여기 하나뿐이다.**
+ *
+ * 그래프([timelineSeries])도 이 함수를 쓴다. 규칙이 두 벌이 되면 그림과
+ * 숫자가 **조용히 갈린다** — 한쪽만 epoch 을 따르면 보정이 바뀐 뒤로
+ * 곡선과 읽는 값이 어긋난다.
+ */
+internal fun rowValues(meta: SessionMeta, row: TimelineRow): PlaybackValues {
     val offset = offsetFor(meta, row.currentEpoch)
     val rowMs = row.rowIndex.toLong() * TimelineFormat.ROW_MILLIS
 
