@@ -87,9 +87,13 @@ object ReportPdf {
         val bar = Paint().apply { color = WARN_BAR; isAntiAlias = true }
         val rule = Paint().apply { color = FAINT; strokeWidth = 0.5f; isAntiAlias = true }
 
+        val warnings = reportWarnings(meta)
         val pages = ReportPageLayout.paginate(
             titleKo = TITLE_KO,
-            warningsKo = reportWarningsKo(meta),
+            // **한 자리에서 함께 만든 짝을 그대로 넘긴다** — 갈라서
+            // 넘기면 하나만 고쳐져 어긋난다.
+            warnings = warnings,
+
             sections = buildReport(meta),
             metrics = metrics,
             // **재는 붓과 그리는 붓이 같아야 한다.** 다른 굵기로 재면

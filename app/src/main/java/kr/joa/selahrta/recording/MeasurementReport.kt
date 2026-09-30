@@ -199,33 +199,70 @@ private fun clippedKo(m: SessionMeta): String = when (val n = m.clippedRows) {
  * **경고가 있으면 맨 앞에 둔다.** 아래로 밀려 내려가면 숫자를 먼저
  * 읽고 넘어간다.
  */
-fun reportWarningsKo(m: SessionMeta): List<String> = buildList {
+/**
+ * 경고 하나 — **전문과 핵심 한 줄**을 함께 지닌다.
+ *
+ * ## 왜 짝으로 두나
+ *
+ * 종이에서 경고는 **쪽마다 되풀이**해야 한다(PND-05). 그런데 전문을
+ * 모든 쪽에 되풀이하면 긴 경고가 본문 자리를 먹는다 — 예전에는 그럴 때
+ * **앞쪽만 남기고 잘랐고**, 그러면 전문이 **어느 쪽에도 안 남았다.**
+ *
+ * 그래서 **첫 쪽에는 전문, 그다음 쪽부터는 핵심 한 줄**로 간다. 둘을
+ * 따로 만드는 함수 두 개로 두면 **하나만 고쳐져 어긋난다** — 실제로
+ * 이 저장소가 여러 번 데인 모양이라 한 자리에서 함께 만든다.
+ */
+data class ReportWarning(
+    /** 종이 첫 쪽·화면에 그대로 나가는 글. */
+    val fullKo: String,
+    /** 둘째 쪽부터 되풀이할 한 줄. **뜻은 줄이지 않는다.** */
+    val coreKo: String,
+)
+
+/** 전문만. 화면과 CSV 가 쓴다. */
+fun reportWarningsKo(m: SessionMeta): List<String> = reportWarnings(m).map { it.fullKo }
+
+fun reportWarnings(m: SessionMeta): List<ReportWarning> = buildList {
     when (m.conditions.calibrationState) {
         CalibrationState.Uncalibrated, null ->
             if (m.referenceOnly) {
                 add(
-                    "미보정으로 쟀습니다. 아래 dB 값은 참고용이며 실제 음압과 " +
-                        "10dB 넘게 다를 수 있습니다.",
+                    ReportWarning(
+                        fullKo = "미보정으로 쟀습니다. 아래 dB 값은 참고용이며 실제 음압과 " +
+                            "10dB 넘게 다를 수 있습니다.",
+                        coreKo = "미보정 — 아래 dB 값은 참고용입니다.",
+                    ),
                 )
             }
 
         CalibrationState.FactoryDefault ->
             add(
-                "이 기종의 기본값으로 쟀습니다. 개발자가 같은 기종에서 재어 앱에 " +
-                    "실어 둔 값이라 짐작보다는 가깝지만, 이 기기를 잰 값은 아닙니다.",
+                ReportWarning(
+                    fullKo = "이 기종의 기본값으로 쟀습니다. 개발자가 같은 기종에서 재어 앱에 " +
+                        "실어 둔 값이라 짐작보다는 가깝지만, 이 기기를 잰 값은 아닙니다.",
+                    coreKo = "기종 기본값 — 이 기기를 잰 값이 아닙니다.",
+                ),
             )
 
         else -> Unit
     }
-    add(m.conditions.trustLineKo())
+    add(ReportWarning(m.conditions.trustLineKo(), m.conditions.trustCoreKo()))
     if (m.droppedPackets > 0) {
-        add("소리 조각 ${m.droppedPackets}개를 놓쳤습니다. 그 구간의 값은 비어 있습니다.")
+        add(
+            ReportWarning(
+                fullKo = "소리 조각 ${m.droppedPackets}개를 놓쳤습니다. 그 구간의 값은 비어 있습니다.",
+                coreKo = "소리 조각 ${m.droppedPackets}개 놓침 — 그 구간은 비어 있습니다.",
+            ),
+        )
     }
     val clipped = m.clippedRows ?: 0
     if (clipped > 0) {
         add(
-            "입력이 찌그러진 구간이 ${clipped}행 있습니다. 그 구간의 숫자는 " +
-                "실제보다 낮습니다 — 얼마나 낮은지는 알 수 없습니다.",
+            ReportWarning(
+                fullKo = "입력이 찌그러진 구간이 ${clipped}행 있습니다. 그 구간의 숫자는 " +
+                    "실제보다 낮습니다 — 얼마나 낮은지는 알 수 없습니다.",
+                coreKo = "찌그러진 구간 ${clipped}행 — 그 숫자는 실제보다 낮습니다.",
+            ),
         )
     }
 }

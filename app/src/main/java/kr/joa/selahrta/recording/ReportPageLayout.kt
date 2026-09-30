@@ -27,7 +27,16 @@ object ReportPageLayout {
      */
     fun paginate(
         titleKo: String,
-        warningsKo: List<String>,
+        /**
+         * 경고들. **전문과 요약을 짝으로 받는다.**
+         *
+         * 처음에는 목록 둘(`warningsKo`·`warningCoresKo`)로 받고 개수가
+         * 같은지 검사했다. 그런데 **부르는 쪽이 하나를 안 넘겨도 조용히
+         * 돌았다** — 변이로 확인해 보니 요약을 아예 안 넘기는 실수를
+         * **아무 시험도 잡지 못했다.** 검사보다 **못 틀리게 만드는 편**이
+         * 낫다(독립 검토 2회차 잔여 권고).
+         */
+        warnings: List<ReportWarning>,
         sections: List<ReportSection>,
         metrics: ReportMetrics = ReportMetrics(),
         wrap: (String, Int) -> List<String>,
@@ -44,22 +53,34 @@ object ReportPageLayout {
         // 통째로 떨어져 나간다** — 「미보정이라 참고값」이라는 말이 없는
         // 숫자 한 장이 된다. 종이는 한 장씩 돌아다닌다.
         //
+        // **첫 쪽에는 전문, 그다음부터는 핵심 한 줄**(독립 검토 2회차
+        // 잔여 권고).
+        //
+        // 예전에는 전문을 **모든 쪽에** 되풀이하고, 종이 절반을 넘기면
+        // **앞쪽만 남기고 잘랐다.** 그러면 긴 경고의 뒷부분이 **어느
+        // 쪽에도 안 남는다** — 되풀이하려다 정작 전문을 잃는 셈이다.
+        //
+        // 이제 전문은 **첫 쪽에 온전히** 남고(넘치면 다음 쪽으로 이어
+        // 적는다), 그 뒤 쪽에는 **뜻을 줄이지 않은 한 줄**이 선다.
+        //
         // **미리 잘라 둔다.** 쪽을 넘길 때마다 다시 줄바꿈하면 같은 일을
         // 쪽수만큼 되풀이한다.
         // **들여쓴 만큼 좁은 폭으로 끊는다.** 전체 폭으로 끊고 들여 쓰면
         // 그만큼 오른쪽으로 삐져나가 잘린다.
-        val warnLines = warningsKo.flatMap { wrap(it, metrics.warningWidthPt) }
-            // 경고가 종이의 절반을 넘기면 본문이 들어갈 자리가 없다.
-            // 그럴 때는 **앞쪽부터 남기고** 잘렸다고 적는다 — 잘린 줄
-            // 모르고 「이게 전부」라고 읽는 것이 더 나쁘다.
+        val fullLines = warnings.flatMap { wrap(it.fullKo, metrics.warningWidthPt) }
+        val coreLines = warnings.flatMap { wrap(it.coreKo, metrics.warningWidthPt) }
+            // 되풀이하는 쪽은 **본문이 주인**이다. 요약이 종이 절반을
+            // 넘기면 본문이 들어갈 자리가 없으므로 그때는 줄인다 —
+            // **전문은 첫 쪽에 온전히 있으므로 잃는 것이 없다.**
             .let { lines ->
                 val room = ((bottom - metrics.marginPt) / 2) / metrics.warningLineHeightPt
-                if (lines.size <= room) lines else lines.take(room - 1) + "(경고가 더 있습니다)"
+                if (lines.size <= room) lines else lines.take(room - 1) + "(경고 전문은 1쪽에)"
             }
 
-        fun seedWarnings() {
-            if (warnLines.isEmpty()) return
-            warnLines.forEach { line ->
+        /** 되풀이용. 둘째 쪽부터 머리에 선다. */
+        fun seedCores() {
+            if (coreLines.isEmpty()) return
+            coreLines.forEach { line ->
                 y += metrics.warningLineHeightPt
                 current += PlacedItem(ReportItem.Warning(line), y)
             }
@@ -70,7 +91,7 @@ object ReportPageLayout {
             pages += current
             current = mutableListOf()
             y = metrics.marginPt
-            seedWarnings()
+            seedCores()
         }
 
         /**
@@ -87,7 +108,26 @@ object ReportPageLayout {
 
         place(ReportItem.Heading(titleKo), metrics.headingHeightPt)
         y += metrics.headingGapPt
-        seedWarnings()
+
+        // **첫 쪽의 전문은 자르지 않는다.** 넘치면 쪽을 넘겨 이어 적는다 —
+        // 그래야 전문이 **어딘가에는 온전히** 남는다. 이어진 쪽 머리에
+        // 요약을 또 세우면 같은 말이 두 번이라 그동안은 세우지 않는다.
+        fun newPageInPreamble() {
+            pages += current
+            current = mutableListOf()
+            y = metrics.marginPt
+        }
+        fullLines.forEach { line ->
+            if (y + metrics.warningLineHeightPt > bottom && current.isNotEmpty()) {
+                newPageInPreamble()
+            }
+            y += metrics.warningLineHeightPt
+            current += PlacedItem(ReportItem.Warning(line), y)
+        }
+        if (fullLines.isNotEmpty()) y += metrics.warningGapPt
+        // **여기서 쪽을 넘기지 않는다.** 아래 `place` 가 묶음 제목과 첫
+        // 줄이 함께 들어가는지 이미 본다 — 같은 검사를 하나 더 두었다가
+        // **변이로 지워도 아무 시험이 안 잡히는** 죽은 줄이 되었다.
 
         sections.forEach { section ->
             // 제목과 **첫 줄**이 같은 쪽에 함께 들어가야 앉힌다.

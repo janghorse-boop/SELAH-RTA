@@ -20,7 +20,7 @@ class PendingPdfTest {
         val paint = Paint().apply { textSize = 10f; typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL) }
         val wrap = ReportPdf.javaClass.getDeclaredMethod("wrap", Paint::class.java,
             String::class.java, Int::class.javaPrimitiveType).apply { isAccessible = true }
-        val pages = ReportPageLayout.paginate(ReportPdf.TITLE_KO, reportWarningsKo(meta), buildReport(meta)) { text, width ->
+        val pages = ReportPageLayout.paginate(ReportPdf.TITLE_KO, reportWarnings(meta), buildReport(meta)) { text, width ->
             @Suppress("UNCHECKED_CAST")
             (wrap.invoke(ReportPdf, paint, text, width) as List<String>)
         }
