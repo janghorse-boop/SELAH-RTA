@@ -18,6 +18,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalTextStyle
 import kr.joa.selahrta.recording.MEMO_MAX
 import androidx.compose.material3.Text
@@ -74,6 +75,17 @@ fun HistoryScreen(
     onShareAudio: (SessionMeta) -> Unit,
     /** 기록에 메모를 적는다(명세 12장). */
     onMemo: (String, String) -> Unit,
+    /**
+     * 지금 설정으로 다시 분석한다(명세 Recording-E).
+     *
+     * **기본값을 두지 않는다.** 두었더니 `SelahApp` 에서 이 줄을
+     * 빠뜨려도 **조용히 컴파일되고 단추만 아무 일도 안 했다**(변이로
+     * 확인). 그 한 줄은 시험이 닿지 않는 자리라, **빠뜨리면 컴파일이
+     * 막히게** 하는 편이 낫다.
+     */
+    onReanalyze: (SessionMeta) -> Unit,
+    /** 다시 분석하는 중의 진행(0~1). 아니면 null. */
+    reanalyzeProgress: Float?,
     /** 열어 본 기록의 행들. 아직 못 읽었으면 비어 있다. */
     rows: List<kr.joa.selahrta.recording.TimelineRow> = emptyList(),
 ) {
@@ -107,6 +119,8 @@ fun HistoryScreen(
                 onShareAudio = onShareAudio,
                 onMemo = onMemo,
                 rows = rows,
+                onReanalyze = onReanalyze,
+                reanalyzeProgress = reanalyzeProgress,
             )
         }
     }
@@ -236,6 +250,8 @@ private fun SessionDetail(
     onShareAudio: (SessionMeta) -> Unit,
     onMemo: (String, String) -> Unit,
     rows: List<kr.joa.selahrta.recording.TimelineRow>,
+    onReanalyze: (SessionMeta) -> Unit,
+    reanalyzeProgress: Float?,
 ) {
     var confirmDelete by remember { mutableStateOf(false) }
     var playMs by remember(m.id) { mutableStateOf(0) }
@@ -285,6 +301,12 @@ private fun SessionDetail(
         // 시각으로 묶어야 「이 자리가 그 자리」라고 말할 수 있다.
         PlaybackReadout(m, rows, playMs)
     }
+
+    // **다시 분석은 소리 바로 아래에 둔다**(명세 Recording-E).
+    //
+    // 소리를 들어 보고 「이거 보정 전에 잰 건데」가 떠오르는 자리가
+    // 여기다. 리포트 아래에 묻어 두면 그때는 이미 지나쳐 있다.
+    m.audio?.let { ReanalyzeCard(m, onReanalyze, reanalyzeProgress) }
 
     // **리포트 위에 둔다.** 적으려고 들어왔다가 표를 다 지나쳐야
     // 나오면 안 적게 된다.
@@ -419,6 +441,81 @@ private fun MemoCard(m: SessionMeta, onMemo: (String, String) -> Unit) {
                 TextButton(onClick = { onMemo(m.id, text) }) {
                     Text("저장", color = SelahColors.Accent, fontSize = 13.sp)
                 }
+            }
+        }
+    }
+}
+
+/**
+ * **지금 설정으로 다시 분석한다**(명세 Recording-E).
+ *
+ * ## 무엇을 적어 두어야 하나
+ *
+ * 다시 분석하면 **화면의 숫자가 바뀐다.** 그 사실을 미리 말하지 않으면
+ * 「왜 어제와 다르지」가 된다. 그리고 **소리와 처음 잰 값은 그대로**
+ * 라는 것도 함께 말해야 누를 수 있다 — 되돌릴 수 없다고 생각하면
+ * 아무도 안 누른다.
+ */
+@Composable
+private fun ReanalyzeCard(
+    m: SessionMeta,
+    onReanalyze: (SessionMeta) -> Unit,
+    progress: Float?,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(bottom = 10.dp)
+            .background(SelahColors.SurfaceVariant, RoundedCornerShape(12.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            "다시 분석",
+            color = SelahColors.TextMuted,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 1.sp,
+        )
+
+        // **이미 다시 분석한 기록이면 그렇게 적는다.** 아래 숫자가 잰
+        // 그날의 것이 아니라는 뜻이라, 견줄 때 사람이 알아야 한다.
+        m.reanalyzedAtEpochMs?.let { at ->
+            Text(
+                "${localTime(at)} 에 다시 분석했습니다. " +
+                    "아래 숫자는 그때의 보정으로 낸 것입니다.",
+                color = SelahColors.TextSecondary,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+            )
+        }
+
+        Text(
+            "지금 걸린 보정·곡선·가중치로 이 소리를 다시 셈합니다. " +
+                "소리와 처음 잰 값은 그대로 남습니다.",
+            color = SelahColors.TextSecondary,
+            fontSize = 11.sp,
+            lineHeight = 16.sp,
+        )
+
+        if (progress != null) {
+            LinearProgressIndicator(
+                progress = { progress },
+                modifier = Modifier.fillMaxWidth(),
+                color = SelahColors.Accent,
+                trackColor = SelahColors.Outline,
+            )
+            Text(
+                "다시 셈하는 중… ${(progress * 100).toInt()}%",
+                color = SelahColors.TextMuted,
+                fontSize = 11.sp,
+            )
+        } else {
+            OutlinedButton(
+                onClick = { onReanalyze(m) },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("지금 설정으로 다시 분석", fontSize = 13.sp)
             }
         }
     }
