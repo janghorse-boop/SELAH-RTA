@@ -49,6 +49,6 @@ class SignalMiniBarRuleTest {
     /** 설정 탭은 [ViewMode] 가 없다(`screen = null`). 거기서도 보여야 한다. */
     @Test
     fun `설정 탭에서도 보인다`() {
-        assertTrue(signalMiniBarVisible(TestSignal.Sine1k, null))
+        assertTrue(signalMiniBarVisible(TestSignal.Custom, null))
     }
 }

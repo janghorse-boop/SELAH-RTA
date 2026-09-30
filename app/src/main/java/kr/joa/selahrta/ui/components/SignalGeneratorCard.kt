@@ -51,6 +51,9 @@ import kr.joa.selahrta.audio.MIN_TONE_HZ
 import kr.joa.selahrta.audio.SignalChannels
 import kr.joa.selahrta.audio.TestSignal
 import kr.joa.selahrta.ui.theme.SelahColors
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.height
+import kr.joa.selahrta.dsp.BandNoiseFilter
 
 /**
  * 시험 신호 발생기(명세 16장).
@@ -92,39 +95,51 @@ fun SignalGeneratorCard(
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text("테스트 신호 송출", color = SelahColors.TextPrimary, fontSize = 13.sp)
+        // **머리글 줄은 높이가 늘 같다**(2026-10-01 담당자 지적: 「재생
+        // 버튼을 누르면 박스가 살짝 이동한다」).
+        //
+        // 「RTA에서 재기」는 **틀고 있을 때만** 뜬다. 그것을 제 줄에 두었더니
+        // 나타나는 순간 아래가 통째로 밀렸다 — 폰에서 재 보니 **210px**
+        // 이었다(`세기` 줄이 y 893 → 1103). 누른 단추가 손가락 아래에서
+        // 움직이는 셈이라, 두 번 누르게 된다.
+        //
+        // 그래서 **제목 줄 오른쪽**에 두고 그 줄의 높이를 못박는다. 뜨든
+        // 안 뜨든 줄 높이가 같으니 아래는 꿈쩍도 안 한다.
+        Row(
+            Modifier.fillMaxWidth().height(HEADER_ROW_HEIGHT),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("테스트 신호 송출", color = SelahColors.TextPrimary, fontSize = 13.sp)
+            // **틀어 놓고 바로 재러 간다**(지시서 §1).
+            //
+            // 소리는 화면을 넘어도 이어진다 — 재생은 앱 전체가 함께 쓰는
+            // `CaptureViewModel` 이 들고 있다. 그런데 도구 → 분석 → RTA 로
+            // 손가락을 세 번 옮겨야 하고, **그 사이에 끊길까 봐 사람이 먼저
+            // 멈춘다.** 한 걸음으로 만들면 그럴 까닭이 없어진다.
+            if (playing != null) {
+                TextButton(
+                    onClick = onMeasureInRta,
+                    modifier = Modifier.semantics { contentDescription = "RTA에서 재기" },
+                ) {
+                    Text(
+                        "RTA에서 재기 →",
+                        color = SelahColors.Accent,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        softWrap = false,
+                    )
+                }
+            }
+        }
         Text(
             "폰이 두 대면 한 대가 내보내고 한 대가 잽니다. 한 대뿐이어도 " +
-                "스피커 소리가 제 마이크로 돌아오므로 하울링 탐지를 확인할 수 있습니다.",
+                "스피커 소리가 제 마이크로 돌아오므로 하울링 탐지를 확인할 수 " +
+                "있습니다. 틀어 둔 소리는 다른 화면으로 가도 그대로 납니다.",
             color = SelahColors.TextMuted,
             fontSize = 10.sp,
             lineHeight = 14.sp,
         )
-
-        // **틀어 놓고 바로 재러 간다**(지시서 §1).
-        //
-        // 소리는 화면을 넘어도 이어진다 — 재생은 앱 전체가 함께 쓰는
-        // `CaptureViewModel` 이 들고 있다. 그런데 지금은 도구 → 분석 →
-        // RTA 로 손가락을 세 번 옮겨야 하고, **그 사이에 끊길까 봐 사람이
-        // 먼저 멈춘다.** 한 걸음으로 만들면 그럴 까닭이 없어진다.
-        if (playing != null) {
-            TextButton(
-                onClick = onMeasureInRta,
-                modifier = Modifier.semantics { contentDescription = "RTA에서 재기" },
-            ) {
-                Text(
-                    "RTA에서 재기 →",
-                    color = SelahColors.Accent,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                )
-                Text(
-                    "  소리는 그대로 납니다",
-                    color = SelahColors.TextMuted,
-                    fontSize = 10.sp,
-                )
-            }
-        }
 
         // **세기는 이어진 고르개다**(2026-09-24 담당자 지시). 작게·보통·크게
         // 셋뿐이던 때는 PA 에 물렸을 때 「보통은 크고 작게는 안 들리는」
@@ -170,13 +185,32 @@ fun SignalGeneratorCard(
         ChannelPicker(channels, onChannels)
         OutputPicker(output, routeKo, onOutput)
 
-        // 신호 목록. **주파수를 쓰는 둘은 따로 뺀다** — 슬라이더와
-        // 입력칸을 함께 그려야 하고, 둘이 같은 주파수를 쓰므로 고르개를
-        // 두 번 그릴 까닭이 없다.
+        // 신호 목록 — **차례가 지시받은 그대로다**(2026-10-01):
+        // 핑크 · 화이트 · 스윕 · **1/3 옥타브 대역** · **주파수 지정**.
         for (s in TestSignal.entries) {
             if (s.usesPickedHz) continue
             SignalRow(s, s == playing, onPlay, onStop)
         }
+
+        // **대역은 한 줄로 둔다.** 고르개(슬라이더·입력칸)는 아래 상자에만
+        // 있고, 이 줄은 **그 주파수를 따라간다** — 같은 고르개를 두 번
+        // 그리면 두 값이 어긋날 자리가 생긴다.
+        //
+        // 실제로 나가는 것은 **가장 가까운 1/3 옥타브 호칭 중심**이므로
+        // (EQ 눈금과 같은 자리라야 쓸모가 있다) 그 값을 적어 준다 —
+        // 3147Hz 를 가리켜도 3150Hz 대역이 나간다.
+        run {
+            val center = BandNoiseFilter.snapToBandCenter(toneHz)
+            SignalRow(
+                signal = TestSignal.Band,
+                playing = playing == TestSignal.Band,
+                onPlay = onPlay,
+                onStop = onStop,
+                noteKo = "%s %s 대역을 냅니다. 그래픽 EQ 를 만질 때 그 대역을 귀로 확인합니다"
+                    .format(formatHz(center), hzUnit(center)),
+            )
+        }
+
         PickedHzCard(
             playing = playing,
             toneHz = toneHz,
@@ -258,18 +292,26 @@ private fun OutputPicker(
             lineHeight = 14.sp,
         )
         // **요청이 아니라 결과를 적는다.** 고른 것과 다르면 그 말도 함께 온다.
-        if (routeKo != null) {
-            Text(
-                routeKo,
-                color = if (routeKo.contains("다릅니다") || routeKo.contains("거절")) {
-                    SelahColors.Warn
-                } else {
-                    SelahColors.TextSecondary
-                },
-                fontSize = 10.sp,
-                lineHeight = 14.sp,
-            )
-        }
+        //
+        // **자리는 늘 잡아 둔다**(2026-10-01 담당자 지적: 「재생 버튼을 누르면
+        // 박스가 살짝 이동한다」). 이 줄은 틀어야 값이 오는데, 없다가 생기면
+        // **아래가 통째로 밀린다** — 폰에서 재니 76px 이었다. 누른 단추가
+        // 손가락 아래에서 움직이면 두 번 누르게 된다.
+        //
+        // 비어 있어도 `minLines` 가 한 줄을 붙들어 둔다.
+        Text(
+            routeKo ?: "",
+            color = if (routeKo != null &&
+                (routeKo.contains("다릅니다") || routeKo.contains("거절"))
+            ) {
+                SelahColors.Warn
+            } else {
+                SelahColors.TextSecondary
+            },
+            fontSize = 10.sp,
+            lineHeight = 14.sp,
+            minLines = 1,
+        )
     }
 }
 
@@ -342,7 +384,10 @@ private fun PickedHzCard(
     onStop: () -> Unit,
 ) {
     var range by remember { mutableStateOf(ToneRange.All) }
-    val playingHere = playing?.usesPickedHz == true
+    // **이 상자는 순음만 맡는다.** 대역은 위의 제 줄이 밝힌다 —
+    // 둘이 같은 주파수를 쓴다고 해서 같은 자리에서 빛나면, 무엇이 나고
+    // 있는지 가려진다.
+    val playingHere = playing == TestSignal.Custom
 
     Column(
         Modifier
@@ -363,12 +408,42 @@ private fun PickedHzCard(
             .padding(horizontal = 12.dp, vertical = 9.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Text(
-            "주파수 지정",
-            color = if (playingHere) SelahColors.Accent else SelahColors.TextPrimary,
-            fontSize = 12.sp,
-            fontWeight = if (playingHere) FontWeight.SemiBold else FontWeight.Normal,
-        )
+        // **이 상자가 곧 순음이다**(2026-10-01 담당자 지시: 「주파수 지정이
+        // 곧 순음이기 때문에 … 재생버튼을 추가하고 아래 순음 박스도 삭제」).
+        //
+        // 예전에는 고르개만 여기 두고, 실제로 내보내는 줄(순음·대역)을 상자
+        // **아래**에 따로 뒀다. 그래서 주파수를 정해 놓고도 **어디를 눌러야
+        // 소리가 나는지**가 한 걸음 떨어져 있었다.
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "주파수 지정",
+                    color = if (playingHere) SelahColors.Accent else SelahColors.TextPrimary,
+                    fontSize = 12.sp,
+                    fontWeight = if (playingHere) FontWeight.SemiBold else FontWeight.Normal,
+                )
+                Text(
+                    "20Hz ~ 20kHz 순음. RTA 가 알려 준 하울링 자리를 그대로 넣어 봅니다",
+                    color = SelahColors.TextMuted,
+                    fontSize = 10.sp,
+                    lineHeight = 14.sp,
+                )
+            }
+            // 누를 자리를 넉넉히 둔다 — 표식만 18dp 라 손가락이 빗나간다.
+            Box(
+                Modifier
+                    .clickable {
+                        if (playingHere) onStop() else onPlay(TestSignal.Custom)
+                    }
+                    .padding(start = 8.dp, top = 4.dp, bottom = 4.dp),
+            ) {
+                PlayStopMark(playingHere)
+            }
+        }
         ToneHzField(toneHz, onToneHz)
         // **구간을 좁혀 미세하게 맞춘다**(담당자 지시 2026-09-29).
         //
@@ -406,40 +481,6 @@ private fun PickedHzCard(
                 color = SelahColors.TextMuted,
                 fontSize = 9.sp,
             )
-        }
-        // **같은 주파수를 두 가지로 낸다**(담당자 지시 2026-09-29).
-        //
-        // 순음은 그 한 점만 울린다 — 그 자리에 방의 공진이 있으면
-        // 엉뚱하게 크게 들린다. 1/3 옥타브 대역은 EQ 슬라이더 하나가
-        // 덮는 폭을 고르게 채워, **그 슬라이더를 만지며 듣는** 데 맞다.
-        //
-        // 고르개를 두 번 그리지 않는다 — 같은 주파수를 쓰므로.
-        for (s in TestSignal.entries.filter { it.usesPickedHz }) {
-            val on = playing == s
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clickable { if (on) onStop() else onPlay(s) }
-                    .padding(vertical = 2.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        if (s == TestSignal.Custom) "순음" else s.labelKo,
-                        color = if (on) SelahColors.Accent else SelahColors.TextPrimary,
-                        fontSize = 12.sp,
-                        fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
-                    )
-                    Text(
-                        s.noteKo,
-                        color = SelahColors.TextMuted,
-                        fontSize = 10.sp,
-                        lineHeight = 14.sp,
-                    )
-                }
-                PlayStopMark(on, Modifier.padding(start = 8.dp))
-            }
         }
     }
 }
@@ -675,6 +716,8 @@ private fun SignalRow(
     playing: Boolean,
     onPlay: (TestSignal) -> Unit,
     onStop: () -> Unit,
+    /** 설명을 갈아 끼운다. 대역 줄은 **지금 나갈 중심**을 적어야 한다. */
+    noteKo: String = signal.noteKo,
 ) {
     Row(
         Modifier
@@ -700,8 +743,17 @@ private fun SignalRow(
                 fontSize = 12.sp,
                 fontWeight = if (playing) FontWeight.SemiBold else FontWeight.Normal,
             )
-            Text(signal.noteKo, color = SelahColors.TextMuted, fontSize = 10.sp, lineHeight = 14.sp)
+            Text(noteKo, color = SelahColors.TextMuted, fontSize = 10.sp, lineHeight = 14.sp)
         }
         PlayStopMark(playing)
     }
 }
+
+/**
+ * 제목 줄의 높이 — **늘 같아야 한다.**
+ *
+ * 「RTA에서 재기」가 뜨고 지면서 아래가 밀리던 자리다(2026-10-01). 단추가
+ * 안 뜰 때도 이 높이를 지키므로, 무엇을 틀든 아래는 안 움직인다.
+ * 40dp 는 Material 의 글자 단추 최소 높이다 — 그보다 낮추면 단추가 잘린다.
+ */
+private val HEADER_ROW_HEIGHT = 40.dp

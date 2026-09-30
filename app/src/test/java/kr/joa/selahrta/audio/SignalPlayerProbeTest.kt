@@ -130,7 +130,7 @@ class SignalPlayerProbeTest {
 
         var startedCycles = 0
         repeat(6) {
-            if (p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE)) != SignalPlayer.NONE) {
+            if (p.start(SignalRequest(TestSignal.Custom, DEFAULT_AMPLITUDE)) != SignalPlayer.NONE) {
                 startedCycles++
                 check(sinks.last().entered.await(5, TimeUnit.SECONDS))
             }
@@ -162,7 +162,7 @@ class SignalPlayerProbeTest {
     fun `멈추는 동안 놓기가 겹치지 않는다`() {
         val race = StopRaceSink()
         val q = SignalPlayer(openSink = { race }, warn = {})
-        q.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
+        q.start(SignalRequest(TestSignal.Custom, DEFAULT_AMPLITUDE))
         check(race.entered.await(5, TimeUnit.SECONDS))
 
         val stopper = Thread { q.stop() }.apply { start() }
@@ -197,7 +197,7 @@ class SignalPlayerProbeTest {
     fun `적게 쓰이면 그만큼만 나아간다`() {
         val partial = PartialSink()
         val r = SignalPlayer(openSink = { partial }, warn = {})
-        r.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
+        r.start(SignalRequest(TestSignal.Custom, DEFAULT_AMPLITUDE))
         check(partial.secondEntered.await(5, TimeUnit.SECONDS))
 
         // 128 **칸**만 나갔다. 출력은 두 채널이라 칸 128 개는 프레임 64 개다

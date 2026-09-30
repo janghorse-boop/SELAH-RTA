@@ -98,7 +98,7 @@ class ReleaseCompletionTest {
 
         var starts = 0
         repeat(cap + 3) {
-            val id = p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
+            val id = p.start(SignalRequest(TestSignal.Custom, DEFAULT_AMPLITUDE))
             if (id == SignalPlayer.NONE) return@repeat
             starts++
             check(sinks.last().writing.await(10, TimeUnit.SECONDS))

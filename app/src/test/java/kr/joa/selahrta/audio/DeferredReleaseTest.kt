@@ -83,7 +83,7 @@ class DeferredReleaseTest {
         try {
             assertNotEquals(
                 SignalPlayer.NONE,
-                player.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE)),
+                player.start(SignalRequest(TestSignal.Custom, DEFAULT_AMPLITUDE)),
             )
             assertTrue("내보내는 쪽이 write 에 들어오지 않았다", enteredWrite.await(10, TimeUnit.SECONDS))
 

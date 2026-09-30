@@ -52,14 +52,6 @@ enum class TestSignal(val labelKo: String, val noteKo: String) {
      */
     Band("1/3 옥타브 대역", "고른 주파수의 1/3 옥타브 대역만 냅니다. 그래픽 EQ 를 만질 때 그 대역을 귀로 확인합니다"),
 
-    Sine125("125Hz", "저역. 웅웅거림을 보는 자리입니다"),
-    Sine250("250Hz", "저중역. 여기가 많으면 말소리가 탁해집니다"),
-    Sine500("500Hz", "중역"),
-    Sine1k("1kHz", "보정 기준 주파수입니다. 가중이 0dB 인 자리입니다"),
-    Sine2k("2kHz", "말소리 명료도 대역"),
-    Sine4k("4kHz", "하울링이 잘 생기는 자리입니다"),
-    Sine8k("8kHz", "고역. 치찰음 대역입니다"),
-
     /**
      * 사람이 직접 고르는 주파수(2026-09-24 담당자 지시).
      *
@@ -73,21 +65,16 @@ enum class TestSignal(val labelKo: String, val noteKo: String) {
     Custom("주파수 지정", "20Hz~20kHz 에서 직접 고릅니다. RTA 가 알려 준 하울링 자리를 그대로 넣어 봅니다"),
     ;
 
-    /** 정해진 순음이면 그 주파수. 잡음·스윕·[Custom] 이면 null. */
-    val toneHz: Double?
-        get() = when (this) {
-            Sine125 -> 125.0
-            Sine250 -> 250.0
-            Sine500 -> 500.0
-            Sine1k -> 1000.0
-            Sine2k -> 2000.0
-            Sine4k -> 4000.0
-            Sine8k -> 8000.0
-            else -> null
-        }
-
-    /** 순음인가. 화면이 묶어서 보이는 데 쓴다. [Custom] 도 순음이다. */
-    val isTone: Boolean get() = toneHz != null || this == Custom
+    /**
+     * 순음인가.
+     *
+     * **못박아 둔 순음은 없앴다**(2026-10-01 담당자 지시: 「125Hz부터
+     * 8kHz까지 송출 버튼은 삭제」). 125·250·…·8k 를 각각 단추로 두었는데
+     * **[Custom] 이 그 여덟을 다 덮는다** — 20Hz~20kHz 를 직접 적을 수
+     * 있으므로 125Hz 도 거기서 낸다. 여덟 줄이 화면을 채우는 만큼
+     * 정작 쓸 고르개가 아래로 밀려나 있었다.
+     */
+    val isTone: Boolean get() = this == Custom
 
     /**
      * 사람이 고른 주파수를 쓰는가.
@@ -133,13 +120,13 @@ data class SignalRequest(
      * 들리는」 자리에서 맞출 것이 없었다.
      */
     val amplitude: Double,
-    /** [TestSignal.Custom] 일 때 낼 주파수(Hz). 그 외에는 쓰지 않는다. */
+    /** [TestSignal.Custom]·[TestSignal.Band] 가 쓸 주파수(Hz). 그 외에는 안 쓴다. */
     val toneHz: Double = 1_000.0,
     val channels: SignalChannels = SignalChannels.Both,
 ) {
     /** 실제로 낼 주파수. 순음이 아니면 null. */
     val effectiveHz: Double?
-        get() = if (signal.usesPickedHz) toneHz else signal.toneHz
+        get() = if (signal.usesPickedHz) toneHz else null
 
     /** 잘라 낸 진폭. 내보내는 쪽은 이것만 본다. */
     val safeAmplitude: Double

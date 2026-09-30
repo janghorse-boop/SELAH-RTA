@@ -54,7 +54,7 @@ class SignalPlayerTest {
         val sink = FakeSink(failAtWrite = 3)
         val p = player(sink)
 
-        val gen = p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
+        val gen = p.start(SignalRequest(TestSignal.Custom, DEFAULT_AMPLITUDE))
         assertTrue("시작해야 한다", gen != SignalPlayer.NONE)
 
         assertTrue("알림이 와야 한다", awaitEnded())
@@ -85,7 +85,7 @@ class SignalPlayerTest {
         val sink = FakeSink(openFails = true)
         val p = player(sink)
 
-        assertEquals(SignalPlayer.NONE, p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE)))
+        assertEquals(SignalPlayer.NONE, p.start(SignalRequest(TestSignal.Custom, DEFAULT_AMPLITUDE)))
         assertNull(p.playing)
         assertTrue("열지 못한 것도 놓아야 한다", sink.released)
     }
@@ -95,7 +95,7 @@ class SignalPlayerTest {
     fun `사람이 멈추면 알리지 않는다`() {
         val sink = FakeSink()
         val p = player(sink)
-        p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
+        p.start(SignalRequest(TestSignal.Custom, DEFAULT_AMPLITUDE))
         Thread.sleep(50)
 
         p.stop()
@@ -131,13 +131,13 @@ class SignalPlayerTest {
         val b = FakeSink()
         val p = player(a, b)
 
-        val genA = p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
+        val genA = p.start(SignalRequest(TestSignal.Custom, DEFAULT_AMPLITUDE))
         Thread.sleep(30)
-        val genB = p.start(SignalRequest(TestSignal.Sine2k, DEFAULT_AMPLITUDE))
+        val genB = p.start(SignalRequest(TestSignal.Custom, DEFAULT_AMPLITUDE))
 
         assertTrue("세대가 달라야 한다", genA != genB)
         assertTrue("옛 것은 놓아야 한다", a.released)
-        assertEquals("새 것은 내보내는 중", TestSignal.Sine2k, p.playing)
+        assertEquals("새 것은 내보내는 중", TestSignal.Custom, p.playing)
         p.stop()
     }
 
@@ -155,7 +155,7 @@ class SignalPlayerTest {
         // stop() 이 막힌 write 를 풀어 주지 않는 기기를 흉내 낸다.
         val sink = FakeSink(blockAtWrite = 1, unblockOnStop = false)
         val p = player(sink)
-        p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
+        p.start(SignalRequest(TestSignal.Custom, DEFAULT_AMPLITUDE))
         assertTrue("막힌 자리에 들어가야 한다", sink.awaitEntered())
 
         p.stop() // join(500) 이 시간 초과된다
@@ -184,11 +184,11 @@ class SignalPlayerTest {
         val b = FakeSink()
         val p = player(a, b)
 
-        p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
+        p.start(SignalRequest(TestSignal.Custom, DEFAULT_AMPLITUDE))
         assertTrue(a.awaitEntered())
 
         p.stop() // A 는 막힌 채로 살아남는다(시간 초과)
-        p.start(SignalRequest(TestSignal.Sine2k, DEFAULT_AMPLITUDE)) // B 가 시작한다
+        p.start(SignalRequest(TestSignal.Custom, DEFAULT_AMPLITUDE)) // B 가 시작한다
 
         val beforeUnblock = a.writeCount.get()
         a.unblock() // 이제 A 가 깨어난다
@@ -199,7 +199,7 @@ class SignalPlayerTest {
             beforeUnblock,
             a.writeCount.get(),
         )
-        assertEquals("새 재생만 내보내는 중", TestSignal.Sine2k, p.playing)
+        assertEquals("새 재생만 내보내는 중", TestSignal.Custom, p.playing)
         p.stop()
     }
 
@@ -216,16 +216,16 @@ class SignalPlayerTest {
         val b = FakeSink()
         val p = player(a, b)
 
-        p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
+        p.start(SignalRequest(TestSignal.Custom, DEFAULT_AMPLITUDE))
         assertTrue(a.awaitEntered())
 
         p.stop()
-        val genB = p.start(SignalRequest(TestSignal.Sine2k, DEFAULT_AMPLITUDE))
+        val genB = p.start(SignalRequest(TestSignal.Custom, DEFAULT_AMPLITUDE))
 
         a.unblock() // A 의 write 가 오류로 돌아온다
         Thread.sleep(300)
 
-        assertEquals("새 재생이 그대로 살아 있어야 한다", TestSignal.Sine2k, p.playing)
+        assertEquals("새 재생이 그대로 살아 있어야 한다", TestSignal.Custom, p.playing)
         assertTrue("새 출력을 놓으면 안 된다", !b.released)
         assertEquals("옛 오류를 알리면 안 된다", 0, endedCount.get())
         assertNotNull(genB)
@@ -237,7 +237,7 @@ class SignalPlayerTest {
     fun `자원을 두 번 놓지 않는다`() {
         val sink = FakeSink(failAtWrite = 2)
         val p = player(sink)
-        p.start(SignalRequest(TestSignal.Sine1k, DEFAULT_AMPLITUDE))
+        p.start(SignalRequest(TestSignal.Custom, DEFAULT_AMPLITUDE))
         assertTrue(awaitEnded())
 
         p.stop()
