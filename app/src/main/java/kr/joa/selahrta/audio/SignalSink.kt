@@ -75,7 +75,27 @@ interface SignalSink {
  * **미디어 소리로 나간다**(USAGE_MEDIA). 알림음 경로로 내보내면 기기에
  * 따라 음량이 따로 놀고 무음 모드에서 안 들린다.
  */
-class AudioTrackSink : SignalSink {
+class AudioTrackSink(
+    /**
+     * 소리를 **어디로 내보낼지** 고르는 자. null 을 주면 안드로이드가 고른다.
+     *
+     * ## 왜 고를 수 있어야 하나 (2026-09-30)
+     *
+     * USB 오디오 인터페이스를 꽂으면 안드로이드가 **출력도 그쪽으로**
+     * 보낸다. 그런데 **같은 USB 카드로 동시에 넣고 빼면 입력이 완전한
+     * 디지털 무음이 되는** 기기가 있다 — 실기기에서 쟀다:
+     *
+     * ```
+     * 출력 안 정함 → 실제 출력=UMC404HD, 입력 RMS=-240.0dBFS (죽음)
+     * 폰 스피커로  → 실제 출력=SM-S918N,  입력 RMS= -67.8dBFS (삶)
+     * ```
+     *
+     * 그래서 **USB 로 재는 동안에는 출력을 폰 스피커로 돌린다.** 소리는
+     * 어차피 공기를 타고 마이크에 닿아야 하므로 어디서 나오든 된다.
+     * **입력이 죽는 것보다는 낫다.**
+     */
+    private val preferredOutput: (() -> android.media.AudioDeviceInfo?)? = null,
+) : SignalSink {
 
     private var track: AudioTrack? = null
 
@@ -123,6 +143,13 @@ class AudioTrackSink : SignalSink {
         if (t.state != AudioTrack.STATE_INITIALIZED) {
             t.release()
             return false
+        }
+
+        // **고른 자리가 있으면 그리로 못박는다.** 실패해도 그냥 간다 —
+        // 안드로이드가 고른 자리로 나가고, 그것은 예전 동작이다.
+        preferredOutput?.invoke()?.let { dev ->
+            val ok = runCatching { t.setPreferredDevice(dev) }.getOrDefault(false)
+            if (!ok) Log.w(SINK_TAG, "출력을 ${dev.productName} 로 못박지 못했다")
         }
 
         // **play() 도 실패할 수 있다.** 생성자만 감싸고 여기를 빼 두면,
