@@ -4,6 +4,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
+import java.io.IOException
 import java.io.OutputStream
 
 /**
@@ -66,7 +67,11 @@ object ReportPdf {
     /**
      * 써 넣는다.
      *
+     * **쓰기가 실패하면 던진다.** 당연해 보이지만 그냥 두면 그렇지 않다 —
+     * 아래 [Guarded] 의 까닭을 보라.
+     *
      * @return 몇 장이 되었나.
+     * @throws IOException 한 바이트도 못 썼거나 쓰는 중에 끊겼을 때.
      */
     fun write(
         meta: SessionMeta,
@@ -93,58 +98,74 @@ object ReportPdf {
         )
 
         val doc = PdfDocument()
-        pages.forEach { page ->
-            val info = PdfDocument.PageInfo
-                .Builder(metrics.pageWidthPt, metrics.pageHeightPt, page.number)
-                .create()
-            val pdfPage = doc.startPage(info)
-            val canvas = pdfPage.canvas
-            val left = metrics.marginPt.toFloat()
+        // **쓰다 실패해도 닫는다**(독립 검토 2회차 잔여 권고).
+        //
+        // [PdfDocument] 는 네이티브 자원을 쥔다. `writeTo` 는 나눔 대상이
+        // 먼저 끊기거나 저장 공간이 차면 던진다 — 그때 `close` 를 못
+        // 지나가면 **자원이 그대로 남는다.** 여러 장을 잇달아 뽑는
+        // 자리라 한 번의 실패가 쌓인다.
+        try {
+            pages.forEach { page ->
+                val info = PdfDocument.PageInfo
+                    .Builder(metrics.pageWidthPt, metrics.pageHeightPt, page.number)
+                    .create()
+                val pdfPage = doc.startPage(info)
+                val canvas = pdfPage.canvas
+                val left = metrics.marginPt.toFloat()
 
-            drawWarningBar(canvas, page, metrics, bar)
+                drawWarningBar(canvas, page, metrics, bar)
 
-            page.items.forEach { placed ->
-                val y = placed.yPt.toFloat()
-                when (val item = placed.item) {
-                    is ReportItem.Heading -> {
-                        canvas.drawText(item.textKo, left, y, heading)
-                        canvas.drawLine(
-                            left, y + 6f,
-                            (metrics.pageWidthPt - metrics.marginPt).toFloat(), y + 6f,
-                            rule,
-                        )
-                    }
-
-                    is ReportItem.Warning ->
-                        canvas.drawText(item.textKo, left + WARN_INDENT, y, warning)
-
-                    is ReportItem.SectionTitle ->
-                        canvas.drawText(item.textKo, left, y, sectionTitle)
-
-                    is ReportItem.Row -> {
-                        if (item.labelKo.isNotEmpty()) {
-                            canvas.drawText(item.labelKo, left, y, label)
+                page.items.forEach { placed ->
+                    val y = placed.yPt.toFloat()
+                    when (val item = placed.item) {
+                        is ReportItem.Heading -> {
+                            canvas.drawText(item.textKo, left, y, heading)
+                            canvas.drawLine(
+                                left, y + 6f,
+                                (metrics.pageWidthPt - metrics.marginPt).toFloat(), y + 6f,
+                                rule,
+                            )
                         }
-                        canvas.drawText(
-                            item.valueKo,
-                            left + metrics.labelWidthPt,
-                            y,
-                            body,
-                        )
+
+                        is ReportItem.Warning ->
+                            canvas.drawText(
+                                item.textKo,
+                                left + metrics.warningIndentPt,
+                                y,
+                                warning,
+                            )
+
+                        is ReportItem.SectionTitle ->
+                            canvas.drawText(item.textKo, left, y, sectionTitle)
+
+                        is ReportItem.Row -> {
+                            if (item.labelKo.isNotEmpty()) {
+                                canvas.drawText(item.labelKo, left, y, label)
+                            }
+                            canvas.drawText(
+                                item.valueKo,
+                                left + metrics.labelWidthPt,
+                                y,
+                                body,
+                            )
+                        }
                     }
                 }
-            }
 
-            canvas.drawText(
-                "${page.number} / ${page.total}",
-                left,
-                (metrics.pageHeightPt - metrics.marginPt / 2).toFloat(),
-                footer,
-            )
-            doc.finishPage(pdfPage)
+                canvas.drawText(
+                    "${page.number} / ${page.total}",
+                    left,
+                    (metrics.pageHeightPt - metrics.marginPt / 2).toFloat(),
+                    footer,
+                )
+                doc.finishPage(pdfPage)
+            }
+            val guarded = Guarded(out)
+            doc.writeTo(guarded)
+            guarded.failOnProblem()
+        } finally {
+            doc.close()
         }
-        doc.writeTo(out)
-        doc.close()
         return pages.size
     }
 
@@ -154,6 +175,47 @@ object ReportPdf {
      * **흑백으로 뽑아도 남는 표시다.** 색만으로 갈라 두면 인쇄된 종이에서
      * 경고가 본문과 똑같아진다.
      */
+    /**
+     * **`PdfDocument.writeTo` 는 쓰기 실패를 삼킨다.**
+     *
+     * 기기에서 재 보고 알았다. 모든 바이트에서 던지는 스트림을 주었는데
+     * `write` 가 **1장을 썼다고 돌려주었다.** 한 바이트도 안 나갔는데
+     * 「됐다」가 된다 — 나눔 대상이 먼저 끊기거나 저장 공간이 차면 실제로
+     * 그렇게 된다. **저장 성공인데 자료가 없는** 자리이고, 이번 검토에서
+     * 같은 성질의 결함(R2-01)을 하나 받은 참이다.
+     *
+     * 그래서 사이에 끼워 **첫 실패를 붙들었다가 뒤에 다시 던진다.**
+     * 한 바이트도 안 나간 경우도 실패로 본다 — 빈 PDF 는 PDF 가 아니다.
+     */
+    private class Guarded(private val inner: OutputStream) : OutputStream() {
+        private var failure: IOException? = null
+        private var written = 0L
+
+        private inline fun guard(bytes: Int, block: () -> Unit) {
+            // 한 번 끊기면 그다음은 시도하지 않는다 — 첫 까닭을 지키려는 것이다.
+            if (failure != null) return
+            try {
+                block()
+                written += bytes
+            } catch (e: IOException) {
+                failure = e
+            }
+        }
+
+        override fun write(b: Int) = guard(1) { inner.write(b) }
+
+        override fun write(b: ByteArray, off: Int, len: Int) = guard(len) {
+            inner.write(b, off, len)
+        }
+
+        override fun flush() = guard(0) { inner.flush() }
+
+        fun failOnProblem() {
+            failure?.let { throw it }
+            if (written <= 0L) throw IOException("PDF 를 한 바이트도 쓰지 못했습니다.")
+        }
+    }
+
     private fun drawWarningBar(
         canvas: android.graphics.Canvas,
         page: ReportPage,
@@ -200,5 +262,4 @@ object ReportPdf {
     private val WARN_BAR = Color.rgb(194, 65, 12)
     private val FAINT = Color.rgb(130, 130, 135)
     private const val WARN_BAR_WIDTH = 3f
-    private const val WARN_INDENT = 12f
 }

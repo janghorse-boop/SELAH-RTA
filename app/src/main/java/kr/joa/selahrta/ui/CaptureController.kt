@@ -311,6 +311,20 @@ class CaptureController(
         postToCapture { it.rta.removeBandPowerSink(sink) }
     }
 
+    /**
+     * **분석 스레드에서** 지금 표본 번호를 들고 [onFrame] 을 부른다.
+     *
+     * 재는 구간의 원점을 여기서 박는다. 화면 스레드에서 번호를 읽으면
+     * 분석이 도는 중의 값을 볼 수 있고, 무엇보다 **첫 창이 오기를 기다려
+     * 원점을 잡으면 시작에서 놓친 시간이 감춰진다**(독립 검토 R2-02).
+     *
+     * 아직 열린 분석이 없으면 **아무 일도 일어나지 않는다** — 부르는
+     * 쪽이 될 때까지 다시 부른다.
+     */
+    fun postRtaFramePosition(onFrame: (Long) -> Unit) {
+        postToCapture { onFrame(it.rta.inputFrameCount) }
+    }
+
     /** 지금 도는 분석의 **건너뛰는 폭**(표본). coverage 를 읽을 때 적는다. */
     fun rtaHopFrames(): Int? = active?.rta?.hopFrames
 

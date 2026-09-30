@@ -1,0 +1,45 @@
+--- a/app/src/main/java/kr/joa/selahrta/data/rta/RtaCoverage.kt
++++ b/app/src/main/java/kr/joa/selahrta/data/rta/RtaCoverage.kt
+@@ -2,6 +2,7 @@
+ 
+ import kr.joa.selahrta.dsp.RtaBandPowerSink
+ import kr.joa.selahrta.dsp.ThirdOctave
++import kr.joa.selahrta.dsp.SILENCE_DBFS
+ import kotlin.math.log10
+ 
+ /**
+@@ -96,11 +97,14 @@
+             if (power.size != sum.size || power.any { !it.isFinite() || it < 0.0 }) {
+                 return@synchronized
+             }
++            val zero = origin ?: startFrame.also { origin = it }
++            if (endFrame <= startFrame || endFrame <= zero || startFrame >= zero + totalFrames) {
++                return@synchronized
++            }
+             lastSeq = seq
+             windows++
+             for (i in sum.indices) sum[i] += power[i]
+             // **첫 창의 시작을 0 으로 삼는다.**
+-            val zero = origin ?: startFrame.also { origin = it }
+             addSpan(startFrame - zero, endFrame - zero)
+         }
+ 
+@@ -140,10 +144,15 @@
+      * 더하는 셈이고, 재는 도중에 보정이 바뀌면 앞뒤가 섞인다.
+      */
+     fun meanDb(offsetDb: Double): DoubleArray? {
+-        val n = windows
+-        if (n == 0) return null
+         return synchronized(lock) {
+-            DoubleArray(sum.size) { i -> 10.0 * log10(sum[i] / n) + offsetDb }
++            val n = windows
++            if (n == 0) return@synchronized null
++            DoubleArray(sum.size) { i ->
++                val power = sum[i] / n
++                val dbfs = if (power <= 0.0) SILENCE_DBFS
++                    else (10.0 * log10(power)).coerceAtLeast(SILENCE_DBFS)
++                dbfs + offsetDb
++            }
+         }
+     }
+ }

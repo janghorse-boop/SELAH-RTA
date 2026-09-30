@@ -232,6 +232,16 @@ class RtaEngine(
      */
     private var inputFrames = 0L
 
+    /**
+     * 지금까지 넣은 입력 표본 수. **분석 스레드에서만 읽는다.**
+     *
+     * 다른 스레드에서 읽으면 [process] 가 도는 중의 값을 볼 수 있다.
+     * 재는 구간의 **원점을 박을 때** 쓰므로, 그 자리는
+     * [kr.joa.selahrta.dsp.RtaBandPowerSink] 를 다루는 쪽과 같은
+     * 스레드여야 한다(독립 검토 R2-02).
+     */
+    val inputFrameCount: Long get() = inputFrames
+
     /** FFT 한 창의 길이(표본). 겹침을 뺀 **건너뛰는 폭**은 [hopFrames] 다. */
     val hopFrames: Int get() = hop
 

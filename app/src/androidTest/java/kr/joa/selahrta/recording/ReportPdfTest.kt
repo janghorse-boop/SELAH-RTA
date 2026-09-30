@@ -281,4 +281,46 @@ class ReportPdfTest {
             ReportPdf.fileName(m).removeSuffix(".pdf"),
         )
     }
+
+    /**
+     * **쓰다 실패해도 다음 장을 뽑을 수 있다**(독립 검토 2회차 잔여 권고).
+     *
+     * [android.graphics.pdf.PdfDocument] 는 네이티브 자원을 쥔다. `writeTo`
+     * 가 던질 때 `close` 를 못 지나가면 그 자원이 남는다.
+     *
+     * ## 여기서 진짜 결함이 나왔다
+     *
+     * 처음 돌렸을 때 **던지지 않았다.** `PdfDocument.writeTo` 가 스트림의
+     * `IOException` 을 **삼키고**, `write` 는 **1장을 썼다고 돌려주었다** —
+     * 한 바이트도 안 나갔는데 「됐다」가 된다. 나눔 대상이 먼저 끊기거나
+     * 저장 공간이 차면 실제로 그렇게 된다.
+     *
+     * ## 이 시험이 보는 것과 못 보는 것
+     *
+     * **본다**: 쓰기 실패가 **밖으로 나온다**는 것.
+     *
+     * **못 본다**: 네이티브 자원이 실제로 놓였는지. 자바 쪽에서 셀 길이
+     * 없다. 잇달아 뽑아도 죽지 않는다는 것만 본다 — **닫는 코드가 있다는
+     * 증거이지 자원이 놓였다는 증거가 아니다.**
+     */
+    @Test
+    fun 쓰다_실패해도_다음_장을_뽑을_수_있다() {
+        val m = meta()
+        repeat(5) {
+            val boom = object : java.io.OutputStream() {
+                override fun write(b: Int) = throw java.io.IOException("일부러 끊는다")
+            }
+            try {
+                ReportPdf.write(m, boom)
+                org.junit.Assert.fail("던졌어야 한다 (회차 $it)")
+            } catch (e: java.io.IOException) {
+                assertEquals("일부러 끊는다", e.message)
+            }
+        }
+        // 다섯 번 실패한 뒤에도 정상으로 한 장 뽑힌다.
+        val out = java.io.ByteArrayOutputStream()
+        val pages = ReportPdf.write(m, out)
+        assertTrue("실패 뒤에 못 뽑는다", pages >= 1)
+        assertTrue(out.size() > 0)
+    }
 }
