@@ -94,7 +94,16 @@ fun InstrumentGuideScreen(
     // **고른 것이 이 악기에 없으면 첫 칸으로 돌아간다.** 악기를 바꾸면
     // 영역 id 도 함께 바뀌므로, 안 그러면 아무 카드도 안 고른 상태가 된다.
     val region = profile.regions.firstOrNull { it.id == regionId } ?: profile.regions.first()
-    val highlight = remember(region.id) { EqBandHighlight.bandsOf(region.range) }
+    // **열쇠는 `id` 가 아니라 `range` 다**(독립 검토 PND-04).
+    //
+    // `id` 는 **한 프로필 안에서만** 유일하다. 신디사이저의 피아노/EP 와
+    // 리드/브라스는 둘 다 `body` 라는 이름을 쓰는데 범위가 60~200Hz 와
+    // 150~600Hz 로 다르다. `id` 로 기억해 두면 프로필을 바꿔도 **띠가 그
+    // 자리에 그대로 있고**, 사람은 **새 설명을 읽으며 옛 주파수를 본다.**
+    //
+    // 글은 바뀌고 그림만 안 바뀌므로 **눈으로는 알아채기 어렵다** —
+    // 검토자가 차트 한 행의 픽셀을 견주어 찾았다.
+    val highlight = remember(region.range) { EqBandHighlight.bandsOf(region.range) }
 
     BoxWithConstraints(modifier.fillMaxSize()) {
         // **화면 높이의 3할 안팎**(지시서 §6). 고정 높이로 못박으면 작은

@@ -1,0 +1,149 @@
+SELAH RTA pending independent verification, 2026-09-30
+
+PIN: 1a4d7bb8e209e2589b935e99fd87eacdec3e4229
+Initial HEAD: be88c2b1e5663298f946428ffd2ae9cd51b391c1
+Final observed HEAD: 78ceda9c5b493f7f5ef891608a5feaf9bada4c71
+Diff pin..final HEAD: README, CHANGELOG, docs only. app/src/main and dsp/src/main unchanged.
+Archive: D:/Cowork/SELAH-RTA/build/independent-review/pending-20260930/source
+Evidence root: D:/Cowork/SELAH-RTA/build/independent-review/pending-20260930
+JDK: C:/Program Files/Android/Android Studio/jbr
+SDK: C:/Users/jangh/AppData/Local/Android/Sdk
+Emulator: Medium_Phone on emulator-5586, headless/read-only/no-audio; PID at launch 16128.
+Physical phone not targeted. TAKE_AUDIO_FOCUS restored to allow; owned emulator terminated.
+
+BASELINE
+baseline-build.log: BUILD SUCCESSFUL in 3m 15s; 76 actionable tasks, 76 executed.
+Command in archived source:
+  gradlew.bat --offline --no-build-cache --max-workers=2 :dsp:test :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest
+Counts read from baseline JVM XML before the later targeted run:
+  DSP 633 tests, 0 failures, 0 skipped
+  app 950 tests, 0 failures, 0 skipped
+  total 1583 passed
+No new lint run.
+baseline-build.log preserves all 1583 PASSED test records. Later targeted JVM tests
+replace app test XML; do not treat its current three-test XML as the full baseline.
+
+baseline-android.log: 64 tests, 63 passed and 1 assumption skip; Time 135.622.
+  Excluded SrlStopBoundaryIndependentTest and SettingsScreenPolicyIntentTest.
+  Skip: SrlCommandIndependentTest.deniedFocusMustNotOpenOutput,
+        "Requires the emulator-only deny-focus app-op".
+stop-contract.log: SrlStopBoundaryIndependentTest, OK (13 tests), Time 2.374.
+settings-intent.log: SettingsScreenPolicyIntentTest, OK (2 tests), Time 7.389.
+denied-alone.log: skipped test rerun with TAKE_AUDIO_FOCUS ignore, OK (1 test), Time 0.678.
+  AppOps restored to allow immediately after the separate run.
+Distinct baseline Android tests: 79. Executions: 80 (includes one skip and its rerun).
+All 79 distinct tests ultimately passed; do not count the rerun as a new test.
+
+NEW INDEPENDENT PROBES (unpatched production)
+probe-build.log: successful Android test build (21s).
+independent-android.log: 3 tests, 3 assertion failures, Time 29.549.
+  PendingRmsVmTest.customFrequencyChangeMustInvalidateWindow
+  PendingRmsVmTest.contextChangeAtCompletionMustPreventSave
+  PendingEqUiTest.sameLocalRegionIdMustNotReuseAnotherRange
+independent-observations.log, PID 6311:
+  PEND_FREQUENCY saved=1 signal=Custom mean=97.47937509717681
+  PEND_BOUNDARY saved=1 notice=null
+  PEND_EQ chartPixelsChanged=0 piano=60..200 lead=150..600 bothId=body
+RTA probes use actual VM, serial executor, coroutine, and store with synthetic input
+and silent output. The completion test briefly holds the main scheduler across
+the real completion deadline; no production phase/frame/clock field is mutated.
+EQ probe checks the changed summary and actual rendered chart pixels at a fixed
+height within the chart. The proposed fix is a positive control for this probe.
+
+KNOWN CONDITIONS FOLLOW-UP (unpatched production, after restoring proposal)
+The shipped old RtaStoreIndependentTest still leaves the five new RtaConditions
+fields null. Its A/Z and scalar-offset assertions can pass via hasUnknown alone.
+The separate shipped RtaDifferenceTest has known-field predicates; independently
+strengthened the old real-DSP/file-roundtrip fixture as well.
+known-conditions.log: BUILD SUCCESSFUL in 19s; 3 selected tests passed:
+  PendingKnownConditionsTest.differentAnalysisWeightingMustNotBeAutomaticallyComparable
+  PendingKnownConditionsTest.differentScalarOffsetsMustNotDisappearOnDisk
+  PendingKnownConditionsTest.knownSameConditionsMustRemainComparable
+Each record declares the actual analysis weighting and numeric offset; all other
+required fields are known. Control asserts hasUnknown=false and a non-null -1dB
+difference after reopening both records. No production changes were needed.
+Source: docs/review/2026-09-30-pending-known-conditions-regression.kt
+Target: app/src/test/java/kr/joa/selahrta/ui/PendingKnownConditionsTest.kt
+The file also retains the old three other tests for context, but only the three
+methods listed above were executed in this follow-up. Do not report six new runs.
+
+PDF PROBE (PDF production files unpatched)
+pdf-probe-build.log: successful Android test build (11s).
+pdf-probe.log: 1 test, 1 assertion failure, Time 0.442.
+  PendingPdfTest.resultPagesMustRetainTheirWarning
+Logcat PID 6947:
+  PEND_PDF total=3 resultPages=[3] warningPages=[1]
+Uses shipped ReportPdfTest fixture, real ReportPdf.wrap, ReportPageLayout and writer.
+Generated pending-unreviewed-long.pdf in emulator app cache, then read back via run-as.
+The full document retains warnings; the problem is that a separated result page
+does not retain the warning block. The result page still has calibration status.
+
+PDF RENDERING / TEXT
+Files copied from test emulator cache into evidence root:
+  warned.pdf: 162327 bytes, one A4 page
+  long.pdf: 159249 bytes, three pages
+  look.pdf and report-page1.png also retained (existing test output)
+  pending-unreviewed-long.pdf: three pages, uncalibrated/clipped/dropped fixture
+Poppler pdfinfo: Skia/PDF m112, PDF 1.4, no encryption, A4 595 x 842pt, not tagged.
+Rendered at max dimension 1200px using bundled pdftoppm.
+Visually inspected warned-1.png, long-1..3.png and uncal-long-1..3.png.
+Short warning report: Korean text and warning bar visibly present before values.
+Long reports: warning only on page 1, numeric results on page 3.
+pdf-extraction.txt (pypdf, warned.pdf):
+  producer=Skia/PDF m112
+  fontCount=37
+  allType3=True
+  allHaveToUnicode=True
+  containsKoreanWarning=True
+  extractedChars=630
+This disproves the premise that Type3 implies no extractable Korean text.
+It does not certify search/selection behavior in every viewer or actual printing.
+
+MINIMAL PROPOSED PATCH
+docs/review/2026-09-30-pending-boundary-tone-eq-proposed.patch
+  Final context/output check before save, Custom/Band frequency in live context,
+  remember(region.range) instead of remember(region.id).
+proposed-build.log: BUILD SUCCESSFUL in 21s, :app:assembleDebug.
+proposed-android.log: OK (8 tests), Time 73.454.
+  new RTA 2 + new EQ 1 + existing RtaStoreVmIndependentTest 5.
+proposed-observations.log (also contains earlier runs; patched PID is 7132):
+  PEND_FREQUENCY saved=0 signal=null mean=null
+  PEND_BOUNDARY saved=0 notice=재는 도중 출력 채널이(가) 바뀌어 측정을 멈췄습니다.
+  PEND_EQ chartPixelsChanged=237 piano=60..200 lead=150..600 bothId=body
+  RMS_CHANNEL saved=0 label=null mean=null name=null
+  RMS_ACK player=null uiSignal=Pink capture=null
+  RMS_VM_CONTROL saved=1 mean=59.99999999999999
+  RMS_BACKGROUND saved=0 storedSignal=null output=null sequence=null
+  RMS_CANCEL jobActive=false ui=null phase=null
+The proposal does NOT implement input coverage, persisted signal parameters,
+complete per-frame context ownership, or repeated PDF warnings.
+Both modified archived production files were restored; blob equality against pin
+was checked. The built APK remains a proposal build, not the restored source.
+git apply --check passed on final observed HEAD 78ceda9.
+No production edits, commits, pushes or GitHub review submission performed.
+
+REPRODUCTION
+Place the delivered files into the following paths in a pinned checkout:
+  2026-09-30-pending-rta-independent-regression.kt
+    -> app/src/androidTest/java/kr/joa/selahrta/ui/PendingRmsVmTest.kt
+  2026-09-30-pending-eq-independent-regression.kt
+    -> app/src/androidTest/java/kr/joa/selahrta/ui/instrument/PendingEqUiTest.kt
+  2026-09-30-pending-pdf-independent-regression.kt
+    -> app/src/androidTest/java/kr/joa/selahrta/recording/PendingPdfTest.kt
+Use the existing shipped fixture/helpers; probes are not standalone Kotlin programs.
+
+$env:JAVA_HOME='C:/Program Files/Android/Android Studio/jbr'
+.\gradlew.bat --offline --no-build-cache --max-workers=2 :app:assembleDebug :app:assembleDebugAndroidTest
+$adb='C:/Users/jangh/AppData/Local/Android/Sdk/platform-tools/adb.exe'
+& $adb -s emulator-5586 install -r app/build/outputs/apk/debug/app-debug.apk
+& $adb -s emulator-5586 install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+& $adb -s emulator-5586 shell am instrument -w -r -e class 'kr.joa.selahrta.ui.PendingRmsVmTest,kr.joa.selahrta.ui.instrument.PendingEqUiTest,kr.joa.selahrta.recording.PendingPdfTest' kr.joa.selahrta.test/androidx.test.runner.AndroidJUnitRunner
+
+SHA256 DELIVERED PROBES/PATCH
+8BF0844E224F9C13AA5AFF50F8880C07F86F74238A31EED690C98EE34D704654  2026-09-30-pending-known-conditions-regression.kt
+DDF84FAA4B1FBFD05D4E327D6BEF46E2FF7CB43F00E95D8184F806B395F7C5A5  2026-09-30-pending-rta-independent-regression.kt
+F1AB1F002239727CBBFDF293C56ED44D88E2685D58D316EA73E258CED6C28EDC  2026-09-30-pending-eq-independent-regression.kt
+7F8CAF4079859E41C33D9D1AD101726488D2606FCF78D06A1D0009EE480E4C67  2026-09-30-pending-pdf-independent-regression.kt
+3BFE065DDD0DBE5AED873861B4F6F4EF284F4159B29ABF45EB21749373AF66AD  2026-09-30-pending-boundary-tone-eq-proposed.patch
+
+FINAL AUDIT: HEAD 80eb586d185639d4f4487d9a97792d61fe46597c; tree diff from 78ceda9 is empty. Concurrent untracked .kotlin/ and A11yLabelsTest.kt were not created or reviewed by this verification and were left untouched.
