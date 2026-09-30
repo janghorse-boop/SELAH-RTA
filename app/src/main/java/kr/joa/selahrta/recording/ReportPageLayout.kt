@@ -46,7 +46,9 @@ object ReportPageLayout {
         //
         // **미리 잘라 둔다.** 쪽을 넘길 때마다 다시 줄바꿈하면 같은 일을
         // 쪽수만큼 되풀이한다.
-        val warnLines = warningsKo.flatMap { wrap(it, metrics.contentWidthPt) }
+        // **들여쓴 만큼 좁은 폭으로 끊는다.** 전체 폭으로 끊고 들여 쓰면
+        // 그만큼 오른쪽으로 삐져나가 잘린다.
+        val warnLines = warningsKo.flatMap { wrap(it, metrics.warningWidthPt) }
             // 경고가 종이의 절반을 넘기면 본문이 들어갈 자리가 없다.
             // 그럴 때는 **앞쪽부터 남기고** 잘렸다고 적는다 — 잘린 줄
             // 모르고 「이게 전부」라고 읽는 것이 더 나쁘다.
@@ -153,6 +155,15 @@ data class ReportMetrics(
     val headingGapPt: Int = 10,
     val warningLineHeightPt: Int = 15,
     val warningGapPt: Int = 10,
+    /**
+     * 경고를 왼쪽에서 얼마나 들여 쓰는가.
+     *
+     * **재는 폭에서도 빼야 한다**(독립 검토 2회차 잔여 권고). 들여만 쓰고
+     * 전체 폭으로 줄을 끊으면 **끊긴 줄이 오른쪽 여백을 넘어 잘린다** —
+     * 잘린 글자는 종이 밖이라 **그냥 사라진다.** 미보정 경고의 끝이
+     * 사라지는 것이 바로 이 자리다.
+     */
+    val warningIndentPt: Int = 12,
     val sectionTitleHeightPt: Int = 20,
     val sectionGapPt: Int = 10,
     val rowHeightPt: Int = 16,
@@ -172,4 +183,7 @@ data class ReportMetrics(
 
     /** 값이 쓸 수 있는 폭. */
     val valueWidthPt: Int get() = contentWidthPt - labelWidthPt
+
+    /** 경고가 쓸 수 있는 폭. **들여쓴 만큼 좁다.** */
+    val warningWidthPt: Int get() = contentWidthPt - warningIndentPt
 }

@@ -239,4 +239,34 @@ class ReportPageLayoutTest {
         assertTrue("잘리지 않았다(${warns.size}줄)", warns.size < huge.size)
         assertEquals("(경고가 더 있습니다)", warns.last())
     }
+
+    // ── 들여쓴 만큼 좁게 끊는다 ─────────────────────────
+
+    /**
+     * **경고를 끊는 폭은 들여쓴 만큼 좁아야 한다**(독립 검토 2회차 잔여 권고).
+     *
+     * 그리는 쪽은 경고를 왼쪽에서 [ReportMetrics.warningIndentPt] 만큼
+     * 들여 쓴다. 끊는 폭이 전체 글 폭이면 **꽉 찬 줄이 그만큼 오른쪽으로
+     * 밀려 여백을 넘고, 넘은 글자는 종이 밖이라 그냥 사라진다.**
+     *
+     * 여기서는 자에게 들어온 폭을 그대로 받아 적어 본다.
+     */
+    @Test
+    fun `경고는 들여쓴 만큼 좁은 폭으로 끊는다`() {
+        val widths = mutableListOf<Int>()
+        val metrics = ReportMetrics()
+        ReportPageLayout.paginate(
+            "예배 측정 기록",
+            listOf("미보정으로 쟀습니다."),
+            sections,
+            metrics,
+        ) { text, widthPt ->
+            widths += widthPt
+            listOf(text)
+        }
+
+        // 첫 번째가 경고다(제목 다음, 본문 앞).
+        assertEquals(metrics.contentWidthPt - metrics.warningIndentPt, widths.first())
+        assertTrue("들여쓴 만큼 좁지 않다: $widths", widths.first() < metrics.contentWidthPt)
+    }
 }
