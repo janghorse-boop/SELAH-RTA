@@ -119,7 +119,12 @@ Critical/High 이슈가 남아 있으면 다음 Phase 로 넘어가지 않습니
 | 15 | Release 준비 | **부분** | 서명 절차는 [release-signing.md](docs/release-signing.md). **업로드 키스토어는 비밀값이라 사람이 만든다** |
 | 16 | 현장 Pilot | **아직** | |
 | 17 | v1.0 배포 | **아직** | |
-| Recording A~F | 녹음·동기 재생·재분석 | **대부분 만듦** | `AudioFileRecorder`·`WavWriter`·`PlaybackReadout`·`TimelineIo`. **A~F 의 어느 글자가 어디까지인지는 명세와 대조가 필요** |
+| Recording A | PCM(WAV) 녹음 · REC | **만듦** | `AudioFileRecorder`·`WavWriter`·`SessionRecorder`. **「분석 중 dropout 없음」은 미확인**(2시간 부하) |
+| Recording B | 압축 녹음(AAC/M4A) | **만듦** | `MediaCodec`+`MediaMuxer`. **장시간 파일 검증은 미확인** |
+| Recording C | 동기 분석 저장 | **만듦** | `RowSlicer`(500ms 행)·`TimelineIo`·`RecordingEpoch` |
+| Recording D | 동기 재생 UI | **부분** | 소리→값은 된다(`AudioPlayerCard` seek · `PlaybackReadout`). **그래프를 눌러 그 시점으로 가는 쪽이 없다** — 명세가 요구하는 「양방향」이 반쪽이다 |
+| Recording E | 재분석 | **아직** | `analysisVersion` 칸만 있고 **다시 분석하는 코드가 없다** |
+| Recording F | 장시간·현장 검증 | **아직** | 60분·USB 전환·pause/resume·저장공간 |
 | §7 저장 | RTA 측정 저장·차이·차례 | **만듦 · 고침** | #73·#75·#77 → 12회차 **승인 보류**(High 3) → #84 로 여섯 가지 고침. **재검토 대기** |
 | 악기 EQ | 가이드 화면 개편 | **만듦** | #86. 위에 RTA 고정 · 고른 대역을 띠로 강조. **실제 악기·믹서 실습은 미확인**(지시서 §36) · 검토 대기 |
 
