@@ -111,7 +111,7 @@ class RtaCoverageRecordedTest {
             assertNotNull("coverage 가 안 적혔다", m.coverage)
             assertNotNull("창 수가 안 적혔다", m.windows)
             assertNotNull("건너뛰는 폭이 안 적혔다", m.hopFrames)
-            assertEquals("ui-smoothed-v1", m.conditions.averageVersion)
+            assertEquals("analysis-tap-v1", m.conditions.averageVersion)
 
             // **화면이 받은 장보다 분석 장이 많아야 한다** — 이것이 이 작업의
             // 까닭이다. 화면은 66ms 에 한 번만 받는다.

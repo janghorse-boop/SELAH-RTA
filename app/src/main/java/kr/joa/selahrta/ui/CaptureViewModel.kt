@@ -2180,8 +2180,28 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             else -> Unit
         }
 
-        val mean = run.average.meanDb(context.offsetDb) ?: run {
-            controller.update { st -> st.copy(rtaSaveNoticeKo = "잰 것이 없어 저장하지 않았습니다.") }
+        // **평균은 분석 스레드에서 모은 것을 쓴다**(독립 검토 PND-03, 단계 B).
+        //
+        // 예전에는 화면으로 나온 값을 다시 평균했다. 그 값은 **평활을 거쳤고
+        // 66ms 에 한 번만** 나오므로, 분석한 장의 3분의 1 이상이 아예 안
+        // 들어왔다 — 실기기에서 초당 23.5장 중 15장 남짓만 받았다.
+        //
+        // **짧고 큰 소리가 그 틈으로 사라진다.** 예배당에서 그 소리가 바로
+        // 우리가 보려는 것이다.
+        //
+        // **못 받았으면 저장하지 않는다.** 옛 길로 슬그머니 돌아가면 같은
+        // 이름(`averageVersion`)을 단 두 가지 값이 섞이고, 나중에 어느
+        // 쪽이었는지 가릴 길이 없다.
+        val mean = coverage?.meanDb(context.offsetDb) ?: run {
+            controller.update { st ->
+                st.copy(
+                    rtaSaveNoticeKo = if (coverage == null) {
+                        "입력 설정을 읽지 못해 저장하지 않았습니다."
+                    } else {
+                        "분석한 값을 받지 못해 저장하지 않았습니다."
+                    },
+                )
+            }
             return false
         }
 
@@ -2227,9 +2247,10 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 inputSource = context.inputSource,
                 inputChannel = context.inputChannel,
                 signalSpec = context.signalSpec,
-                // 아직은 **화면용으로 평활된 값을 다시 평균**한다. 단계 B 에서
-                // 바뀌며 이 이름도 바뀐다 — 그래야 앞뒤 값이 안 섞인다.
-                averageVersion = "ui-smoothed-v1",
+                // **이름을 올렸다**(단계 B). 평균을 분석 스레드의 생값으로
+                // 모으면서 값이 달라졌다 — 이름을 그대로 두면 **정의가 다른
+                // 두 곡선이 같은 조건으로** 셀해진다.
+                averageVersion = "analysis-tap-v1",
             ),
             measuredAtEpochMs = System.currentTimeMillis(),
         )
