@@ -66,6 +66,8 @@ class ReanalyzeUiTest {
         },
     )
 
+    private var restored: SessionMeta? = null
+
     private fun screen(
         m: SessionMeta,
         progress: Float? = null,
@@ -81,6 +83,7 @@ class ReanalyzeUiTest {
                 onShareAudio = {}, onMemo = { _, _ -> },
                 onReanalyze = onReanalyze,
                 reanalyzeProgress = progress,
+                onRestoreOriginal = { restored = it },
             )
         }
     }
@@ -163,4 +166,41 @@ class ReanalyzeUiTest {
     private fun androidx.compose.ui.test.junit4.ComposeContentTestRule
         .onAllNodesWithTextContaining(text: String) =
         onAllNodes(androidx.compose.ui.test.hasText(text, substring = true))
+
+    // ── 남겨 둔 원본을 꺼낼 수 있는가 ───────────────────
+
+    /**
+     * **되돌릴 수 없으면 「그대로 남습니다」는 확인할 수 없는 말이다.**
+     *
+     * 원본을 파일로 남겨 두어도 꺼낼 길이 없으면, 사용자에게는 그
+     * 약속이 **지켜졌는지 알 수 없는 말**로만 남는다.
+     */
+    @Test
+    fun 다시_분석한_기록은_되돌릴_수_있다() {
+        screen(meta(reanalyzedAt = 1_700_000_500_000L))
+        compose.onNodeWithText("처음 잰 값으로 되돌리기").assertIsDisplayed()
+        compose.onNodeWithText("처음 잰 값으로 되돌리기").performClick()
+        compose.waitForIdle()
+        assertEquals("re-1", restored?.id)
+    }
+
+    /** 아직 안 한 기록에는 **되돌릴 것이 없다.** 단추도 없다. */
+    @Test
+    fun 아직_안_했으면_되돌리기도_없다() {
+        screen(meta())
+        assertEquals(
+            0,
+            compose.onAllNodesWithTextContaining("되돌리기").fetchSemanticsNodes().size,
+        )
+    }
+
+    /** 도는 중에는 **되돌리기도 감춘다.** 둘이 같은 파일을 만진다. */
+    @Test
+    fun 도는_중에는_되돌리기도_없다() {
+        screen(meta(reanalyzedAt = 1L), progress = 0.5f)
+        assertEquals(
+            0,
+            compose.onAllNodesWithTextContaining("되돌리기").fetchSemanticsNodes().size,
+        )
+    }
 }

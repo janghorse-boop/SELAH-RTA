@@ -361,4 +361,56 @@ class SessionReanalyzerTest {
         val gaps = z.indices.map { kotlin.math.abs(z[it] - a[it]).toDouble() }
         assertTrue("가중을 바꿔도 대역이 그대로다 — 엔진에 안 걸린 것 같다", gaps.max() > 1.0)
     }
+
+    // ── 되돌리기 ────────────────────────────────────────
+
+    /**
+     * **처음 잰 값으로 돌아온다.**
+     *
+     * 남겨 둔 것을 꺼낼 길이 없으면 「그대로 남습니다」는 확인할 수
+     * 없는 말이다. 숫자도 타임라인도 처음 것이어야 한다.
+     */
+    @Test
+    fun `되돌리면 처음 잰 값이 돌아온다`() {
+        val (meta, audio) = seed(offset = 100.0)
+        val before = store.timelineFile(meta.id).readBytes()
+        val r = SessionReanalyzer(store)
+        r.run(meta.id, audio, settings(130.0), 1L).getOrThrow()
+        assertNotEquals(100.0, store.readMeta(meta.id).getOrThrow().calibrationOffsetDb, 1e-9)
+
+        val back = r.restoreOriginal(meta.id).getOrThrow()
+
+        assertEquals(100.0, back.calibrationOffsetDb, 1e-9)
+        assertEquals(meta.maxDb, back.maxDb, 1e-9)
+        assertTrue(
+            "타임라인이 처음 것이 아니다",
+            before.contentEquals(store.timelineFile(meta.id).readBytes()),
+        )
+        // **되돌린 뒤에는 「다시 분석함」 표시가 없다** — 지금 것이 곧 원본이다.
+        assertNull(back.reanalyzedAtEpochMs)
+    }
+
+    /** 되돌린 뒤에 **또 다시 분석할 수 있다.** 원본은 그대로 남는다. */
+    @Test
+    fun `되돌린 뒤에도 원본은 남는다`() {
+        val (meta, audio) = seed(offset = 100.0)
+        val r = SessionReanalyzer(store)
+        r.run(meta.id, audio, settings(130.0), 1L).getOrThrow()
+        r.restoreOriginal(meta.id).getOrThrow()
+
+        assertTrue("원본이 사라졌다", store.originalDir(meta.id).isDirectory)
+        val again = r.run(meta.id, audio, settings(140.0), 2L).getOrThrow()
+        assertEquals(140.0, again.calibrationOffsetDb, 1e-9)
+        // 그리고 **그 원본은 여전히 처음 것**이다(130 도 140 도 아니다).
+        assertEquals(100.0, store.readOriginalMeta(meta.id)!!.calibrationOffsetDb, 1e-9)
+    }
+
+    /** 한 번도 안 했으면 **되돌릴 것이 없다.** 조용히 넘어가지 않는다. */
+    @Test
+    fun `원본이 없으면 되돌리기가 실패한다`() {
+        val (meta, _) = seed()
+        val r = SessionReanalyzer(store).restoreOriginal(meta.id)
+        assertTrue(r.isFailure)
+        assertTrue("${r.exceptionOrNull()?.message}", r.exceptionOrNull()!!.message!!.contains("온전히"))
+    }
 }
