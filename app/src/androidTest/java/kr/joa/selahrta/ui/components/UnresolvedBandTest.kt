@@ -10,7 +10,6 @@ import androidx.compose.ui.unit.dp
 import kr.joa.selahrta.dsp.ThirdOctave
 import kr.joa.selahrta.ui.RtaView
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotEquals
 import org.junit.Rule
 import org.junit.Test
 
@@ -62,31 +61,31 @@ class UnresolvedBandTest {
      * 안 보인다.
      */
     /**
-     * 그려진 막대들을 **가로줄을 훑어** 찾는다.
+     * 한 가로줄에 **몇 가지 색의 막대**가 있는가.
      *
-     * 처음에는 `폭 / 31` 로 자리를 어림했다가 **막대 사이 빈틈을 집어**
-     * 시험이 엉뚱한 이유로 통과했다(밴드 2 는 빈틈, 20 은 막대). 차트에는
-     * 눈금·여백이 있어 그 나눗셈이 맞지 않는다.
+     * ## 왜 자리를 세지 않나
      *
-     * 바탕색이 아닌 픽셀이 이어진 덩어리를 **막대 하나**로 본다.
+     * 처음에는 `폭 / 31` 로 막대 자리를 어림했다가 **빈틈을 집어**
+     * 시험이 엉뚱한 이유로 통과했다. 다음에는 「바탕색이 아닌 덩어리」로
+     * 셌는데, 차트 안쪽 바탕이 화면 맨 왼쪽과 달라 **31개가 하나로**
+     * 잡혔다.
+     *
+     * 기하에 기대지 말고 **색의 가짓수**를 묻는다. 막대가 흐린 것과
+     * 진한 것 두 가지면 색도 두 가지다.
      */
-    private fun barColors(): List<androidx.compose.ui.graphics.Color> {
+    private fun barColorCount(): Int {
         val img = compose.onRoot().captureToImage().toPixelMap()
         val y = img.height * 3 / 4
-        val background = img[0, y]
-        val out = ArrayList<androidx.compose.ui.graphics.Color>()
-        var x = 0
-        while (x < img.width) {
-            if (img[x, y] != background) {
-                val start = x
-                while (x < img.width && img[x, y] != background) x++
-                // 덩어리 한가운데를 집는다 — 가장자리는 안티에일리어싱이다.
-                out += img[(start + x) / 2, y]
-            } else {
-                x++
-            }
+        val tally = HashMap<androidx.compose.ui.graphics.Color, Int>()
+        for (x in 0 until img.width) {
+            val c = img[x, y]
+            tally[c] = (tally[c] ?: 0) + 1
         }
-        return out
+        // 가장 넓은 색이 바탕이다. 나머지 가운데 **눈에 띄게 넓은 것**만
+        // 막대로 본다 — 가장자리 안티에일리어싱은 몇 픽셀뿐이다.
+        val background = tally.maxByOrNull { it.value }!!.key
+        val minRun = img.width / (ThirdOctave.BAND_COUNT * 4)
+        return tally.filterKeys { it != background }.count { it.value >= minRun }
     }
 
     /**
@@ -97,33 +96,21 @@ class UnresolvedBandTest {
      * 지나가면 안 보인다.
      */
     @Test
-    fun 못_가르는_밴드는_다르게_그린다() {
+    fun 못_가르는_밴드는_흐리게_그린다() {
         render(unresolvedBelow = 8)
-        val bars = barColors()
-
-        assertEquals("막대가 31개로 안 잡혔다", ThirdOctave.BAND_COUNT, bars.size)
-        assertNotEquals(
-            "못 가르는 밴드(2)와 가르는 밴드(20)가 같은 색이다 — " +
-                "화면은 「흐리게 그립니다」라고 적어 두었다",
-            bars[20],
-            bars[2],
+        assertEquals(
+            "막대 색이 한 가지다 — 화면은 「흐리게 그립니다」라고 적어 두었다",
+            2,
+            barColorCount(),
         )
     }
 
-    /** **가르는 밴드끼리는 같다.** 위 시험이 아무 차이나 잡지 않게 못박는다. */
+    /**
+     * **다 가르면 한 가지다.** 위 시험이 아무 차이나 잡지 않게 못박는다.
+     */
     @Test
-    fun 가르는_밴드끼리는_같은_색이다() {
-        render(unresolvedBelow = 8)
-        val bars = barColors()
-        assertEquals(bars[12], bars[20])
-        assertEquals(bars[12], bars[30])
-    }
-
-    /** **못 가르는 밴드끼리도 같다.** 흐림은 한 가지 값이어야 한다. */
-    @Test
-    fun 못_가르는_밴드끼리는_같은_색이다() {
-        render(unresolvedBelow = 8)
-        val bars = barColors()
-        assertEquals(bars[2], bars[6])
+    fun 다_가르면_막대_색이_한_가지다() {
+        render(unresolvedBelow = 0)
+        assertEquals(1, barColorCount())
     }
 }
