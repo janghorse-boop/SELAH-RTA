@@ -16,6 +16,10 @@ USB-C 측정 마이크를 연결하면 정확도가 올라갑니다.
 > **USB 오디오인터페이스를 꽂아 볼 때** →
 > [`docs/manual/usb-audio-interface-check.md`](docs/manual/usb-audio-interface-check.md)
 >
+> **쓰는 사람에게 건넬 안내서** →
+> [`docs/manual/README.md`](docs/manual/README.md)
+> 교회 음향 담당자용. **화면 그림은 아직 없다**(현장에서 찍어야 한다).
+>
 > **음압 교정기(ND-9)를 들고 나갈 때** →
 > [`docs/manual/calibrator-nd9-check.md`](docs/manual/calibrator-nd9-check.md)
 > **내장 마이크로는 절대값이 안 닫힌다** — 무엇이 닫히고 무엇이 안
