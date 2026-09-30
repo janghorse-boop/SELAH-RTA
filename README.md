@@ -16,6 +16,11 @@ USB-C 측정 마이크를 연결하면 정확도가 올라갑니다.
 > **USB 오디오인터페이스를 꽂아 볼 때** →
 > [`docs/manual/usb-audio-interface-check.md`](docs/manual/usb-audio-interface-check.md)
 >
+> **음압 교정기(ND-9)를 들고 나갈 때** →
+> [`docs/manual/calibrator-nd9-check.md`](docs/manual/calibrator-nd9-check.md)
+> **내장 마이크로는 절대값이 안 닫힌다** — 무엇이 닫히고 무엇이 안
+> 닫히는지가 그 문서 0장에 있다.
+>
 > **무엇을 아직 모르는가** → [`docs/unverified.md`](docs/unverified.md)
 > 시험이 다 통과해도 **확인하지 못한 것**이 있다. 모아 두지 않으면
 > 모른다는 사실이 사라지고 「시험이 통과했으니 됐다」가 된다.
