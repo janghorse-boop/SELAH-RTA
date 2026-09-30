@@ -751,6 +751,24 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 시험 신호를 스피커로 내보내는 쪽. 측정과는 따로 논다. */
     private val player = SignalPlayer(
+        // **USB 로 재는 동안에는 소리를 폰 스피커로 돌린다**(2026-09-30).
+        //
+        // 안드로이드는 인터페이스를 꽂으면 출력도 그쪽으로 보내는데,
+        // **같은 USB 카드로 동시에 넣고 빼면 입력이 완전한 디지털 무음**이
+        // 되는 기기가 있다(실기기에서 쟀다). 그러면 마법사 2·4단계가
+        // **아무것도 못 잰 채로** 넘어간다.
+        openSink = {
+            kr.joa.selahrta.audio.AudioTrackSink(
+                preferredOutput = {
+                    val kind = controller.baseState.value.opened?.micKind
+                    if (kr.joa.selahrta.audio.SignalOutputChoice.preferBuiltInSpeaker(kind)) {
+                        builtInSpeaker()
+                    } else {
+                        null
+                    }
+                },
+            )
+        },
         onEnded = { generation, reason ->
             // **생명주기 소식이라 버리면 안 된다**(독립 검토 SRLR-04).
             //
@@ -3379,6 +3397,14 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
     }
+
+    /** 폰 내장 스피커. 못 찾으면 null — 그때는 안드로이드가 고른다. */
+    private fun builtInSpeaker(): android.media.AudioDeviceInfo? = runCatching {
+        val am = getApplication<Application>()
+            .getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
+        am.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS)
+            .firstOrNull { it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+    }.getOrNull()
 
     fun closeSession() {
         controller.update {
