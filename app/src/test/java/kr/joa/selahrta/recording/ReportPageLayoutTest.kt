@@ -184,4 +184,59 @@ class ReportPageLayoutTest {
         assertEquals(1, pages.size)
         assertTrue(pages.first().items.any { it.item is ReportItem.Heading })
     }
+
+    // ── 경고가 쪽마다 남는가 (독립 검토 PND-05) ──
+
+    /**
+     * **숫자가 있는 쪽에는 경고도 있어야 한다.**
+     *
+     * 처음에는 맨 앞에 한 번만 두었다. 그러다 메모가 길어 숫자가
+     * 뒷쪽으로 밀리면, **그 쪽만 인쇄하거나 전달했을 때 해석할 단서가
+     * 통째로 떨어져 나간다** — 「미보정이라 참고값」이라는 말이 없는
+     * 숫자 한 장이 된다. **종이는 한 장씩 돌아다닌다.**
+     */
+    @Test
+    fun `경고가 쪽마다 되풀이된다`() {
+        val many = (1..40).map { n ->
+            ReportSection("묶음 $n", (1..5).map { ReportLine("이름 $it", "값 $it") })
+        }
+        val pages = layout(warnings = listOf("미보정으로 재습니다."), sections = many)
+        assertTrue("여러 쪽이어야 뜻이 있다", pages.size > 1)
+        pages.forEach { page ->
+            assertTrue(
+                "쪽 ${page.number} 에 경고가 없다",
+                page.items.any { it.item is ReportItem.Warning },
+            )
+        }
+    }
+
+    /** 되풀이는 경고는 **본문보다 위**에 온다. 아래에 있으면 먼저 숫자를 읽는다. */
+    @Test
+    fun `되풀이는 경고도 본문보다 위다`() {
+        val many = (1..40).map { n ->
+            ReportSection("묶음 $n", (1..5).map { ReportLine("이름 $it", "값 $it") })
+        }
+        layout(warnings = listOf("미보정으로 재습니다."), sections = many).drop(1).forEach { page ->
+            val firstWarn = page.items.indexOfFirst { it.item is ReportItem.Warning }
+            val firstBody = page.items.indexOfFirst {
+                it.item is ReportItem.Row || it.item is ReportItem.SectionTitle
+            }
+            assertTrue("쪽 ${page.number}: 경고가 본문 아래에 있다", firstWarn < firstBody)
+        }
+    }
+
+    /**
+     * **경고가 종이를 다 먹으면 잘라 내고 잘렸다고 적는다.**
+     *
+     * 다 실으려다 본문이 들어갈 자리가 없어지면 손만 놓게 된다.
+     * 잘렸다는 사실을 안 적으면 「이게 전부」로 읽힌다.
+     */
+    @Test
+    fun `경고가 너무 길면 잘리고 그 사실을 적는다`() {
+        val huge = (1..80).map { "경고 $it" }
+        val pages = layout(warnings = huge)
+        val warns = pages.first().items.mapNotNull { (it.item as? ReportItem.Warning)?.textKo }
+        assertTrue("잘리지 않았다(${warns.size}줄)", warns.size < huge.size)
+        assertEquals("(경고가 더 있습니다)", warns.last())
+    }
 }
