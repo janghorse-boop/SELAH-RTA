@@ -118,4 +118,20 @@ data class MeasurementConditions(
                 "하드웨어 안쪽의 가공까지는 알 수 없습니다."
         else -> "입력 경로를 기록하지 못했습니다."
     }
+
+    /**
+     * 같은 말의 **한 줄짜리**. 쪽마다 되풀이할 때 쓴다.
+     *
+     * **뜻을 줄이지 않고 말만 줄인다** — 「참고용이다」, 「이 기기를 잰
+     * 값이 아니다」처럼 **읽는 사람이 숫자를 어떻게 다뤄야 하는지**가
+     * 빠지면 줄인 뜻이 없다(독립 검토 2회차 잔여 권고).
+     */
+    fun trustCoreKo(): String = when {
+        !recorded -> "잰 조건이 기록되지 않은 옛 기록입니다."
+        audioSource?.trustworthy == true && processingClean == true ->
+            "가공 없는 입력으로 쟀습니다."
+        audioSource != null && audioSource.trustworthy.not() ->
+            "가공 없는 입력을 못 써 ${audioSource.labelKo}로 쟀습니다."
+        else -> "입력 경로를 기록하지 못했습니다."
+    }
 }

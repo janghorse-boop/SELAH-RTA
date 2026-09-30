@@ -27,12 +27,21 @@ class ReportPageLayoutTest {
         ReportSection("무엇으로 쟀나", listOf(ReportLine("마이크", "내장"))),
     )
 
+    /** 요약을 안 주면 전문을 그대로 요약으로 쓴다(짝을 만들어 준다). */
+    private fun warn(vararg textKo: String) = textKo.map { ReportWarning(it, it) }
+
     private fun layout(
         warnings: List<String> = emptyList(),
         sections: List<ReportSection> = this.sections,
         metrics: ReportMetrics = ReportMetrics(),
         perLine: Int = 200,
-    ) = ReportPageLayout.paginate("예배 측정 기록", warnings, sections, metrics, ruler(perLine))
+    ) = ReportPageLayout.paginate(
+        "예배 측정 기록",
+        warnings.map { ReportWarning(it, it) },
+        sections,
+        metrics,
+        wrap = ruler(perLine),
+    )
 
     // ── 경고가 먼저다 ───────────────────────────────────
 
@@ -226,18 +235,32 @@ class ReportPageLayoutTest {
     }
 
     /**
-     * **경고가 종이를 다 먹으면 잘라 내고 잘렸다고 적는다.**
+     * **되풀이하는 요약이 종이를 다 먹으면 잘라 내고, 어디에 있는지 적는다.**
      *
-     * 다 실으려다 본문이 들어갈 자리가 없어지면 손만 놓게 된다.
-     * 잘렸다는 사실을 안 적으면 「이게 전부」로 읽힌다.
+     * 2026-09-30 2회차 검토로 **규칙이 바뀌었다.** 예전에는 **전문**을
+     * 잘랐고, 그래서 긴 경고의 뒷부분이 **어느 쪽에도 안 남았다.**
+     *
+     * 이제 자르는 것은 **둘째 쪽부터의 요약**뿐이다. 전문은 첫 쪽에
+     * 온전히 있으므로 **잃는 것이 없고**, 잘린 자리에는 「1쪽에 있다」고
+     * 적어 찾아갈 수 있게 한다.
      */
     @Test
-    fun `경고가 너무 길면 잘리고 그 사실을 적는다`() {
+    fun `되풀이할 요약이 너무 길면 잘리고 어디에 있는지 적는다`() {
         val huge = (1..80).map { "경고 $it" }
-        val pages = layout(warnings = huge)
-        val warns = pages.first().items.mapNotNull { (it.item as? ReportItem.Warning)?.textKo }
-        assertTrue("잘리지 않았다(${warns.size}줄)", warns.size < huge.size)
-        assertEquals("(경고가 더 있습니다)", warns.last())
+        val pages = ReportPageLayout.paginate(
+            "예배 측정 기록",
+            huge.map { ReportWarning(it, it) },
+            longSections(),
+            ReportMetrics(),
+            wrap = ruler(200),
+        )
+        // 전문은 **온전하다.** 한 쪽을 넘치면 이어 적으므로 첫 쪽만
+        // 보지 않고 **본문이 시작하기 전까지**를 모아 본다.
+        assertEquals("전문이 잘렸다", huge, preamble(pages))
+        // 되풀이하는 쪽의 요약은 잘리고, 어디 있는지 적혀 있다.
+        val later = pages.last().items.mapNotNull { (it.item as? ReportItem.Warning)?.textKo }
+        assertTrue("요약이 안 잘렸다(${later.size}줄)", later.size < huge.size)
+        assertEquals("(경고 전문은 1쪽에)", later.last())
     }
 
     // ── 들여쓴 만큼 좁게 끊는다 ─────────────────────────
@@ -257,7 +280,7 @@ class ReportPageLayoutTest {
         val metrics = ReportMetrics()
         ReportPageLayout.paginate(
             "예배 측정 기록",
-            listOf("미보정으로 쟀습니다."),
+            warn("미보정으로 쟀습니다."),
             sections,
             metrics,
         ) { text, widthPt ->
@@ -268,5 +291,92 @@ class ReportPageLayoutTest {
         // 첫 번째가 경고다(제목 다음, 본문 앞).
         assertEquals(metrics.contentWidthPt - metrics.warningIndentPt, widths.first())
         assertTrue("들여쓴 만큼 좁지 않다: $widths", widths.first() < metrics.contentWidthPt)
+    }
+
+    // ── 전문은 첫 쪽에, 요약은 쪽마다 ───────────────────
+
+    /**
+     * **긴 경고의 전문이 어느 쪽에도 안 남던 것을 막는다**
+     * (독립 검토 2회차 잔여 권고).
+     *
+     * 예전에는 전문을 모든 쪽에 되풀이하고, 종이 절반을 넘기면 앞쪽만
+     * 남기고 잘랐다. 그러면 **뒷부분이 통째로 사라진다** — 되풀이하려다
+     * 정작 전문을 잃는 셈이다.
+     */
+    @Test
+    fun `전문은 첫 쪽에 온전히 남는다`() {
+        val long = "가".repeat(600) // 여러 줄이 되는 긴 경고
+        val pages = ReportPageLayout.paginate(
+            "예배 측정 기록",
+            listOf(ReportWarning(long, "미보정 — 참고용입니다.")),
+            longSections(),
+            ReportMetrics(),
+            wrap = ruler(40),
+        )
+        assertEquals("전문이 잘렸다", long, preamble(pages).joinToString(""))
+    }
+
+    /** 둘째 쪽부터는 **요약 한 줄**이 선다 — 전문이 본문을 밀어내지 않는다. */
+    @Test
+    fun `둘째 쪽부터는 요약이 선다`() {
+        val long = "가".repeat(600)
+        val core = "미보정 — 참고용입니다."
+        val pages = ReportPageLayout.paginate(
+            "예배 측정 기록",
+            listOf(ReportWarning(long, core)),
+            longSections(),
+            ReportMetrics(),
+            wrap = ruler(40),
+        )
+        assertTrue("쪽이 하나뿐이면 이 시험은 뜻이 없다", pages.size >= 2)
+        val later = pages.last().items
+            .mapNotNull { (it.item as? ReportItem.Warning)?.textKo }
+        assertEquals("요약이 안 섰다", listOf(core), later)
+    }
+
+    /** 요약을 안 주면 전문을 되풀이한다 — 옛 부르는 쪽이 그대로 돈다. */
+    @Test
+    fun `요약이 없으면 전문을 되풀이한다`() {
+        val warn = "미보정으로 쟀습니다."
+        val pages = ReportPageLayout.paginate(
+            "예배 측정 기록",
+            listOf(ReportWarning(warn, warn)),
+            longSections(),
+            ReportMetrics(),
+            wrap = ruler(200),
+        )
+        assertTrue(pages.size >= 2)
+        val later = pages.last().items
+            .mapNotNull { (it.item as? ReportItem.Warning)?.textKo }
+        assertEquals(listOf(warn), later)
+    }
+
+    // **「요약 개수가 어긋나면 거절한다」 시험은 없앴다.**
+    //
+    // 목록 둘을 받던 때에는 필요했지만, 이제 짝([ReportWarning])을 그대로
+    // 받으므로 **어긋난 상태를 만들 수가 없다.** 못 틀리게 만든 자리에
+    // 검사를 남겨 두면 「검사가 있으니 안전하다」는 잘못된 안심만 남는다.
+
+    /**
+     * **본문이 시작하기 전까지의 경고** — 곧 전문이다.
+     *
+     * 전문이 한 쪽을 넘치면 다음 쪽으로 이어 적으므로, 첫 쪽만 보면
+     * 「잘렸다」고 잘못 읽는다(실제로 그렇게 썼다가 고쳤다).
+     */
+    private fun preamble(pages: List<ReportPage>): List<String> = buildList {
+        for (page in pages) {
+            for (placed in page.items) {
+                when (val item = placed.item) {
+                    is ReportItem.SectionTitle, is ReportItem.Row -> return@buildList
+                    is ReportItem.Warning -> add(item.textKo)
+                    else -> Unit
+                }
+            }
+        }
+    }
+
+    /** 쪽을 여러 장 만들 만큼 긴 본문. */
+    private fun longSections() = (1..12).map { i ->
+        ReportSection("묶음 $i", (1..6).map { ReportLine("이름 $it", "값 $it") })
     }
 }
