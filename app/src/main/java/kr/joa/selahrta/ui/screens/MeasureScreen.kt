@@ -47,6 +47,7 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.background
@@ -141,6 +142,21 @@ fun MeasureScreen(
         range?.avgLowDb,
         range?.avgHighDb,
     )
+
+    // **화면이 넓으면 계기도 커진다**(2026-10-01 담당자 지시: 「SPL 화면은
+    // 세로가 맞는데 막대그래프가 너무 작아서 어울리지가 않습니다」).
+    //
+    // 계기와 큰 숫자를 dp 로 못박아 두었더니, 폰에서 맞춘 크기가 태블릿
+    // (753dp)에서는 **폭의 삼분의 일**밖에 안 됐다. 아래가 텅 비고 계기만
+    // 조그맣게 떠 있었다.
+    //
+    // **폭만 보면 안 된다.** 처음에 폭으로만 셈했더니 태블릿을 눕혔을 때
+    // (1205×753dp) 계기가 세로를 다 먹어 **「측정 시작」이 화면 밖으로
+    // 밀렸다**(기기에서 확인). 둘 다 넉넉할 때만 키운다.
+    //
+    // **재는 값은 하나도 안 바뀐다.** 크기만 바뀐다.
+    val cfg = LocalConfiguration.current
+    val meterScale = meterScaleFor(cfg.screenWidthDp, cfg.screenHeightDp)
 
     Column(
         Modifier
@@ -334,7 +350,7 @@ fun MeasureScreen(
         ) {
             GaugeArc(
                 fraction = m.currentSpl?.let { gaugeFraction(it) },
-                modifier = Modifier.size(248.dp, 132.dp),
+                modifier = Modifier.size(GAUGE_W * meterScale, GAUGE_H * meterScale),
                 // 바에 칠하는 색이라 **바용 판정색**을 쓴다(글자용과 다르다).
                 color = liveColor ?: SelahColors.InRangeBar,
                 // **견줄 수 없으면 띠도 없다.** C·Z 가중에서 dBA 범위를
@@ -353,7 +369,7 @@ fun MeasureScreen(
             // 위쪽에 여백을 주어 가운데정렬의 기준을 아래로 민다.
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.padding(top = 40.dp),
+                modifier = Modifier.padding(top = 40.dp * meterScale),
             ) {
                 Text(
                     // **지금 값만 소수 첫째 자리까지**(담당자 지시
@@ -361,7 +377,7 @@ fun MeasureScreen(
                     // 거기는 나란히 견주는 자리라 자릿수가 들쭉날쭉하면
                     // 오히려 읽기 나쁘다.
                     formatDb(m.currentSpl, decimals = 1),
-                    fontSize = 52.sp,
+                    fontSize = BIG_VALUE_SP * meterScale,
                     fontWeight = FontWeight.Bold,
                     // 미보정 값은 흐리게 그린다. 보정된 값과 같은 밝기로 띄우면
                     // 둘의 무게가 같아 보인다 — 하나는 잰 값이고 하나는 짐작이다.
@@ -395,7 +411,7 @@ fun MeasureScreen(
                     // 타일의 밑줄(칸이 늘 있어 글자만 바뀐다). 숫자가
                     // 올라오는 모습 자체도 보는 사람에게는 신호다.
                     weighting.unitSuffix,
-                    fontSize = 14.sp,
+                    fontSize = UNIT_SP * meterScale,
                     color = if (
                         capture.calibration.state ==
                         kr.joa.selahrta.domain.CalibrationState.Uncalibrated
@@ -1474,3 +1490,45 @@ private fun SegmentPills(
         }
     }
 }
+
+/** 폰에서 맞춰 둔 계기 크기. 여기에 [meterScaleFor] 를 곱한다. */
+private val GAUGE_W = 248.dp
+private val GAUGE_H = 132.dp
+private val BIG_VALUE_SP = 52.sp
+private val UNIT_SP = 14.sp
+
+/**
+ * 넓은 화면에서 계기를 얼마나 키울 것인가.
+ *
+ * **순수 함수로 떼어 둔다.** 화면 안에 셈을 묻어 두면 기기를 꽂아야만
+ * 확인할 수 있고, 그러면 「태블릿에서 얼마인가」를 아무도 다시 안 본다.
+ *
+ * ## 폭과 높이를 **둘 다** 본다
+ *
+ * 폭으로만 셈했더니 태블릿을 눕혔을 때(1205×753dp) 배수가 3 이 되어
+ * 계기가 세로를 다 먹었고, **「측정 시작」이 화면 밖으로 밀렸다.**
+ * 스크롤하면 나오지만 **첫 화면에 안 보이는 것은 없는 것**이다.
+ *
+ * 그래서 **좁은 쪽을 따른다** — 둘 다 넉넉할 때만 커진다.
+ *
+ * - 폰 세로(384×790): 둘 다 기준에 못 미쳐 **1**. 예전 그대로다.
+ * - 태블릿 세로(753×1205): 폭 1.88 · 높이 1.51 → **1.5**.
+ * - 태블릿 가로(1205×753): 폭 3.01 · 높이 0.94 → **1**. 안 키운다.
+ *
+ * 위로는 1.6 에서 멈춘다. 그 위는 아직 본 기기가 없어 **짐작으로 키우지
+ * 않는다.**
+ */
+internal fun meterScaleFor(screenWidthDp: Int, screenHeightDp: Int): Float {
+    val byWidth = screenWidthDp / METER_REF_WIDTH_DP
+    val byHeight = screenHeightDp / METER_REF_HEIGHT_DP
+    return minOf(byWidth, byHeight).coerceIn(1f, METER_MAX_SCALE)
+}
+
+private const val METER_REF_WIDTH_DP = 400f
+
+/**
+ * 폰 세로의 쓸 수 있는 높이. 갤럭시 S23 이 표시줄을 뺀 790dp 쯤이다 —
+ * **그보다 낮으면 키우지 않는다**는 뜻이라 조금 넉넉하게 800 으로 둔다.
+ */
+private const val METER_REF_HEIGHT_DP = 800f
+private const val METER_MAX_SCALE = 1.6f
