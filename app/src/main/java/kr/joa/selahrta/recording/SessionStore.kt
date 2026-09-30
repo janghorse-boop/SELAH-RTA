@@ -36,9 +36,74 @@ class SessionStore(private val root: File) {
     /** 세션 하나가 들어앉을 폴더. */
     fun dirOf(id: String): File = File(root, id)
 
-    fun metaFile(id: String): File = File(dirOf(id), META_NAME)
+    fun metaFile(id: String): File {
+        recover(id)
+        return File(dirOf(id), META_NAME)
+    }
 
-    fun timelineFile(id: String): File = File(dirOf(id), TIMELINE_NAME)
+    fun timelineFile(id: String): File {
+        recover(id)
+        return File(dirOf(id), TIMELINE_NAME)
+    }
+
+    /** 원본이 남아 있는 자리. 한 번도 다시 분석하지 않았으면 없다. */
+    fun originalDir(id: String): File = File(dirOf(id), ORIGINAL_DIR)
+
+    /** 원본 겉장과 타임라인. 없으면 null — **지금 것이 곧 원본이다.** */
+    fun readOriginalMeta(id: String): SessionMeta? {
+        val f = File(originalDir(id), META_NAME)
+        if (!f.isFile) return null
+        return decodeSessionMeta(f.readText()).getOrNull()
+    }
+
+    fun originalTimelineFile(id: String): File = File(originalDir(id), TIMELINE_NAME)
+
+    /**
+     * **게시하다 죽었으면 마저 게시한다**(독립 검토 R3-02).
+     *
+     * ## 왜 필요한가
+     *
+     * 다시 분석은 **타임라인과 겉장 둘을 함께** 갈아 끼운다. 파일 둘을
+     * 차례로 옮기는 것은 **트랜잭션이 아니다** — 사이에서 죽으면 새 행과
+     * 옛 겉장이 함께 남고, 그러면 **그래프·CSV·PDF 가 서로 맞지 않는
+     * 설정으로 값을 해석한다.**
+     *
+     * 그래서 **한 번의 이름 바꾸기**로 게시한다. [READY_NAME] 이 생기는
+     * 그 순간이 경계다. 그 뒤에 죽어도 다음에 열 때 여기서 마저 옮긴다.
+     *
+     * 읽는 자리마다 먼저 부른다. 값이 싸다 — 파일 하나가 있는지 볼 뿐이다.
+     */
+    fun recover(id: String) {
+        val dir = dirOf(id)
+        val ready = File(dir, READY_NAME)
+        if (!ready.isFile) return
+        val staged = File(dir, STAGING_DIR)
+        val meta = File(staged, META_NAME)
+        val timeline = File(staged, TIMELINE_NAME)
+        // **둘 다 있어야 옮긴다.** 하나만 있으면 게시 준비가 덜 된 것이고,
+        // 그 상태로 옮기면 반쪽짜리가 활성이 된다.
+        //
+        // **없으면 버린다.** 예전에는 그냥 건너뛰고 표시 파일을 그대로
+        // 두었는데, 그러면 **열 때마다 같은 반쪽을 다시 보려 든다** —
+        // 고쳐지지 않을 일을 영원히 되풀이한다. 게시되지 못한 판은
+        // 쓸모가 없으므로 치운다.
+        if (!meta.isFile || !timeline.isFile) {
+            ready.delete()
+            staged.deleteRecursively()
+            return
+        }
+        runCatching {
+            File(dir, TIMELINE_NAME).writeBytes(timeline.readBytes())
+            File(dir, META_NAME).writeBytes(meta.readBytes())
+        }.onFailure {
+            // **여기서는 남겨 둔다.** 옮기다 실패한 것은 **온전한 판**이라,
+            // 다음에 다시 열 때 마저 옮길 여지가 있다(저장공간이 찼다가
+            // 비워지는 경우).
+            return
+        }
+        ready.delete()
+        staged.deleteRecursively()
+    }
 
     /**
      * 새 세션의 자리를 만든다.
@@ -165,6 +230,20 @@ class SessionStore(private val root: File) {
     companion object {
         const val META_NAME = "meta.txt"
         const val TIMELINE_NAME = "timeline.bin"
+
+        /** 처음 잰 것이 통째로 들어앉는 자리(겉장 + 타임라인). */
+        const val ORIGINAL_DIR = "original"
+
+        /** 게시를 기다리는 새 판. */
+        const val STAGING_DIR = "staging"
+
+        /**
+         * **이 파일이 생기는 순간이 경계다.**
+         *
+         * 만드는 데 이름 바꾸기 한 번이면 되므로 **쪼개지지 않는다.**
+         * 있으면 [STAGING_DIR] 을 활성으로 옮긴다.
+         */
+        const val READY_NAME = "staged.ready"
 
         /**
          * 세션 이름. **시각을 앞에 둔다** — 폴더를 이름순으로 늘어놓으면

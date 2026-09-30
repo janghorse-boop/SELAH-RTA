@@ -1,0 +1,13 @@
+diff --git a/app/src/main/java/kr/joa/selahrta/ui/components/SplTimelineGraph.kt b/app/src/main/java/kr/joa/selahrta/ui/components/SplTimelineGraph.kt
+--- a/app/src/main/java/kr/joa/selahrta/ui/components/SplTimelineGraph.kt
++++ b/app/src/main/java/kr/joa/selahrta/ui/components/SplTimelineGraph.kt
+@@ -77,7 +77,7 @@
+     var widthPx by remember { mutableIntStateOf(0) }
+     val columns = (widthPx / 3).coerceIn(1, 400)
+-    val series = remember(meta.id, rows, columns) { timelineSeries(meta, rows, columns) }
+-    val markers = remember(meta.id, series) { timelineMarkers(meta, series) }
++    val series = remember(meta, rows, columns) { timelineSeries(meta, rows, columns) }
++    val markers = remember(meta, series) { timelineMarkers(meta, series) }
+     val grid = remember(series) { timelineGridDb(series) }
+ 
+     Column(

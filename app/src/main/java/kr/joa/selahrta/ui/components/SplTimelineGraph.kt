@@ -76,8 +76,16 @@ fun SplTimelineGraph(
     // **칸 수는 화면 폭에서 온다.** 한 칸이 1px 보다 좁으면 그리나 마나다.
     var widthPx by remember { mutableIntStateOf(0) }
     val columns = (widthPx / 3).coerceIn(1, 400)
-    val series = remember(meta.id, rows, columns) { timelineSeries(meta, rows, columns) }
-    val markers = remember(meta.id, series) { timelineMarkers(meta, series) }
+    // **열쇠는 `meta` 전체다. `meta.id` 가 아니다**(독립 검토 R3-05).
+    //
+    // 둘 다 `meta` 를 읽는데 열쇠는 id 만 봤다. 그러면 **같은 기록을 다시
+    // 분석해 보정이 바뀌어도** 옛 결과가 그대로 남는다 — 그래프만 이전
+    // 보정 값을 그린다.
+    //
+    // **PND-04 에서 똑같은 실수를 하고 고쳤던 자리다**(`region.id` 를
+    // 열쇠로 써서 프로필을 바꿔도 띠가 그대로였다). 같은 실수를 반복했다.
+    val series = remember(meta, rows, columns) { timelineSeries(meta, rows, columns) }
+    val markers = remember(meta, series) { timelineMarkers(meta, series) }
     val grid = remember(series) { timelineGridDb(series) }
 
     Column(

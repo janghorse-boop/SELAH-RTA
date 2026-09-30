@@ -1,5 +1,6 @@
 package kr.joa.selahrta.recording
 
+import kr.joa.selahrta.dsp.Weighting
 import java.io.File
 import java.io.IOException
 
@@ -56,53 +57,89 @@ class SessionReanalyzer(private val store: SessionStore) {
         }
 
         val dir = store.dirOf(id)
-        val current = store.timelineFile(id)
-        val original = File(dir, ORIGINAL_TIMELINE_NAME)
 
-        // **먼저 원본을 지켜 둔다.** 새 것을 쓰다 죽어도 원본은 남는다.
-        // 이미 있으면 덮지 않는다 — 두 번째 재분석이 첫 번째 결과를
-        // 「원본」으로 만들면 진짜 원본이 사라진다.
-        if (!original.isFile && current.isFile) {
-            current.copyTo(original, overwrite = false)
-        }
-
-        // **임시로 쓴 뒤 옮긴다.** 쓰다 죽으면 옛 타임라인이 그대로 남는다.
-        val tmp = File(dir, "$TIMELINE_TMP_NAME")
-        tmp.outputStream().buffered().use { out ->
-            val w = TimelineWriter(
-                out,
-                TimelineHeader(
-                    nominalSampleRate = settings.sampleRateOf(old),
-                    rowMillis = TimelineFormat.ROW_MILLIS,
-                ),
-            )
-            session.rows.forEach { w.write(it) }
-        }
-        if (!tmp.renameTo(current)) {
-            // 옮기기가 안 되는 저장소가 있다. **덮어쓰기라도** 한다.
-            current.writeBytes(tmp.readBytes())
-            tmp.delete()
+        // **원본은 겉장까지 함께 남긴다**(독립 검토 R3-01).
+        //
+        // 예전에는 `timeline.bin` 만 복사했다. 그런데 행에 든 것은 **보정
+        // 전 raw 값과 epoch 번호**다 — 그 번호를 풀 표(겉장의 `epochs`)가
+        // 새 값으로 덮이면 **바이트는 남아도 원래 SPL 을 복원할 근거가
+        // 사라진다.** 「처음 잰 값도 그대로 남아 있습니다」가 거짓이 된다.
+        //
+        // **한 번만 만든다.** 두 번째 재분석이 첫 번째 결과를 「원본」으로
+        // 만들면 처음 잰 것이 사라진다.
+        val original = store.originalDir(id)
+        if (!original.isDirectory) {
+            val tmp = File(dir, "$ORIGINAL_DIR.tmp")
+            tmp.deleteRecursively()
+            if (!tmp.mkdirs()) throw IOException("원본 자리를 만들지 못했습니다.")
+            File(dir, SessionStore.TIMELINE_NAME).copyTo(File(tmp, SessionStore.TIMELINE_NAME))
+            File(tmp, SessionStore.META_NAME).writeText(encodeSessionMeta(old))
+            if (!tmp.renameTo(original)) {
+                tmp.deleteRecursively()
+                throw IOException("원본을 남기지 못했습니다. 기록을 그대로 두었습니다.")
+            }
         }
 
         val next = old.merged(session, settings, nowMs)
-        store.writeMeta(next).getOrThrow()
-        next
+
+        // **둘을 함께 게시한다**(독립 검토 R3-02).
+        //
+        // 타임라인을 먼저 바꾸고 겉장을 나중에 쓰면, 그 사이에 실패했을 때
+        // **새 행과 옛 겉장이 함께 남는다** — 그래프·CSV·PDF 가 서로 맞지
+        // 않는 설정으로 값을 해석한다. 실패를 돌려주면서 기록은 이미
+        // 바뀌어 있는 셈이다.
+        //
+        // 그래서 **옆에 다 만들어 놓고 검사한 뒤**, 표시 파일 하나를
+        // 만드는 것으로 게시한다. 이름 바꾸기 한 번이라 쪼개지지 않는다.
+        val staged = File(dir, SessionStore.STAGING_DIR)
+        staged.deleteRecursively()
+        if (!staged.mkdirs()) throw IOException("새 판을 놓을 자리를 만들지 못했습니다.")
+        try {
+            File(staged, SessionStore.TIMELINE_NAME).outputStream().buffered().use { out ->
+                val w = TimelineWriter(
+                    out,
+                    TimelineHeader(
+                        nominalSampleRate = old.sampleRate,
+                        rowMillis = TimelineFormat.ROW_MILLIS,
+                    ),
+                )
+                session.rows.forEach { w.write(it) }
+            }
+            val text = encodeSessionMeta(next)
+            // **다시 읽어 본 뒤에 게시한다.** 쓸 수는 있는데 못 읽는 겉장을
+            // 게시하면 그 기록이 목록에서 사라진다(R2-01 과 같은 성질).
+            decodeSessionMeta(text).getOrThrow()
+            File(staged, SessionStore.META_NAME).writeText(text)
+
+            val ready = File(dir, SessionStore.READY_NAME)
+            val readyTmp = File(dir, "${SessionStore.READY_NAME}.tmp")
+            readyTmp.writeText(next.id)
+            if (!readyTmp.renameTo(ready)) {
+                readyTmp.delete()
+                throw IOException("새 판을 게시하지 못했습니다. 기록을 그대로 두었습니다.")
+            }
+        } catch (e: Throwable) {
+            // **게시 전에 실패하면 활성은 그대로다.** 옆에 만들던 것만 치운다.
+            staged.deleteRecursively()
+            throw e
+        }
+
+        // 여기서 죽어도 다음에 열 때 [SessionStore.recover] 가 마저 옮긴다.
+        store.recover(id)
+        store.readMeta(id).getOrThrow()
     }
 
     companion object {
-        /** 처음 다시 분석할 때 원본을 여기로 옮겨 둔다. */
-        const val ORIGINAL_TIMELINE_NAME = "timeline-v1.bin"
-        private const val TIMELINE_TMP_NAME = "timeline.bin.tmp"
+        /**
+         * 처음 잰 것이 통째로 들어앉는 자리(**겉장 + 타임라인**).
+         *
+         * 예전에는 `timeline-v1.bin` 하나였다. 행은 **보정 전 raw 값과
+         * epoch 번호**라, 그 번호를 풀 표가 없으면 **바이트가 남아도
+         * 원래 SPL 을 복원할 수 없다**(독립 검토 R3-01).
+         */
+        const val ORIGINAL_DIR = SessionStore.ORIGINAL_DIR
     }
 }
-
-/**
- * 소리에 적힌 샘플레이트를 못 읽었을 때를 위한 되돌아갈 값.
- *
- * [Reanalysis] 는 **파일 머리의 값**을 쓴다. 겉장의 값과 다르면 소리 쪽이
- * 맞다 — 여기는 타임라인 머리에 적을 값을 고르는 자리일 뿐이다.
- */
-private fun ReanalysisSettings.sampleRateOf(old: SessionMeta): Int = old.sampleRate
 
 /**
  * 다시 셈한 결과를 겉장에 녹인다.
@@ -131,6 +168,25 @@ private fun SessionMeta.merged(
     events = session.events,
     clippedRows = session.rows.count { it.clipped },
     curveApplied = settings.curve != null,
+    // **셈에 실제로 건 가중을 적는다**(독립 검토 R3-04).
+    //
+    // 예전에는 옛 값이 그대로 남아, **새 C 분석인데 겉장은 A** 라고
+    // 말했다. 라벨과 숫자가 다르면 나중에 견줄 수가 없다.
+    analysisWeighting = settings.analysisWeighting,
+    // **PEAK 에는 가중이 안 걸린다.** 기록에 남는 peak 는
+    // `SplFrame.blockPeakDbfs` 이고, 그 값은 A·C·Z 가 **모두 같다**
+    // (재서 확인했다 — `SplEngine` 이 「Peak 는 가중 전에 잰다」).
+    // 그러니 여기에 A 나 C 를 적으면 **걸지 않은 가중을 걸었다고 말하는 것**이다.
+    peakWeighting = Weighting.Z,
+    // **보정 상태도 셈을 따라간다.** 미보정으로 다시 셈했는데 옛
+    // 「전대역 보정」이 남아 **미보정 경고가 통째로 사라졌다**(R3-04).
+    conditions = conditions.copy(
+        calibrationState = when {
+            settings.referenceOnly -> kr.joa.selahrta.domain.CalibrationState.Uncalibrated
+            settings.curve != null -> kr.joa.selahrta.domain.CalibrationState.FrequencyCalibrated
+            else -> kr.joa.selahrta.domain.CalibrationState.GlobalCalibrated
+        },
+    ),
     reanalyzedAtEpochMs = nowMs,
-    originalTimelineName = SessionReanalyzer.ORIGINAL_TIMELINE_NAME,
+    originalTimelineName = SessionReanalyzer.ORIGINAL_DIR,
 )
