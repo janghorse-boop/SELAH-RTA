@@ -134,6 +134,25 @@ data class RtaConditions(
      * 빠져 있었다.
      */
     val inputChannel: Int? = null,
+    /**
+     * **무슨 소리를 넣어 잰 것인가** — 독립 검토 PND-02.
+     *
+     * 신호의 **이름만으로는 모자란다.** 「주파수 지정」은 1kHz 일 수도
+     * 2kHz 일 수도 있고, 「1/3 옥타브 대역」은 중심이 어디냐에 따라 전혀
+     * 다른 소리다. 그것이 안 적히면 **다른 주파수로 잰 두 곡선이 같은
+     * 조건**이 되고, 그 차이가 방의 차이로 읽힌다.
+     *
+     * 적는 꼴:
+     * - `hz:1000.0` — 주파수를 고르는 신호(순음 지정)
+     * - `band:1000.0:third-octave-butterworth-pair-v1` — 대역 잡음.
+     *   **폭은 사람이 고르는 값이 아니라 규칙**이라 그 규칙의 이름을 적는다.
+     * - `fixed` — 핑크·화이트·정해진 순음. **이름이 곧 조건**이다.
+     * - `none` — 소리를 안 틀고 잰 것.
+     *
+     * 옛 파일에는 이 칸이 없어 **null(미확인)** 이다 — 지금 설정으로
+     * 채우지 않는다.
+     */
+    val signalSpec: String? = null,
 ) {
     /**
      * 겉장에 없던 것은 **null 로 남는다**(담당자 지시 2026-09-29 기준 5).
@@ -144,7 +163,8 @@ data class RtaConditions(
      * 그렇다.
      */
     val hasUnknown: Boolean
-        get() = analysisWeighting == null || offsetDb == null || curveHash == null ||
+        get() = signalSpec == null ||
+            analysisWeighting == null || offsetDb == null || curveHash == null ||
             inputSource == null || inputChannel == null ||
             inputKey == null || calibrationState == null ||
             calibrationSource == null || curveName == null ||

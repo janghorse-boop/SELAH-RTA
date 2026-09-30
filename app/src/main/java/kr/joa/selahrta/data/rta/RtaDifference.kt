@@ -70,6 +70,12 @@ class RtaDifference private constructor(
             if (second.bandsSpl.size != ThirdOctave.BAND_COUNT) return null
             if (first.conditions.hasUnknown || second.conditions.hasUnknown) return null
             if (!comparable(first.conditions, second.conditions)) return null
+            // **무슨 소리를 넣었는지도 같아야 한다**(독립 검토 PND-02).
+            //
+            // 조건 쪽만 보다 보니 **핑크로 잰 것과 순음으로 잰 것**이 같은
+            // 조건으로 셈해졌다. 자극이 다르면 그 차이는 방의 차이가 아니다.
+            // 자세한 것(주파수·대역 모양)은 `conditions.signalSpec` 이 든다.
+            if (first.signal != second.signal) return null
 
             val n = ThirdOctave.BAND_COUNT
             val diff = DoubleArray(n) { first.bandsSpl[it] - second.bandsSpl[it] }
@@ -128,6 +134,10 @@ class RtaDifference private constructor(
                 a.curveHash == b.curveHash &&
                 // **가중이 다르면 같은 소리도 다르게 찍힌다** — 100Hz 에서 19dB.
                 a.analysisWeighting == b.analysisWeighting &&
+                // **주파수·대역 모양까지 본다**(독립 검토 PND-02). 1kHz 로
+                // 재 것과 2kHz 로 재 것은 같은 「주파수 지정」이지만 전혀 다른
+                // 소리다 — 그 차이를 방의 차이로 읽게 두면 안 된다.
+                a.signalSpec == b.signalSpec &&
                 a.fftSize == b.fftSize &&
                 a.sampleRate == b.sampleRate
     }

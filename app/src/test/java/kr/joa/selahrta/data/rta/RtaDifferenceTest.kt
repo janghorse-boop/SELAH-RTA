@@ -31,9 +31,10 @@ class RtaDifferenceTest {
         curveHash: String? = "",
         inputSource: String? = "Unprocessed",
         inputChannel: Int? = 0,
+        signalSpec: String? = "fixed",
     ) = RtaConditions(
         input, state, source, curve, fft, rate,
-        weighting, offsetDb, curveHash, inputSource, inputChannel,
+        weighting, offsetDb, curveHash, inputSource, inputChannel, signalSpec,
     )
 
     private fun m(
@@ -309,5 +310,49 @@ class RtaDifferenceTest {
         val old = m("a", "Left", flat(60.0), conditions(weighting = null))
         val now = m("b", "Left", flat(60.0))
         assertNull(RtaDifference.of(old, now))
+    }
+
+    // ── 무슨 소리를 넣었는가 (독립 검토 PND-02) ──
+
+    /**
+     * **자극이 다르면 그 차이는 방의 차이가 아니다.**
+     *
+     * 조건만 보다 보니 핑크로 재 것과 순음으로 재 것이 같은 조건으로
+     * 셀해졌다.
+     */
+    @Test
+    fun `신호 종류가 다르면 차이를 안 낸다`() {
+        val a = m("a", "Left", flat(60.0))
+        val b = m("b", "Left", flat(60.0)).copy(signal = "Custom")
+        assertNull(RtaDifference.of(a, b))
+    }
+
+    /**
+     * **1kHz 로 재 것과 2kHz 로 재 것은 같은 「주파수 지정」이지만
+     * 전혀 다른 소리다.**
+     *
+     * 이름만 적어 두면 둘이 같은 조건이 된다.
+     */
+    @Test
+    fun `주파수가 다르면 차이를 안 낸다`() {
+        val a = m("a", "Left", flat(60.0), conditions(signalSpec = "hz:1000.0"))
+        val b = m("b", "Left", flat(60.0), conditions(signalSpec = "hz:2000.0"))
+        assertNull(RtaDifference.of(a, b))
+    }
+
+    /** **대역 모양이 바뀜어도 같다.** 폭은 규칙이고, 규칙이 바뀌면 소리가 다르다. */
+    @Test
+    fun `대역 규칙이 다르면 차이를 안 낸다`() {
+        val a = m("a", "Left", flat(60.0), conditions(signalSpec = "band:1000.0:v1"))
+        val b = m("b", "Left", flat(60.0), conditions(signalSpec = "band:1000.0:v2"))
+        assertNull(RtaDifference.of(a, b))
+    }
+
+    /** 같은 소리로 재고 **채널만 다른 것**은 그대로 셀다 — 그것이 목적이다. */
+    @Test
+    fun `같은 소리면 채널이 달라도 셀는다`() {
+        val a = m("a", "Left", flat(66.0), conditions(signalSpec = "hz:1000.0"))
+        val b = m("b", "Right", flat(60.0), conditions(signalSpec = "hz:1000.0"))
+        assertEquals(6.0, RtaDifference.of(a, b)!!.widestDb, 1e-9)
     }
 }

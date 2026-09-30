@@ -229,6 +229,7 @@ class RtaMeasurementStore(
             put("curveHash", m.conditions.curveHash)
             put("inputSource", m.conditions.inputSource)
             put("inputChannel", m.conditions.inputChannel)
+            put("signalSpec", m.conditions.signalSpec)
             put("measuredAtEpochMs", m.measuredAtEpochMs)
             put("memoKo", m.memoKo)
             // **끝 표시를 맨 뒤에 둔다.** 쓰다가 죽으면 이 줄이 없으므로
@@ -285,6 +286,7 @@ class RtaMeasurementStore(
                     curveHash = r.strOrNull("curveHash"),
                     inputSource = r.strOrNull("inputSource"),
                     inputChannel = r.intOrNull("inputChannel"),
+                    signalSpec = r.strOrNull("signalSpec"),
                 ),
                 measuredAtEpochMs = r.longOrNull("measuredAtEpochMs") ?: 0L,
                 memoKo = r.strOrNull("memoKo").orEmpty(),
