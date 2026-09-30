@@ -539,7 +539,12 @@ private fun ToneHzField(toneHz: Double, onToneHz: (Double) -> Unit) {
             keyboardActions = KeyboardActions(onDone = { commit() }),
             modifier = Modifier
                 .width(96.dp)
-                .onFocusChanged { if (!it.isFocused && editing) commit() },
+                .onFocusChanged { if (!it.isFocused && editing) commit() }
+                // **이름을 붙인다.** 화면에는 옆에 「Hz」가 적혀 있고 위에
+                // 제목도 있지만, 그것들은 **다른 마디**다 — 읽개가 이 칸을
+                // 짚으면 숫자만 읽고 **무엇을 적는 칸인지 말하지 못한다.**
+                // 눈으로 보면 멀쩡해서 이런 자리는 눈으로 못 찾는다.
+                .semantics { contentDescription = "순음 주파수(Hz)" },
         )
         Text(
             " Hz",
