@@ -1,0 +1,21 @@
+--- a/app/src/main/java/kr/joa/selahrta/audio/MicSource.kt
++++ b/app/src/main/java/kr/joa/selahrta/audio/MicSource.kt
+@@ -102,7 +102,8 @@
+         // 가공 없는 입력을 먼저 시도하고, 안 되면 덜 가공된 쪽으로 내려간다.
+         // 그리고 **무엇으로 열렸는지 반드시 남긴다** — 숨기면 담당자가
+         // 자동 게인이 걸린 숫자를 그대로 믿는다.
+-        val unprocessedOk = shouldTryUnprocessed(unprocessedSupported(), target?.kind)
++        val reportedSupport = unprocessedSupported()
++        val unprocessedOk = shouldTryUnprocessed(reportedSupport, target?.kind)
+         val sources = buildList {
+             if (unprocessedOk) add(CaptureSource.Unprocessed)
+             add(CaptureSource.VoiceRecognition)
+@@ -114,7 +115,7 @@
+         var lastDetail: String? = null
+         for (src in sources) {
+             for (enc in encodings) {
+-                val r = tryOpen(requested, src, enc, unprocessedOk)
++                val r = tryOpen(requested, src, enc, reportedSupport)
+                 when (r) {
+                     is OpenResult.Opened -> return r
+                     is OpenResult.Failed -> lastDetail = r.detail
