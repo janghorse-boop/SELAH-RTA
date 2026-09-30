@@ -1,0 +1,41 @@
+PIN edc2a5c182c839012666896dc120b74836553c84
+ROOT build/independent-review/round2-20260930
+JAVA_HOME C:/Program Files/Android/Android Studio/jbr
+
+Baseline source was a git archive. Windows tar complained about one Korean documentation pathname; Python tarfile extracted the archive successfully afterward.
+First baseline attempt accidentally included a newly prepared reviewer test before its API spelling was corrected (push -> process); this was a reviewer harness compile error, not a product failure. Removed the probe before the final baseline build.
+
+BASELINE FINAL COMMAND (source/):
+gradlew.bat --offline --no-build-cache --max-workers=2 :dsp:test :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest
+baseline-final.log: BUILD SUCCESSFUL in 1m 58s
+XML counted before targeted tests overwrote app results:
+DSP 633 failures 0; APP 977 failures 0.
+No lint run. No Android instrumentation run this turn.
+
+PROBE COMMAND:
+gradlew.bat --offline --no-build-cache --max-workers=2 :app:testDebugUnitTest --tests '*Round2IndependentTest*'
+4 tests / 4 assertion failures. Original XML preserved as probe-results.xml.
+R2_SILENCE windows=3 finite=0 first=-Infinity
+R2_REOPEN success=true count=0 listing=RtaListing(items=[], unreadable=1)
+R2_OUTSIDE coverage=1.0 windows=2 mean=-3.010295613697165
+R2_SNAPSHOT mean=3.010299956639812 windows=2
+R2_IMPULSE a=-71.4780453987058 b=-74.4916739677606 delta=-3.013628569054802
+
+PARTIAL PATCH COMMAND:
+gradlew.bat --offline --no-build-cache --max-workers=2 :app:testDebugUnitTest --tests '*Round2IndependentTest.silentPcmMustHaveFiniteStoredBands' --tests '*Round2IndependentTest.outsideWindowMustNotChangeMean' --tests '*Round2IndependentTest.meanMustUseOneAtomicSnapshot' --tests '*RtaCoverageTest' --tests '*AverageDefinitionTest'
+proposed.log: BUILD SUCCESSFUL in 8s
+17 tests / 0 failures (3 independent + 14 existing).
+PCM position claim is deliberately NOT among these 17; partial patch does not address it.
+Original RtaCoverage restored byte-for-byte from RtaCoverage.original.kt. Proposed version retained as RtaCoverage.proposed.kt for evidence. Actual repository product files not patched.
+git apply --check of delivered patch: passed.
+
+EMULATOR:
+Existing emulator-5584 untouched.
+Two attempts to launch owned read-only/headless/no-audio emulator-5586 (PIDs 30180,30500) exited. emulator.log: Another emulator instance is running. Please close it or run all emulators with -read-only flag.
+Neither launch process remains. No installed APK, AppOps change, microphone capture, or real device operation this turn.
+
+SHA256
+6D3A3A979535793F3FCA71ED23871A193F217AF3080342918E4D7C7D08DC38C8  2026-09-30-round2-independent-regression.kt
+EFC600359C8D0CC1DE650907117A54C69E5B520EB80E0F4B1A663238DDB79FF7  2026-09-30-round2-coverage-partial-proposed.patch
+
+Concurrent work at final audit: PlaybackReadout.kt modified, TimelineGraph.kt untracked. Left untouched and excluded from pinned review.
