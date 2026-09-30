@@ -131,6 +131,23 @@ data class SessionMeta(
     /** 어느 셈으로 만든 기록인가. 셈이 바뀌면 옛 기록과 견줄 수 없다. */
     val analysisVersion: Int = ANALYSIS_VERSION,
 
+    /**
+     * **다시 분석한 시각.** 한 번도 안 했으면 null.
+     *
+     * 이 값이 있으면 **아래 숫자는 잰 그날의 것이 아니다** — 소리는
+     * 그대로지만 잣대가 바뀌었다. 견줄 때 사람이 알아야 한다.
+     */
+    val reanalyzedAtEpochMs: Long? = null,
+
+    /**
+     * **원본 타임라인이 남아 있는 파일 이름.** 없으면 null.
+     *
+     * 명세 Recording-E 의 완료 기준이 「원본 보존」이다. 다시 분석해도
+     * 처음 잰 것이 그대로 있다는 **증거**가 되도록 이름을 겉장에 적는다 —
+     * 파일만 두면 다음 사람이 그것이 무엇인지 모른다.
+     */
+    val originalTimelineName: String? = null,
+
     /** 사람이 적는 메모(명세 12장). */
     val memo: String = "",
 
@@ -224,8 +241,11 @@ data class RecordedAudio(
  * - **v1** — 첫 판.
  * - **v2** — 잰 조건([MeasurementConditions])이 붙었다. v1 기록도 그대로
  *   읽힌다. 없는 칸은 「기록 없음」이지 「가공이 없었다」가 아니다.
+ * - **v3** — 다시 분석한 시각과 원본 타임라인 이름이 붙었다(명세
+ *   Recording-E). 없으면 **한 번도 다시 분석하지 않은 것**이다 —
+ *   그 뜻이 분명해서 옛 기록도 그대로 읽힌다.
  */
-const val SESSION_SCHEMA_VERSION = 2
+const val SESSION_SCHEMA_VERSION = 3
 
 /**
  * 셈의 판 번호. DSP 가 바뀌면 올린다.
@@ -283,6 +303,10 @@ fun encodeSessionMeta(m: SessionMeta): String = buildString {
         put("audio.droppedBlocks", a.droppedBlocks)
     }
     put("analysisVersion", m.analysisVersion)
+    // **안 한 일은 적지 않는다**(판 3). 빈 값으로 적어 두면 다음에 읽을
+    // 때 「다시 분석했는데 시각이 없다」로 읽힌다.
+    m.reanalyzedAtEpochMs?.let { put("reanalyzedAtEpochMs", it) }
+    m.originalTimelineName?.let { put("originalTimelineName", it) }
     put("memo", m.memo)
 
     // ---- 잰 조건(판 2) ----
@@ -414,6 +438,9 @@ fun decodeSessionMeta(text: String): Result<SessionMeta> {
             )
         },
         analysisVersion = r.int("analysisVersion"),
+        // **없는 것이 정상이다.** 한 번도 다시 분석하지 않은 기록이다.
+        reanalyzedAtEpochMs = r.longOrNull("reanalyzedAtEpochMs"),
+        originalTimelineName = r.strOrNull("originalTimelineName"),
         memo = r.str("memo"),
         // **조건 칸은 없어도 된다**(판 2에서 생겼다).
         //

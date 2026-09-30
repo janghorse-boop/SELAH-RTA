@@ -587,8 +587,10 @@ fun SelahApp() {
                             onDismissNotice = vm::dismissHistoryNotice,
                             audioFileOf = { vm.audioFileOf(it) ?: java.io.File("") },
                             onShareAudio = vm::shareAudioOnly,
-                        onMemo = vm::setSessionMemo,
+                            onMemo = vm::setSessionMemo,
                             rows = capture.openedRows,
+                            onReanalyze = vm::reanalyzeSession,
+                            reanalyzeProgress = capture.reanalyzeProgress,
                         )
                     }
                     ViewMode.Signal -> ToolsScreen(

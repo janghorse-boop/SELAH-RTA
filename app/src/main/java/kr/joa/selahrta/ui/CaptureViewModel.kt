@@ -215,6 +215,13 @@ data class CaptureUiState(
     /** 내보내기·삭제 결과를 사람에게 한 줄로. */
     val historyNoticeKo: String? = null,
     /**
+     * 다시 분석하는 중인 기록의 진행(0~1). 안 하는 중이면 null.
+     *
+     * **긴 녹음은 오래 걸린다.** 아무 표시가 없으면 사람은 앱이 멈춘
+     * 줄 알고 나가거나 다시 누른다.
+     */
+    val reanalyzeProgress: Float? = null,
+    /**
      * 공유 창을 띄울 파일들. 띄운 뒤 화면이 비운다.
      *
      * **CSV 와 소리를 함께 보낸다.** 따로 보내면 받는 쪽에서 짝이
@@ -3496,6 +3503,68 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                     )
                 }
             }
+            refreshSessions()
+        }
+    }
+
+    /**
+     * 기록 하나를 **지금 설정으로 다시 분석한다**(명세 Recording-E).
+     *
+     * ## 왜 「지금 설정」인가
+     *
+     * 다시 셈하는 까닭이 대개 **보정을 새로 했기 때문**이다. 그러니
+     * 지금 걸려 있는 보정·곡선·가중치를 그대로 쓴다.
+     *
+     * **소리는 그대로**이고 **처음 잰 타임라인도 남는다** —
+     * [kr.joa.selahrta.recording.SessionReanalyzer] 가 지킨다.
+     */
+    fun reanalyzeSession(meta: kr.joa.selahrta.recording.SessionMeta) {
+        val audio = audioFileOf(meta)
+        if (audio == null || !audio.isFile) {
+            controller.update {
+                it.copy(historyNoticeKo = "이 기록에는 다시 분석할 소리가 없습니다.")
+            }
+            return
+        }
+        // **두 번 누르는 것을 막는다.** 같은 파일에 둘이 쓰면 결과가 섞인다.
+        if (controller.baseState.value.reanalyzeProgress != null) return
+
+        val st = controller.baseState.value
+        val settings = kr.joa.selahrta.recording.ReanalysisSettings(
+            offsetDb = st.calibration.offset.db,
+            referenceOnly = st.calibration.isReferenceOnly,
+            leqWindowMs = st.meterSettings.leqWindow.millis,
+            weighting = st.meterSettings.splWeighting,
+            timeWeight = st.meterSettings.timeWeight,
+            fftSize = st.meterSettings.fftSize,
+            curve = st.curve?.takeIf { it.enabled }?.curve,
+            channelIndex = meta.channelIndex,
+        )
+        controller.update { it.copy(reanalyzeProgress = 0f, historyNoticeKo = null) }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            val r = kr.joa.selahrta.recording.SessionReanalyzer(sessionStore).run(
+                id = meta.id,
+                audioFile = audio,
+                settings = settings,
+                nowMs = System.currentTimeMillis(),
+            ) { p -> onMainThread { controller.update { it.copy(reanalyzeProgress = p) } } }
+
+            onMainThread {
+                controller.update {
+                    it.copy(
+                        reanalyzeProgress = null,
+                        historyNoticeKo = if (r.isSuccess) {
+                            "다시 분석했습니다. 처음 잰 값도 그대로 남아 있습니다."
+                        } else {
+                            "다시 분석하지 못했습니다: ${r.exceptionOrNull()?.message}"
+                        },
+                    )
+                }
+            }
+            // **행까지 다시 읽어야 화면이 새 값을 본다.** 겉장만 갈아
+            // 끼우면 그래프와 「듣는 자리의 값」은 옛 행 그대로다.
+            r.getOrNull()?.let { onMainThread { openSession(it) } }
             refreshSessions()
         }
     }

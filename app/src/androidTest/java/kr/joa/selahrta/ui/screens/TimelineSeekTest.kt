@@ -116,6 +116,7 @@ class TimelineSeekTest {
                     onDelete = {}, onDismissNotice = {},
                     audioFileOf = { file },
                     onShareAudio = {}, onMemo = { _, _ -> },
+                    onReanalyze = {}, reanalyzeProgress = null,
                     rows = rows(),
                 )
             }

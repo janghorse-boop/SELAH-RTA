@@ -322,7 +322,12 @@ class MeasurementReportTest {
         val v2 = encodeSessionMeta(meta(conditions = s23))
         val v1 = v2.lineSequence()
             .filterNot { it.startsWith("cond.") }
-            .joinToString("\n") { if (it == "schemaVersion=2") "schemaVersion=1" else it }
+            .joinToString("\n") {
+                // **판 번호를 글자로 박지 않는다.** 예전에는 `2` 를 찾았는데,
+                // 판이 3 으로 오르자 바꿔치기가 안 먹어 **판 3 을 넣고
+                // 「1 이어야 한다」로 견주다** 터졌다.
+                if (it.startsWith("schemaVersion=")) "schemaVersion=1" else it
+            }
         val back = decodeSessionMeta(v1).getOrThrow()
         assertEquals(1, back.schemaVersion)
         assertFalse("옛 기록에 조건이 있다고 말한다", back.conditions.recorded)
