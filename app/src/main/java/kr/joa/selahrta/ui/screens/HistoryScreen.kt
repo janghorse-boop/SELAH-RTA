@@ -239,6 +239,10 @@ private fun SessionDetail(
 ) {
     var confirmDelete by remember { mutableStateOf(false) }
     var playMs by remember(m.id) { mutableStateOf(0) }
+    // **그래프에서 시킨 자리.** 기록을 바꾸면 비운다.
+    var seek by remember(m.id) {
+        mutableStateOf<kr.joa.selahrta.ui.components.PlaybackSeek?>(null)
+    }
 
     TextButton(onClick = onClose) {
         Text("← 목록으로", color = SelahColors.Accent, fontSize = 13.sp)
@@ -257,6 +261,25 @@ private fun SessionDetail(
             file = audioFileOf(m),
             onShare = { onShareAudio(m) },
             onPosition = { playMs = it },
+            seek = seek,
+        )
+        // **그래프를 눌러 그 시점으로 간다**(명세 Recording-D 「양방향」).
+        //
+        // 소리→값 한쪽만 있을 때는 「95dB 이 찍힌 자리」를 눈으로 찾아
+        // 놓고도 **그 소리로 갈 길이 없었다.** 슬라이더를 더듬어 찾는
+        // 것은 「찾을 수 있다」가 아니다.
+        kr.joa.selahrta.ui.components.SplTimelineGraph(
+            meta = m,
+            rows = rows,
+            playMs = playMs,
+            onSeek = { ms ->
+                // **번호를 올려 보낸다.** 같은 자리를 두 번 눌러도 먹혀야
+                // 한다 — 그래프에서 같은 봉우리를 다시 누르는 것은 흔하다.
+                seek = kr.joa.selahrta.ui.components.PlaybackSeek(
+                    ms = ms,
+                    nonce = (seek?.nonce ?: 0L) + 1L,
+                )
+            },
         )
         // **듣는 자리의 값을 바로 아래 붙인다.** 숫자와 소리를 같은
         // 시각으로 묶어야 「이 자리가 그 자리」라고 말할 수 있다.
@@ -448,6 +471,35 @@ private fun PlaybackReadout(
             ReadoutValue("최대", v.maxDb, m)
             ReadoutValue("순간최고", v.peakDb, m)
         }
+        // **그 순간의 31밴드**(명세 Recording-D 「31-band RTA」).
+        //
+        // 큰 숫자 셋만으로는 「시끄럽다」까지만 안다. 어느 대역이
+        // 시끄러운지는 여기서 보인다 — 저음이 뭉쳤는지 고음이 쏘는지가
+        // 조치를 가른다.
+        v.bands?.let { bands ->
+            val shown = bands.filter { it.isFinite() }
+            if (shown.isNotEmpty()) {
+                val floor = kotlin.math.floor((shown.min() - 3.0) / 10.0) * 10.0
+                val ceil = kotlin.math.ceil((shown.max() + 3.0) / 10.0) * 10.0
+                kr.joa.selahrta.ui.components.BandMeter(
+                    kr.joa.selahrta.ui.RtaView(
+                        bandsSpl = bands,
+                        holdSpl = bands,
+                        resolved = BooleanArray(bands.size) { true },
+                        lossDb = DoubleArray(bands.size),
+                        curveApplied = m.curveApplied,
+                    ),
+                    floor,
+                    // 눈금이 납작하면 다 비슷해 보인다. 최소 30dB 은 편다.
+                    maxOf(ceil, floor + 30.0),
+                    Modifier.fillMaxWidth(),
+                    // **머무름(hold)은 뜻이 없다** — 멈춰 있는 한 장이다.
+                    showHold = false,
+                    chartHeight = 150.dp,
+                )
+            }
+        }
+
         // **찌그러진 자리는 값이 전부 하한이다.** 들으면서 알아야 한다.
         if (v.clipped) {
             Text(
