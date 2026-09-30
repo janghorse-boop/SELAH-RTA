@@ -12,6 +12,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -974,9 +977,21 @@ private fun BottomBar(
     compact: Boolean,
     onSelect: (NavSection) -> Unit,
 ) {
+    // **줄일 때도 시스템 여백만큼은 남긴다**(2026-10-01).
+    //
+    // 예전에는 높이를 46dp 로 통째로 못박았다. 그런데 `NavigationBar` 는
+    // **그 높이 안에서** 시스템 항해 막대(제스처 바) 여백을 제 여백으로
+    // 쓴다. 폰은 그 여백이 작아 버텼지만, 갤럭시탭 S8 을 눕히면 여백이
+    // 46dp 를 거의 다 먹어 **탭 줄이 10px 남짓만 남았다** — 분석 화면에
+    // 들어가면 **나올 길이 없었다.**
+    //
+    // 그래서 **내용 높이(46dp)에 그 여백을 더해** 준다. 폰에서는 예전과
+    // 같은 모양이고(여백이 0 이면 46dp 그대로), 태블릿에서는 제스처 바
+    // 위로 올라온다.
+    val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     NavigationBar(
         containerColor = SelahColors.Surface,
-        modifier = if (compact) Modifier.height(46.dp) else Modifier,
+        modifier = if (compact) Modifier.height(COMPACT_BAR_HEIGHT + bottomInset) else Modifier,
     ) {
         NavSection.entries.forEach { s ->
             NavigationBarItem(
@@ -1016,3 +1031,11 @@ private fun BottomBar(
  * 그리는 코드 곁에 두어야 화면을 고칠 때 함께 눈에 들어온다.
  */
 private val CHART_ONLY_MODES = setOf(ViewMode.Rta, ViewMode.Spectrum, ViewMode.Spectrogram)
+
+/**
+ * 분석 화면에서 탭 줄이 쓰는 **내용 높이**(시스템 여백은 여기 안 든다).
+ *
+ * 46dp 는 아이콘만 남긴 줄의 높이다. 여기에 항해 막대 여백을 더해야
+ * 실제 높이가 된다 — 안 더하면 기기에 따라 줄이 통째로 가려진다.
+ */
+private val COMPACT_BAR_HEIGHT = 46.dp
