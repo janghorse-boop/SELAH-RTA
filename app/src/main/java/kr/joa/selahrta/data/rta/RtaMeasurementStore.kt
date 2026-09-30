@@ -230,6 +230,10 @@ class RtaMeasurementStore(
             put("inputSource", m.conditions.inputSource)
             put("inputChannel", m.conditions.inputChannel)
             put("signalSpec", m.conditions.signalSpec)
+            put("averageVersion", m.conditions.averageVersion)
+            put("coverage", m.coverage)
+            put("windows", m.windows)
+            put("hopFrames", m.hopFrames)
             put("measuredAtEpochMs", m.measuredAtEpochMs)
             put("memoKo", m.memoKo)
             // **끝 표시를 맨 뒤에 둔다.** 쓰다가 죽으면 이 줄이 없으므로
@@ -271,6 +275,9 @@ class RtaMeasurementStore(
                 channel = r.str("channel"),
                 outputDbfs = r.dblOrNull("outputDbfs") ?: 0.0,
                 averagedFrames = r.intOrNull("averagedFrames") ?: 0,
+                coverage = r.dblOrNull("coverage"),
+                windows = r.intOrNull("windows"),
+                hopFrames = r.intOrNull("hopFrames"),
                 // **없는 것은 없는 채로 둔다**(담당자 지시 기준 5). 지금
                 // 설정이나 기본값으로 채우면 「이 조건으로 쟀다」는 거짓이
                 // 만들어져, 다음에 견줄 때 다른 조건인데 같다고 읽힌다.
@@ -287,6 +294,7 @@ class RtaMeasurementStore(
                     inputSource = r.strOrNull("inputSource"),
                     inputChannel = r.intOrNull("inputChannel"),
                     signalSpec = r.strOrNull("signalSpec"),
+                    averageVersion = r.strOrNull("averageVersion"),
                 ),
                 measuredAtEpochMs = r.longOrNull("measuredAtEpochMs") ?: 0L,
                 memoKo = r.strOrNull("memoKo").orEmpty(),

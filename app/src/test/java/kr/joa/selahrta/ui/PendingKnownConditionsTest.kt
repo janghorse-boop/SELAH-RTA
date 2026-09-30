@@ -12,7 +12,7 @@ class PendingKnownConditionsTest {
     private fun flat(db: Double) = DoubleArray(31) { db }
     // signalSpec added after this file was written (PND-02); kept explicit so the
     // fixture still describes a fully known measurement.
-    private val conditions = RtaConditions("builtin", "GlobalCalibrated", "Calibrator", "", 4096, 48000, "Z", 120.0, "", "Unprocessed", 0, "fixed")
+    private val conditions = RtaConditions("builtin", "GlobalCalibrated", "Calibrator", "", 4096, 48000, "Z", 120.0, "", "Unprocessed", 0, "fixed", "ui-smoothed-v1")
     private fun record(id: String, bands: DoubleArray) = RtaMeasurement(
         id, "set", id, "rta", bands, "Pink", "Left", -20.0, 120, conditions, 1L,
     )

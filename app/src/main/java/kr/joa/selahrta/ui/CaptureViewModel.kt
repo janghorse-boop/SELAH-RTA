@@ -1817,6 +1817,22 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         rtaRun = run
         publishRtaCapture(run, nameKo)
 
+        // **분석 스레드에서 직접 모으는 곳을 붙인다**(독립 검토 PND-03,
+        // 단계 A). **이번에는 적기만 한다** — 평균도 판정도 그대로 두고,
+        // 저장 기록에 coverage 를 함께 남긴다.
+        //
+        // 한 번에 다 바꾸면 「측정이 갑자기 안 된다」가 되고, 그것은 쓰는
+        // 사람에게 고장이다(설계 3장).
+        val sampleRate = context.sampleRate ?: 0
+        val coverage = if (sampleRate > 0) {
+            kr.joa.selahrta.data.rta.RtaCoverage(
+                totalFrames = sampleRate.toLong() *
+                    kr.joa.selahrta.data.rta.RtaCaptureRun.DEFAULT_MEASURE_MS / 1000L,
+            ).also { controller.attachBandPowerSink(it) }
+        } else {
+            null
+        }
+
         return kotlinx.coroutines.coroutineScope {
             // **장을 받는 쪽과 시간을 보는 쪽을 따로 둔다.** 장이 아예 안
             // 오는 것이 알아채야 할 일이므로, 시간은 장과 무관하게 흘러야
@@ -1842,6 +1858,19 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 while (run.running) {
                     kotlinx.coroutines.delay(RTA_TICK_MS)
                     run.tick(nowMs())
+                    // **안정화가 끝나면 셈을 켠다**(PND-03). 안정화 구간의
+                    // 소리는 평균에 안 들어가므로 coverage 에도 안 들어가야 한다.
+                    //
+                    // **「바뀌는 순간」을 잡으려다 한 번 헛돌았다.** 전환은
+                    // 틱이 아니라 **장이 들어올 때** 일어난다(`onFrame` 이
+                    // 직접 `tick` 을 부른다). 그래서 틱이 볼 때는 이미 끝난
+                    // 뒤였고 셈이 영영 안 켜졌다 — 기기에서 `windows=0` 으로
+                    // 드러났다.
+                    //
+                    // 지금은 **재는 중이면 그냥 켠다.** 두 번 켜도 같다.
+                    if (run.phase is kr.joa.selahrta.data.rta.RtaCapturePhase.Measuring) {
+                        coverage?.arm()
+                    }
                     // **조건이 바뀌면 그만둔다**(RMS-01). 앞뒤가 다른 잣대로
                     // 잰 값을 한 곡선에 담으면 나중에 가릴 길이 없다.
                     val changed = rtaContextChangeKo(context, rtaContextNow())
@@ -1863,6 +1892,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 }
             } finally {
                 frames.cancel()
+                coverage?.let { controller.detachBandPowerSink(it) }
                 // **그만둔 길에서도 화면을 치운다**(독립 검토 RMS-04).
                 //
                 // 코루틴이 취소되면 아래 `finishRtaCapture` 까지 못 간다.
@@ -1900,7 +1930,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 return@coroutineScope false
             }
 
-            finishRtaCapture(run, nameKo, setId, context)
+            finishRtaCapture(run, nameKo, setId, context, coverage)
         }
     }
 
@@ -2133,6 +2163,8 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         setId: String?,
         /** 잴 때 붙박아 둔 조건. **끝나고 화면을 다시 읽지 않는다**(RMS-01). */
         context: RtaCaptureContext,
+        /** 분석 스레드에서 모은 것. **이번에는 적기만 한다**(PND-03 단계 A). */
+        coverage: kr.joa.selahrta.data.rta.RtaCoverage?,
     ): Boolean {
         if (rtaRun === run) {
             rtaRun = null
@@ -2169,6 +2201,10 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             channel = context.channel,
             outputDbfs = context.outputDbfs,
             averagedFrames = run.average.frames,
+            // **이번에는 적기만 한다**(PND-03 단계 A). 평균도 판정도 그대로다.
+            coverage = coverage?.coverage,
+            windows = coverage?.windows,
+            hopFrames = controller.rtaHopFrames(),
             conditions = kr.joa.selahrta.data.rta.RtaConditions(
                 inputKey = context.inputKey,
                 calibrationState = context.calibrationState,
@@ -2191,6 +2227,9 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 inputSource = context.inputSource,
                 inputChannel = context.inputChannel,
                 signalSpec = context.signalSpec,
+                // 아직은 **화면용으로 평활된 값을 다시 평균**한다. 단계 B 에서
+                // 바뀌며 이 이름도 바뀐다 — 그래야 앞뒤 값이 안 섞인다.
+                averageVersion = "ui-smoothed-v1",
             ),
             measuredAtEpochMs = System.currentTimeMillis(),
         )

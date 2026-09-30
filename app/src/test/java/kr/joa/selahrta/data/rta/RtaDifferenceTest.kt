@@ -32,9 +32,11 @@ class RtaDifferenceTest {
         inputSource: String? = "Unprocessed",
         inputChannel: Int? = 0,
         signalSpec: String? = "fixed",
+        averageVersion: String? = "ui-smoothed-v1",
     ) = RtaConditions(
         input, state, source, curve, fft, rate,
         weighting, offsetDb, curveHash, inputSource, inputChannel, signalSpec,
+        averageVersion,
     )
 
     private fun m(
