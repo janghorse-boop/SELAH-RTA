@@ -24,10 +24,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // **폰은 세로로 잠근다. 태블릿은 놓아 둔다.** 까닭은
-        // [defaultOrientation] 에 적어 두었다 — RTA 화면이 잠시 가로로
+        // **세로로 잠근다 — 기기를 가리지 않는다.** 까닭은
+        // [defaultOrientation] 에 적어 두었다. 분석 화면이 잠시 가로로
         // 벗어났다가 그 값으로 돌아오므로 한 자리에 모아 두었다.
-        requestedOrientation = defaultOrientation(this)
+        requestedOrientation = defaultOrientation()
 
         // 시스템 표시줄은 **기기 테마가 아니라 앱 설정**을 따른다. 기본값을
         // 두면 폰이 라이트일 때 화면 아래가 흰 띠로 남는데, 어두운
