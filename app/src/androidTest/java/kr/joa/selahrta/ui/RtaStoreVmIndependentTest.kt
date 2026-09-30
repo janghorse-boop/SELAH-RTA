@@ -88,17 +88,32 @@ class RtaStoreVmIndependentTest {
         }
     }
 
+    /**
+     * 검토자가 대조군으로 둠 시험이다. **전제가 바뀌어 고쳐 적는다.**
+     *
+     * 원래는 「합성 장을 밀어 넣으면 그 값이 그대로 저장된다」를
+     * 보았다. 평균을 **분석 스레드에서 모으도록** 바꾸면서
+     * (독립 검토 PND-03 단계 B) 그 전제가 깨졌다 — 이 시험은
+     * **분석을 돌리지 않으므로 저장할 값이 없다.**
+     *
+     * 화면으로 나온 값을 다시 평균하던 예전에는 저장까지 갔다. 지금은
+     * **안 가는 것이 맞는 동작**이다 — 분석이 안 돌았는데 저장하면
+     * 그 값이 무엇인지 말할 수 없다.
+     *
+     * **실제로 재서 저장되는 대조군은 `RtaCoverageRecordedTest`** 가 맡는다.
+     */
     @Test fun stableCaptureControlPersistsViaFreshStore() {
         val h = Harness()
         try {
             h.play()
-            val offset = h.base().calibration.offset.db
             main { h.vm.startRtaCapture("stable", null) }
             h.feed(12300)
             val items = RtaMeasurementStore(h.root).list()
-            println("RMS_VM_CONTROL saved=${items.size} mean=${items.firstOrNull()?.bandsSpl?.get(0)}")
-            assertEquals(1, items.size)
-            assertEquals(-60.0 + offset, items.single().bandsSpl[0], 1e-8)
+            val notice = h.base().rtaSaveNoticeKo
+            println("RMS_VM_CONTROL saved=${items.size} notice=$notice")
+            assertEquals(0, items.size)
+            // 조건이 바뀌어서가 아니라 **분석이 안 돌아서** 멈춰야 한다.
+            assertTrue(notice?.contains("바뀌어") != true)
             assertNull(h.base().rtaCapture)
         } finally { h.cleanup() }
     }

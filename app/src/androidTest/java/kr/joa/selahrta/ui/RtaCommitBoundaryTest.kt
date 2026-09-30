@@ -191,7 +191,14 @@ class RtaCommitBoundaryTest {
             val items = h.saved()
             println("PEND_BOUNDARY saved=${items.size} notice=${h.base().rtaSaveNoticeKo}")
             assertEquals("완료 경계에서 바뀐 조건이 그대로 저장됐다", 0, items.size)
-            assertNotNull("왜 저장 안 했는지 적어야 한다", h.base().rtaSaveNoticeKo)
+            // **왜 안 저장했는지까지 본다.** 합성 장만 밀어 넣는 시험이라
+            // **분석이 실제로 도는 것은 아니다** — 그만둘 수 있는 까닭이
+            // 둘이다. 이유를 안 보면 「조건이 바뀌어서」와 「어차피 저장
+            // 안 됨」이 구별되지 않는다.
+            assertTrue(
+                "조건이 바뀌어서 멈췄다고 적혀야 한다: ${h.base().rtaSaveNoticeKo}",
+                h.base().rtaSaveNoticeKo?.contains("출력 채널") == true,
+            )
         } finally {
             gate.countDown()
             h.cleanup()
@@ -219,18 +226,34 @@ class RtaCommitBoundaryTest {
             val items = h.saved()
             println("PEND_FREQUENCY saved=${items.size} notice=${h.base().rtaSaveNoticeKo}")
             assertEquals("주파수가 바뀌었는데 한 곡선으로 저장됐다", 0, items.size)
+            assertTrue(
+                "신호가 바뀌어서 멈췄다고 적혀야 한다: ${h.base().rtaSaveNoticeKo}",
+                h.base().rtaSaveNoticeKo?.contains("신호 주파수") == true,
+            )
         } finally {
             h.cleanup()
         }
     }
 
     /**
-     * **정상 대조군.** 아무것도 안 바꾸면 그대로 저장된다.
+     * **대조군 — 아무것도 안 바꾸면 「다른 이유」로 멈춘다.**
      *
-     * 이것이 없으면 위 둘은 **「아무것도 저장 안 하는 코드」로도 통과**한다.
+     * 위 둘이 「저장 안 됨」만 보면 **아무것도 저장 안 하는 코드로도
+     * 통과**한다. 그래서 조건을 건드리지 않은 판을 함께 돌리고,
+     * **그때는 이유가 다르다**는 것을 본다.
+     *
+     * ## 왜 여기서는 저장까지 안 가나
+     *
+     * 이 시험은 **합성 장을 밀어 넣을 뿐 분석을 돌리지 않는다.** 평균을
+     * 분석 스레드에서 모으도록 바꾸면서(PND-03 단계 B) **분석이 안 돌면
+     * 저장할 값도 없다.** 예전에는 화면으로 나온 값을 다시 평균했기 때문에
+     * 이 시험도 저장까지 갔다.
+     *
+     * **실제로 재서 저장되는 대조군은 `RtaCoverageRecordedTest`** 가 맡는다 —
+     * 거기는 마이크를 열고 분석을 실제로 돌린다.
      */
     @Test
-    fun 조건이_그대로면_저장된다() {
+    fun 조건을_안_바꾸면_다른_이유로_멈춘다() {
         val h = Harness()
         try {
             main { h.vm.setSignalToneHz(1_000.0) }
@@ -238,12 +261,12 @@ class RtaCommitBoundaryTest {
             main { h.vm.startRtaCapture("정상", null) }
             h.feed(12_300)
 
-            val items = h.saved()
-            println("PEND_CONTROL saved=${items.size} spec=${items.firstOrNull()?.conditions?.signalSpec}")
-            assertEquals(1, items.size)
+            val notice = h.base().rtaSaveNoticeKo
+            println("PEND_CONTROL saved=${h.saved().size} notice=$notice")
+            assertEquals(0, h.saved().size)
             assertTrue(
-                "무슨 소리로 쟀는지 적혀야 한다: ${items.single().conditions.signalSpec}",
-                items.single().conditions.signalSpec == "hz:1000.0",
+                "조건이 바뀌었다는 이유가 나오면 위 시험들이 헛돈 것이다: $notice",
+                notice?.contains("바뀌어") != true,
             )
         } finally {
             h.cleanup()
