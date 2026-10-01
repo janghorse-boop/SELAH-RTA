@@ -33,13 +33,17 @@ class TappedSinkTest {
         return out to { b, o, c -> for (i in 0 until c) out.add(b[o + i]) }
     }
 
-    /** 스테레오 인터리브를 모노로 합친다. L+R 이다 — 상관은 크기에 무관하다. */
+    /**
+     * 스테레오 인터리브를 모노로 평균한다. `(L+R)/2` 다 — 상관은 크기에
+     * 무관하지만, Magnitude(H1) 는 기준의 크기에 그대로 걸린다(독립 검토
+     * ①). 「합친다」가 아니라 「평균한다」인 까닭이 그 때문이다.
+     */
     @Test
-    fun `인터리브를 모노로 합친다`() {
+    fun `인터리브를 모노로 평균한다`() {
         val (mono, cb) = collector()
         val sink = TappedSink(PartialSink { it }, cb)
         sink.write(floatArrayOf(1f, 2f, 3f, 4f), 0, 4)
-        assertArrayEquals(floatArrayOf(3f, 7f), mono.toFloatArray(), 1e-6f)
+        assertArrayEquals(floatArrayOf(1.5f, 3.5f), mono.toFloatArray(), 1e-6f)
     }
 
     /** **이것이 이번에 막는 자리다.** */
@@ -48,7 +52,7 @@ class TappedSinkTest {
         val (mono, cb) = collector()
         val sink = TappedSink(PartialSink { 2 }, cb)
         sink.write(floatArrayOf(1f, 2f, 3f, 4f), 0, 4)
-        assertArrayEquals(floatArrayOf(3f), mono.toFloatArray(), 1e-6f)
+        assertArrayEquals(floatArrayOf(1.5f), mono.toFloatArray(), 1e-6f)
     }
 
     /** 홀수 칸으로 끊겨도 프레임 경계를 잃지 않는다. */
@@ -58,7 +62,31 @@ class TappedSinkTest {
         val sink = TappedSink(PartialSink { 1 }, cb)
         val buf = floatArrayOf(1f, 2f, 3f, 4f)
         for (i in 0 until 4) sink.write(buf, i, 1)
-        assertArrayEquals(floatArrayOf(3f, 7f), mono.toFloatArray(), 1e-6f)
+        assertArrayEquals(floatArrayOf(1.5f, 3.5f), mono.toFloatArray(), 1e-6f)
+    }
+
+    /**
+     * **독립 검토가 요구한 회귀 시험.** `SignalPlayer` 의 `Both` 모드는
+     * 양쪽에 **같은 신호 `s`** 를 싣는다 — 그래서 기준은 평균을 거쳐
+     * **정확히 `s`** 가 되어야 한다(합이면 `2s`, Magnitude 가 6.02dB
+     * 밀린다). 이것이 Magnitude 0dB 를 지키는 그물이다.
+     */
+    @Test
+    fun `양쪽에 같은 신호를 실으면 기준이 그 신호 그대로 나온다`() {
+        val (mono, cb) = collector()
+        val sink = TappedSink(PartialSink { it }, cb)
+        sink.write(floatArrayOf(0.5f, 0.5f, -0.25f, -0.25f), 0, 4)
+        assertArrayEquals(floatArrayOf(0.5f, -0.25f), mono.toFloatArray(), 1e-6f)
+    }
+
+    /**
+     * `channels` 를 보지 않고 무조건 2칸=1프레임으로 묶으므로, 모노로
+     * 열리면 무관한 표본 둘이 하나로 합쳐진다 — 그 전에 막아야 한다.
+     */
+    @Test(expected = IllegalArgumentException::class)
+    fun `모노로 열면 거부한다`() {
+        val sink = TappedSink(PartialSink { it }) { _, _, _ -> }
+        sink.open(48_000, 1024, 1)
     }
 
     @Test
@@ -89,7 +117,7 @@ class TappedSinkTest {
         sink.open(48_000, 1024, 2)
         sink.write(floatArrayOf(10f, 20f), 0, 1)
         sink.write(floatArrayOf(10f, 20f), 1, 1)
-        assertArrayEquals(floatArrayOf(30f), mono.toFloatArray(), 1e-6f)
+        assertArrayEquals(floatArrayOf(15f), mono.toFloatArray(), 1e-6f)
     }
 
     /**
@@ -106,6 +134,6 @@ class TappedSinkTest {
         sink.stop()
         sink.write(floatArrayOf(10f, 20f), 0, 1)
         sink.write(floatArrayOf(10f, 20f), 1, 1)
-        assertArrayEquals(floatArrayOf(30f), mono.toFloatArray(), 1e-6f)
+        assertArrayEquals(floatArrayOf(15f), mono.toFloatArray(), 1e-6f)
     }
 }

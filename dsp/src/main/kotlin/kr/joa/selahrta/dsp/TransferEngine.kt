@@ -74,6 +74,9 @@ class TransferEngine(
     private val refRing = SampleRing(capacity)
     private val measRing = SampleRing(capacity)
 
+    /** [measure] 재진입을 막는다 — 겹쳐 부르면 뒤의 것이 `null` 을 받는다. */
+    private val measuring = java.util.concurrent.atomic.AtomicBoolean(false)
+
     private val estimator = DelayEstimator(
         analysisSize = minOf(span, 32_768),
         maxLagSamples = maxLagSamples,
@@ -109,38 +112,46 @@ class TransferEngine(
      * 읽지 않고** 이미 떠 놓은 [refLong] 안에서 자르기 때문이다(잠금을
      * 두 번 잡지 않으려는 것).
      *
-     * **재진입 불가 — 한 스레드에서만 부른다.** `refLong`·`refWindow`·
-     * `measWindow`·[estimator]·[averager] 가 전부 인스턴스 버퍼이고,
-     * 잠금([lock])은 고리([refRing]·[measRing]) 쓰기만 보호한다. 두 스레드가
-     * 동시에 [measure] 를 부르면 이 버퍼들을 함께 덮어써 뒤섞인 값을 낸다.
+     * **재진입 불가 — [measuring] 플래그가 코드로 막는다.** `refLong`·
+     * `refWindow`·`measWindow`·[estimator]·[averager] 가 전부 인스턴스
+     * 버퍼이고, 잠금([lock])은 고리([refRing]·[measRing]) 쓰기만 보호한다.
+     * 두 스레드가 동시에 본문에 들어가면 이 버퍼들을 함께 덮어써 뒤섞인
+     * 값을 낸다 — 그래서 **겹쳐 부르면 뒤의 것이 `null` 을 받는다.**
      */
     fun measure(): TransferMeasurement? {
-        synchronized(lock) {
-            if (refRing.written < refLong.size || measRing.written < span) return null
-            refRing.snapshot(refLong)
-            measRing.snapshot(measWindow)
+        // **이미 재는 중이면 조용히 물러난다.** 예외를 던지지 않는 까닭은,
+        // 화면이 주기적으로 부르는 자리라 한 번 늦는 것이 정상이기 때문이다.
+        if (!measuring.compareAndSet(false, true)) return null
+        try {
+            synchronized(lock) {
+                if (refRing.written < refLong.size || measRing.written < span) return null
+                refRing.snapshot(refLong)
+                measRing.snapshot(measWindow)
+            }
+            // 여기부터는 고리를 다시 읽지 않는다 — 이미 떠 놓은 배열 안에서만 자른다.
+
+            // refLong 의 꼬리 span 개 = 지금 기준(lagBack = 0 에 해당).
+            System.arraycopy(refLong, refLong.size - span, refWindow, 0, span)
+
+            val delay = estimator.estimate(refWindow, measWindow)
+            if (!delay.found) return TransferMeasurement(delay, null)
+
+            // **기준을 지연만큼 거슬러 뜬다** — 측정은 그만큼 늦게 들어왔다.
+            val start = refLong.size - span - delay.samples
+            // 지금은 도달하지 않는다 — estimator.estimate() 는 늘 0..maxLagSamples
+            // 범위 안의 값만 내놓으므로(그 밖은 찾지 않는다), start 는 항상
+            // 0 이상이다. refLong 을 그만큼 길게 뜬 것이 이 보장의 근거다.
+            if (start < 0) return TransferMeasurement(delay, null)
+
+            averager.reset()
+            for (k in 0 until averages) {
+                val at = k * hop
+                averager.addBlock(refLong, start + at, measWindow, at)
+            }
+            return TransferMeasurement(delay, transferFunction(averager))
+        } finally {
+            measuring.set(false)
         }
-        // 여기부터는 고리를 다시 읽지 않는다 — 이미 떠 놓은 배열 안에서만 자른다.
-
-        // refLong 의 꼬리 span 개 = 지금 기준(lagBack = 0 에 해당).
-        System.arraycopy(refLong, refLong.size - span, refWindow, 0, span)
-
-        val delay = estimator.estimate(refWindow, measWindow)
-        if (!delay.found) return TransferMeasurement(delay, null)
-
-        // **기준을 지연만큼 거슬러 뜬다** — 측정은 그만큼 늦게 들어왔다.
-        val start = refLong.size - span - delay.samples
-        // 지금은 도달하지 않는다 — estimator.estimate() 는 늘 0..maxLagSamples
-        // 범위 안의 값만 내놓으므로(그 밖은 찾지 않는다), start 는 항상
-        // 0 이상이다. refLong 을 그만큼 길게 뜬 것이 이 보장의 근거다.
-        if (start < 0) return TransferMeasurement(delay, null)
-
-        averager.reset()
-        for (k in 0 until averages) {
-            val at = k * hop
-            averager.addBlock(refLong, start + at, measWindow, at)
-        }
-        return TransferMeasurement(delay, transferFunction(averager))
     }
 
     fun delayMs(samples: Int): Double = samples * 1000.0 / sampleRate

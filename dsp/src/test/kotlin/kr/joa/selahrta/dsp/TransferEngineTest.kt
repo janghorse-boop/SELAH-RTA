@@ -5,6 +5,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.random.Random
 
 class TransferEngineTest {
@@ -114,5 +115,36 @@ class TransferEngineTest {
         assertNotNull(m)
         assertTrue("관계없는데 지연을 찾았다", !m!!.delay.found)
         assertNull("시간이 안 맞았는데 전달함수를 냈다", m.transfer)
+    }
+
+    /**
+     * **재진입을 막는다 — 독립 검토 ③.** `measure()` 의 버퍼(`refLong` 등)는
+     * 전부 인스턴스 소유라 두 스레드가 동시에 본문에 들어가면 뒤섞인다.
+     * 본문에 「들어간 순간」을 밖에서 관찰할 고리가 없으므로(콜백을 새로
+     * 심는 건 더 큰 변경이다), 검토가 허락한 간단한 꼴을 쓴다 — `measuring`
+     * 플래그를 리플렉션으로 미리 세워 둔 뒤 [TransferEngine.measure] 가
+     * `null` 을 돌려주는지 본다. `compareAndSet` 가 없으면(변이) 이 플래그는
+     * 아무것도 막지 못하므로 측정이 평소대로 나와 이 시험이 실패한다.
+     */
+    @Test
+    fun `재는 중에 또 부르면 null 을 받는다`() {
+        val e = engine()
+        val needed = span + maxLag
+        e.offerReference(noise(needed), 0, needed)
+        e.offerMeasurement(noise(span), 0, span)
+
+        val field = TransferEngine::class.java.getDeclaredField("measuring")
+        field.isAccessible = true
+        val measuring = field.get(e) as AtomicBoolean
+
+        measuring.set(true)
+        try {
+            assertNull("이미 재는 중인데 쟀다", e.measure())
+        } finally {
+            measuring.set(false)
+        }
+
+        // 플래그를 내리면 평소대로 다시 잴 수 있다 — 영영 잠기지 않는다.
+        assertNotNull("재진입 막이가 풀리지 않았다", e.measure())
     }
 }
