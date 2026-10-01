@@ -70,6 +70,8 @@ fun ToolsScreen(
             output = capture.meterSettings.signalOutput,
             onOutput = onSignalOutput,
             routeKo = capture.signalRouteKo,
+            availableOutputs = capture.outputKinds,
+            capturingFrom = capture.opened?.micKind,
             onDismissNotice = onDismissSignalNotice,
             onMeasureInRta = onMeasureInRta,
             modifier = Modifier.padding(top = 4.dp, bottom = 16.dp),

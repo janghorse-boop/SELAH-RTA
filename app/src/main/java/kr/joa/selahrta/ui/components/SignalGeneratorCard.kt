@@ -53,6 +53,7 @@ import kr.joa.selahrta.audio.TestSignal
 import kr.joa.selahrta.ui.theme.SelahColors
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.FlowRow
 import kr.joa.selahrta.dsp.BandNoiseFilter
 
 /**
@@ -82,6 +83,10 @@ fun SignalGeneratorCard(
     onOutput: (kr.joa.selahrta.audio.SignalOutput) -> Unit,
     /** **실제로** 어디로 나갔는가. 안 틀고 있으면 null. */
     routeKo: String?,
+    /** 지금 꽂혀 있어 **나갈 수 있는** 자리들. 없는 것은 감추지 않고 적는다. */
+    availableOutputs: Set<kr.joa.selahrta.audio.OutputKind>,
+    /** 지금 재고 있는 입력의 종류. 같은 USB 로 넣고 빼는지 가리는 데 쓴다. */
+    capturingFrom: kr.joa.selahrta.domain.MicKind?,
     onDismissNotice: () -> Unit,
     /** 소리를 켜 둔 채 RTA 화면으로 간다. 재생은 끊기지 않는다. */
     onMeasureInRta: () -> Unit,
@@ -183,7 +188,7 @@ fun SignalGeneratorCard(
         )
 
         ChannelPicker(channels, onChannels)
-        OutputPicker(output, routeKo, onOutput)
+        OutputPicker(output, routeKo, availableOutputs, capturingFrom, onOutput)
 
         // 신호 목록 — **차례가 지시받은 그대로다**(2026-10-01):
         // 핑크 · 화이트 · 스윕 · **1/3 옥타브 대역** · **주파수 지정**.
@@ -249,14 +254,22 @@ fun SignalGeneratorCard(
  * **화면에는 아무 표시도 없었다.** 그래서 실제 경로를 여기 적는다.
  */
 @Composable
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 private fun OutputPicker(
     selected: kr.joa.selahrta.audio.SignalOutput,
     routeKo: String?,
+    availableOutputs: Set<kr.joa.selahrta.audio.OutputKind>,
+    capturingFrom: kr.joa.selahrta.domain.MicKind?,
     onPick: (kr.joa.selahrta.audio.SignalOutput) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("내보낼 곳", color = SelahColors.TextMuted, fontSize = 11.sp)
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        // **다섯이 한 줄에 안 들어간다.** 좁은 폰에서 옆으로 밀리게 두면
+        // 뒤의 것들이 안 보이고, **보이지 않는 것은 없는 것이다.** 접는다.
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
             for (o in kr.joa.selahrta.audio.SignalOutput.entries) {
                 val on = o == selected
                 Text(
@@ -291,6 +304,24 @@ private fun OutputPicker(
             fontSize = 10.sp,
             lineHeight = 14.sp,
         )
+        // **고른 자리가 안 꽂혀 있으면 그렇다고 적는다.**
+        //
+        // 감추지 않는 까닭은 위에 적었다. 대신 **고르는 순간** 없다는 것을
+        // 알려야 한다 — 안 그러면 틀어 놓고 「왜 소리가 안 나지」를 한다.
+        selected.kind.takeIf { it !in availableOutputs }?.let {
+            Text(
+                "${it.labelKo} 가 지금 안 꽂혀 있습니다 — 시스템이 고른 곳으로 나갑니다.",
+                color = SelahColors.Warn,
+                fontSize = 10.sp,
+                lineHeight = 14.sp,
+            )
+        }
+        // **같은 USB 로 넣고 빼려는가.** 막지는 않고 미리 알린다.
+        kr.joa.selahrta.audio.SignalOutputChoice
+            .usbDuplexRiskKo(selected, capturingFrom)
+            ?.let {
+                Text(it, color = SelahColors.Warn, fontSize = 10.sp, lineHeight = 14.sp)
+            }
         // **요청이 아니라 결과를 적는다.** 고른 것과 다르면 그 말도 함께 온다.
         //
         // **자리는 늘 잡아 둔다**(2026-10-01 담당자 지적: 「재생 버튼을 누르면

@@ -1,91 +1,188 @@
 package kr.joa.selahrta.audio
 
+import android.media.AudioDeviceInfo
 import kr.joa.selahrta.domain.MicKind
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * **소리를 어디로 내보낼지는 사람이 고른다**(독립 검토 R5-04).
+ * **소리를 어디로 내보낼지는 사람이 고른다**(독립 검토 R5-04, 2026-10-01 확장).
  *
- * 처음에는 「USB 로 재면 무조건 폰 스피커」로 못박았다. 실기기에서 잰
- * 것이 근거였다:
+ * ## 실제로 쓰이는 길이 셋이다
  *
- * ```
- * 출력 안 정함 → 실제 출력=UMC404HD, 입력 RMS=-240.0dBFS  (죽음)
- * 폰 스피커로  → 실제 출력=SM-S918N,  입력 RMS= -67.8dBFS  (삶)
- * ```
+ * 담당자가 쓰는 장비로 정리하면 이렇다:
  *
- * 그러나 그것은 **기기 하나로 본 것**이고, 무엇보다 **사람이 고른 출력을
- * 조용히 덮었다.** PA 로 신호를 넣고 USB 마이크로 재려던 사람에게는
- * 폰 스피커에서 소리가 나는 것이 고장이다.
+ * - **폰 스피커** — 방을 울려 제 마이크로 되받는다.
+ * - **유선(USB-C · 3.5잭)** — USB-C 로 믹서·인터페이스에 **바로** 넣을 수
+ *   있고, **iMM-6C 의 Y 케이블**도 여기다(마이크는 USB-C 로 들어오고 같은
+ *   케이블의 3.5잭으로 폰의 출력이 나가 믹서 입력에 꽂힌다).
+ * - **블루투스** — 폰이 믹서·스피커에 선 없이 붙는다.
  *
- * **기본값은 그대로 우회다.** 끄면 그 조합에서 아무것도 못 잰 채로
- * 마법사가 넘어간다 — 다만 이제 **덮지 않고 고르게 한다.**
+ * ## 고른 것을 덮지 않는다
+ *
+ * 처음에는 「USB 로 재면 무조건 폰 스피커」로 못박았다. 실기기에서 잰 것이
+ * 근거였다 — 같은 USB 카드로 동시에 넣고 빼면 입력이 **완전한 디지털
+ * 무음**이 된다(SM-S918N + UMC404HD). 그러나 그것은 **기기 하나로 본
+ * 것**이고, 무엇보다 **PA 로 신호를 넣으며 재려던 사람에게는 고장**이다.
+ *
+ * 그래서 기본값(자동)만 그 우회를 하고, 나머지는 고른 대로 간다.
  */
 class SignalOutputChoiceTest {
 
-    // ── 자동: 재는 쪽이 USB 일 때만 ──────────────────────
-
-    @Test
-    fun `자동은 USB 로 재면 폰 스피커로 돌린다`() {
-        assertTrue(SignalOutputChoice.preferBuiltInSpeaker(SignalOutput.Auto, MicKind.Usb))
-    }
+    // ── 고른 것이 곧 나갈 자리다 ────────────────────────
 
     /**
-     * **내장 마이크로 재면 건드리지 않는다.**
+     * **「자동」과 「시스템」은 없앴다**(2026-10-01 담당자 지적:
+     * 「테스트 신호에서 자동과 시스템은 선택할 필요가 있는지?」).
      *
-     * PA 로 신호를 넣고 폰으로 방을 재는 것은 **흔하고 쓸모 있는
-     * 조합**이다. 그때 소리를 폰 스피커로 되돌리면 **쓸모를 없앤다.**
+     * 시스템은 「어디로 나가는지 모르겠다」는 뜻이고, 자동은 「USB 로 재면
+     * 폰 스피커」라는 **숨은 규칙**이었다. 셋이 다 드러난 지금은 둘 다
+     * 쓸모가 없다.
      */
     @Test
-    fun `자동은 내장 마이크로 재면 건드리지 않는다`() {
-        assertFalse(SignalOutputChoice.preferBuiltInSpeaker(SignalOutput.Auto, MicKind.BuiltIn))
-    }
-
-    /** 안 열렸으면 건드리지 않는다 — 짐작해서 바꾸지 않는다. */
-    @Test
-    fun `자동은 안 열렸으면 건드리지 않는다`() {
-        assertFalse(SignalOutputChoice.preferBuiltInSpeaker(SignalOutput.Auto, null))
-    }
-
-    /** **기본값이 자동이다.** 기본값이 바뀌면 그 조합에서 다시 무음이 된다. */
-    @Test
-    fun `기본값은 자동이다`() {
-        assertTrue(kr.joa.selahrta.settings.MeterSettings().signalOutput == SignalOutput.Auto)
-    }
-
-    // ── 고른 것은 덮지 않는다 ───────────────────────────
-
-    /**
-     * **「시스템이 고른 곳」을 골랐으면 USB 여도 안 돌린다.**
-     *
-     * 이것이 이번 회차의 요점이다. 우회가 필요 없는 기기이거나, PA 로
-     * 신호를 넣으려는 사람이 **일부러** 고른 것이다.
-     */
-    @Test
-    fun `시스템을 골랐으면 USB 라도 안 돌린다`() {
-        assertFalse(
-            SignalOutputChoice.preferBuiltInSpeaker(SignalOutput.SystemDefault, MicKind.Usb),
+    fun `고르개는 셋뿐이다`() {
+        assertEquals(
+            listOf(SignalOutput.BuiltInSpeaker, SignalOutput.Wired, SignalOutput.Bluetooth),
+            SignalOutput.entries.toList(),
         )
     }
 
-    /** **「언제나 폰 스피커」는 내장 마이크로 재도 돌린다.** */
+    /** 고른 것이 **그대로** 나갈 자리다. 가운데서 바꾸는 규칙이 없다. */
     @Test
-    fun `폰 스피커를 골랐으면 내장 마이크로 재도 돌린다`() {
+    fun `고른 것이 그대로 나갈 자리다`() {
+        assertEquals(
+            OutputKind.BuiltInSpeaker,
+            SignalOutputChoice.wantedKind(SignalOutput.BuiltInSpeaker),
+        )
+        assertEquals(OutputKind.Wired, SignalOutputChoice.wantedKind(SignalOutput.Wired))
+        assertEquals(OutputKind.Bluetooth, SignalOutputChoice.wantedKind(SignalOutput.Bluetooth))
+    }
+
+    /**
+     * **기본값은 폰 스피커다.**
+     *
+     * 늘 있고(안 꽂혀서 못 나가는 일이 없다), 같은 USB 카드로 넣고 빼지
+     * 않아 **입력이 죽지 않는다** — 「자동」이 막던 사고가 그대로 막힌다.
+     */
+    @Test
+    fun `기본값은 폰 스피커다`() {
+        assertEquals(
+            SignalOutput.BuiltInSpeaker,
+            kr.joa.selahrta.settings.MeterSettings().signalOutput,
+        )
+    }
+
+    // ── 어떤 기기가 그 자리에 드는가 ────────────────────
+
+    /**
+     * **USB-C 와 3.5잭을 한 종류로 묶어 「유선」이라 부른다.**
+     *
+     * 처음에는 「3.5잭」이라 적었다가 담당자가 짚었다 — 그것은 **케이블의
+     * 한쪽 끝만** 가리키고, **인터페이스 없이 USB-C 로 바로 장비에 넣는**
+     * 쓰임이 이름에서 빠진다. 쓰는 사람에게는 「선으로 내보낸다」 하나이고,
+     * iMM-6C 처럼 USB-C 에 3.5잭이 달린 케이블은 둘을 가를 수도 없다.
+     */
+    @Test
+    fun `유선은 3_5잭과 USB 를 다 받는다`() {
+        for (t in listOf(
+            AudioDeviceInfo.TYPE_WIRED_HEADSET,
+            AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+            AudioDeviceInfo.TYPE_USB_HEADSET,
+            AudioDeviceInfo.TYPE_USB_DEVICE,
+            AudioDeviceInfo.TYPE_USB_ACCESSORY,
+        )) {
+            assertTrue("$t 를 유선으로 안 봤다", SignalOutputChoice.matches(OutputKind.Wired, t))
+        }
+    }
+
+    /**
+     * **블루투스는 한 가지가 아니다.** A2DP 만 보면 LE 로 붙은 기기를
+     * 「없다」고 말한다 — 그러면 꽂혀 있는데 안 꽂혔다고 적는다.
+     */
+    @Test
+    fun `블루투스는 A2DP 와 LE 를 다 받는다`() {
+        for (t in listOf(
+            AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+            AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+            AudioDeviceInfo.TYPE_BLE_HEADSET,
+            AudioDeviceInfo.TYPE_BLE_SPEAKER,
+        )) {
+            assertTrue(
+                "$t 를 블루투스로 안 봤다",
+                SignalOutputChoice.matches(OutputKind.Bluetooth, t),
+            )
+        }
+    }
+
+    /** **아무거나 받지는 않는다.** 섞이면 엉뚱한 자리로 못박는다. */
+    @Test
+    fun `종류가 서로 섞이지 않는다`() {
         assertTrue(
-            SignalOutputChoice.preferBuiltInSpeaker(SignalOutput.BuiltInSpeaker, MicKind.BuiltIn),
+            SignalOutputChoice.matches(
+                OutputKind.BuiltInSpeaker,
+                AudioDeviceInfo.TYPE_BUILTIN_SPEAKER,
+            ),
+        )
+        assertFalse(
+            SignalOutputChoice.matches(
+                OutputKind.BuiltInSpeaker,
+                AudioDeviceInfo.TYPE_USB_HEADSET,
+            ),
+        )
+        assertFalse(
+            SignalOutputChoice.matches(OutputKind.Wired, AudioDeviceInfo.TYPE_BLUETOOTH_A2DP),
+        )
+        assertFalse(
+            SignalOutputChoice.matches(OutputKind.Bluetooth, AudioDeviceInfo.TYPE_USB_DEVICE),
         )
     }
 
-    /** 고른 것은 **입력이 안 열려 있어도** 그대로 간다. */
+    // ── 같은 USB 로 넣고 빼는 것을 미리 알린다 ──────────
+
+    /**
+     * **iMM-6C 의 Y 케이블이 정확히 그 모양이다** — 마이크도 USB-C, 출력도
+     * 그 USB-C 다. 실기기에서 입력이 죽는 것을 봤으니 미리 알린다.
+     */
     @Test
-    fun `고른 것은 입력과 무관하게 간다`() {
-        assertFalse(SignalOutputChoice.preferBuiltInSpeaker(SignalOutput.SystemDefault, null))
-        assertTrue(SignalOutputChoice.preferBuiltInSpeaker(SignalOutput.BuiltInSpeaker, null))
+    fun `USB 로 재면서 유선으로 내보내면 알린다`() {
+        val say = SignalOutputChoice.usbDuplexRiskKo(SignalOutput.Wired, MicKind.Usb)
+        assertTrue("$say", say != null && say.contains("무음"))
     }
 
-    /** 고르개마다 **사람이 읽을 설명**이 있어야 한다. 「자동」만으로는 못 고른다. */
+    /** **막지는 않는다.** 알리는 말일 뿐이고, 고름 자체는 그대로 간다. */
+    @Test
+    fun `알려도 고른 자리는 그대로다`() {
+        assertEquals(OutputKind.Wired, SignalOutputChoice.wantedKind(SignalOutput.Wired))
+    }
+
+    /** **아무 때나 겁주지 않는다.** 내장 마이크로 재면 그 걱정이 없다. */
+    @Test
+    fun `내장으로 재면 알리지 않는다`() {
+        assertNull(SignalOutputChoice.usbDuplexRiskKo(SignalOutput.Wired, MicKind.BuiltIn))
+        assertNull(SignalOutputChoice.usbDuplexRiskKo(SignalOutput.BuiltInSpeaker, MicKind.Usb))
+        assertNull(SignalOutputChoice.usbDuplexRiskKo(SignalOutput.Bluetooth, MicKind.Usb))
+    }
+
+    // ── 사람이 읽을 말 ──────────────────────────────────
+
+    /**
+     * **이름이 케이블의 한쪽 끝만 가리키지 않는다**(2026-10-01 담당자 지적).
+     *
+     * 「3.5잭」이라 적으면 **USB-C 로 바로 장비에 넣는** 쓰임이 이름에서
+     * 빠진다. 칩에는 「유선」, 긴 이름에는 **둘 다** 적는다.
+     */
+    @Test
+    fun `유선 이름이 USB-C 를 빠뜨리지 않는다`() {
+        assertEquals("유선", SignalOutput.Wired.shortLabelKo)
+        assertTrue(SignalOutput.Wired.labelKo, SignalOutput.Wired.labelKo.contains("USB-C"))
+        assertTrue(SignalOutput.Wired.labelKo, SignalOutput.Wired.labelKo.contains("3.5잭"))
+        assertTrue(SignalOutput.Wired.helpKo, SignalOutput.Wired.helpKo.contains("USB-C"))
+    }
+
+    /** 고르개마다 **사람이 읽을 설명**이 있어야 한다. */
     @Test
     fun `고르개마다 설명이 있다`() {
         for (o in SignalOutput.entries) {

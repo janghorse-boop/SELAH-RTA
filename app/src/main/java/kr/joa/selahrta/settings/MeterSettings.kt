@@ -152,12 +152,12 @@ data class MeterSettings(
     /**
      * **시험 신호를 어디로 내보낼지**(독립 검토 R5-04).
      *
-     * 기본값은 자동이고, 자동은 **USB 로 재는 동안에만** 폰 스피커로
-     * 돌린다. 왜 고르게 하는지는 [kr.joa.selahrta.audio.SignalOutput] 에
-     * 적어 두었다 — 요점은 **사람이 고른 출력을 조용히 덮지 않는다**는 것.
+     * 기본값은 **폰 스피커**다 — 늘 있고, 같은 USB 카드로 넣고 빼지 않아
+     * 입력이 죽지 않는다. 왜 고르게 하는지는
+     * [kr.joa.selahrta.audio.SignalOutput] 에 적어 두었다.
      */
     val signalOutput: kr.joa.selahrta.audio.SignalOutput =
-        kr.joa.selahrta.audio.SignalOutput.Auto,
+        kr.joa.selahrta.audio.SignalOutput.BuiltInSpeaker,
     /** 사용자가 고른 입력 기기의 열쇠. null 이면 자동. */
     val preferredInputKey: String? = null,
     /**
@@ -333,7 +333,7 @@ class MeterSettingsStore(private val context: Context) {
                     ?.let { n ->
                         kr.joa.selahrta.audio.SignalOutput.entries.firstOrNull { it.name == n }
                     }
-                    ?: kr.joa.selahrta.audio.SignalOutput.Auto,
+                    ?: kr.joa.selahrta.audio.SignalOutput.BuiltInSpeaker,
                 leqWindow = p[leqWindowKey]?.let { ms ->
                     LeqWindow.entries.firstOrNull { it.millis == ms }
                 } ?: LeqWindow.ThirtySeconds,

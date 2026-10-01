@@ -281,6 +281,14 @@ data class CaptureUiState(
     val settingsLoaded: Boolean = false,
     /** 지금 쓸 수 있는 입력 기기들. 꽂고 빼면 바뀐다. */
     val inputs: List<InputDeviceInfo> = emptyList(),
+    /**
+     * 지금 **나갈 수 있는** 자리들(2026-10-01).
+     *
+     * 고르개에서 없는 것을 **감추지는 않는다** — 감추면 「블루투스로도 낼
+     * 수 있다」는 것 자체를 모르게 된다. 고를 수는 있게 두고, 안 꽂혀
+     * 있으면 그렇다고 적는다.
+     */
+    val outputKinds: Set<kr.joa.selahrta.audio.OutputKind> = emptySet(),
     /** 기기 선택·전환에 관해 알릴 것. 사실을 숨기지 않는다. */
     val deviceNoticeKo: String? = null,
     val errorKo: String? = null,
@@ -769,16 +777,10 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             kr.joa.selahrta.audio.AudioTrackSink(
                 preferredOutput = {
                     val st = controller.baseState.value
-                    if (
-                        kr.joa.selahrta.audio.SignalOutputChoice.preferBuiltInSpeaker(
-                            st.meterSettings.signalOutput,
-                            st.opened?.micKind,
-                        )
-                    ) {
-                        builtInSpeaker()
-                    } else {
-                        null
-                    }
+                    outputDeviceOf(
+                        kr.joa.selahrta.audio.SignalOutputChoice
+                            .wantedKind(st.meterSettings.signalOutput),
+                    )
                 },
                 // **요청이 그대로 됐는지 화면까지 올린다**(독립 검토 R5-04).
                 onRoute = { note ->
@@ -1127,7 +1129,12 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             scanner.watch().collect { list ->
                 val prev = controller.baseState.value.inputs
-                controller.update { st -> st.copy(inputs = list) }
+                // **나갈 자리도 함께 본다**(2026-10-01). 입력이 꽂히고
+                // 빠지는 그 순간에 출력도 바뀐다 — iMM-6C 를 꽂으면 마이크와
+                // 유선 출력이 **함께** 생긴다. 따로 지켜보면 한 박자 어긋난다.
+                controller.update { st ->
+                    st.copy(inputs = list, outputKinds = availableOutputKinds())
+                }
                 // **본 기기는 기억한다.** 빼도 목록에 남아야 다시 꽂기
                 // 전에도 고를 수 있고, 그 기기의 보정이 있다는 사실도
                 // 보인다(2026-09-24 담당자 지시).
@@ -3429,12 +3436,36 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** 폰 내장 스피커. 못 찾으면 null — 그때는 안드로이드가 고른다. */
-    private fun builtInSpeaker(): android.media.AudioDeviceInfo? = runCatching {
+    /**
+     * 고른 **종류**에 드는 출력 기기를 찾는다. 없으면 null.
+     *
+     * null 이면 `setPreferredDevice` 를 안 부르고 **안드로이드가 고른 곳으로**
+     * 나간다. 그 사실은 화면의 「실제 출력」 줄이 적는다 — 고른 곳이 안
+     * 꽂혀 있는데 **조용히 다른 데로 나가면** 사람은 알 길이 없다.
+     */
+    private fun outputDeviceOf(
+        kind: kr.joa.selahrta.audio.OutputKind,
+    ): android.media.AudioDeviceInfo? = runCatching {
         val am = getApplication<Application>()
             .getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
         am.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS)
-            .firstOrNull { it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+            .firstOrNull { kr.joa.selahrta.audio.SignalOutputChoice.matches(kind, it.type) }
     }.getOrNull()
+
+    /**
+     * 지금 **쓸 수 있는** 출력 종류들. 화면이 「안 꽂혀 있습니다」를 적는 데 쓴다.
+     *
+     * 고르개에서 안 보이게 감추지는 **않는다** — 감추면 「블루투스로 낼 수
+     * 있다」는 것 자체를 모르게 된다. 고를 수는 있게 두고, 없으면 없다고 적는다.
+     */
+    private fun availableOutputKinds(): Set<kr.joa.selahrta.audio.OutputKind> = runCatching {
+        val am = getApplication<Application>()
+            .getSystemService(android.content.Context.AUDIO_SERVICE) as android.media.AudioManager
+        val types = am.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS).map { it.type }
+        kr.joa.selahrta.audio.OutputKind.entries
+            .filter { k -> types.any { kr.joa.selahrta.audio.SignalOutputChoice.matches(k, it) } }
+            .toSet()
+    }.getOrElse { emptySet() }
 
     fun closeSession() {
         controller.update {
