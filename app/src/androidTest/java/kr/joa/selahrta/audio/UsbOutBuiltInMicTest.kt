@@ -230,8 +230,11 @@ class UsbOutBuiltInMicTest {
      */
     @Test
     fun 사례3_USB로_내보내며_내장마이크로_잰다() {
-        val minutes = InstrumentationRegistry.getArguments()
-            .getString("minutes")?.toDoubleOrNull() ?: 5.0
+        val args = InstrumentationRegistry.getArguments()
+        val minutes = args.getString("minutes")?.toDoubleOrNull() ?: 5.0
+        // **세기를 밖에서 준다.** 근무 중에는 작게, 조용할 때는 크게 —
+        // 다시 빌드하지 않고 바꿀 수 있어야 시험을 여러 번 돌린다.
+        val amp = args.getString("amplitude")?.toDoubleOrNull() ?: 0.03
         val out = wiredOut()
         assumeTrue("USB-C 오디오 출력이 꽂혀 있어야 한다", out != null)
         val mic = bottomMic()
@@ -283,9 +286,12 @@ class UsbOutBuiltInMicTest {
             .let { it.getOrElse(it.size / 2) { -240.0 } }
 
         val id = player.start(
-            SignalRequest(TestSignal.Pink, amplitude = 0.03, channels = SignalChannels.Both),
+            SignalRequest(TestSignal.Pink, amplitude = amp, channels = SignalChannels.Both),
         )
-        Log.i(tag, "재생 시작 id=$id (0 이면 못 열었다) · 틀기 전 RMS=%.1fdBFS".format(beforeDb))
+        Log.i(
+            tag,
+            "재생 시작 id=$id 세기=%.3f · 틀기 전 RMS=%.1fdBFS".format(amp, beforeDb),
+        )
         assertTrue("소리를 못 열었다", id != SignalPlayer.NONE)
 
         val endAt = System.currentTimeMillis() + (minutes * 60_000).toLong()
@@ -308,10 +314,22 @@ class UsbOutBuiltInMicTest {
                 ),
             )
         }
-        player.stop()
-        Thread.sleep(500)
-        val afterDb = levels.toList().takeLast(60).map { dbfs(it) }.sorted()
+        // **끄기 직전**을 먼저 재 둔다 — 끈 뒤 값과 견줘야 「들었다」가 선다.
+        val onDb = levels.toList().takeLast(60).map { dbfs(it) }.sorted()
             .let { it.getOrElse(it.size / 2) { -240.0 } }
+        player.stop()
+        // 끈 뒤 3초를 더 받아 **꺼진 상태의 바닥**을 잰다.
+        val afterMark = levels.size
+        Thread.sleep(3_000)
+        val offDb = levels.toList().drop(afterMark).map { dbfs(it) }.sorted()
+            .let { it.getOrElse(it.size / 2) { -240.0 } }
+        val afterDb = onDb
+        Log.i(
+            tag,
+            "켬/끔 견줌: 틀기전=%.1f 트는중=%.1f 끈뒤=%.1f dBFS (켬-끔=%.1fdB)".format(
+                beforeDb, onDb, offDb, onDb - offDb,
+            ),
+        )
         val fmt = confirmed.get() ?: opened
         src.close()
 
@@ -349,5 +367,121 @@ class UsbOutBuiltInMicTest {
             "재는 내내 바닥값이다(%.1fdBFS) — 입력이 죽었다".format(afterDb),
             afterDb > -120.0,
         )
+    }
+
+    // ── 사례 4·5: 뽑았다 다시 꽂는다 ────────────────────
+
+    /**
+     * **도는 중에 USB-C 를 뽑았다 꽂는다**(지시서 사례 4·5).
+     *
+     * 사람이 손으로 해야 하므로 **기다리면서 지켜본다.** 기기 목록을
+     * 1초마다 보고 **사라진 순간과 돌아온 순간**을 적는다.
+     *
+     * 보는 것:
+     * - 뽑았을 때 **입력이 살아 있는가** — 출력이 사라졌다고 입력까지
+     *   죽으면 측정이 통째로 끊긴다.
+     * - 출력이 어디로 떨어지는가(fallback).
+     * - 다시 꽂았을 때 **입력이 그대로인가** — 여기서 USB 입력으로
+     *   끌려가면 그 뒤 측정은 조용히 다른 마이크의 것이 된다.
+     *
+     * 길이는 `-e minutes N`(기본 1.5분), 세기는 `-e amplitude`(기본 0.1).
+     * 뽑으면 폰 스피커로 떨어질 수 있어 **작게** 잡았다.
+     */
+    @Test
+    fun 사례4_5_USB를_뽑았다_다시_꽂는다() {
+        val args = InstrumentationRegistry.getArguments()
+        val minutes = args.getString("minutes")?.toDoubleOrNull() ?: 1.5
+        val amp = args.getString("amplitude")?.toDoubleOrNull() ?: 0.1
+        assumeTrue("USB-C 오디오 출력이 꽂혀 있어야 한다", wiredOut() != null)
+        val mic = bottomMic()
+        assumeTrue("내장 마이크를 못 찾았다", mic != null)
+
+        val routeChanges = AtomicInteger()
+        val captureEnds = AtomicInteger()
+        val confirmed = AtomicReference<OpenedFormat?>(null)
+        val src = MicSource(
+            InstrumentationRegistry.getInstrumentation().targetContext,
+            mic,
+            onRoutingChanged = {
+                routeChanges.incrementAndGet()
+                Log.w(tag, "입력 경로 바뀜 → ${it?.displayName} (${it?.kind})")
+            },
+            onRouteConfirmed = { confirmed.set(it) },
+            onCaptureEnded = {
+                captureEnds.incrementAndGet()
+                Log.w(tag, "캡처 끝남: $it")
+            },
+        )
+        val r = src.open(RequestedFormat(sampleRate = 48_000))
+        assumeTrue("입력을 못 열었다", r is OpenResult.Opened)
+        val opened = (r as OpenResult.Opened).format
+
+        val routeNote = AtomicReference("모름")
+        val player = SignalPlayer(
+            openSink = {
+                AudioTrackSink(
+                    preferredOutput = { wiredOut() },
+                    onRoute = { routeNote.set(it); Log.i(tag, "실제 출력: $it") },
+                )
+            },
+        )
+
+        val blocks = AtomicLong()
+        val levels = ConcurrentLinkedQueue<Double>()
+        src.start { _, st -> blocks.incrementAndGet(); levels += st.rms }
+        player.start(SignalRequest(TestSignal.Pink, amplitude = amp, channels = SignalChannels.Both))
+        Log.i(tag, "준비됐습니다 — 소리가 나면 뽑았다 꽂으십시오 (세기 %.2f)".format(amp))
+
+        var wired = wiredOut() != null
+        var unplugged = false
+        var replugged = false
+        var blocksAtUnplug = 0L
+        val endAt = System.currentTimeMillis() + (minutes * 60_000).toLong()
+        var sec = 0
+        while (System.currentTimeMillis() < endAt) {
+            Thread.sleep(1_000)
+            sec++
+            val now = wiredOut() != null
+            if (wired && !now) {
+                unplugged = true
+                blocksAtUnplug = blocks.get()
+                Log.w(tag, "[${sec}초] **뽑혔다** — 장=${blocks.get()} 입력경로변경=${routeChanges.get()} 캡처끝=${captureEnds.get()}")
+            }
+            if (!wired && now) {
+                replugged = true
+                Log.w(tag, "[${sec}초] **다시 꽂혔다** — 장=${blocks.get()} 입력경로변경=${routeChanges.get()}")
+            }
+            wired = now
+            if (sec % 5 == 0) {
+                val recent = levels.toList().takeLast(40).map { dbfs(it) }.sorted()
+                Log.i(
+                    tag,
+                    "[%d초] 유선=%s 장=%d RMS=%.1fdBFS 경로변경=%d 캡처끝=%d 출력=%s".format(
+                        sec, if (now) "있음" else "없음", blocks.get(),
+                        recent.getOrElse(recent.size / 2) { -240.0 },
+                        routeChanges.get(), captureEnds.get(), routeNote.get(),
+                    ),
+                )
+            }
+        }
+        player.stop()
+        val fmt = confirmed.get() ?: opened
+        src.close()
+
+        Log.i(
+            tag,
+            "끝 뽑힘=$unplugged 다시꽂힘=$replugged 장=${blocks.get()} " +
+                "뽑힌뒤장=${blocks.get() - blocksAtUnplug} 입력경로변경=${routeChanges.get()} " +
+                "캡처끝=${captureEnds.get()} 입력=${fmt.micKind}/${fmt.deviceLabel}/${fmt.sampleRate}",
+        )
+
+        assumeTrue("뽑았다 꽂는 것을 못 봤다 — 다시 해 주십시오", unplugged && replugged)
+        assertEquals(
+            "착탈 뒤 입력이 내장 마이크가 아니다",
+            kr.joa.selahrta.domain.MicKind.BuiltIn,
+            fmt.micKind,
+        )
+        assertTrue("뽑은 뒤로 장이 안 들어왔다 — 입력이 함께 죽었다", blocks.get() > blocksAtUnplug)
+        assertEquals("착탈 중에 캡처가 끊겼다", 0, captureEnds.get())
     }
 }
