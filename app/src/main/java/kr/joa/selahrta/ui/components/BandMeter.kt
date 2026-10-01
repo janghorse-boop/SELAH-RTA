@@ -76,8 +76,26 @@ class RtaOverlayCurve(
     val color: Color,
 )
 
+/**
+ * 주파수를 사람이 읽을 숫자로.
+ *
+ * **뒤에 붙는 0 은 떼어 낸다**(2026-10-01 담당자 지시: 「20.00 kHz는
+ * 20 kHz로」, 「1.00 kHz도 1 kHz로」).
+ *
+ * `%.2f` 로 못박아 두어 **1kHz 가 「1.00 kHz」로** 적혔다. 자릿수는
+ * 3150Hz 를 「3.15 kHz」로 적으려고 둔 것인데, 떨어지는 값까지 끌고 다니면
+ * **없는 정밀도를 있는 것처럼** 보인다 — 20kHz 는 20kHz 지 20.00kHz 가
+ * 아니다.
+ *
+ * 그래서 소수 둘로 적되 **뒤의 0 과 남는 소수점을 떼어 낸다**:
+ * `1000 → 1` · `1250 → 1.25` · `3150 → 3.15` · `20000 → 20`.
+ */
 fun formatHz(hz: Double): String =
-    if (hz < 1000) "%.0f".format(hz) else "%.2f".format(hz / 1000)
+    if (hz < 1000) {
+        "%.0f".format(hz)
+    } else {
+        "%.2f".format(hz / 1000).trimEnd('0').trimEnd('.')
+    }
 
 /** [formatHz] 와 짝이 되는 단위. */
 fun hzUnit(hz: Double): String = if (hz < 1000) "Hz" else "kHz"
