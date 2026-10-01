@@ -41,6 +41,11 @@ class SampleRing(private val capacity: Int) {
      * **Coherence 가 통째로 무너진다.** 기준 쪽을 지연만큼 거슬러 떠서
      * 시간을 맞춘다.
      *
+     * **지금 생산 경로는 이 매개변수를 쓰지 않는다.** [TransferEngine] 은
+     * 잠금을 두 번 잡지 않으려고 **한 번에 길게 떠서 배열 안에서 자른다**
+     * (고리를 다시 읽지 않는다). 이 매개변수는 일반 부품으로 남겨 두고
+     * 시험으로 지킨다.
+     *
      * @return 실제로 채운 개수.
      */
     fun snapshot(out: DoubleArray, lagBack: Int = 0): Int {

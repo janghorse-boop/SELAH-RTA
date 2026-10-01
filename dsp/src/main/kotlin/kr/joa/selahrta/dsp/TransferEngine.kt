@@ -31,6 +31,13 @@ data class TransferMeasurement(val delay: DelayResult, val transfer: TransferRes
  * **지연을 못 찾으면 전달함수를 내지 않는다.** 시간이 안 맞은 채로 곱한
  * 스펙트럼은 그럴듯한 그림을 내놓지만 **Coherence 가 통째로 무너진** 값이다
  * (명세 3장: 시간축이 맞지 않은 상태에서 그럴듯한 그래프를 만들지 않는다).
+ *
+ * ## 지연 탐색 범위가 평균 창에 묶여 있다 — 떼어내야 한다
+ *
+ * 지금은 `analysisSize` 가 [span] 에서 나오므로 평균을 줄이면 탐색 범위가
+ * 함께 줄어든다. 그래서 기본 `maxLagSamples` 로는 **평균 5회 미만을 쓸 수
+ * 없다.** 명세 29장은 `None`·`Short` 를 요구하므로, **화면에 Averaging 을
+ * 붙이기 전에 둘을 떼어놓아야 한다.**
  */
 class TransferEngine(
     private val sampleRate: Int = 48_000,
@@ -48,6 +55,17 @@ class TransferEngine(
 
     /** 평균 [averages] 회를 50% 겹침으로 모으는 데 필요한 표본 수. */
     private val span = fftSize + (averages - 1) * hop
+
+    init {
+        // span 은 지연 탐색 범위(analysisSize)의 바탕이다 — 그보다 긴
+        // 지연은 애초에 찾을 길이 없으니, 잘못된 조합을 생성자에서 바로
+        // 걸러낸다(평균을 줄이면 화면에서 바로 죽는 문제, 검토 ①).
+        require(maxLagSamples < span) {
+            "평균 ${averages}회 · FFT ${fftSize} 로는 분석 창이 ${span} 표본뿐이라 " +
+                "최대 지연 ${maxLagSamples} 를 찾을 수 없다. " +
+                "평균을 늘리거나(최소 ${(maxLagSamples - fftSize) / hop + 2}회) 최대 지연을 줄여야 한다."
+        }
+    }
 
     /** 지연 보정까지 담을 만큼 넉넉히. */
     private val capacity = Integer.highestOneBit(span + maxLagSamples) * 2
@@ -90,6 +108,11 @@ class TransferEngine(
      * 지연을 구한 뒤 그만큼 거슬러 가야 하는데, 그 자리를 고리에서 **다시
      * 읽지 않고** 이미 떠 놓은 [refLong] 안에서 자르기 때문이다(잠금을
      * 두 번 잡지 않으려는 것).
+     *
+     * **재진입 불가 — 한 스레드에서만 부른다.** `refLong`·`refWindow`·
+     * `measWindow`·[estimator]·[averager] 가 전부 인스턴스 버퍼이고,
+     * 잠금([lock])은 고리([refRing]·[measRing]) 쓰기만 보호한다. 두 스레드가
+     * 동시에 [measure] 를 부르면 이 버퍼들을 함께 덮어써 뒤섞인 값을 낸다.
      */
     fun measure(): TransferMeasurement? {
         synchronized(lock) {

@@ -105,4 +105,30 @@ class DelayEstimatorTest {
     fun `아무 소리도 없으면 못 찾았다고 말한다`() {
         assertFalse(est().estimate(DoubleArray(n), DoubleArray(n)).found)
     }
+
+    /**
+     * **꼬리를 본다** — [analysisSize] 보다 긴 입력을 주면 가장 최근
+     * [analysisSize] 개만 봐야 한다. 앞쪽(과거)에는 못 찾아야 할 지연을,
+     * 뒤쪽(꼬리, 「지금」)에는 찾아야 할 지연을 심어 둔다. 앞쪽을 보고 있으면
+     * (옛 버그처럼 배열의 머리를 쓰면) `oldLag` 를 찾아 이 시험이 실패한다.
+     */
+    @Test
+    fun `analysisSize 보다 긴 입력은 꼬리만 본다`() {
+        val total = n * 2
+        val reference = noise(total)
+        val oldLag = 1200  // 앞쪽(버려야 할 구간)에 심은, 찾으면 안 되는 지연
+        val newLag = 500   // 뒤쪽(꼬리, 봐야 할 구간)에 심은, 찾아야 하는 지연
+
+        val measurement = DoubleArray(total) { i ->
+            if (i < n) {
+                if (i < oldLag) 0.0 else reference[i - oldLag]
+            } else {
+                if (i - n < newLag) 0.0 else reference[i - newLag]
+            }
+        }
+
+        val r = est().estimate(reference, measurement)
+        assertTrue("꼬리의 지연을 못 찾았다", r.found)
+        assertEquals("앞쪽(버려야 할) 지연을 찾았다 — 꼬리를 보고 있지 않다", newLag, r.samples)
+    }
 }

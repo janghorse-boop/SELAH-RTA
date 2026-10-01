@@ -71,6 +71,19 @@ class DelayEstimator(
     private val yRe = DoubleArray(fftSize)
     private val yIm = DoubleArray(fftSize)
 
+    /**
+     * [reference] 와 [measurement] 의 시간차를 잰다.
+     *
+     * 두 배열 다 **「지금」에서 끝난다고 가정한다.** 배열이 [analysisSize]
+     * 보다 길면 **가장 최근 [analysisSize] 개만** 본다 — 앞쪽(과거)은
+     * 버린다. 짧으면(또는 길이가 다르면) 더 짧은 쪽 길이로 맞춰 본다.
+     *
+     * **왜 꼬리인가**: 최근 구간일수록 또렷하고(잔향이 덜 섞인 직접음
+     * 비중이 높다), 무엇보다 **라우팅이 바뀌거나 마이크를 옮겨 지연이
+     * 달라졌을 때** 옛 구간만 보고 또렷한 「옛 지연」을 자신 있게 내놓지
+     * 않는다 — 그 값으로 전달함수를 맞추면 한 번도 보지 못한 최신 구간이
+     * 조용히 잘못 정렬된다.
+     */
     fun estimate(reference: DoubleArray, measurement: DoubleArray): DelayResult {
         val n = minOf(reference.size, measurement.size, analysisSize)
         load(reference, n, xRe, xIm)
@@ -131,7 +144,8 @@ class DelayEstimator(
     private fun load(src: DoubleArray, n: Int, re: DoubleArray, im: DoubleArray) {
         java.util.Arrays.fill(re, 0.0)
         java.util.Arrays.fill(im, 0.0)
-        System.arraycopy(src, 0, re, 0, n)
+        // **가장 최근 n 개**를 쓴다 — 두 창 다 「지금」에서 끝나므로 꼬리가 맞는 자리다.
+        System.arraycopy(src, src.size - n, re, 0, n)
     }
 
     /**

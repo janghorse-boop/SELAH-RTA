@@ -9,6 +9,12 @@ import kotlin.math.log10
  * @param coherence 칸마다의 `γ²` (0~1). 무효인 칸은 0 이다.
  * @param valid **기준이 그 칸에 쓸 만큼 있었는가.** false 면 그리지 않는다.
  * @param averages 모은 블록 수. 상관을 보일지 말지가 여기 달려 있다.
+ *
+ * **배열을 든 `data class`라 `equals`/`hashCode` 는 참조 비교다**(배열은
+ * 내용이 아니라 식별자로 비교된다). 지금은 [transferFunction] 이 호출마다
+ * 새 배열을 만들어 문제가 없지만, 배열을 재사용해 채우는 쪽으로 바뀌면
+ * `StateFlow`·`distinctUntilChanged` 가 값이 바뀐 것을 못 보고 갱신을
+ * 조용히 삼킨다.
  */
 data class TransferResult(
     val magnitudeDb: DoubleArray,
