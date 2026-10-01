@@ -72,6 +72,50 @@ class TransferFunctionTest {
         assertEquals(0.0, r.coherence[300], 1e-12)
     }
 
+    /**
+     * **검토에서 드러난 구멍.** 피크를 고를 때 DC(0Hz) 칸까지 보면,
+     * 마이크 DC 바이어스나 저주파 험이 실측에서 0Hz 칸에 큰 에너지로
+     * 실릴 때 문턱이 실제 신호의 봉우리가 아니라 DC 에너지로 잡혀
+     * 멀쩡한 칸까지 통째로 무효가 된다. DC 는 전달함수에서 뜻이 없는
+     * 주파수이므로 피크 후보에서도, 결과에서도 항상 제외해야 한다.
+     */
+    @Test
+    fun `DC 바이어스가 있어도 실제 신호 칸은 유효하고 DC 는 항상 무효다`() {
+        val a = SpectralAverager(n)
+        repeat(16) { val x = tone(n, 64); a.addBlock(x, 0, x, 0) }
+        // 마이크 DC 바이어스·저주파 험을 흉내낸다 — 시간 영역에 상수를 더하면
+        // Hann 창의 스펙트럼 누설로 0Hz 뿐 아니라 1·2번 칸까지 퍼져 시험이
+        // 가리려는 자리(DC 한 칸)를 벗어난다. 그래서 0Hz 칸에만 직접
+        // 거대한 에너지를 싣는다 — 기준(bin 64) 봉우리의 10 만 배.
+        a.sxx[0] = a.sxx[64] * 100_000.0
+        val r = transferFunction(a, refFloorDb = -40.0)
+
+        assertTrue("DC 가 피크를 끌어가 실제 신호 칸(64)이 무효로 나온다", r.valid[64])
+        assertFalse("DC 칸(0)이 유효로 나온다", r.valid[0])
+    }
+
+    /**
+     * **검토에서 드러난 구멍.** 게이트는 `avg.sxx`(기준)를 보고 판정해야
+     * 한다. 기존 시험들은 전부 `addBlock(x, 0, x, 0)` 라 `sxx == syy` 여서
+     * 누가 게이트를 `avg.syy` 로 바꿔도 통과했다. 기준과 측정을 다르게
+     * 만들어 — 기준은 한 칸에만 에너지가 있는 순음, 측정은 모든 칸에
+     * 에너지가 있는 넓은 대역 잡음 — `sxx` 가 거의 0 인 칸이 `syy` 가 커도
+     * 무효로 남는지를 가른다.
+     */
+    @Test
+    fun `게이트는 기준 채널을 본다 — 측정에만 에너지가 있어도 무효다`() {
+        val a = SpectralAverager(n)
+        repeat(16) {
+            val ref = tone(n, 64)   // 기준: 한 칸에만 에너지
+            val meas = noise(n)     // 측정: 넓은 대역 전부에 에너지
+            a.addBlock(ref, 0, meas, 0)
+        }
+        val r = transferFunction(a, refFloorDb = -40.0)
+
+        assertTrue("기준이 있는 칸(64)이 무효로 나온다", r.valid[64])
+        assertFalse("기준이 없는 칸(300)이 측정 에너지만으로 유효가 된다", r.valid[300])
+    }
+
     @Test
     fun `평균 수를 그대로 들고 나온다`() {
         val a = SpectralAverager(n)

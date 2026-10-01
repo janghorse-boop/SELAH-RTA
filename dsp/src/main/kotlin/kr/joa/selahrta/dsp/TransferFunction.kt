@@ -60,6 +60,18 @@ fun coherenceDisplay(averages: Int): CoherenceDisplay = when {
  * 판정이 따라 움직이지 않게 하려는 것이다.
  *
  * **[refFloorDb] 는 실측으로 정할 값이다.** −40dB 은 출발점일 뿐이다.
+ *
+ * ## DC(0Hz) 칸은 항상 무효다
+ *
+ * **DC 는 전달함수에서 뜻이 없는 주파수다.** 그런데 실측에서는 마이크
+ * DC 바이어스나 저주파 험이 0Hz 칸에 크게 실릴 수 있다. 그 칸을
+ * [peak] 후보에 넣으면 **실제 신호의 봉우리가 아니라 DC 에너지로 문턱이
+ * 잡혀**, 멀쩡히 상관된 칸들까지 통째로 무효가 된다. 그래서 피크를 고를
+ * 때도, 본 루프를 돌 때도 **DC(인덱스 0)는 건너뛴다** — `valid[0]` 은
+ * 항상 `false` 로 남는다.
+ *
+ * **나이키스트 칸(`bins-1`)은 그대로 둔다.** 거기엔 위상이 없고 허수부도
+ * 0 이라 DC 와 달리 값이 튈 여지가 적다 — 그래서 DC 만 뺐다.
  */
 fun transferFunction(avg: SpectralAverager, refFloorDb: Double = -40.0): TransferResult {
     val bins = avg.bins
@@ -69,13 +81,16 @@ fun transferFunction(avg: SpectralAverager, refFloorDb: Double = -40.0): Transfe
 
     if (avg.count == 0) return TransferResult(mag, coh, valid, 0)
 
+    // DC(i=0)는 피크 후보에서 제외한다 — 마이크 바이어스·저주파 험이 실려
+    // 문턱을 망칠 수 있다. 나이키스트(bins-1)는 위상이 없어 그대로 둔다.
     var peak = 0.0
-    for (i in 0 until bins) if (avg.sxx[i] > peak) peak = avg.sxx[i]
+    for (i in 1 until bins) if (avg.sxx[i] > peak) peak = avg.sxx[i]
     if (peak <= 0.0) return TransferResult(mag, coh, valid, avg.count)
 
     val floor = peak * Math.pow(10.0, refFloorDb / 10.0)
 
-    for (i in 0 until bins) {
+    // i = 1 부터 돈다 — DC(i=0)는 결과에서 언제나 무효(valid[0] == false)로 남는다.
+    for (i in 1 until bins) {
         val sxx = avg.sxx[i]
         if (sxx < floor) continue          // 무효 — 그리지 않는다
 
@@ -84,9 +99,16 @@ fun transferFunction(avg: SpectralAverager, refFloorDb: Double = -40.0): Transfe
         val crossMagSq = re * re + im * im
 
         valid[i] = true
+        // 유효한 칸인데 측정이 그 주파수에서 완전 무음(crossMagSq == 0)이면
+        // magnitudeDb 는 -Infinity 가 된다. 값 자체는 올바른 표현이지만,
+        // 화면을 그리는 다음 작업은 유한하지 않은 값을 다뤄야 한다.
         mag[i] = 10.0 * log10(crossMagSq / (sxx * sxx))
 
         val denom = sxx * avg.syy[i]
+        // coerceIn(0.0, 1.0) 은 부동소수 잡음 방어일 뿐이다 — 분자·분모가
+        // 모두 제곱합이라 음수가 될 수 없고, 상한도 코시-슈바르츠 부등식
+        // (|Sxy|² ≤ Sxx·Syy)으로 수학적으로 보장된다. 두 경계 모두
+        // 「수학적으로 넘을 수 없는 값」이지 실제로 넘는 경우를 가리는 것이 아니다.
         coh[i] = if (denom > 0.0) (crossMagSq / denom).coerceIn(0.0, 1.0) else 0.0
     }
 
