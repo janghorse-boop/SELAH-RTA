@@ -1131,7 +1131,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 val prev = controller.baseState.value.inputs
                 // **나갈 자리도 함께 본다**(2026-10-01). 입력이 꽂히고
                 // 빠지는 그 순간에 출력도 바뀐다 — iMM-6C 를 꽂으면 마이크와
-                // 3.5잭 출력이 **함께** 생긴다. 따로 지켜보면 한 박자 어긋난다.
+                // 유선 출력이 **함께** 생긴다. 따로 지켜보면 한 박자 어긋난다.
                 controller.update { st ->
                     st.copy(inputs = list, outputKinds = availableOutputKinds())
                 }

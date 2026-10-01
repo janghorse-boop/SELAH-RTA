@@ -16,8 +16,9 @@ import org.junit.Test
  * 담당자가 쓰는 장비로 정리하면 이렇다:
  *
  * - **폰 스피커** — 방을 울려 제 마이크로 되받는다.
- * - **3.5잭 · USB-C** — **iMM-6C 의 Y 케이블**. 마이크는 USB-C 로 들어오고
- *   같은 케이블의 3.5잭으로 폰의 출력이 나가 **믹서 입력**에 꽂힌다.
+ * - **유선(USB-C · 3.5잭)** — USB-C 로 믹서·인터페이스에 **바로** 넣을 수
+ *   있고, **iMM-6C 의 Y 케이블**도 여기다(마이크는 USB-C 로 들어오고 같은
+ *   케이블의 3.5잭으로 폰의 출력이 나가 믹서 입력에 꽂힌다).
  * - **블루투스** — 폰이 믹서·스피커에 선 없이 붙는다.
  *
  * ## 고른 것을 덮지 않는다
@@ -77,10 +78,12 @@ class SignalOutputChoiceTest {
     // ── 어떤 기기가 그 자리에 드는가 ────────────────────
 
     /**
-     * **3.5잭과 USB-C 를 한 종류로 묶는다.**
+     * **USB-C 와 3.5잭을 한 종류로 묶어 「유선」이라 부른다.**
      *
-     * 쓰는 사람에게는 「선으로 내보낸다」 하나이고, iMM-6C 처럼 USB-C 에
-     * 3.5잭이 달린 케이블은 둘을 가를 수도 없다.
+     * 처음에는 「3.5잭」이라 적었다가 담당자가 짚었다 — 그것은 **케이블의
+     * 한쪽 끝만** 가리키고, **인터페이스 없이 USB-C 로 바로 장비에 넣는**
+     * 쓰임이 이름에서 빠진다. 쓰는 사람에게는 「선으로 내보낸다」 하나이고,
+     * iMM-6C 처럼 USB-C 에 3.5잭이 달린 케이블은 둘을 가를 수도 없다.
      */
     @Test
     fun `유선은 3_5잭과 USB 를 다 받는다`() {
@@ -165,7 +168,21 @@ class SignalOutputChoiceTest {
 
     // ── 사람이 읽을 말 ──────────────────────────────────
 
-    /** 고르개마다 **사람이 읽을 설명**이 있어야 한다. 「자동」만으로는 못 고른다. */
+    /**
+     * **이름이 케이블의 한쪽 끝만 가리키지 않는다**(2026-10-01 담당자 지적).
+     *
+     * 「3.5잭」이라 적으면 **USB-C 로 바로 장비에 넣는** 쓰임이 이름에서
+     * 빠진다. 칩에는 「유선」, 긴 이름에는 **둘 다** 적는다.
+     */
+    @Test
+    fun `유선 이름이 USB-C 를 빠뜨리지 않는다`() {
+        assertEquals("유선", SignalOutput.Wired.shortLabelKo)
+        assertTrue(SignalOutput.Wired.labelKo, SignalOutput.Wired.labelKo.contains("USB-C"))
+        assertTrue(SignalOutput.Wired.labelKo, SignalOutput.Wired.labelKo.contains("3.5잭"))
+        assertTrue(SignalOutput.Wired.helpKo, SignalOutput.Wired.helpKo.contains("USB-C"))
+    }
+
+    /** 고르개마다 **사람이 읽을 설명**이 있어야 한다. */
     @Test
     fun `고르개마다 설명이 있다`() {
         for (o in SignalOutput.entries) {
