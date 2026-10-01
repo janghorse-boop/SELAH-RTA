@@ -91,4 +91,21 @@ class TappedSinkTest {
         sink.write(floatArrayOf(10f, 20f), 1, 1)
         assertArrayEquals(floatArrayOf(30f), mono.toFloatArray(), 1e-6f)
     }
+
+    /**
+     * `stop()` 뒤 `open()` 없이 바로 이어 써도 반 프레임이 남아 있으면 안
+     * 된다. `SignalSink.stop()` 의 계약은 「그 뒤 write() 가 open() 없이
+     * 다시 올 수 없다」를 보장하지 않는다 — 지금은 SignalPlayer 가 늘
+     * stop() 뒤 release() 로 가서 드러나지 않을 뿐이다.
+     */
+    @Test
+    fun `멈췄다 다시 써도 남은 반 프레임을 버린다`() {
+        val (mono, cb) = collector()
+        val sink = TappedSink(PartialSink { 1 }, cb)
+        sink.write(floatArrayOf(1f), 0, 1)
+        sink.stop()
+        sink.write(floatArrayOf(10f, 20f), 0, 1)
+        sink.write(floatArrayOf(10f, 20f), 1, 1)
+        assertArrayEquals(floatArrayOf(30f), mono.toFloatArray(), 1e-6f)
+    }
 }
