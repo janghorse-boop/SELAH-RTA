@@ -46,6 +46,10 @@ fun estimateDrift(
 ): DriftResult {
     val outRate = rateOrNull(outFirst, outLast) ?: return DriftResult.Unavailable
     val inRate = rateOrNull(inFirst, inLast) ?: return DriftResult.Unavailable
+    // 지금은 도달하지 않는다 — rateOrNull 이 null 이 아닌 값을 주면
+    // dNanos > 0 && dFrames > 0 이 보장되어 inRate 는 항상 엄밀히 양수다.
+    // rateOrNull 의 계약이 나중에 느슨해지면(예: null 대신 기본값을 돌려주는
+    // 리팩터링) 그때를 위한 안전망으로 의도적으로 남긴다.
     if (inRate <= 0.0) return DriftResult.Unavailable
     return DriftResult.Ppm((outRate / inRate - 1.0) * 1_000_000.0)
 }

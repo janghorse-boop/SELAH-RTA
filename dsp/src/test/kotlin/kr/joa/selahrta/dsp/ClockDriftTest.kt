@@ -60,4 +60,33 @@ class ClockDriftTest {
         val (i1, i2) = pair(48_000.0)
         assertEquals(DriftResult.Unavailable, estimateDrift(o1, o2, i1, i2))
     }
+
+    // 위 세 시험은 출력 쪽만 깨뜨리고 입력 쪽은 pair(48_000.0) 로 멀쩡히 둔다.
+    // estimateDrift 는 출력 쪽을 먼저 평가해 거기서 Unavailable 을 돌려주므로,
+    // 입력 쪽 rateOrNull 이 null 을 돌려주는 분기는 저 시험만으로는 한 번도
+    // 실행되지 않는다. 아래 세 시험은 **출력은 멀쩡하고 입력만 못 재는** 대칭
+    // 경우를 추가해 그 분기를 실제로 지나가게 한다.
+
+    @Test
+    fun `입력 쪽 시간이 안 흘렀으면 못 쟀다고 말한다`() {
+        val (o1, o2) = pair(48_000.0)
+        val s = ClockSample(0L, 0L)
+        assertEquals(DriftResult.Unavailable, estimateDrift(o1, o2, s, s))
+    }
+
+    @Test
+    fun `입력 쪽 프레임이 안 늘었으면 못 쟀다고 말한다`() {
+        val (o1, o2) = pair(48_000.0)
+        val i1 = ClockSample(0L, 0L)
+        val i2 = ClockSample(0L, 60 * sec)       // 시간은 흘렀는데 프레임이 그대로
+        assertEquals(DriftResult.Unavailable, estimateDrift(o1, o2, i1, i2))
+    }
+
+    @Test
+    fun `입력 쪽 시간이 거꾸로 가면 못 쟀다고 말한다`() {
+        val (o1, o2) = pair(48_000.0)
+        val i1 = ClockSample(0L, 60 * sec)
+        val i2 = ClockSample(48_000L * 60, 0L)
+        assertEquals(DriftResult.Unavailable, estimateDrift(o1, o2, i1, i2))
+    }
 }
