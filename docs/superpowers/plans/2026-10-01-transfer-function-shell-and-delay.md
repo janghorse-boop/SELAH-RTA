@@ -1,5 +1,22 @@
 # Transfer Function 1차 — 문과 지연 찾기 구현 계획
 
+> ## ⛔ 실행 중단 — 다시 쓸 때까지 이 계획으로 구현하지 않는다 (2026-10-01 저녁)
+>
+> **Codex 명세 검토 회신이 1차 MVP 를 `Delay + Clock Drift + Magnitude +
+> Coherence` 로 넓혔다**(개발지시서 32장). 이 계획은 Delay 하나만 담고 있다.
+>
+> **Task 1(`SampleRing`)까지 끝났다** — 커밋 `4064631`, 시험 5/5 통과.
+> 순수 자료구조라 Codex 의 10개 지적 어디에도 안 걸려 가지
+> `feat/transfer-function-delay` 에 남겨 두었다. **Task 2 이후는 돌리지
+> 않았다.**
+>
+> 개정된 명세를 Codex 가 최종 검토한 뒤 계획을 다시 쓴다. **지금도 그대로
+> 쓸 수 있는 것**: Task 2(상호상관·PHAT) · Task 3(잠금 하나) · Task 4
+> (`TappedSink` 와 `write()` 의 함정). **다시 봐야 할 것**: Task 5·6 의
+> 화면 범위(Magnitude·Coherence 가 1차에 들어온다) · Task 7.
+>
+> 재개 기록: `.superpowers/sdd/2026-10-01-transfer-function-shell-and-delay/progress.md`
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 분석 탭에 Transfer Function 으로 들어가는 문을 달고, 그 안에서
