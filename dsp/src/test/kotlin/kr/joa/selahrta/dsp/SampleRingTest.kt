@@ -85,4 +85,13 @@ class SampleRingTest {
             // 기대한 대로
         }
     }
+
+    @Test
+    fun `lagBack 이 쌓인 양보다 크거나 같으면 0 개를 돌려주고 out 이 전부 0 이다`() {
+        val ring = SampleRing(4)
+        ring.write(floatArrayOf(1f, 2f, 3f), 0, 3)   // 3개만 쌓임
+        val out = DoubleArray(4) { 9.0 }             // 미리 더미 값을 채워 0 으로 덮이는지 확인
+        assertEquals(0, ring.snapshot(out, lagBack = 10))
+        assertArrayEquals(doubleArrayOf(0.0, 0.0, 0.0, 0.0), out, 1e-9)
+    }
 }
