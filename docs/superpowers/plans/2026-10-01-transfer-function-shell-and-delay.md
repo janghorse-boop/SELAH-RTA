@@ -293,6 +293,36 @@ class DelayEstimatorTest {
         assertEquals(300, r.samples)
     }
 
+    /**
+     * **PHAT 가 정말 더 뾰족한가** — 말이 아니라 숫자로 본다.
+     *
+     * 잔향을 흉내 낸다: 본 신호 뒤에 반사 여럿을 깔고 점점 줄인다.
+     * 잔향이 있는 공간이 이렇게 들린다.
+     */
+    @Test
+    fun `잔향 속에서 PHAT 가 더 또렷하다`() {
+        val x = noise(n)
+        val y = DoubleArray(n)
+        var gain = 1.0
+        var lag = 400
+        repeat(8) {
+            val echo = delayed(x, lag, gain)
+            for (i in 0 until n) y[i] += echo[i]
+            lag += 170          // 3.5ms 간격
+            gain *= 0.72
+        }
+
+        val withPhat = DelayEstimator(n, 2000, phat = true).estimate(x, y)
+        val plain = DelayEstimator(n, 2000, phat = false).estimate(x, y)
+
+        assertTrue("PHAT 가 본 신호를 놓쳤다", withPhat.found)
+        assertEquals("PHAT 가 엉뚱한 지연을 골랐다", 400, withPhat.samples)
+        assertTrue(
+            "PHAT 또렷함 ${withPhat.sharpness} 가 평범한 상관 ${plain.sharpness} 보다 크지 않다",
+            withPhat.sharpness > plain.sharpness,
+        )
+    }
+
     /** **제일 중요한 시험.** 관계없는 잡음끼리는 「못 찾았다」라야 한다. */
     @Test
     fun `관계없는 잡음끼리는 못 찾았다고 말한다`() {
@@ -340,6 +370,9 @@ import kotlin.math.abs
  */
 data class DelayResult(val samples: Int, val sharpness: Double, val found: Boolean)
 
+/** PHAT 로 나눌 때 **0 으로 나누지 않기 위한 바닥.** 소리 없는 대역은 크기가 0 이다. */
+private const val PHAT_FLOOR = 1e-12
+
 /**
  * 기준과 측정의 시간차를 **상호상관**으로 찾는다.
  *
@@ -354,7 +387,7 @@ data class DelayResult(val samples: Int, val sharpness: Double, val found: Boole
  * (으뜸 봉우리 ÷ 버금 봉우리)을 함께 보고, 문턱 아래면 **못 찾았다고
  * 말한다.**
  *
- * **문턱값 [minSharpness] 는 실측으로 정한 값이 아니다.** 실제 예배당에서
+ * **문턱값 [minSharpness] 는 실측으로 정한 값이 아니다.** 실제 공간에서
  * 재어 보고 정해야 한다. 그때까지 화면은 이 값을 함께 적는다.
  *
  * ## 분수 표본은 보지 않는다
@@ -366,6 +399,17 @@ class DelayEstimator(
     private val analysisSize: Int = 32_768,
     private val maxLagSamples: Int = 24_000,
     private val minSharpness: Double = 2.0,
+    /**
+     * **PHAT 가중**을 쓸 것인가(기본: 쓴다).
+     *
+     * 상호 스펙트럼의 **크기를 1 로 고르고 위상만 남긴다.** 잔향이 긴 공간에서는
+     * 잔향이 긴 곳에서 봉우리가 훨씬 뾰족해진다 — 그래야 「또렷함」으로
+     * 참·거짓을 가를 수 있다. 잔향 속 지연 추정의 표준 방법이다.
+     *
+     * **끌 수 있게 둔 까닭**: 끈 것과 견주는 시험이 있어야 「정말 더
+     * 뾰족한가」를 말로가 아니라 숫자로 보일 수 있다.
+     */
+    private val phat: Boolean = true,
 ) {
     init {
         require(analysisSize > 0) { "analysisSize 는 1 이상: $analysisSize" }
@@ -391,12 +435,24 @@ class DelayEstimator(
         fft.transform(xRe, xIm)
         fft.transform(yRe, yIm)
 
-        // conj(X) · Y
+        // conj(X) · Y — 그리고 **PHAT 가중**(크기를 고르게, 위상만 남김)
         for (i in 0 until fftSize) {
             val re = xRe[i] * yRe[i] + xIm[i] * yIm[i]
             val im = xRe[i] * yIm[i] - xIm[i] * yRe[i]
-            xRe[i] = re
-            xIm[i] = im
+            if (phat) {
+                val mag = kotlin.math.sqrt(re * re + im * im)
+                // **0 으로 나누지 않는다.** 소리가 없는 대역은 크기가 0 이다.
+                if (mag > PHAT_FLOOR) {
+                    xRe[i] = re / mag
+                    xIm[i] = im / mag
+                } else {
+                    xRe[i] = 0.0
+                    xIm[i] = 0.0
+                }
+            } else {
+                xRe[i] = re
+                xIm[i] = im
+            }
         }
 
         inverse(xRe, xIm)
@@ -449,7 +505,7 @@ class DelayEstimator(
 ```
 .\gradlew :dsp:test --tests 'kr.joa.selahrta.dsp.DelayEstimatorTest'
 ```
-기대: 7개 통과. **실패하면 `minSharpness` 를 올려 맞추지 말 것** — 그러면
+기대: 8개 통과. **실패하면 `minSharpness` 를 올려 맞추지 말 것** — 그러면
 「관계없는 잡음」 시험이 통과하는 대신 「잡음 섞인」 시험이 깨진다. 둘 다
 통과하는 값을 찾아야 한다(2.0 에서 시작해 1.5~3.0 사이를 본다).
 
