@@ -184,6 +184,22 @@ class AudioTrackSink(
     }
 
     /**
+     * **같은 기기인가** — id 로 견주지 않는다(2026-10-01 실측).
+     *
+     * 뽑았다 꽂으면 안드로이드가 **새 id** 를 준다(실기기에서 546 → 849).
+     * 그래서 id 로 견주면 **제대로 D3V 로 나가고 있는데도** 「고른 곳과
+     * 다릅니다」가 뜬다 — 멀쩡한데 틀렸다고 말하는 경고다.
+     *
+     * 사람이 「같은 기기」라고 부르는 것은 **종류·이름·주소**다. 그 셋으로
+     * 견준다.
+     */
+    private fun sameOutput(
+        a: android.media.AudioDeviceInfo,
+        b: android.media.AudioDeviceInfo,
+    ): Boolean = sameOutputKey(a.type, a.productName.toString(), a.address) ==
+        sameOutputKey(b.type, b.productName.toString(), b.address)
+
+    /**
      * 실제 경로를 **재서 알린다.**
      *
      * `routedDevice` 는 재생이 붙기 전에는 null 이라, 한 번 물어보고
@@ -204,7 +220,7 @@ class AudioTrackSink(
                     requestRejected ->
                         "출력 $actualKo — 고른 곳(${wanted?.productName})으로 " +
                             "보내 달라는 요청이 거절됐습니다."
-                    wanted != null && actual != null && actual.id != wanted.id ->
+                    wanted != null && actual != null && !sameOutput(actual, wanted) ->
                         "출력 $actualKo — 고른 곳(${wanted.productName})과 다릅니다."
                     else -> "출력 $actualKo"
                 },
@@ -240,3 +256,12 @@ class AudioTrackSink(
             .isSuccess
     }
 }
+
+/**
+ * 출력 기기를 가리는 열쇠 — **종류·이름·주소**.
+ *
+ * id 를 안 쓰는 까닭은 [AudioTrackSink.sameOutput] 에 적어 두었다. 순수
+ * 함수로 떼어 두어 기기 없이도 시험할 수 있게 한다.
+ */
+internal fun sameOutputKey(type: Int, productName: String, address: String): String =
+    "$type|$productName|$address"
