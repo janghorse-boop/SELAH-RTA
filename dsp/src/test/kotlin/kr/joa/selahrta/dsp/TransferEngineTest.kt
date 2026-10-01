@@ -11,13 +11,15 @@ class TransferEngineTest {
 
     private val fft = 256
     private val avgs = 8
+    private val maxLag = 500
+    private val span = fft + (avgs - 1) * (fft / 2)
     private val rng = Random(20261002)
 
     private fun engine() = TransferEngine(
         sampleRate = 48_000,
         fftSize = fft,
         averages = avgs,
-        maxLagSamples = 500,
+        maxLagSamples = maxLag,
     )
 
     private fun noise(n: Int) = FloatArray(n) { (rng.nextDouble() * 2 - 1).toFloat() }
@@ -27,6 +29,20 @@ class TransferEngineTest {
         val e = engine()
         e.offerReference(noise(100), 0, 100)
         e.offerMeasurement(noise(100), 0, 100)
+        assertNull(e.measure())
+    }
+
+    /**
+     * 기준은 [span] 뿐 아니라 지연 보정까지(`span + maxLagSamples`) 쌓여야
+     * 잰다 — 측정은 넉넉해도 기준이 **그만큼** 못 쌓였으면 안 잰다. 고리를
+     * 두 번 읽지 않고 한 번에 길게 떠 두는 설계가 바로 이 문턱에 기대고 있다.
+     */
+    @Test
+    fun `기준이 지연 보정만큼 못 쌓였으면 못 잰다`() {
+        val e = engine()
+        val needed = span + maxLag
+        e.offerReference(noise(needed - 1), 0, needed - 1)
+        e.offerMeasurement(noise(span), 0, span)
         assertNull(e.measure())
     }
 
