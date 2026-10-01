@@ -84,8 +84,16 @@ data class SelahPalette(
 internal val DarkPalette = SelahPalette(
     background = Color(0xFF0B0E11),
     surface = Color(0xFF12171C),
-    surfaceVariant = Color(0xFF1B2128),
-    outline = Color(0xFF2A333D),
+    // **상자가 바탕에서 떠 보여야 한다**(2026-10-01 담당자 지적:
+    // 「검정색 배경에 박스 음영과 차이가 적어 잘 구분이 되지 않습니다」).
+    //
+    // 재 보니 그럴 만했다 — 예전 값(0xFF1B2128)은 카드 바탕과 **대비가
+    // 1.11:1** 이었다. 그 정도면 눈이 경계를 못 찾는다. 1.5:1 쯤으로
+    // 올린다. 더 올리면 이번에는 **글자보다 상자가 먼저 보인다.**
+    surfaceVariant = Color(0xFF2B333D),
+    // 윤곽선도 함께 올린다(1.85 → 2.4:1 대 배경). 바탕을 올리는 것만으로는
+    // 상자끼리 붙어 있는 자리가 안 갈린다.
+    outline = Color(0xFF44515E),
 
     // **대화상자 바탕은 앱 배경보다 뚜렷이 밝아야 한다.**
     //
@@ -95,9 +103,22 @@ internal val DarkPalette = SelahPalette(
     dialogSurface = Color(0xFF283340),
 
     textPrimary = Color(0xFFE6EDF3),
-    textSecondary = Color(0xFF9FB0C0),
-    // 값이 아직 없을 때 쓰는 색. 실제 값보다 뚜렷하게 흐려야 한다.
-    textMuted = Color(0xFF5C6B7A),
+    // 상자 바탕을 올린 만큼 **글자도 함께 올린다.** 바닥이 밝아지면 같은
+    // 글자색이 그만큼 묻힌다 — 한쪽만 고치면 층이 무너진다.
+    textSecondary = Color(0xFFB2C0CD),
+    /**
+     * 설명 줄과 아직 없는 값에 쓰는 색.
+     *
+     * **읽을 수는 있어야 한다**(2026-10-01 담당자 지적: 「다크모드에서 설명
+     * 문구가 색상 때문인지 잘 보이지 않습니다」).
+     *
+     * 재 보니 옛 값(0xFF5C6B7A)은 상자 바탕에 대고 **2.97:1** 이었다 —
+     * 보통 글자의 기준(4.5:1)에 한참 못 미친다. 10sp 로 적는 설명 줄이
+     * 그 색이었으니 안 보이는 것이 맞다. 지금은 **4.7:1** 이다.
+     *
+     * 그래도 [textSecondary](6.9:1)보다는 흐리다 — **층은 그대로 둔다.**
+     */
+    textMuted = Color(0xFF909FAE),
 
     accent = Color(0xFF4FC3F7),
     onAccent = Color(0xFF00201C),
@@ -149,7 +170,8 @@ internal val LightPalette = SelahPalette(
     //
     // 5.23:1 / 4.91:1 로 올린다(일반 글자 기준 4.5:1). 그래도
     // textSecondary(7.40:1)보다 옅어 「덜 중요한 줄」로는 그대로 읽힌다.
-    textMuted = Color(0xFF5F6E7E),
+    // 밝은 바탕에서도 기준에 걸쳐 있었다(4.47:1). 조금 내려 5.2:1 로.
+    textMuted = Color(0xFF55646F),
 
     // 하늘색(0xFF4FC3F7)은 흰 바탕에서 글자로 못 쓴다. 같은 계열을
     // 어둡게 내린다.

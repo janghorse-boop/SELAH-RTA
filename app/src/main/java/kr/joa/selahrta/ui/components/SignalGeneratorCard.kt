@@ -54,6 +54,8 @@ import kr.joa.selahrta.ui.theme.SelahColors
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.widthIn
 import kr.joa.selahrta.dsp.BandNoiseFilter
 
 /**
@@ -433,7 +435,7 @@ private fun PickedHzCard(
             )
             .border(
                 1.dp,
-                if (playingHere) SelahColors.Accent else Color.Transparent,
+                if (playingHere) SelahColors.Accent else SelahColors.Outline,
                 RoundedCornerShape(8.dp),
             )
             .padding(horizontal = 12.dp, vertical = 9.dp),
@@ -464,18 +466,30 @@ private fun PickedHzCard(
                     lineHeight = 14.sp,
                 )
             }
+        }
+        // **고치는 자리와 트는 자리를 붙인다**(2026-10-01 담당자 지적:
+        // 「재생버튼의 위치가 사용자 측면에서 적절해 보이지 않습니다」).
+        //
+        // 예전에는 단추가 상자 **맨 위**에 있었다. 그런데 사람이 하는 일은
+        // 「숫자를 고치고 → 틀어 본다」라, 눈과 손가락이 상자 위아래를
+        // 오가야 했다. 숫자 바로 옆에 두면 한 자리에서 끝난다.
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ToneHzField(toneHz, onToneHz, Modifier.weight(1f))
             // 누를 자리를 넉넉히 둔다 — 표식만 18dp 라 손가락이 빗나간다.
             Box(
                 Modifier
                     .clickable {
                         if (playingHere) onStop() else onPlay(TestSignal.Custom)
                     }
-                    .padding(start = 8.dp, top = 4.dp, bottom = 4.dp),
+                    .padding(10.dp),
             ) {
                 PlayStopMark(playingHere)
             }
         }
-        ToneHzField(toneHz, onToneHz)
         // **구간을 좁혀 미세하게 맞춘다**(담당자 지시 2026-09-29).
         //
         // 20Hz~20kHz 를 한 슬라이더에 펴면 손가락 한 마디가 수백 Hz 다.
@@ -650,7 +664,11 @@ private fun ToneRangeChips(selected: ToneRange, onPick: (ToneRange) -> Unit) {
  * 엉뚱한 주파수를 내는 것보다 낫다.
  */
 @Composable
-private fun ToneHzField(toneHz: Double, onToneHz: (Double) -> Unit) {
+private fun ToneHzField(
+    toneHz: Double,
+    onToneHz: (Double) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     var text by remember(toneHz) { mutableStateOf(formatHzPlain(toneHz)) }
     var editing by remember { mutableStateOf(false) }
 
@@ -664,7 +682,26 @@ private fun ToneHzField(toneHz: Double, onToneHz: (Double) -> Unit) {
         editing = false
     }
 
-    Row(verticalAlignment = Alignment.Bottom) {
+    // **고칠 수 있게 생겨야 한다**(2026-10-01 담당자 지적: 「숫자는 사용자가
+    // 변경할 수 있는데 그냥 봐서는 수정을 할 수 있게 되어 있는지
+    // 모르겠습니다」).
+    //
+    // 예전에는 숫자만 덩그러니 놓여 있어 **옆의 설명 글자와 똑같이** 보였다.
+    // 고칠 수 있는 칸이라는 표시가 하나도 없었다.
+    //
+    // 그래서 **칸처럼 그린다** — 바탕을 한 겹 깔고, 테두리를 두고, 「눌러서
+    // 고칩니다」를 칸 안에 적는다. 고치는 중에는 테두리가 강조색이 된다.
+    Row(
+        modifier
+            .background(SelahColors.Surface, RoundedCornerShape(8.dp))
+            .border(
+                1.dp,
+                if (editing) SelahColors.Accent else SelahColors.Accent.copy(alpha = 0.45f),
+                RoundedCornerShape(8.dp),
+            )
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.Bottom,
+    ) {
         BasicTextField(
             value = if (editing) text else formatHzPlain(toneHz),
             onValueChange = { new ->
@@ -685,7 +722,7 @@ private fun ToneHzField(toneHz: Double, onToneHz: (Double) -> Unit) {
             ),
             keyboardActions = KeyboardActions(onDone = { commit() }),
             modifier = Modifier
-                .width(96.dp)
+                .widthIn(min = 72.dp, max = 110.dp)
                 .onFocusChanged { if (!it.isFocused && editing) commit() }
                 // **이름을 붙인다.** 화면에는 옆에 「Hz」가 적혀 있고 위에
                 // 제목도 있지만, 그것들은 **다른 마디**다 — 읽개가 이 칸을
@@ -698,6 +735,16 @@ private fun ToneHzField(toneHz: Double, onToneHz: (Double) -> Unit) {
             color = SelahColors.TextSecondary,
             fontSize = 12.sp,
             modifier = Modifier.padding(bottom = 3.dp),
+        )
+        Spacer(Modifier.weight(1f))
+        // **글자로도 적는다.** 테두리만으로는 「누를 수 있다」가 안 읽히는
+        // 사람이 있고, 읽어 주는 쪽에는 테두리가 아무 말도 하지 않는다.
+        Text(
+            if (editing) "다 쓰면 완료" else "눌러서 고칩니다",
+            color = SelahColors.TextMuted,
+            fontSize = 9.sp,
+            softWrap = false,
+            modifier = Modifier.padding(bottom = 4.dp),
         )
     }
 }
@@ -757,9 +804,12 @@ private fun SignalRow(
                 if (playing) SelahColors.Accent.copy(alpha = 0.16f) else SelahColors.SurfaceVariant,
                 RoundedCornerShape(8.dp),
             )
+            // **안 틀고 있어도 테두리를 둔다**(2026-10-01 담당자 지적:
+            // 「검정색 배경에 박스 음영과 차이가 적어 잘 구분이 되지
+            // 않습니다」). 바탕 밝기만으로는 상자끼리 붙은 자리가 안 갈린다.
             .border(
                 1.dp,
-                if (playing) SelahColors.Accent else Color.Transparent,
+                if (playing) SelahColors.Accent else SelahColors.Outline,
                 RoundedCornerShape(8.dp),
             )
             .clickable { if (playing) onStop() else onPlay(signal) }
