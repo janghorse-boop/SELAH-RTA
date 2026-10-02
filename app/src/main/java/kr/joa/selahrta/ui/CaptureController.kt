@@ -503,17 +503,19 @@ class CaptureController(
             opened = fmt,
             deviceNoticeKo = buildString {
                 _state.value.deviceNoticeKo?.let { append(it) }
-                if (!fmt.routedAsRequested) {
+                // 내장 마이크는 안드로이드가 오디오 경로에 맞는 것을
+                // 스스로 고르므로 요청이 무시되는 일이 흔하다(실측).
+                // 숨기면 담당자는 고른 마이크로 재고 있다고 믿는다.
+                val notice = "고르신 ${fmt.requestedDeviceLabel ?: "기기"} 대신 " +
+                    "${fmt.deviceLabel} 로 열렸습니다. " +
+                    "내장 마이크는 시스템이 경로에 맞는 것을 고르기 때문입니다. " +
+                    "보정값도 실제로 열린 기기의 것이 적용됩니다."
+                // **이미 적은 것은 다시 잇지 않는다.** 확인은 한 세션에 여러 번
+                // 온다 — 활성 조합의 「모름」 전이까지 넘기게 된 뒤로 더
+                // 잦다(10회차 R10-01).
+                if (!fmt.routedAsRequested && notice !in this) {
                     if (isNotEmpty()) append(" ")
-                    append(
-                        // 내장 마이크는 안드로이드가 오디오 경로에 맞는 것을
-                        // 스스로 고르므로 요청이 무시되는 일이 흔하다(실측).
-                        // 숨기면 담당자는 고른 마이크로 재고 있다고 믿는다.
-                        "고르신 ${fmt.requestedDeviceLabel ?: "기기"} 대신 " +
-                            "${fmt.deviceLabel} 로 열렸습니다. " +
-                            "내장 마이크는 시스템이 경로에 맞는 것을 고르기 때문입니다. " +
-                            "보정값도 실제로 열린 기기의 것이 적용됩니다.",
-                    )
+                    append(notice)
                 }
             }.takeIf { it.isNotEmpty() },
         )

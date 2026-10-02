@@ -1,0 +1,22 @@
+--------- beginning of main
+10-02 21:18:11.136 32449 32470 I ADRIFT  : 입력 확인 SM-S918N kind=BuiltIn 활성마이크=Mic 22(그룹 0·0)
+10-02 21:18:12.674 32449 32470 I ADRIFT  : HEAD session=030acec4 model=SM-S918N build=BP4A.251205.006/S918NKSS8FZI1 sdk=36 rate=48000 fft=8192 avg=16 maxLag=24000 intervalMs=10000 mode=Trial minutes=2.0 amplitude=0.2 signal=Pink/Both(seed=SignalPlayer)
+10-02 21:18:12.675 32449 32470 I ADRIFT  : HEAD 출력 요청=USB-Audio - UMC404HD 192k(종류11, 주소'card=1;device=0', id=1687) 실제=USB-Audio - UMC404HD 192k(종류11, 주소'card=1;device=0', id=1687)
+10-02 21:18:12.675 32449 32470 I ADRIFT  : HEAD 입력 요청=SM-S918N(주소'bottom') 기준=BuiltIn|SM-S918N 내장=true 활성조합='22' source=VoiceRecognition — 주소·활성 마이크는 안드로이드의 표기일 뿐 물리 위치의 증거가 아니다
+10-02 21:18:22.869 32449 32470 I ADRIFT  : OBS session=030acec4 kind=Measured epoch=0 windowEnd=552960 lag=7449 found=true sharpness=6.619 mono=161994652251253 underruns=0 outErr=0 inErr=0 routeChanged=false outRoute=1687 peak=0.2153
+10-02 21:18:32.918 32449 32470 I ADRIFT  : OBS session=030acec4 kind=Measured epoch=0 windowEnd=1042432 lag=7448 found=true sharpness=4.742 mono=162004846553124 underruns=0 outErr=0 inErr=0 routeChanged=false outRoute=1687 peak=0.2370
+10-02 21:18:42.975 32449 32470 I ADRIFT  : OBS session=030acec4 kind=Measured epoch=0 windowEnd=1523712 lag=7451 found=true sharpness=3.247 mono=162014895655568 underruns=0 outErr=0 inErr=0 routeChanged=false outRoute=1687 peak=0.2112
+10-02 21:18:53.026 32449 32470 I ADRIFT  : OBS session=030acec4 kind=Measured epoch=0 windowEnd=2007040 lag=7450 found=true sharpness=5.790 mono=162024952200044 underruns=0 outErr=0 inErr=0 routeChanged=false outRoute=1687 peak=0.2459
+10-02 21:19:03.068 32449 32470 I ADRIFT  : OBS session=030acec4 kind=Measured epoch=0 windowEnd=2488320 lag=7448 found=true sharpness=4.940 mono=162035002304623 underruns=0 outErr=0 inErr=0 routeChanged=false outRoute=1687 peak=0.2043
+10-02 21:19:13.121 32449 32470 I ADRIFT  : OBS session=030acec4 kind=Measured epoch=0 windowEnd=2970624 lag=7451 found=true sharpness=3.361 mono=162045045530244 underruns=0 outErr=0 inErr=0 routeChanged=false outRoute=1687 peak=0.2145
+10-02 21:19:23.172 32449 32470 I ADRIFT  : OBS session=030acec4 kind=Measured epoch=0 windowEnd=3453952 lag=7450 found=true sharpness=6.321 mono=162055098071803 underruns=0 outErr=0 inErr=0 routeChanged=false outRoute=1687 peak=0.2048
+10-02 21:19:33.228 32449 32470 I ADRIFT  : OBS session=030acec4 kind=Measured epoch=0 windowEnd=3936256 lag=7448 found=true sharpness=4.848 mono=162065149556226 underruns=0 outErr=0 inErr=0 routeChanged=false outRoute=1687 peak=0.2384
+10-02 21:19:43.283 32449 32470 I ADRIFT  : OBS session=030acec4 kind=Measured epoch=0 windowEnd=4418560 lag=7451 found=true sharpness=2.432 mono=162075206090597 underruns=0 outErr=0 inErr=0 routeChanged=false outRoute=1687 peak=0.2464
+10-02 21:19:53.335 32449 32470 I ADRIFT  : OBS session=030acec4 kind=Measured epoch=0 windowEnd=4900864 lag=7450 found=true sharpness=6.017 mono=162085260134239 underruns=0 outErr=0 inErr=0 routeChanged=false outRoute=1687 peak=0.2332
+10-02 21:20:03.373 32449 32470 I ADRIFT  : OBS session=030acec4 kind=Measured epoch=0 windowEnd=5384192 lag=7448 found=true sharpness=5.395 mono=162095312605590 underruns=0 outErr=0 inErr=0 routeChanged=false outRoute=1687 peak=0.2325
+10-02 21:20:13.409 32449 32470 I ADRIFT  : OBS session=030acec4 kind=Measured epoch=0 windowEnd=5866496 lag=7451 found=true sharpness=2.375 mono=162105349433659 underruns=0 outErr=0 inErr=0 routeChanged=false outRoute=1687 peak=0.2308
+10-02 21:20:13.646 32449 32470 I ADRIFT  : SESSION VALID
+10-02 21:20:13.646 32449 32470 I ADRIFT  : 관측 12 · 서로 다른 창 12 · 중복 0 · 버림 {} · 못 찾음 0 · 마지막 관측 진행=true
+10-02 21:20:13.646 32449 32470 I ADRIFT  : SEG #0 epoch=0 시작까닭=처음 관측=12 1.8분 기울기=0.1376 ppm 1표본환산=0.1882 ppm 최대잔차=1.88 계단의심=false 길이조건=false
+10-02 21:20:13.646 32449 32470 I ADRIFT  : SEG #0 채택 안 함 — 시운전 — 결론을 내지 않는다
+10-02 21:20:13.646 32449 32470 I ADRIFT  : RESULT PASS

@@ -34,6 +34,18 @@ package kr.joa.selahrta.audio
 fun activeMicComboKey(mics: List<ActiveMicInfo>): String =
     mics.map { it.id }.distinct().sorted().joinToString("+")
 
+/**
+ * 확인을 **받는 쪽에 넘길 만큼** 조합이 달라졌는가 — 「모름」이 낀 변화도 참이다.
+ *
+ * [activeMicChangeKo] 와 다르다. 그쪽은 **사람에게 「바뀌었다」고 말할지**를
+ * 정하므로 한쪽이라도 모르면 말하지 않는다. 이쪽은 **알릴지**를 정한다 —
+ * 「22 → 모름」(잃음)과 「모름 → 22」(알게 됨)도 받는 쪽이 알아야 다음 변화를
+ * 옳게 견준다. 예전에는 그 둘을 걸러, 「모름 → 22 → 24」에서 받는 쪽이 24 를
+ * 처음 알게 된 조합으로 읽었다(10회차 R10-01). 「모른다」는 「같다」가 아니다.
+ */
+fun activeMicComboChanged(before: List<ActiveMicInfo>, after: List<ActiveMicInfo>): Boolean =
+    activeMicComboKey(before) != activeMicComboKey(after)
+
 /** 진단 화면과 로그에 적을 한 줄. 모르면 그렇다고 적는다. */
 fun activeMicComboKo(mics: List<ActiveMicInfo>): String {
     if (mics.isEmpty()) return "확인 불가"

@@ -106,6 +106,24 @@ class CaptureControllerTest {
         assertEquals(1, confirmed.size)
     }
 
+    /**
+     * **같은 확인이 다시 와도 안내문을 덧붙이지 않는다.** 10회차 R10-01 로
+     * `MicSource` 가 활성 조합의 「모름」 전이도 확인으로 넘기게 되어 확인이 더
+     * 자주 온다. 예전 코드는 올 때마다 「고르신 … 대신 … 로 열렸습니다」를 또
+     * 이어 붙였다.
+     */
+    @Test
+    fun `같은 확인이 다시 와도 안내문을 되풀이하지 않는다`() {
+        build(confirmOnStart = false)
+        controller.start()
+        last.confirmRoute(asRequested = false)
+        val once = state.deviceNoticeKo
+        assertTrue("안내문이 없다", once != null && "대신" in once)
+        last.confirmRoute(asRequested = false)
+        last.confirmRoute(asRequested = false)
+        assertEquals("안내문이 되풀이됐다", once, state.deviceNoticeKo)
+    }
+
     @Test
     fun `쓸 수 있는 기기가 없으면 그 사실을 알린다`() {
         build(deviceList = emptyList())

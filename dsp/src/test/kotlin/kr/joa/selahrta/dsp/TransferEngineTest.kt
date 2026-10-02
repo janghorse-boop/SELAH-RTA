@@ -47,6 +47,20 @@ class TransferEngineTest {
         assertNull(e.measure())
     }
 
+    /**
+     * 두 창은 **같은 표본 번호에서** 끝나므로(R6-01) 측정도 기준과 똑같이
+     * `span + maxLagSamples` 만큼 쌓여야 한다 — 그 번호까지 기준을 거슬러
+     * 뜰 자리가 있어야 하기 때문이다.
+     */
+    @Test
+    fun `측정도 지연 보정만큼 쌓여야 잰다`() {
+        val e = engine()
+        val needed = span + maxLag
+        e.offerReference(noise(needed + 200), 0, needed + 200)
+        e.offerMeasurement(noise(needed - 1), 0, needed - 1)
+        assertNull(e.measure())
+    }
+
     @Test
     fun `들어온 개수를 따로 센다`() {
         val e = engine()
@@ -131,7 +145,7 @@ class TransferEngineTest {
         val e = engine()
         val needed = span + maxLag
         e.offerReference(noise(needed), 0, needed)
-        e.offerMeasurement(noise(span), 0, span)
+        e.offerMeasurement(noise(needed), 0, needed)
 
         val field = TransferEngine::class.java.getDeclaredField("measuring")
         field.isAccessible = true
@@ -146,5 +160,172 @@ class TransferEngineTest {
 
         // 플래그를 내리면 평소대로 다시 잴 수 있다 — 영영 잠기지 않는다.
         assertNotNull("재진입 막이가 풀리지 않았다", e.measure())
+    }
+
+    // ── 독립 검토 R6-01: 콜백이 먼저 온 만큼을 지연으로 내면 안 된다 ──────
+
+    private val lag = 300
+    private val total = 20_000
+
+    /** `y[n] = x[n − lag]` — 같은 표본 번호에서 시작한 두 스트림. */
+    private fun pair(n: Int): Pair<FloatArray, FloatArray> {
+        val x = noise(n)
+        val y = FloatArray(n) { if (it < lag) 0f else x[it - lag] }
+        return x to y
+    }
+
+    private fun assertDelay(why: String, m: TransferMeasurement?) {
+        assertNotNull("$why: 아무것도 안 나왔다", m)
+        assertTrue("$why: 지연을 못 찾았다", m!!.delay.found)
+        assertEquals("$why: 콜백 진행 차이가 지연에 섞였다", lag, m.delay.samples)
+    }
+
+    /**
+     * **검토자의 반례 그대로.** 기준 콜백만 128표본 먼저 들어온 순간에
+     * 재면, 각 고리의 꼬리끼리 견주어 `300 + 128 = 428` 이 나왔다. 두
+     * 창은 **같은 표본 번호에서 끝나야** 한다.
+     */
+    @Test
+    fun `기준 콜백이 먼저 들어와도 지연은 그대로다`() {
+        val e = engine()
+        val (x, y) = pair(total + 128)
+        e.offerReference(x, 0, total)
+        e.offerMeasurement(y, 0, total)
+        assertDelay("양쪽이 같을 때", e.measure())
+
+        e.offerReference(x, total, 128)
+        assertDelay("기준만 128 먼저", e.measure())
+
+        e.offerMeasurement(y, total, 128)
+        assertDelay("측정이 따라온 뒤", e.measure())
+    }
+
+    /** 거꾸로 측정 콜백이 먼저 와도 마찬가지다 — 꼬리끼리 견주면 172 가 나온다. */
+    @Test
+    fun `측정 콜백이 먼저 들어와도 지연은 그대로다`() {
+        val e = engine()
+        val (x, y) = pair(total + 128)
+        e.offerReference(x, 0, total)
+        e.offerMeasurement(y, 0, total + 128)
+        assertDelay("측정만 128 먼저", e.measure())
+    }
+
+    /**
+     * 실제 재생·캡처는 **조각 크기도 다르고 번갈아** 온다. 어느 순간에
+     * 재든 지연이 같아야 한다 — 한 번이라도 다르면 장시간 기록에서
+     * 큐 진행차가 드리프트처럼 보인다.
+     *
+     * 둘 다 실시간이라 **뒤처진 쪽이 다음 조각을 낸다** — 그래야 앞서는
+     * 폭이 조각 하나 안쪽이다. 조각마다 잰다.
+     */
+    @Test
+    fun `조각 크기가 달라도 어느 순간에 재든 지연은 그대로다`() {
+        val e = engine()
+        val n = 40_000
+        val (x, y) = pair(n)
+        var ri = 0
+        var mi = 0
+        var measured = 0
+        var refLed = false
+        var measLed = false
+        val chunks = Random(7)
+        while (ri < n || mi < n) {
+            if (mi >= n || (ri < n && ri <= mi)) {
+                val c = minOf(n - ri, 32 + chunks.nextInt(300))   // 재생: 32~331
+                e.offerReference(x, ri, c); ri += c
+            } else {
+                val c = minOf(n - mi, 16 + chunks.nextInt(220))   // 캡처: 16~235
+                e.offerMeasurement(y, mi, c); mi += c
+            }
+            e.measure()?.let {
+                assertDelay("기준 $ri / 측정 $mi", it)
+                measured++
+                if (ri > mi) refLed = true
+                if (mi > ri) measLed = true
+            }
+        }
+        assertTrue("잰 횟수가 $measured — 시험이 거의 아무것도 안 봤다", measured > 100)
+        assertTrue("기준이 앞선 순간에 한 번도 안 쟀다", refLed)
+        assertTrue("측정이 앞선 순간에 한 번도 안 쟀다", measLed)
+    }
+
+    /**
+     * 기준이 먼저 와 있어도 **전달함수도** 같은 자리로 맞춘다 — 지연만
+     * 맞고 정렬이 틀리면 Coherence 가 무너진다.
+     */
+    @Test
+    fun `기준이 먼저 와 있어도 0dB 과 상관 1 을 낸다`() {
+        val e = engine()
+        val (x, y) = pair(total + 128)
+        e.offerReference(x, 0, total + 128)
+        e.offerMeasurement(y, 0, total)
+        val t = e.measure()!!.transfer!!
+        val b = t.magnitudeDb.size / 4
+        assertEquals("0dB 이 아니다", 0.0, t.magnitudeDb[b], 0.5)
+        assertTrue("상관이 ${t.coherence[b]} 로 낮다", t.coherence[b] > 0.95)
+    }
+
+    /**
+     * **어느 자리를 쟀는지 함께 낸다.** 장시간 기록은 이 번호로 「언제의
+     * 지연인가」를 적는다. 두 스트림 중 **덜 들어온 쪽**의 개수가 창의 끝이다.
+     */
+    @Test
+    fun `창이 끝난 표본 번호를 함께 낸다`() {
+        val e = engine()
+        val (x, y) = pair(total + 128)
+        e.offerReference(x, 0, total + 128)
+        e.offerMeasurement(y, 0, total)
+        assertEquals(total.toLong(), e.measure()!!.windowEnd)
+    }
+
+    /**
+     * 표본 번호로 **측정이 기준보다 앞서는**(음수 지연) 경우 — 캡처를 재생보다
+     * 늦게 열면 생길 수 있다. 탐색은 0..maxLag 뿐이라 찾을 수 없다.
+     *
+     * **경로가 하나뿐인 백색잡음에서만** 성립한다. 음수 직접 경로에 양수
+     * 반사 경로가 함께 있으면(`y[n] = x[n+300] + 0.5·x[n−100]`) 추정기는
+     * **실재하는 양수 반사 경로(100)를 고른다**(7회차 검토자 재현). 이
+     * 추정기는 직접음을 가려내지 않으므로, 이 시험을 「음수 지연이면 늘
+     * 거절한다」는 보증으로 넓혀 읽지 않는다.
+     */
+    @Test
+    fun `경로가 하나뿐인 음수 지연은 못 찾았다고 한다`() {
+        val e = engine()
+        val x = noise(total + lag)
+        val y = FloatArray(total) { x[it + lag] }   // y[n] = x[n + lag]
+        e.offerReference(x, 0, total)
+        e.offerMeasurement(y, 0, total)
+        val m = e.measure()!!
+        assertTrue("음수 지연인데 ${m.delay.samples} 를 찾았다고 했다", !m.delay.found)
+        assertNull(m.transfer)
+    }
+
+    /** `reset()` 은 새 표본 번호의 시작이다 — 앞뒤를 한 직선으로 이으면 안 된다. */
+    @Test
+    fun `reset 하면 epoch 가 바뀐다`() {
+        val e = engine()
+        val (x, y) = pair(total)
+        e.offerReference(x, 0, total)
+        e.offerMeasurement(y, 0, total)
+        val first = e.measure()!!.epoch
+        e.reset()
+        e.offerReference(x, 0, total)
+        e.offerMeasurement(y, 0, total)
+        val second = e.measure()!!.epoch
+        assertTrue("reset 뒤에도 epoch 가 같다: $first", first != second)
+    }
+
+    /**
+     * 한쪽이 멈춰 다른 쪽이 **고리 여유보다 더** 앞서가면, 같은 번호의 창이
+     * 이미 덮어써져 없다. 그때 꼬리끼리 견주면 안 되고 **재지 않는다.**
+     */
+    @Test
+    fun `한쪽이 고리 여유보다 앞서면 재지 않는다`() {
+        val e = engine()
+        val n = 200_000
+        val (x, y) = pair(n)
+        e.offerReference(x, 0, n)
+        e.offerMeasurement(y, 0, total)
+        assertNull("덮어써진 자리를 쟀다", e.measure())
     }
 }
