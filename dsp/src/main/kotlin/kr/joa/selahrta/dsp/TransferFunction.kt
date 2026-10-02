@@ -47,9 +47,6 @@ fun coherenceDisplay(averages: Int): CoherenceDisplay = when {
     else -> CoherenceDisplay.Shown
 }
 
-/** 표본당 전력이 이보다 작은 기준은 수치상 0 으로 본다(약 −196 dBFS). 실측으로 정한 값이 아니다. */
-private const val NUMERIC_ZERO_POWER = 1e-20
-
 /**
  * 모아 둔 스펙트럼에서 **H1 과 Coherence** 를 낸다.
  *
@@ -94,13 +91,12 @@ fun transferFunction(avg: SpectralAverager, refFloorDb: Double = -40.0): Transfe
     // 문턱을 망칠 수 있다. 나이키스트(bins-1)는 위상이 없어 그대로 둔다.
     var peak = 0.0
     for (i in 1 until bins) if (avg.sxx[i] > peak) peak = avg.sxx[i]
-    // **수치상 0 인 기준은 쓰지 않는다**(6회차 R6-03 과 함께). 아래 문턱은 피크
-    // 대비 상대값뿐이라, DC 만 있던 기준에서 평균을 빼고 남은 1e-17 짜리 부동소수
-    // 찌꺼기 안에서도 「유효한 칸」을 만들었다. 표본당 전력 1e-20(약 −196 dBFS)을
-    // 바닥으로 둔다 — float 오디오의 잡음 바닥(약 −150 dBFS)보다 훨씬 아래라 측정
-    // 문턱이 아니라 「0 을 0 으로 읽는」 장치다. **실측으로 정한 값이 아니다.**
-    val fftSize = (bins - 1) * 2
-    if (peak <= avg.count * fftSize * NUMERIC_ZERO_POWER) return TransferResult(mag, coh, valid, avg.count)
+    if (peak <= 0.0) return TransferResult(mag, coh, valid, avg.count)
+    // *(한때 여기에 절대 바닥 — 「표본당 전력 1e-20 아래는 수치상 0」— 을 두었다.
+    // 그것이 공통 배율만 다른 실제 신호를 통째로 지웠고(1e-11 배에서 유효 칸 4,049 → 0),
+    // 비교한 `peak/(count·N)` 은 표본당 전력도 아니어서 같은 순음이 FFT 크기에 따라
+    // 유효·무효가 갈렸다. 15회차 R15-01 로 거뒀다. DC 뿐인 기준의 찌꺼기는
+    // SpectralAverager 의 평균 계산에서 없앤다.)*
 
     val floor = peak * Math.pow(10.0, refFloorDb / 10.0)
 

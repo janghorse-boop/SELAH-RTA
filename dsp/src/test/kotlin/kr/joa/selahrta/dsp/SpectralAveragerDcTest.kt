@@ -71,12 +71,56 @@ class SpectralAveragerDcTest {
         }
     }
 
-    /** 기준이 DC 뿐이면 쓸 칸이 없다 — 평균을 빼면 남는 기준이 없다. */
+    /**
+     * 기준이 DC 뿐이면 쓸 칸이 없다 — 평균을 빼면 남는 기준이 없다.
+     *
+     * 평균은 **첫 표본을 뺀 차이들의 평균**으로 낸다(15회차 R15-01). 그냥 더해서
+     * 나누면 0.2 같은 값의 반올림 오차로 1e-17 짜리 찌꺼기가 남아, 상대 문턱 안에서
+     * 「유효한 칸」을 지어냈다. 한때 절대 바닥(1e-20)으로 막았는데 그것이 실제 작은
+     * 신호까지 지웠다 — 아래 시험.
+     */
     @Test
     fun `기준이 DC 뿐이면 모든 칸이 무효다`() {
-        val a = SpectralAverager(n)
-        repeat(4) { a.addBlock(DoubleArray(n) { 0.2 }, 0, DoubleArray(n) { 0.1 }, 0) }
-        val t = transferFunction(a)
-        assertEquals(0, t.valid.count { it })
+        for (dc in listOf(0.1, 0.2, 1.0, 0.3e-6)) {
+            val a = SpectralAverager(n)
+            repeat(4) { a.addBlock(DoubleArray(n) { dc }, 0, DoubleArray(n) { dc * 0.5 }, 0) }
+            val t = transferFunction(a)
+            assertEquals("DC $dc", 0, t.valid.count { it })
+        }
+    }
+
+    /**
+     * **15회차 R15-01 의 반례.** 공통 배율만 다른 같은 상관 신호는 같은 칸이 유효해야
+     * 한다. 절대 바닥을 두었을 때는 1e-11 배에서 유효 칸 4,049 → 0 이 됐다. float 를
+     * 거쳐 표현 가능한 값이다. 이 시험은 폰이 그런 작은 음압을 잴 수 있다는 뜻이 아니다.
+     */
+    @Test
+    fun `공통 배율만 다른 신호는 같은 칸이 유효하다`() {
+        val base = DoubleArray(n * 16) { Random(17 + it).nextDouble(-1.0, 1.0) }
+        val counts = listOf(1e-6, 1e-11, 1e-15).map { scale ->
+            val a = SpectralAverager(n)
+            val x = DoubleArray(base.size) { (base[it] * scale).toFloat().toDouble() }
+            val y = DoubleArray(base.size) { x[it] * 0.5 }
+            repeat(16) { b -> a.addBlock(x, b * n, y, b * n) }
+            transferFunction(a).valid.count { it }
+        }
+        assertTrue("유효 칸이 ${counts[0]} 뿐이다", counts[0] > 4000)
+        assertEquals("배율 1e-11 에서 칸이 사라졌다", counts[0], counts[1])
+        assertEquals("배율 1e-15 에서 칸이 사라졌다", counts[0], counts[2])
+    }
+
+    /**
+     * **같은 평균제곱의 순음은 FFT 크기와 상관없이 유효해야 한다**(15회차). 절대 바닥은
+     * `peak/(count·N)` 을 표본당 전력이라 불렀지만 그렇지 않아, FFT 256·1024 에서는
+     * 무효, 8192 에서는 유효였다.
+     */
+    @Test
+    fun `작은 순음은 FFT 크기와 상관없이 유효하다`() {
+        for (size in listOf(256, 1024, 8192)) {
+            val a = SpectralAverager(size)
+            val x = DoubleArray(size) { 1e-11 * sin(2 * PI * 7 * it / size) }
+            repeat(16) { a.addBlock(x, 0, x, 0) }
+            assertTrue("FFT $size 에서 7번 칸 무효", transferFunction(a).valid[7])
+        }
     }
 }

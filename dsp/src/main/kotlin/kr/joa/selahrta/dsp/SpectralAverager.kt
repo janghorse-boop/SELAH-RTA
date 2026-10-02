@@ -76,14 +76,25 @@ class SpectralAverager(val fftSize: Int = 8192) {
         // transferFunction() 의 기준 문턱이 올라가, 기준이 멀쩡한 칸들을 「약함」
         // 으로 지웠다(DC 0.1 에서 유효 칸 4096 → 1). 기준·측정 양쪽에 같이 하므로
         // H1 에서 상쇄된다 — 저역 순음 크기가 그대로인지 시험이 본다.
+        //
+        // **평균은 첫 표본을 뺀 차이들로 낸다**(15회차 R15-01). 그냥 더해서 나누면
+        // 0.2 같은 상수의 반올림 오차로 1e-17 짜리 찌꺼기가 남아, 상대 문턱 안에서
+        // 「유효한 칸」을 지어냈다. 차이로 내면 상수 블록은 정확히 0 이 된다.
+        //
+        // **한계**: 기준·측정에 각자의 평균을 빼므로, 블록에 딱 맞지 않는 저역에서
+        // 두 신호의 위상이 다르면 상쇄되지 않는다. 검토자 시험(FFT 1024, 0.7칸,
+        // 90° 위상차)에서 Magnitude −6.15 → −6.34 dB, Coherence 0.971 → 0.928.
+        // 유효 저역 범위를 정할 때 이 몫을 넣어야 한다.
+        val ref0 = ref[refOffset]
+        val meas0 = meas[measOffset]
         var refMean = 0.0
         var measMean = 0.0
         for (i in 0 until fftSize) {
-            refMean += ref[refOffset + i]
-            measMean += meas[measOffset + i]
+            refMean += ref[refOffset + i] - ref0
+            measMean += meas[measOffset + i] - meas0
         }
-        refMean /= fftSize
-        measMean /= fftSize
+        refMean = ref0 + refMean / fftSize
+        measMean = meas0 + measMean / fftSize
         for (i in 0 until fftSize) {
             xRe[i] = (ref[refOffset + i] - refMean) * window[i]
             xIm[i] = 0.0
