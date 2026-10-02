@@ -16,6 +16,44 @@ data class TransferMeasurement(
 )
 
 /**
+ * [TransferEngine.measureOutcome] 의 결과 — **안 나왔으면 왜 안 나왔는지**까지.
+ *
+ * 셋이 모두 `null` 이던 때는 「아직 시작 중」과 「운용 중에 한쪽이 멈춰
+ * 자리를 잃었다」가 구별되지 않았다(7회차 §11 (c)). 장시간 기록에서
+ * 뒤의 것을 앞의 것으로 읽으면 **보존 실패가 숨는다.**
+ *
+ * 까닭의 숫자는 **판단한 잠금 안에서** 함께 뜬 값이다 — 나중에
+ * [TransferEngine.referenceCount] 따위를 따로 읽어 까닭을 짐작하지 않는다.
+ */
+sealed interface MeasureOutcome {
+    /** 다른 측정이 아직 돈다. **고리를 뜨지 않았으므로** epoch 도 개수도 없다. */
+    data object Busy : MeasureOutcome
+
+    /** 첫 측정에 필요한 양([needed])이 **어느 한쪽이라도** 아직 안 쌓였다. */
+    data class InsufficientData(
+        val epoch: Long,
+        val referenceCount: Long,
+        val measurementCount: Long,
+        val needed: Long,
+    ) : MeasureOutcome
+
+    /**
+     * 한쪽이 **허용 여유보다 더 앞서** 같은 번호의 창이 이미 덮어써졌다.
+     * 여유는 방향마다 다르다([referenceSlack]·[measurementSlack]).
+     * **이것이 곧 표본 누락이라는 뜻은 아니다** — 한쪽이 멈췄거나 늦을 뿐일 수 있다.
+     */
+    data class RetentionExceeded(
+        val epoch: Long,
+        val referenceCount: Long,
+        val measurementCount: Long,
+        val referenceSlack: Long,
+        val measurementSlack: Long,
+    ) : MeasureOutcome
+
+    data class Measured(val measurement: TransferMeasurement) : MeasureOutcome
+}
+
+/**
  * 기준과 측정을 모아 두었다가 **지연 → 시간 정렬 → 전달함수** 순으로 잰다.
  *
  * ## 잠금이 **하나**인 까닭
@@ -101,14 +139,21 @@ class TransferEngine(
     /**
      * 지연 보정까지 담을 만큼 넉넉히. **남는 몫이 한쪽이 앞서갈 수 있는
      * 여유**다 — 그보다 더 앞서면 같은 번호의 창이 이미 덮어써져 재지 않는다.
+     *
+     * **여유는 비대칭이다**(7회차 R7-01). 기준은 `span + maxLagSamples` 를
+     * 들고 있어야 하므로 [referenceSlack] 만큼, 측정은 `span` 만 들면 되므로
+     * [measurementSlack] 만큼 앞설 수 있다. 기본 설정(48kHz)에서 각각
+     * 37,440(0.78초) · 61,440(1.28초)이다.
      */
     private val capacity = Integer.highestOneBit(span + maxLagSamples) * 2
+    private val referenceSlack = (capacity - (span + maxLagSamples)).toLong()
+    private val measurementSlack = (capacity - span).toLong()
 
     private val lock = Any()
     private val refRing = SampleRing(capacity)
     private val measRing = SampleRing(capacity)
 
-    /** [measure] 재진입을 막는다 — 겹쳐 부르면 뒤의 것이 `null` 을 받는다. */
+    /** [measure] 재진입을 막는다 — 겹쳐 부르면 뒤의 것이 `null`([MeasureOutcome.Busy])을 받는다. */
     private val measuring = java.util.concurrent.atomic.AtomicBoolean(false)
 
     /** [reset] 마다 하나씩 는다. [lock] 안에서만 읽고 쓴다. */
@@ -155,22 +200,44 @@ class TransferEngine(
      * 버퍼이고, 잠금([lock])은 고리([refRing]·[measRing]) 쓰기만 보호한다.
      * 두 스레드가 동시에 본문에 들어가면 이 버퍼들을 함께 덮어써 뒤섞인
      * 값을 낸다 — 그래서 **겹쳐 부르면 뒤의 것이 `null` 을 받는다.**
+     * `null` 은 까닭을 가리지 않는다 — 가려야 하면 [measureOutcome] 을 쓴다.
      */
-    fun measure(): TransferMeasurement? {
+    fun measure(): TransferMeasurement? =
+        (measureOutcome() as? MeasureOutcome.Measured)?.measurement
+
+    /**
+     * [measure] 와 같이 재되, **안 나왔으면 그 까닭**을 낸다. 장시간 기록은
+     * 이쪽을 쓴다 — 「시작 중」과 「자리를 잃었다」를 갈라 적어야 한다.
+     *
+     * **reset 과 겹칠 때**(7회차 R7-02): 고리를 **reset 보다 먼저 뜬** 측정은
+     * 옛 epoch 로 끝까지 나온다 — reset 은 진행 중인 계산을 취소하지 않는다.
+     * 재진입 막이를 얻었어도 **아직 고리를 뜨기 전**이면 새 epoch 로 나온다.
+     * 그러니 「reset 전에 부르기 시작했으면 옛 것」이라고 가정하지 말고,
+     * 결과에 실린 [TransferMeasurement.epoch] 로 가른다.
+     */
+    fun measureOutcome(): MeasureOutcome {
         // **이미 재는 중이면 조용히 물러난다.** 예외를 던지지 않는 까닭은,
         // 화면이 주기적으로 부르는 자리라 한 번 늦는 것이 정상이기 때문이다.
-        if (!measuring.compareAndSet(false, true)) return null
+        if (!measuring.compareAndSet(false, true)) return MeasureOutcome.Busy
         try {
             val end: Long
             val epochAt: Long
             synchronized(lock) {
+                val refCount = refRing.written
+                val measCount = measRing.written
                 // 두 창이 함께 끝날 자리 — 덜 들어온 쪽의 개수.
-                end = minOf(refRing.written, measRing.written)
-                if (end < refLong.size) return null
-                val refBack = refRing.written - end
-                val measBack = measRing.written - end
+                end = minOf(refCount, measCount)
+                if (end < refLong.size) {
+                    return MeasureOutcome.InsufficientData(epoch, refCount, measCount, refLong.size.toLong())
+                }
+                val refBack = refCount - end
+                val measBack = measCount - end
                 // 앞서간 쪽이 고리 여유를 넘으면 그 자리는 이미 덮어써졌다.
-                if (refBack + refLong.size > capacity || measBack + span > capacity) return null
+                if (refBack > referenceSlack || measBack > measurementSlack) {
+                    return MeasureOutcome.RetentionExceeded(
+                        epoch, refCount, measCount, referenceSlack, measurementSlack,
+                    )
+                }
                 refRing.snapshot(refLong, refBack.toInt())
                 measRing.snapshot(measWindow, measBack.toInt())
                 epochAt = epoch
@@ -181,21 +248,21 @@ class TransferEngine(
             System.arraycopy(refLong, refLong.size - span, refWindow, 0, span)
 
             val delay = estimator.estimate(refWindow, measWindow)
-            if (!delay.found) return TransferMeasurement(delay, null, end, epochAt)
+            if (!delay.found) return MeasureOutcome.Measured(TransferMeasurement(delay, null, end, epochAt))
 
             // **기준을 지연만큼 거슬러 뜬다** — 측정은 그만큼 늦게 들어왔다.
             val start = refLong.size - span - delay.samples
             // 지금은 도달하지 않는다 — estimator.estimate() 는 늘 0..maxLagSamples
             // 범위 안의 값만 내놓으므로(그 밖은 찾지 않는다), start 는 항상
             // 0 이상이다. refLong 을 그만큼 길게 뜬 것이 이 보장의 근거다.
-            if (start < 0) return TransferMeasurement(delay, null, end, epochAt)
+            if (start < 0) return MeasureOutcome.Measured(TransferMeasurement(delay, null, end, epochAt))
 
             averager.reset()
             for (k in 0 until averages) {
                 val at = k * hop
                 averager.addBlock(refLong, start + at, measWindow, at)
             }
-            return TransferMeasurement(delay, transferFunction(averager), end, epochAt)
+            return MeasureOutcome.Measured(TransferMeasurement(delay, transferFunction(averager), end, epochAt))
         } finally {
             measuring.set(false)
         }
