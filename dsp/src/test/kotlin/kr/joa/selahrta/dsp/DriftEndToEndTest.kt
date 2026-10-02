@@ -98,10 +98,8 @@ class DriftEndToEndTest {
             val s = a.segments.single()
             assertTrue("$rate: 관측 ${s.points}", s.points >= 50)
             assertFalse("$rate: 계단이 아닌데 의심했다 (최대 잔차 ${s.maxResidual})", s.stepSuspected)
-            assertTrue(
-                "$rate ppm 을 ${s.ppm} ± ${s.ci95} 로 못 품었다",
-                abs(s.ppm - rate) <= s.ci95,
-            )
+            // 구간을 내지 않으므로 고정 허용치로 본다. 1분에 1표본 = 0.35 ppm.
+            assertTrue("$rate ppm 을 ${s.ppm} 로 냈다", abs(s.ppm - rate) <= 2.0)
         }
     }
 }

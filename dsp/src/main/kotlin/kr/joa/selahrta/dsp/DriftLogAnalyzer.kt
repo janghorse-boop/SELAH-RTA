@@ -2,7 +2,6 @@ package kr.joa.selahrta.dsp
 
 import kotlin.math.abs
 import kotlin.math.max
-import kotlin.math.sqrt
 
 /** 기록 한 줄의 종류 — [MeasureOutcome] 의 갈래와 같다. */
 enum class ObservationKind { Measured, Busy, InsufficientData, RetentionExceeded }
@@ -31,9 +30,10 @@ data class DriftObservation(
 /**
  * 끊기지 않은 한 구간의 기울기.
  *
- * @param ppm 지연 기울기 × 10⁶ (표본 번호 좌표).
- * @param ci95 95% 구간의 반폭(ppm). 참값이 `ppm ± ci95` 안에 있다고 **이 방법의
- *   가정 아래** 말할 수 있다 — 관측이 서로 독립이라는 가정이다(설계 6장).
+ * @param ppm 최소제곱 지연 기울기 × 10⁶ (표본 번호 좌표). **기술 통계다** —
+ *   불확도를 함께 내지 않는다(8회차 R8-01, 아래 [DriftLogAnalyzer] 참고).
+ * @param resolutionPpm 이 구간 길이에서 **정수 1표본이 몇 ppm 인가.** 이보다
+ *   작은 기울기는 정수 지연으로 가를 수 없다 — 통계가 아니라 산수다.
  * @param startReason 이 구간이 **왜 여기서 시작했나**. 첫 구간은 `null`.
  * @param stepSuspected 직선에서 [DriftLogAnalyzer.stepSamples] 넘게 벗어난 관측이 있다.
  * @param usable 결론에 쓸 수 있는가 — 관측 수·길이를 채우고 계단 의심이 없을 때만.
@@ -45,7 +45,7 @@ data class DriftSegment(
     val points: Int,
     val minutes: Double,
     val ppm: Double,
-    val ci95: Double,
+    val resolutionPpm: Double,
     val maxResidual: Double,
     val stepSuspected: Boolean,
     val usable: Boolean,
@@ -71,8 +71,22 @@ data class DriftAnalysis(
  *
  * ## 무엇을 말하지 않는가
  *
- * 기울기와 그 구간만 낸다. **원인**(하드웨어 클럭인지 OS 보정인지 큐인지)도,
- * **「보정이 필요 없다」**는 판정도 내지 않는다. 그런 문턱은 정하지 않았다.
+ * 기울기(기술 통계)와 정수 해상도만 낸다. **원인**(하드웨어 클럭인지 OS
+ * 보정인지 큐인지)도, **「보정이 필요 없다」**는 판정도 내지 않는다.
+ *
+ * ## 95% 구간과 유의성을 거둔 까닭 (8회차 R8-01)
+ *
+ * 처음에는 잔차로 표준오차를 내고 √(1/12) 를 바닥으로 깔아 95% 구간과
+ * 「유의한 변화를 검출하지 못했다 / 밀렸다」를 냈다. **틀렸다.**
+ *
+ * - 참값 +0.008 ppm 은 30분에 0.7표본이라 정수로는 **내내 같은 값**이다.
+ *   그러면 잔차가 0 이고 「0 ± 0.0017 ppm」이 나와 **참값을 배제**했다.
+ *   반올림 오차는 무작위가 아니라 **참값이 정하는 규칙적인 오차**라
+ *   iid 바닥으로 덮이지 않는다.
+ * - 잔차가 서로 이어지면(방·스피커의 느린 변화) 구간이 실제보다 좁아진다.
+ *   10초 간격만으로 관측이 독립이라고 할 근거가 없다.
+ *
+ * 검증된 불확도 방법이 생기기 전까지는 **점추정과 해상도만** 적는다.
  */
 class DriftLogAnalyzer(
     private val sampleRate: Int = 48_000,
@@ -151,13 +165,7 @@ class DriftLogAnalyzer(
         return DriftAnalysis(segments, skipped, notFound, duplicates)
     }
 
-    /**
-     * 최소제곱 직선 `lag = a + b·windowEnd`.
-     *
-     * 잔차 표준편차는 **√(1/12) 아래로 내리지 않는다** — 정수 양자화의 바닥이다.
-     * 지연이 내내 같은 정수면 잔차가 0 이라 구간도 0 이 되는데, 참값은 그
-     * 1표본 안에서 움직였을 수 있다.
-     */
+    /** 최소제곱 직선 `lag = a + b·windowEnd`. 불확도는 내지 않는다(위 KDoc). */
     private fun fit(seg: List<DriftObservation>, reason: String?): DriftSegment {
         val n = seg.size
         val x0 = seg.first().windowEnd.toDouble()
@@ -172,16 +180,12 @@ class DriftLogAnalyzer(
             sxy += (xs[i] - mx) * (ys[i] - my)
         }
         val slope = if (sxx > 0) sxy / sxx else 0.0
-        var ssr = 0.0
         var maxRes = 0.0
         for (i in 0 until n) {
-            val r = ys[i] - (my + slope * (xs[i] - mx))
-            ssr += r * r
-            maxRes = max(maxRes, abs(r))
+            maxRes = max(maxRes, abs(ys[i] - (my + slope * (xs[i] - mx))))
         }
-        val s = max(if (n > 2) sqrt(ssr / (n - 2)) else 0.0, QUANT_FLOOR)
-        val se = if (sxx > 0) s / sqrt(sxx) else Double.POSITIVE_INFINITY
-        val minutes = (seg.last().windowEnd - seg.first().windowEnd).toDouble() / sampleRate / 60.0
+        val span = (seg.last().windowEnd - seg.first().windowEnd).toDouble()
+        val minutes = span / sampleRate / 60.0
         val step = maxRes > stepSamples
         return DriftSegment(
             epoch = seg.first().epoch,
@@ -190,7 +194,7 @@ class DriftLogAnalyzer(
             points = n,
             minutes = minutes,
             ppm = slope * 1e6,
-            ci95 = 1.96 * se * 1e6,
+            resolutionPpm = if (span > 0) 1e6 / span else Double.POSITIVE_INFINITY,
             maxResidual = maxRes,
             stepSuspected = step,
             usable = n >= minPoints && minutes >= minMinutes && !step,
@@ -199,11 +203,9 @@ class DriftLogAnalyzer(
     }
 
     companion object {
-        /** 정수 양자화 잡음의 표준편차 √(1/12). */
-        private val QUANT_FLOOR = sqrt(1.0 / 12.0)
-
         /**
-         * **정한 말만 한다**(설계 4장 7). 쓸 수 없는 구간에는 그 까닭만 적는다.
+         * **정한 말만 한다**(설계 4장 7, 8회차 R8-01 로 개정). 쓸 수 없는 구간에는
+         * 그 까닭만 적는다. 95%·유의성 판단은 하지 않는다.
          */
         fun conclusion(s: DriftSegment): String {
             if (!s.usable) {
@@ -213,13 +215,13 @@ class DriftLogAnalyzer(
                 }
                 return "이 구간은 결론에 쓰지 않는다 — $why."
             }
-            val lo = s.ppm - s.ci95
-            val hi = s.ppm + s.ci95
-            val head = "이 구성에서 %.1f분 동안 기울기 %.4f ppm (95%% 구간 [%.4f, %.4f])".format(s.minutes, s.ppm, lo, hi)
-            return if (lo <= 0.0 && hi >= 0.0) {
-                "$head. 이 방법의 불확도 안에서 유의한 상대 지연 변화를 검출하지 못했다."
+            val head = "이 구성에서 %.1f분 동안 최소제곱 기울기 %.4f ppm (기술 통계)".format(s.minutes, s.ppm)
+            val res = "정수 1표본 = %.4f ppm".format(s.resolutionPpm)
+            val tail = "불확도는 검증된 방법이 아직 없어 내지 않는다"
+            return if (abs(s.ppm) < s.resolutionPpm) {
+                "$head. $res 이라 그보다 작은 기울기는 이 자료로 가를 수 없다. $tail."
             } else {
-                "$head. 한 방향으로 밀렸다."
+                "$head. $res. $tail."
             }
         }
     }

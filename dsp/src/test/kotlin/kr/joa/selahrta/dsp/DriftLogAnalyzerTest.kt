@@ -49,45 +49,40 @@ class DriftLogAnalyzerTest {
 
     private fun analyze(o: List<DriftObservation>) = DriftLogAnalyzer(sampleRate = fs).analyze(o)
 
-    private fun assertCovers(truth: Double, s: DriftSegment) {
-        assertTrue(
-            "참값 $truth 를 구간 ${s.ppm} ± ${s.ci95} 가 못 품었다",
-            abs(s.ppm - truth) <= s.ci95,
-        )
+    /** 점추정이 참값 가까이 있는가 — **구간을 내지 않으므로** 고정 허용치로 본다. */
+    private fun assertNear(truth: Double, s: DriftSegment, tol: Double) {
+        assertTrue("참값 $truth 에서 ${s.ppm} 로 ${tol} 넘게 벗어났다", abs(s.ppm - truth) <= tol)
     }
 
     /**
-     * **95% 구간이 정말 95% 언저리를 품는가.** seed 하나로 보면 멀쩡해도 5% 는
-     * 우연히 실패한다 — 그때 seed 를 바꿔 끼우면 관문을 고치는 것이다. 그래서
-     * 200개 seed 로 **품는 비율**을 잰다. 너무 낮으면 구간이 거짓으로 좁고,
-     * 1.0 에 붙으면 너무 넓어 쓸모가 없다.
+     * 기울기가 분명하면 점추정이 참값 가까이 나온다. 허용치 0.1 ppm 은 30분 정수
+     * 해상도(0.0116 ppm)의 약 9배다.
      */
     @Test
-    fun `알려진 기울기를 95퍼센트 구간이 그만큼 품는다`() {
+    fun `알려진 기울기를 점추정이 되찾는다`() {
         for (ppm in listOf(0.0, 1.0, -1.0, 20.0, -20.0)) {
-            var covered = 0
-            val trials = 200
-            for (seed in 0 until trials) {
-                val a = analyze(series(ppm, jitter = Random(seed)))
-                assertEquals("$ppm/$seed: 구간 수", 1, a.segments.size)
-                val s = a.segments.single()
-                assertTrue("$ppm/$seed: 쓸 수 있어야 한다", s.usable)
-                assertFalse("$ppm/$seed: 계단이 아닌데 의심했다", s.stepSuspected)
-                if (abs(s.ppm - ppm) <= s.ci95) covered++
-            }
-            val rate = covered.toDouble() / trials
-            assertTrue("$ppm ppm: 품은 비율 $rate", rate in 0.90..0.995)
+            val s = analyze(series(ppm, jitter = Random(7))).segments.single()
+            assertTrue("$ppm: 쓸 수 있어야 한다", s.usable)
+            assertFalse("$ppm: 계단이 아닌데 의심했다", s.stepSuspected)
+            assertNear(ppm, s, 0.1)
         }
     }
 
-    /** 30분 내내 같은 정수여도 구간이 0 으로 줄지 않는다 — 양자화 바닥. */
+    /**
+     * **8회차 R8-01 의 반례.** 참값 +0.008 ppm 은 30분에 0.7표본이라 정수로는
+     * 내내 300 으로 보인다. 예전에는 「0 ± 0.0017 ppm」을 내며 참값을 배제했다.
+     * 이제는 구간을 내지 않고, **해상도보다 작은 기울기는 가를 수 없다**고 적는다.
+     */
     @Test
-    fun `지연이 꼭 같아도 구간은 0 이 아니다`() {
-        val s = analyze(series(0.0)).segments.single()
-        assertEquals(0.0, s.ppm, 1e-12)
-        assertTrue("구간이 ${s.ci95} — 양자화 바닥이 없다", s.ci95 > 0.0)
-        // 30분에 1표본 = 0.0116 ppm. 바닥이 그 자릿수여야 한다.
-        assertTrue("구간 ${s.ci95} 가 너무 넓거나 좁다", s.ci95 in 0.0005..0.01)
+    fun `해상도보다 작은 기울기는 가를 수 없다고 적는다`() {
+        val o = (0 until points).map { obs(0, 100_000 + it * step, (300 + 0.008e-6 * (100_000 + it * step)).toInt()) }
+        val s = analyze(o).segments.single()
+        assertEquals("모든 관측이 같은 정수다", 0.0, s.maxResidual, 1e-12)
+        // 30분(179 간격)에 1표본 = 1 / (179·480000) ≈ 0.01164 ppm
+        assertEquals(1e6 / (179.0 * step), s.resolutionPpm, 1e-9)
+        val c = DriftLogAnalyzer.conclusion(s)
+        assertTrue(c, c.contains("가를 수 없다"))
+        assertFalse("구간을 냈다: $c", c.contains("95") || c.contains("구간 ["))
     }
 
     @Test
@@ -108,7 +103,7 @@ class DriftLogAnalyzerTest {
         assertEquals("구간 수", 2, a.segments.size)
         a.segments.forEach {
             assertFalse("끊었는데도 계단을 의심했다", it.stepSuspected)
-            assertCovers(5.0, it)
+            assertNear(5.0, it, 0.1)
         }
         assertEquals("출력 언더런", a.segments[1].startReason)
     }
@@ -175,16 +170,19 @@ class DriftLogAnalyzerTest {
         assertFalse("20개가 안 되는데 썼다", few.usable)
     }
 
+    /**
+     * **정한 말만 한다.** 8회차 R8-01 뒤로 95% 구간·유의성 판단을 내지 않는다 —
+     * 관측이 서로 독립이라는 가정이 이 자료에서 확인되지 않았다.
+     */
     @Test
     fun `결론은 정한 말만 한다`() {
-        val flat = analyze(series(0.0)).segments.single()
-        val c0 = DriftLogAnalyzer.conclusion(flat)
-        assertTrue(c0, c0.contains("유의한 상대 지연 변화를 검출하지 못했다"))
-        val moving = analyze(series(20.0)).segments.single()
-        val c1 = DriftLogAnalyzer.conclusion(moving)
-        assertTrue(c1, c1.contains("한 방향으로 밀렸다"))
-        for (c in listOf(c0, c1)) {
-            assertFalse("원인을 말했다: $c", c.contains("클럭이 같") || c.contains("보정이 필요 없") || c.contains("하드웨어"))
+        for (ppm in listOf(0.0, 20.0)) {
+            val c = DriftLogAnalyzer.conclusion(analyze(series(ppm)).segments.single())
+            assertTrue(c, c.contains("기술 통계"))
+            assertTrue(c, c.contains("불확도"))
+            for (banned in listOf("95", "유의", "검출하지 못했다", "한 방향으로 밀렸다", "클럭이 같", "보정이 필요 없", "하드웨어")) {
+                assertFalse("「$banned」을 말했다: $c", c.contains(banned))
+            }
         }
     }
 }
