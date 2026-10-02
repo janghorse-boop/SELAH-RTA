@@ -10,11 +10,15 @@ import android.media.AudioTrack
 import android.media.MediaRecorder
 import android.util.Log
 import androidx.test.platform.app.InstrumentationRegistry
+import kr.joa.selahrta.dsp.ClockDriftTracker
 import kr.joa.selahrta.dsp.ClockSample
 import kr.joa.selahrta.dsp.DriftResult
-import kr.joa.selahrta.dsp.estimateDrift
+import kr.joa.selahrta.dsp.clockDriftVerdict
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.concurrent.thread
 
 /**
@@ -43,6 +47,15 @@ import kotlin.concurrent.thread
  * 안드로이드는 route 에 따라 타임스탬프를 **아예 안 줄 수 있다.** 그때
  * `0 ppm` 으로 적으면 「드리프트 없음」으로 읽힌다. 몇 번 물어서 몇 번
  * 받았는지를 **그대로 적는다.**
+ *
+ * ## 판정 (6회차 R6-05)
+ *
+ * 예전에는 첫 물음을 기준으로 박고, 끝에 「한 번이라도 받았나(`got > 0`)」만
+ * 물었다. 그래서 첫 출력을 못 받으면 뒤에 잘 받아도 끝까지 못 쟀고, 첫 쌍만 받고
+ * 나머지를 다 놓쳐도 **통과**했다. 이제 기준·끝 쌍은 [ClockDriftTracker] 가
+ * 고르고, 통과·실패는 [clockDriftVerdict] 가 정한다 — 둘 다 JVM 시험
+ * (`ClockDriftTrackerTest`)이 지킨다. 입출력 오류·경로 변경도 실패이고, 만든
+ * 뒤의 자원은 `finally` 로 놓는다.
  *
  * ## 덤으로 보는 것
  *
@@ -108,26 +121,13 @@ class ClockDriftMeasurementTest {
         say("내장 마이크: ${mic?.productName ?: "없음"}")
     }
 
-    /**
-     * **본 측정.** 무음을 USB 로 내보내며 내장 마이크로 받고, 두 시계의
-     * 프레임 진행 속도를 견준다.
-     */
-    @Test
-    fun 클럭_드리프트를_잰다() {
-        val usbOut = outputs().firstOrNull { isUsb(it) }
-        assertTrue("USB 출력 기기가 없다 — 인터페이스를 꽂으십시오", usbOut != null)
-        val mic = inputs().firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_MIC }
-        assertTrue("내장 마이크를 못 찾았다", mic != null)
-        say("출력=${usbOut!!.productName}(${kindOf(usbOut.type)}) 입력=${mic!!.productName}")
-
-        // ---- 출력: 무음을 흘린다 ----
-        val outChannels = 2
+    private fun buildTrack(): AudioTrack {
         val outMinBytes = AudioTrack.getMinBufferSize(
             rate,
             AudioFormat.CHANNEL_OUT_STEREO,
             AudioFormat.ENCODING_PCM_FLOAT,
         )
-        val track = AudioTrack.Builder()
+        return AudioTrack.Builder()
             .setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -143,15 +143,15 @@ class ClockDriftMeasurementTest {
             )
             .setBufferSizeInBytes(outMinBytes * 4)
             .build()
-        track.preferredDevice = usbOut
+    }
 
-        // ---- 입력: 내장 마이크 ----
+    private fun buildRecord(): AudioRecord {
         val inMinBytes = AudioRecord.getMinBufferSize(
             rate,
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_FLOAT,
         )
-        val record = AudioRecord.Builder()
+        return AudioRecord.Builder()
             .setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
             .setAudioFormat(
                 AudioFormat.Builder()
@@ -162,165 +162,154 @@ class ClockDriftMeasurementTest {
             )
             .setBufferSizeInBytes(inMinBytes * 4)
             .build()
-        record.preferredDevice = mic
+    }
 
-        val running = java.util.concurrent.atomic.AtomicBoolean(true)
+    /**
+     * **본 측정.** 무음을 USB 로 내보내며 내장 마이크로 받고, 두 시계의
+     * 프레임 진행 속도를 견준다.
+     */
+    @Test
+    fun 클럭_드리프트를_잰다() {
+        val usbOut = outputs().firstOrNull { isUsb(it) }
+        assertTrue("USB 출력 기기가 없다 — 인터페이스를 꽂으십시오", usbOut != null)
+        val mic = inputs().firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_MIC }
+        assertTrue("내장 마이크를 못 찾았다", mic != null)
+        say("출력=${usbOut!!.productName}(${kindOf(usbOut.type)}) 입력=${mic!!.productName}")
+
+        val outChannels = 2
+        val running = AtomicBoolean(true)
         // **입력이 실제로 들어오는지도 센다** — 입출력 겸용 USB 기기에서
         // 입력이 통째로 죽은 전례가 있다(2026-09-30, UMC404HD).
-        val readFrames = java.util.concurrent.atomic.AtomicLong(0)
-        val silentBlocks = java.util.concurrent.atomic.AtomicLong(0)
-        val totalBlocks = java.util.concurrent.atomic.AtomicLong(0)
-
-        track.play()
-        record.startRecording()
-
-        // **「고른 곳」이 아니라 「실제로 간 곳」을 본다.**
-        //
-        // `preferredDevice` 는 말 그대로 **선호**다. 안드로이드가 다른 길로
-        // 보낼 수 있고, 그러면 **엉뚱한 경로를 재고도 통과**한다. 다른
-        // 폰·다른 인터페이스에서 돌릴 때 그 함정에 빠지지 않도록 단언한다.
-        //
-        // route 는 열린 직후에 바로 안 잡힐 수 있어 잠깐 기다린다.
-        Thread.sleep(500)
-        val outRoute = track.routedDevice
-        val inRoute = record.routedDevice
-        say("실제 출력 route=${outRoute?.productName}(${outRoute?.let { kindOf(it.type) }}) id=${outRoute?.id}")
-        say("실제 입력 route=${inRoute?.productName}(${inRoute?.let { kindOf(it.type) }}) id=${inRoute?.id} 주소'${inRoute?.address}'")
-
-        assertTrue("출력 route 를 알 수 없다", outRoute != null)
-        assertTrue(
-            "출력이 USB 로 안 갔다 — 실제로는 ${outRoute!!.productName}(${kindOf(outRoute.type)})",
-            isUsb(outRoute),
-        )
-        assertTrue("입력 route 를 알 수 없다", inRoute != null)
-        assertTrue(
-            "입력이 내장 마이크가 아니다 — 실제로는 ${inRoute!!.productName}(${kindOf(inRoute.type)})",
-            inRoute.type == AudioDeviceInfo.TYPE_BUILTIN_MIC,
-        )
-
-        // 도는 동안 경로가 바뀌면 그 뒤 값은 다른 길의 값이다. 세어 둔다.
-        val outRouteId = outRoute.id
-        val inRouteId = inRoute.id
+        val readFrames = AtomicLong(0)
+        val silentBlocks = AtomicLong(0)
+        val totalBlocks = AtomicLong(0)
+        // **오류로 멈춘 스레드를 센다**(R6-05). 예전에는 로그만 남기고 끝까지 갔다.
+        val ioErrors = AtomicInteger(0)
+        val tracker = ClockDriftTracker()
         var routeChanges = 0
-
-        // 무음을 계속 써 넣는다. **내용이 0 이라 아무 소리도 안 난다.**
-        val silence = FloatArray(1024 * outChannels)
-        val writer = thread(name = "drift-out") {
-            while (running.get()) {
-                val w = track.write(silence, 0, silence.size, AudioTrack.WRITE_BLOCKING)
-                if (w < 0) { say("출력 오류 $w"); break }
-            }
-        }
-        // 읽지 않으면 버퍼가 차서 타임스탬프가 멎는다.
-        val buf = FloatArray(1024)
-        val reader = thread(name = "drift-in") {
-            while (running.get()) {
-                val n = record.read(buf, 0, buf.size, AudioRecord.READ_BLOCKING)
-                if (n > 0) {
-                    readFrames.addAndGet(n.toLong())
-                    totalBlocks.incrementAndGet()
-                    var peak = 0f
-                    for (i in 0 until n) { val a = kotlin.math.abs(buf[i]); if (a > peak) peak = a }
-                    if (peak == 0f) silentBlocks.incrementAndGet()
-                } else if (n < 0) { say("입력 오류 $n"); break }
-            }
-        }
-
-        fun outStamp(): ClockSample? {
-            val ts = AudioTimestamp()
-            return if (track.getTimestamp(ts)) ClockSample(ts.framePosition, ts.nanoTime) else null
-        }
-        fun inStamp(): ClockSample? {
-            val ts = AudioTimestamp()
-            val ok = record.getTimestamp(ts, AudioTimestamp.TIMEBASE_MONOTONIC)
-            return if (ok == AudioRecord.SUCCESS) ClockSample(ts.framePosition, ts.nanoTime) else null
-        }
-
-        // **자리를 잡을 때까지 기다린다.** 시작 직후의 타임스탬프는 아직
-        // 자리를 안 잡아 값이 튄다(안드로이드 문서 권고).
-        Thread.sleep(3_000)
-
-        var outAsk = 0; var outGot = 0
-        var inAsk = 0; var inGot = 0
-        fun ask(): Pair<ClockSample?, ClockSample?> {
-            outAsk++; inAsk++
-            val o = outStamp()?.also { outGot++ }
-            val i = inStamp()?.also { inGot++ }
-            return o to i
-        }
-
-        val (out0, in0) = ask()
-        say("첫 타임스탬프 — 출력=${out0?.let { "frames=${it.frames} t=${it.nanos}" } ?: "**못 받음**"} / 입력=${in0?.let { "frames=${it.frames} t=${it.nanos}" } ?: "**못 받음**"}")
-
         val totalMs = (minutes() * 60_000).toLong()
-        val stepMs = 10_000L
-        var elapsed = 0L
-        var lastOut = out0
-        var lastIn = in0
 
-        while (elapsed < totalMs) {
-            Thread.sleep(minOf(stepMs, totalMs - elapsed))
-            elapsed += stepMs
-            val (o, i) = ask()
-            if (o != null) lastOut = o
-            if (i != null) lastIn = i
+        var track: AudioTrack? = null
+        var record: AudioRecord? = null
+        var writer: Thread? = null
+        var reader: Thread? = null
+        try {
+            // **만든 뒤의 모든 자원은 finally 가 놓는다**(R6-05) — 앞 단언이 실패해도.
+            val t = buildTrack().also { track = it }
+            t.preferredDevice = usbOut
+            val r = buildRecord().also { record = it }
+            r.preferredDevice = mic
 
-            val now = if (out0 != null && in0 != null && o != null && i != null) {
-                estimateDrift(out0, o, in0, i)
-            } else {
-                DriftResult.Unavailable
-            }
-            val drift = when (now) {
-                is DriftResult.Ppm -> "%.2f ppm".format(now.value)
-                DriftResult.Unavailable -> "**못 쟀다**"
-            }
-            // **경로가 그대로인가.** 도중에 바뀌면 그 뒤 값은 다른 길의
-            // 값이라, 모르고 지나가면 엉뚱한 측정을 그대로 적게 된다.
-            val nowOut = track.routedDevice?.id
-            val nowIn = record.routedDevice?.id
-            if (nowOut != outRouteId || nowIn != inRouteId) {
-                routeChanges++
-                say("!! 경로가 바뀌었다 — 출력 $outRouteId→$nowOut 입력 $inRouteId→$nowIn")
-            }
+            t.play()
+            r.startRecording()
 
-            val blocks = totalBlocks.get()
-            val silentPct = if (blocks > 0) silentBlocks.get() * 100.0 / blocks else 0.0
-            say(
-                "[${elapsed / 1000}초] 드리프트=$drift · 입력장=${blocks} 무음장=${silentBlocks.get()}(%.2f%%)".format(silentPct) +
-                    " · 타임스탬프 출력 $outGot/$outAsk · 입력 $inGot/$inAsk · 경로변경 $routeChanges",
+            // **「고른 곳」이 아니라 「실제로 간 곳」을 본다.** `preferredDevice` 는
+            // 말 그대로 선호다. route 는 열린 직후에 바로 안 잡힐 수 있어 잠깐 기다린다.
+            Thread.sleep(500)
+            val outRoute = t.routedDevice
+            val inRoute = r.routedDevice
+            say("실제 출력 route=${outRoute?.productName}(${outRoute?.let { kindOf(it.type) }}) id=${outRoute?.id}")
+            say("실제 입력 route=${inRoute?.productName}(${inRoute?.let { kindOf(it.type) }}) id=${inRoute?.id} 주소'${inRoute?.address}'")
+
+            assertTrue("출력 route 를 알 수 없다", outRoute != null)
+            assertTrue(
+                "출력이 USB 로 안 갔다 — 실제로는 ${outRoute!!.productName}(${kindOf(outRoute.type)})",
+                isUsb(outRoute),
             )
+            assertTrue("입력 route 를 알 수 없다", inRoute != null)
+            assertTrue(
+                "입력이 내장 마이크가 아니다 — 실제로는 ${inRoute!!.productName}(${kindOf(inRoute.type)})",
+                inRoute.type == AudioDeviceInfo.TYPE_BUILTIN_MIC,
+            )
+            val outRouteId = outRoute.id
+            val inRouteId = inRoute.id
+
+            // 무음을 계속 써 넣는다. **내용이 0 이라 아무 소리도 안 난다.**
+            val silence = FloatArray(1024 * outChannels)
+            writer = thread(name = "drift-out") {
+                while (running.get()) {
+                    val w = t.write(silence, 0, silence.size, AudioTrack.WRITE_BLOCKING)
+                    if (w < 0) { say("출력 오류 $w"); ioErrors.incrementAndGet(); break }
+                }
+            }
+            // 읽지 않으면 버퍼가 차서 타임스탬프가 멎는다.
+            val buf = FloatArray(1024)
+            reader = thread(name = "drift-in") {
+                while (running.get()) {
+                    val n = r.read(buf, 0, buf.size, AudioRecord.READ_BLOCKING)
+                    if (n > 0) {
+                        readFrames.addAndGet(n.toLong())
+                        totalBlocks.incrementAndGet()
+                        var peak = 0f
+                        for (i in 0 until n) { val a = kotlin.math.abs(buf[i]); if (a > peak) peak = a }
+                        if (peak == 0f) silentBlocks.incrementAndGet()
+                    } else if (n < 0) { say("입력 오류 $n"); ioErrors.incrementAndGet(); break }
+                }
+            }
+
+            fun outStamp(): ClockSample? {
+                val ts = AudioTimestamp()
+                return if (t.getTimestamp(ts)) ClockSample(ts.framePosition, ts.nanoTime) else null
+            }
+            fun inStamp(): ClockSample? {
+                val ts = AudioTimestamp()
+                val ok = r.getTimestamp(ts, AudioTimestamp.TIMEBASE_MONOTONIC)
+                return if (ok == AudioRecord.SUCCESS) ClockSample(ts.framePosition, ts.nanoTime) else null
+            }
+
+            // **자리를 잡을 때까지 기다린다.** 시작 직후의 타임스탬프는 아직
+            // 자리를 안 잡아 값이 튄다(안드로이드 문서 권고).
+            Thread.sleep(3_000)
+            tracker.offer(outStamp(), inStamp())
+
+            val stepMs = 10_000L
+            var elapsed = 0L
+            while (elapsed < totalMs) {
+                Thread.sleep(minOf(stepMs, totalMs - elapsed))
+                elapsed += stepMs
+                tracker.offer(outStamp(), inStamp())
+                val now = tracker.track()
+                val drift = when (val res = now.result) {
+                    is DriftResult.Ppm -> "%.3f ppm(구간 %.0f초)".format(res.value, now.spanSeconds)
+                    DriftResult.Unavailable -> "**못 쟀다**"
+                }
+                // **경로가 그대로인가.** 도중에 바뀌면 그 뒤 값은 다른 길의 값이다.
+                val nowOut = t.routedDevice?.id
+                val nowIn = r.routedDevice?.id
+                if (nowOut != outRouteId || nowIn != inRouteId) {
+                    routeChanges++
+                    say("!! 경로가 바뀌었다 — 출력 $outRouteId→$nowOut 입력 $inRouteId→$nowIn")
+                }
+                val blocks = totalBlocks.get()
+                val silentPct = if (blocks > 0) silentBlocks.get() * 100.0 / blocks else 0.0
+                say(
+                    "[${elapsed / 1000}초] 드리프트=$drift · 입력장=$blocks 무음장=${silentBlocks.get()}(%.2f%%)".format(silentPct) +
+                        " · 쌍 ${now.validPairs}/${now.asked} (출력 놓침 ${now.outMissed} · 입력 놓침 ${now.inMissed})" +
+                        " · 경로변경 $routeChanges · 입출력오류 ${ioErrors.get()}",
+                )
+            }
+        } finally {
+            running.set(false)
+            writer?.join(2_000)
+            reader?.join(2_000)
+            record?.let { runCatching { it.stop() }; it.release() }
+            track?.let { runCatching { it.stop() }; it.release() }
         }
 
-        running.set(false)
-        writer.join(2_000); reader.join(2_000)
-        record.stop(); record.release()
-        track.stop(); track.release()
-
-        // ---- 판정 ----
-        val final = if (out0 != null && in0 != null && lastOut != null && lastIn != null) {
-            estimateDrift(out0, lastOut, in0, lastIn)
-        } else {
-            DriftResult.Unavailable
-        }
+        // ---- 판정: 잰 값이 아니라 「쟀는가」 ----
+        val final = tracker.track()
         say("=== 끝 ===")
-        say("출력 타임스탬프 $outGot/$outAsk · 입력 타임스탬프 $inGot/$inAsk")
+        say("타임스탬프 쌍 ${final.validPairs}/${final.asked} · 출력 놓침 ${final.outMissed} · 입력 놓침 ${final.inMissed}")
         say("입력 장 ${totalBlocks.get()} · 무음 장 ${silentBlocks.get()} · 받은 프레임 ${readFrames.get()}")
-        say("경로 변경 $routeChanges 회")
-        when (final) {
-            is DriftResult.Ppm -> say("드리프트 = %.3f ppm".format(final.value))
+        say("경로 변경 $routeChanges 회 · 입출력 오류 ${ioErrors.get()} 회")
+        when (val res = final.result) {
+            is DriftResult.Ppm -> say("드리프트 = %.3f ppm (분석 구간 %.0f초)".format(res.value, final.spanSeconds))
             DriftResult.Unavailable -> say("드리프트 = **못 쟀다**(UNAVAILABLE) — 0 ppm 이 아니다")
         }
-
-        // **이 시험은 재는 것이 목적이다.** 드리프트 값 자체로 통과·실패를
-        // 가르지 않는다 — 문턱을 정할 근거가 아직 없기 때문이다.
-        // 다만 **아무것도 못 쟀으면** 실패로 둔다. 그래야 「돌렸다」가
-        // 「쟀다」로 둔갑하지 않는다.
-        assertTrue(
-            "타임스탬프를 한 번도 못 받았다 — 출력 $outGot/$outAsk, 입력 $inGot/$inAsk",
-            outGot > 0 && inGot > 0,
-        )
-        // **도중에 길이 바뀌었으면 그 측정은 못 쓴다.** 앞뒤가 다른 길의
-        // 값이라 드리프트가 아니라 길이 바뀐 것을 재게 된다.
-        assertTrue("도는 동안 경로가 $routeChanges 회 바뀌었다 — 이 측정은 못 쓴다", routeChanges == 0)
+        // **이 시험은 재는 것이 목적이다.** 드리프트 값 자체로 통과·실패를 가르지
+        // 않는다 — 문턱을 정할 근거가 없다. 다만 **못 쟀으면** 실패다.
+        val why = clockDriftVerdict(final, requestedSeconds = totalMs / 1000.0, ioErrors = ioErrors.get(), routeChanges = routeChanges)
+        say(if (why == null) "RESULT PASS" else "RESULT FAIL — $why")
+        assertTrue(why ?: "", why == null)
     }
 }
