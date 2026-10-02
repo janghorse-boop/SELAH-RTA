@@ -85,20 +85,25 @@ class SpectralAverager(val fftSize: Int = 8192) {
         // 두 신호의 위상이 다르면 상쇄되지 않는다. 검토자 시험(FFT 1024, 0.7칸,
         // 90° 위상차)에서 Magnitude −6.15 → −6.34 dB, Coherence 0.971 → 0.928.
         // 유효 저역 범위를 정할 때 이 몫을 넣어야 한다.
+        //
+        // **절대 평균을 다시 만들지 않는다**(16회차 R16-02). 차이 평균에 첫 표본을
+        // 다시 더하면 큰 DC 위의 작은 평균이 그 합의 정밀도에 묻혀(1 과 1+ulp(1) 이
+        // 오가는 입력에서 1번 칸 −51 dB), 다음 뺄셈에서 DC 가 남았다. 그래서
+        // `(표본 − 첫 표본) − 차이 평균` 으로 끝까지 중심화한다.
         val ref0 = ref[refOffset]
         val meas0 = meas[measOffset]
-        var refMean = 0.0
-        var measMean = 0.0
+        var refDiffMean = 0.0
+        var measDiffMean = 0.0
         for (i in 0 until fftSize) {
-            refMean += ref[refOffset + i] - ref0
-            measMean += meas[measOffset + i] - meas0
+            refDiffMean += ref[refOffset + i] - ref0
+            measDiffMean += meas[measOffset + i] - meas0
         }
-        refMean = ref0 + refMean / fftSize
-        measMean = meas0 + measMean / fftSize
+        refDiffMean /= fftSize
+        measDiffMean /= fftSize
         for (i in 0 until fftSize) {
-            xRe[i] = (ref[refOffset + i] - refMean) * window[i]
+            xRe[i] = ((ref[refOffset + i] - ref0) - refDiffMean) * window[i]
             xIm[i] = 0.0
-            yRe[i] = (meas[measOffset + i] - measMean) * window[i]
+            yRe[i] = ((meas[measOffset + i] - meas0) - measDiffMean) * window[i]
             yIm[i] = 0.0
         }
 

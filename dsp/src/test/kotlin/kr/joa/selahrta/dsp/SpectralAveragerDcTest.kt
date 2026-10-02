@@ -110,6 +110,31 @@ class SpectralAveragerDcTest {
     }
 
     /**
+     * **16회차 R16-02 의 반례.** 차이들의 평균에 첫 표본을 **다시 더해** 절대 평균을
+     * 만들면, 큰 DC 위의 작은 평균이 그 합의 정밀도에 묻힌다. `x` 가 1 과 1+ulp(1)
+     * 사이를 오가고 `y = (x−1)·0.5` 이면 1번 칸이 −51 dB · 상관 0.06 으로 나왔다
+     * (DC 를 미리 뺀 대조군은 −6.02 dB). double 을 직접 넣는 극단의 경계다 — float
+     * 입력 9조합은 그전에도 통과했다.
+     */
+    @Test
+    fun `큰 DC 위의 작은 변화도 첫 표본 기준으로 끝까지 중심화한다`() {
+        val r = Random(3)
+        val ulp = Math.ulp(1.0)
+        val a = SpectralAverager(1024)
+        repeat(16) {
+            val x = DoubleArray(1024) { if (r.nextBoolean()) 1.0 else 1.0 + ulp }
+            val y = DoubleArray(1024) { (x[it] - 1.0) * 0.5 }
+            a.addBlock(x, 0, y, 0)
+        }
+        val t = transferFunction(a)
+        for (k in listOf(1, 50, 300)) {
+            assertTrue("칸 $k 무효", t.valid[k])
+            assertEquals("칸 $k 크기", -6.0206, t.magnitudeDb[k], 0.01)
+            assertEquals("칸 $k 상관", 1.0, t.coherence[k], 1e-6)
+        }
+    }
+
+    /**
      * **같은 평균제곱의 순음은 FFT 크기와 상관없이 유효해야 한다**(15회차). 절대 바닥은
      * `peak/(count·N)` 을 표본당 전력이라 불렀지만 그렇지 않아, FFT 256·1024 에서는
      * 무효, 8192 에서는 유효였다.
