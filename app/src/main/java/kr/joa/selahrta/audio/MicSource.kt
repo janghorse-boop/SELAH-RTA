@@ -425,8 +425,13 @@ class MicSource(
                 //
                 // 라우팅 통지가 온 때만 본다 — 지시서가 말한 「입력 변경
                 // 직후」다. 프레임마다 묻지 않는다.
+                //
+                // **「모름」이 낀 변화도 넘긴다**(10회차 R10-01). 예전에는
+                // 앞뒤를 둘 다 알 때만(`activeMicChangeKo != null`) 넘겨,
+                // 조합을 잃은 것도, 몰랐다가 알게 된 것도 받는 쪽이 몰랐다.
+                // 화면 경고는 그대로 `activeMicChangeKo` 가 정한다.
                 known != null -> confirmRoute(rec)
-                    ?.takeIf { it.activeMicChangeKo != null }
+                    ?.takeIf { activeMicComboChanged(known.activeMics, it.activeMics) }
                     ?.let { onRouteConfirmed?.invoke(it) }
             }
         }

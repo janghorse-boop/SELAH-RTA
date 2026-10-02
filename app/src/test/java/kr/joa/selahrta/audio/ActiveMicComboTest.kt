@@ -102,4 +102,29 @@ class ActiveMicComboTest {
         assertTrue(ko, !ko.contains("**"))
         assertEquals("확인 불가", activeMicComboKo(emptyList()))
     }
+
+    // ── 확인을 넘길지 (10회차 R10-01) ───────────────────────────────
+
+    /**
+     * **「모름」이 낀 변화도 넘긴다.** `MicSource` 는 앞뒤를 **둘 다 알 때만**
+     * 확인을 넘겼다. 그래서 「22 → 모름」은 조합을 잃었는데도 아무도 몰랐고,
+     * 「모름 → 22 → 24」는 22 가 안에서만 갱신되어 받는 쪽이 24 를 **처음
+     * 알게 된 조합**으로 읽었다 — 바뀐 것을 못 봤다.
+     *
+     * 화면에 띄우는 경고([activeMicChangeKo])는 그대로 「둘 다 알 때만」이다 —
+     * 모르는 것을 근거로 「바뀌었다」고 **말하지는** 않는다. 다만 **알리기는**
+     * 한다. 「모른다」는 「같다」가 아니다.
+     */
+    @Test
+    fun `모름이 낀 변화도 넘긴다`() {
+        assertTrue("알던 조합을 잃었다", activeMicComboChanged(listOf(mic(22)), emptyList()))
+        assertTrue("몰랐다가 알게 됐다", activeMicComboChanged(emptyList(), listOf(mic(22))))
+        assertTrue("알던 조합끼리 바뀌었다", activeMicComboChanged(listOf(mic(22)), listOf(mic(24))))
+    }
+
+    @Test
+    fun `같은 조합이면 넘기지 않는다`() {
+        assertTrue(!activeMicComboChanged(listOf(mic(7), mic(5)), listOf(mic(5), mic(7))))
+        assertTrue("모름에서 모름은 변화가 아니다", !activeMicComboChanged(emptyList(), emptyList()))
+    }
 }
