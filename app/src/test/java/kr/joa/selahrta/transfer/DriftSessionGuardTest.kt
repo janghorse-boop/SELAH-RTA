@@ -283,6 +283,26 @@ class DriftSessionGuardTest {
         assertTrue(r.lines.last().startsWith("RESULT PASS"))
     }
 
+    /**
+     * **진단을 싣되 불확도는 내지 않는다**(20회차 설계 검토 뒤). 구간마다 `DIAG` 줄에
+     * 양립 집합(무잡음 가정에 조건부)·잔차 자기상관·슬롯 상관·최대 공백을 적는다.
+     * 「95%」·유의성·구간 채택은 어디에도 없다.
+     */
+    @Test
+    fun `구간마다 진단을 싣고 불확도는 내지 않는다`() {
+        val o = record(80)
+        val r = driftSessionReport(DriftMode.Record, SessionVerdict.Valid(emptyList()), analyze(o), o)
+        val diag = r.lines.filter { it.startsWith("DIAG #") }
+        assertEquals("구간마다 DIAG 한 줄", 1, diag.size)
+        val d = diag.single()
+        for (word in listOf("양립", "무잡음 가정", "자기상관", "슬롯", "최대 공백", "불확도가 아니다")) {
+            assertTrue("「$word」이 없다: $d", word in d)
+        }
+        for (banned in listOf("95%", "유의", "신뢰구간 [")) {
+            assertTrue("「$banned」을 말했다: ${r.lines}", r.lines.none { banned in it })
+        }
+    }
+
     @Test
     fun `유효해도 쓸 구간이 없으면 기록은 실패다`() {
         val o = record(30)      // 약 5분
