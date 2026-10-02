@@ -71,10 +71,23 @@ class SpectralAverager(val fftSize: Int = 8192) {
             "meas 에서 $measOffset 부터 $fftSize 개를 읽을 수 없다 (크기 ${meas.size})"
         }
 
+        // **창을 씌우기 전에 블록의 DC 를 뺀다**(6회차 R6-03). DC 는 Hann 창을
+        // 지나며 0번 칸에만 머물지 않고 1번 칸으로 샌다. 그 칸이 피크가 되면
+        // transferFunction() 의 기준 문턱이 올라가, 기준이 멀쩡한 칸들을 「약함」
+        // 으로 지웠다(DC 0.1 에서 유효 칸 4096 → 1). 기준·측정 양쪽에 같이 하므로
+        // H1 에서 상쇄된다 — 저역 순음 크기가 그대로인지 시험이 본다.
+        var refMean = 0.0
+        var measMean = 0.0
         for (i in 0 until fftSize) {
-            xRe[i] = ref[refOffset + i] * window[i]
+            refMean += ref[refOffset + i]
+            measMean += meas[measOffset + i]
+        }
+        refMean /= fftSize
+        measMean /= fftSize
+        for (i in 0 until fftSize) {
+            xRe[i] = (ref[refOffset + i] - refMean) * window[i]
             xIm[i] = 0.0
-            yRe[i] = meas[measOffset + i] * window[i]
+            yRe[i] = (meas[measOffset + i] - measMean) * window[i]
             yIm[i] = 0.0
         }
 
