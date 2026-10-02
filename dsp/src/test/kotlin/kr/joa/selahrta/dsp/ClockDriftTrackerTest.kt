@@ -1,6 +1,7 @@
 package kr.joa.selahrta.dsp
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -84,6 +85,56 @@ class ClockDriftTrackerTest {
         t.offer(ClockSample(at(10.0).frames, at(20.0).nanos), at(20.0))   // 출력이 멈췄다
         val r = t.track()
         assertEquals("끝은 10초의 쌍이어야 한다", 10.0, r.spanSeconds, 1e-6)
+    }
+
+    /**
+     * **15회차 R15-02 의 반례.** 출력 프레임만 20초에 0 으로 되돌아가고 다시 오르면,
+     * 예전에는 20·30초 쌍을 끝으로 안 삼았을 뿐 불연속을 기억하지 않아, 40초에
+     * 재시작 전의 첫 쌍과 이어 **−500,000 ppm · 40초 · PASS** 였다.
+     */
+    @Test
+    fun `카운터가 되돌아가면 하나의 시계로 잇지 않는다`() {
+        val t = ClockDriftTracker()
+        val outFrames = listOf(0L, 480_000L, 0L, 480_000L, 960_000L)
+        for ((k, f) in outFrames.withIndex()) {
+            t.offer(ClockSample(f, (k * 10e9).toLong()), at(k * 10.0))
+        }
+        val r = t.track()
+        assertTrue("역행을 못 셌다", r.regressions > 0)
+        val why = clockDriftVerdict(r, requestedSeconds = 40.0, ioErrors = 0, routeChanges = 0)
+        assertNotNull("되돌아간 카운터를 이어 통과했다: $r", why)
+        assertTrue(why!!, "되돌아" in why)
+    }
+
+    /**
+     * **15회차.** 90초 뒤로 출력 프레임이 멈추고 시각만 흐르면 끝점이 90초에 남아
+     * `validPairs=19/19 · span=90초 · PASS` 였다 — 요청 180초의 절반이라 통과.
+     * 양쪽을 받은 수와 **나아가 채택한 수**는 다르고, 마지막 물음이 안 나아갔으면
+     * 끝에서 멈춘 기록이다.
+     */
+    @Test
+    fun `끝에서 멈춘 기록은 통과하지 않는다`() {
+        val t = ClockDriftTracker()
+        for (k in 0..18) {
+            val sec = k * 10.0
+            val out = if (sec <= 90.0) at(sec) else ClockSample(at(90.0).frames, (sec * 1e9).toLong())
+            t.offer(out, at(sec))
+        }
+        val r = t.track()
+        assertEquals("양쪽을 받은 쌍", 19, r.validPairs)
+        assertEquals("나아가 채택한 쌍", 10, r.acceptedPairs)
+        assertFalse("마지막 물음이 나아갔다고 했다", r.lastAdvanced)
+        val why = clockDriftVerdict(r, requestedSeconds = 180.0, ioErrors = 0, routeChanges = 0)
+        assertNotNull("끝에서 멈춘 기록을 통과시켰다", why)
+        assertTrue(why!!, "나아가지" in why)
+    }
+
+    @Test
+    fun `정상 기록은 모든 쌍이 나아가고 마지막도 나아갔다`() {
+        val r = good()
+        assertEquals(19, r.acceptedPairs)
+        assertEquals(0, r.regressions)
+        assertTrue(r.lastAdvanced)
     }
 
     // ── 판정 ────────────────────────────────────────────────────────────
