@@ -135,6 +135,24 @@ class DriftSessionGuardTest {
         assertTrue(g.finish(usb) is SessionVerdict.Valid)
     }
 
+    /**
+     * **10회차 R10-02.** 내장으로 확인된 뒤, 기준을 잡기 전에 「경로가 바뀌었다」
+     * 통지만 오고 새 확인이 없으면 예전에는 **옛 내장 확인으로 기준을 잡았다.**
+     * 실제 `MicSource` 는 기기가 바뀌면 통지만 보내고 확인은 다시 하지 않는다.
+     * 통지 뒤에는 그 전의 확인을 믿지 않는다 — 새 확인이 와야 기준을 잡는다.
+     */
+    @Test
+    fun `기준 전에 경로 통지가 오면 옛 확인으로 기준을 잡지 않는다`() {
+        val g = DriftSessionGuard()
+        g.inputConfirmed(builtIn)
+        g.inputRouted("USB 로 바뀜")
+        assertNull("통지 뒤의 옛 확인으로 기준을 잡았다", g.arm(usb))
+
+        g.inputConfirmed(builtIn)          // 새 확인이 오면 잡는다
+        assertEquals(builtIn, g.arm(usb))
+        assertTrue(g.finish(usb) is SessionVerdict.Valid)
+    }
+
     @Test
     fun `확인된 입력이 없으면 기준을 못 잡는다`() {
         assertNull(DriftSessionGuard().arm(usb))

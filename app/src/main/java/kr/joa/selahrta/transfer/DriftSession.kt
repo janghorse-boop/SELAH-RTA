@@ -102,10 +102,16 @@ class DriftSessionGuard {
         }
     }
 
-    /** `MicSource.onRoutingChanged` 마다. */
+    /**
+     * `MicSource.onRoutingChanged` 마다.
+     *
+     * **기준을 잡기 전이면 그 전의 확인을 버린다**(10회차 R10-02). `MicSource` 는
+     * 기기가 바뀌면 통지만 보내고 확인은 다시 하지 않는다. 버리지 않으면 옛 내장
+     * 확인으로 기준을 잡아, USB 로 바뀐 입력을 「내장」으로 잰다.
+     */
     fun inputRouted(desc: String) = synchronized(lock) {
         if (closed) { lateEvents++; return@synchronized }
-        if (armed) invalidate("도중에 입력 경로가 바뀌었다 → $desc")
+        if (armed) invalidate("도중에 입력 경로가 바뀌었다 → $desc") else latestInput = null
     }
 
     /** 출력의 경로 변경 통지마다. */
