@@ -143,7 +143,8 @@ class AcousticDriftRecordingTest {
             // 있어 부르는 쪽의 stop/release 가 이것을 못 본다(8회차 R8-05).
             try {
                 t.setPreferredDevice(wanted)
-                t.addOnRoutingChangedListener({ _ -> onRouted() }, null)
+                // 메인 Looper 에 단다 — 판정 전 장벽(메인 큐 비우기)이 같은 큐에 걸리게.
+                t.addOnRoutingChangedListener({ _ -> onRouted() }, android.os.Handler(android.os.Looper.getMainLooper()))
                 t.play()
             } catch (e: Throwable) {
                 runCatching { t.release() }
@@ -287,6 +288,17 @@ class AcousticDriftRecordingTest {
             // 마지막 관측 뒤의 변경도 넣고(9회차 R9-01 ③), 멈추고 닫는 동안 오는
             // 통지는 「도중 변경」이 아니라 뒤늦은 통지로만 센다(10회차 R10-03 —
             // 예전에는 정리한 뒤에 닫아, 정리 중 통지로 정상 수집이 무효가 됐다).
+            //
+            // **닫기 전에 메인 큐를 비운다**(16회차 R16-01 과 같은 자리). 출력·입력 경로
+            // 콜백은 메인 Looper 에서 돈다. 측정 중에 일어났지만 아직 처리되지 않은 통지가
+            // 큐에 있으면, 닫은 뒤에 처리되어 「뒤늦은 통지」로 버려진다. 장벽 하나를 넣고
+            // 그것이 처리될 때까지 기다린다. **한계**: 안드로이드 쪽에서 아직 이 큐로
+            // 넘어오지 않은 통지는 못 본다.
+            run {
+                val drained = java.util.concurrent.CountDownLatch(1)
+                android.os.Handler(android.os.Looper.getMainLooper()).post { drained.countDown() }
+                assertTrue("메인 큐가 비지 않는다", drained.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            }
             verdict = guard.finish(keyOf(sink.track?.routedDevice))
         } finally {
             runCatching { player.stop() }
