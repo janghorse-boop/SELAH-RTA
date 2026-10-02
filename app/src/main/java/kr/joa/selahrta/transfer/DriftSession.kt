@@ -114,6 +114,22 @@ class DriftSessionGuard {
         if (armed) invalidate("도중에 입력 경로가 바뀌었다 → $desc") else latestInput = null
     }
 
+    /**
+     * `MicSource.onRawRoutingNotice` 마다 — **거르기 전의** 입력 경로 통지(17회차 R17-01).
+     *
+     * `MicSource` 는 통지를 처리하는 순간의 기기·주소·조합으로 걸러 알린다. 통지가 늦게
+     * 처리되면(A→B→A 뒤) 지금 값이 원래와 같아 [inputRouted]·[inputConfirmed] 가 둘 다
+     * 오지 않았다. 그래서 측정 중의 원시 통지는 그것만으로 무효다 — 그 사이에 무슨 일이
+     * 있었는지 모른다.
+     *
+     * **기준 전에는 세지 않는다.** 녹음을 시작하면 첫 경로 확인과 함께 정상 통지가 온다.
+     * 기준 전의 실제 기기 변경은 [inputRouted] 가 이전 확인을 버려 막는다.
+     */
+    fun inputRawNotice() = synchronized(lock) {
+        if (closed) { lateEvents++; return@synchronized }
+        if (armed) invalidate("도중에 입력 경로 통지가 왔다 — 그 사이의 연속성을 보일 수 없다")
+    }
+
     /** 출력의 경로 변경 통지마다. */
     fun outputRouted() = synchronized(lock) {
         if (closed) { lateEvents++; return@synchronized }

@@ -153,6 +153,43 @@ class DriftSessionGuardTest {
         assertTrue(g.finish(usb) is SessionVerdict.Valid)
     }
 
+    /**
+     * **17회차 R17-01.** `MicSource` 는 통지를 처리하는 순간의 기기·주소·조합으로 걸러
+     * 알린다. A→B→A(또는 조합 22→24→22) 뒤에 늦게 처리되면 지금 값이 원래와 같아
+     * 아무것도 알리지 않았다. 그래서 거르기 **전의** 원시 통지를 따로 받는다 — 측정
+     * 중에 오면 그 사이에 무슨 일이 있었는지 모르므로 무효다.
+     */
+    @Test
+    fun `측정 중에 원시 입력 통지가 오면 무효다`() {
+        val g = armed()
+        g.inputRawNotice()
+        assertInvalid(g.finish(usb), "입력 경로 통지")
+    }
+
+    /**
+     * 기준 전의 원시 통지는 세지 않는다 — 녹음을 시작하면 첫 경로 확인과 함께 정상
+     * 통지가 온다. 그걸로 시작부터 실패하면 측정을 못 한다. 기준 전의 **실제 기기
+     * 변경**은 [DriftSessionGuard.inputRouted] 가 이전 확인을 버리는 것으로 막는다.
+     */
+    @Test
+    fun `기준 전의 원시 입력 통지는 세지 않는다`() {
+        val g = DriftSessionGuard()
+        g.inputRawNotice()
+        g.inputConfirmed(builtIn)
+        g.inputRawNotice()
+        assertEquals(builtIn, g.arm(usb))
+        assertTrue(g.finish(usb) is SessionVerdict.Valid)
+    }
+
+    @Test
+    fun `끝낸 뒤의 원시 입력 통지는 세기만 한다`() {
+        val g = armed()
+        val v = g.finish(usb)
+        g.inputRawNotice()
+        assertTrue(v is SessionVerdict.Valid)
+        assertEquals(1, g.lateEvents)
+    }
+
     @Test
     fun `확인된 입력이 없으면 기준을 못 잡는다`() {
         assertNull(DriftSessionGuard().arm(usb))
