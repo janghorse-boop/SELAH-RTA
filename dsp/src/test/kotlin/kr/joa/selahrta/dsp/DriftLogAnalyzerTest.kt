@@ -69,20 +69,58 @@ class DriftLogAnalyzerTest {
     }
 
     /**
-     * **8회차 R8-01 의 반례.** 참값 +0.008 ppm 은 30분에 0.7표본이라 정수로는
-     * 내내 300 으로 보인다. 예전에는 「0 ± 0.0017 ppm」을 내며 참값을 배제했다.
-     * 이제는 구간을 내지 않고, **해상도보다 작은 기울기는 가를 수 없다**고 적는다.
+     * **8회차 R8-01 의 반례.** 참값 +0.008 ppm 은 특정 초기 분수 위상에서 30분
+     * 내내 같은 정수(300)가 될 수 있다. 예전에는 「0 ± 0.0017 ppm」을 내며
+     * 참값을 배제했다. 이제는 구간을 내지 않는다.
+     *
+     * **9회차 R9-04**: 「해상도보다 작으면 가를 수 없다」고 덧붙이던 것도 거뒀다.
+     * `1e6 / span` 은 구간 전체에서 지연이 1표본 변하는 기울기일 뿐, OLS 의 최소
+     * 눈금도 검출 한계도 아니다 — 마지막 값 하나만 301 이 되어도 OLS 는 그
+     * 30분의 1 남짓만 움직인다.
      */
     @Test
-    fun `해상도보다 작은 기울기는 가를 수 없다고 적는다`() {
+    fun `1표본 환산값을 검출 한계로 말하지 않는다`() {
         val o = (0 until points).map { obs(0, 100_000 + it * step, (300 + 0.008e-6 * (100_000 + it * step)).toInt()) }
         val s = analyze(o).segments.single()
         assertEquals("모든 관측이 같은 정수다", 0.0, s.maxResidual, 1e-12)
         // 30분(179 간격)에 1표본 = 1 / (179·480000) ≈ 0.01164 ppm
         assertEquals(1e6 / (179.0 * step), s.resolutionPpm, 1e-9)
         val c = DriftLogAnalyzer.conclusion(s)
-        assertTrue(c, c.contains("가를 수 없다"))
-        assertFalse("구간을 냈다: $c", c.contains("95") || c.contains("구간 ["))
+        assertTrue(c, c.contains("검출 한계"))
+        for (banned in listOf("가를 수 없다", "95", "구간 [")) {
+            assertFalse("「$banned」을 말했다: $c", c.contains(banned))
+        }
+
+        // 마지막 하나만 301 — OLS 는 1표본 환산값보다 훨씬 작게 움직인다.
+        val bumped = o.mapIndexed { i, it -> if (i == o.lastIndex) it.copy(lag = 301) else it }
+        val b = analyze(bumped).segments.single()
+        assertTrue("OLS 가 ${b.ppm} 로 환산값 ${b.resolutionPpm} 보다 작지 않다", b.ppm > 0 && b.ppm < b.resolutionPpm / 10)
+    }
+
+    /**
+     * **9회차 R9-02 의 반례.** 스트림이 멈추면 엔진은 남은 같은 창을 계속 다시
+     * 잰다. 그것을 「지연을 찾은 관측 여섯」으로 세면 시운전이 통과한다.
+     * 중복을 거른 수와 **마지막 관측이 새 창이었는가**를 따로 낸다.
+     */
+    @Test
+    fun `멈춘 스트림의 같은 창은 하나로 세고 진행하지 않았다고 한다`() {
+        val first = obs(0, 552_000, 300)
+        val a = analyze(List(6) { first })
+        assertEquals(1, a.distinctFound)
+        assertFalse("같은 창을 다시 잰 것을 진행으로 봤다", a.lastProgressed)
+
+        val moving = analyze(series(0.0, n = 6))
+        assertEquals(6, moving.distinctFound)
+        assertTrue(moving.lastProgressed)
+
+        // 앞은 나아가다 끝에서 멈췄다 — 마지막이 중복이면 진행 아님.
+        val stalled = analyze(series(0.0, n = 4) + series(0.0, n = 4).last())
+        assertEquals(4, stalled.distinctFound)
+        assertFalse(stalled.lastProgressed)
+
+        // 마지막이 못 찾음이어도 진행 아님.
+        val lost = analyze(series(0.0, n = 4) + obs(0, 100_000 + 4 * step, 0, found = false))
+        assertFalse(lost.lastProgressed)
     }
 
     @Test
@@ -180,7 +218,7 @@ class DriftLogAnalyzerTest {
             val c = DriftLogAnalyzer.conclusion(analyze(series(ppm)).segments.single())
             assertTrue(c, c.contains("기술 통계"))
             assertTrue(c, c.contains("불확도"))
-            for (banned in listOf("95", "유의", "검출하지 못했다", "한 방향으로 밀렸다", "클럭이 같", "보정이 필요 없", "하드웨어")) {
+            for (banned in listOf("95", "유의", "검출하지 못했다", "한 방향으로 밀렸다", "가를 수 없다", "클럭이 같", "보정이 필요 없", "하드웨어")) {
                 assertFalse("「$banned」을 말했다: $c", c.contains(banned))
             }
         }

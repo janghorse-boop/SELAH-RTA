@@ -32,8 +32,9 @@ data class DriftObservation(
  *
  * @param ppm 최소제곱 지연 기울기 × 10⁶ (표본 번호 좌표). **기술 통계다** —
  *   불확도를 함께 내지 않는다(8회차 R8-01, 아래 [DriftLogAnalyzer] 참고).
- * @param resolutionPpm 이 구간 길이에서 **정수 1표본이 몇 ppm 인가.** 이보다
- *   작은 기울기는 정수 지연으로 가를 수 없다 — 통계가 아니라 산수다.
+ * @param resolutionPpm 구간 전체에서 지연이 **1표본 변하는 기울기**(ppm). 크기를
+ *   가늠하는 환산값일 뿐 **검출 한계도 OLS 의 최소 눈금도 아니다**(9회차 R9-04) —
+ *   마지막 관측 하나만 1표본 달라져도 OLS 는 이 값의 수십분의 1 만 움직인다.
  * @param startReason 이 구간이 **왜 여기서 시작했나**. 첫 구간은 `null`.
  * @param stepSuspected 직선에서 [DriftLogAnalyzer.stepSamples] 넘게 벗어난 관측이 있다.
  * @param usable 결론에 쓸 수 있는가 — 관측 수·길이를 채우고 계단 의심이 없을 때만.
@@ -60,6 +61,16 @@ data class DriftAnalysis(
     val notFound: Int,
     /** 같은 `(session, epoch, windowEnd)` 라 하나로 센 관측. */
     val duplicates: Int,
+    /**
+     * 지연을 찾은 **서로 다른 창**의 수 — 중복을 거른 뒤다. 스트림이 멈추면 엔진은
+     * 같은 창을 계속 다시 재므로, 줄 수로 세면 멈춘 기록이 많아 보인다(9회차 R9-02).
+     */
+    val distinctFound: Int,
+    /**
+     * **마지막 관측이 새 창이었는가** — 지연을 찾았고, 중복이 아니고, 같은 세션·epoch
+     * 의 앞 창보다 나아갔다(첫 관측이면 그것으로 참). 끝에서 스트림이 멈췄는지 본다.
+     */
+    val lastProgressed: Boolean,
 )
 
 /**
@@ -71,7 +82,7 @@ data class DriftAnalysis(
  *
  * ## 무엇을 말하지 않는가
  *
- * 기울기(기술 통계)와 정수 해상도만 낸다. **원인**(하드웨어 클럭인지 OS
+ * 기울기(기술 통계)와 1표본 환산값만 낸다. **원인**(하드웨어 클럭인지 OS
  * 보정인지 큐인지)도, **「보정이 필요 없다」**는 판정도 내지 않는다.
  *
  * ## 95% 구간과 유의성을 거둔 까닭 (8회차 R8-01)
@@ -79,14 +90,15 @@ data class DriftAnalysis(
  * 처음에는 잔차로 표준오차를 내고 √(1/12) 를 바닥으로 깔아 95% 구간과
  * 「유의한 변화를 검출하지 못했다 / 밀렸다」를 냈다. **틀렸다.**
  *
- * - 참값 +0.008 ppm 은 30분에 0.7표본이라 정수로는 **내내 같은 값**이다.
- *   그러면 잔차가 0 이고 「0 ± 0.0017 ppm」이 나와 **참값을 배제**했다.
+ * - 참값 +0.008 ppm 은 30분에 0.7표본이라, 초기 분수 위상에 따라 정수로는
+ *   **내내 같은 값**일 수 있다. 그러면 잔차가 0 이고 「0 ± 0.0017 ppm」이 나와
+ *   **참값을 배제**했다.
  *   반올림 오차는 무작위가 아니라 **참값이 정하는 규칙적인 오차**라
  *   iid 바닥으로 덮이지 않는다.
  * - 잔차가 서로 이어지면(방·스피커의 느린 변화) 구간이 실제보다 좁아진다.
  *   10초 간격만으로 관측이 독립이라고 할 근거가 없다.
  *
- * 검증된 불확도 방법이 생기기 전까지는 **점추정과 해상도만** 적는다.
+ * 검증된 불확도 방법이 생기기 전까지는 **점추정과 1표본 환산값만** 적는다.
  */
 class DriftLogAnalyzer(
     private val sampleRate: Int = 48_000,
@@ -120,6 +132,8 @@ class DriftLogAnalyzer(
         var pendingBreak: String? = null
         var last: DriftObservation? = null        // 마지막으로 **본** 줄(종류 무관) — 누계 비교용
         var lastKept: DriftObservation? = null    // 마지막으로 **구간에 넣은** 관측 — 순서 비교용
+        var distinctFound = 0
+        var lastProgressed = false
 
         fun close() {
             if (current.isNotEmpty()) segments += fit(current, currentReason)
@@ -127,6 +141,7 @@ class DriftLogAnalyzer(
         }
 
         for (o in observations) {
+            lastProgressed = false
             // 사건은 종류와 상관없이 본다.
             val prev = last
             if (o.routeChanged) pendingBreak = pendingBreak ?: "경로 바뀜"
@@ -158,11 +173,14 @@ class DriftLogAnalyzer(
                 currentReason = reason
             }
             pendingBreak = null
+            distinctFound++
+            lastProgressed = k == null ||
+                (k.session == o.session && k.epoch == o.epoch && o.windowEnd > k.windowEnd)
             current += o
             lastKept = o
         }
         close()
-        return DriftAnalysis(segments, skipped, notFound, duplicates)
+        return DriftAnalysis(segments, skipped, notFound, duplicates, distinctFound, lastProgressed)
     }
 
     /** 최소제곱 직선 `lag = a + b·windowEnd`. 불확도는 내지 않는다(위 KDoc). */
@@ -216,13 +234,9 @@ class DriftLogAnalyzer(
                 return "이 구간은 결론에 쓰지 않는다 — $why."
             }
             val head = "이 구성에서 %.1f분 동안 최소제곱 기울기 %.4f ppm (기술 통계)".format(s.minutes, s.ppm)
-            val res = "정수 1표본 = %.4f ppm".format(s.resolutionPpm)
-            val tail = "불확도는 검증된 방법이 아직 없어 내지 않는다"
-            return if (abs(s.ppm) < s.resolutionPpm) {
-                "$head. $res 이라 그보다 작은 기울기는 이 자료로 가를 수 없다. $tail."
-            } else {
-                "$head. $res. $tail."
-            }
+            val scale = "구간 전체에서 지연 1표본 변화 = %.4f ppm (환산값 — 검출 한계도 신뢰구간도 아니다)"
+                .format(s.resolutionPpm)
+            return "$head. $scale. 불확도는 검증된 방법이 아직 없어 내지 않는다."
         }
     }
 }
