@@ -101,10 +101,11 @@ class FakeSource(
     }
 
     /** 경로가 확인됐다고 알린다. 시험이 시점을 정한다. */
-    fun confirmRoute(device: InputDeviceInfo? = this.device) {
+    fun confirmRoute(device: InputDeviceInfo? = this.device, asRequested: Boolean = true) {
         hooks.onRouteConfirmed(
             openedFormat.copy(
                 routeConfirmed = true,
+                routedAsRequested = asRequested,
                 deviceKey = device?.stableKey ?: "fake",
                 deviceLabel = device?.displayName ?: "가짜 입력",
                 micKind = device?.kind ?: MicKind.BuiltIn,
