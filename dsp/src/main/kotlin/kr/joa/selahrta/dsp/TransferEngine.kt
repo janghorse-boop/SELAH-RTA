@@ -1,7 +1,19 @@
 package kr.joa.selahrta.dsp
 
-/** 한 번 잰 결과. [transfer] 는 **지연을 찾았을 때만** 있다. */
-data class TransferMeasurement(val delay: DelayResult, val transfer: TransferResult?)
+/**
+ * 한 번 잰 결과. [transfer] 는 **지연을 찾았을 때만** 있다.
+ *
+ * @param windowEnd 두 창이 **함께 끝난 표본 번호**(그 [epoch] 안에서 0 부터 센
+ *   개수). 장시간 기록은 이 번호로 「언제의 지연인가」를 적는다.
+ * @param epoch [TransferEngine.reset] 마다 바뀐다. **epoch 가 다른 값끼리는
+ *   표본 번호가 이어지지 않는다** — 한 직선으로 맞추면 안 된다.
+ */
+data class TransferMeasurement(
+    val delay: DelayResult,
+    val transfer: TransferResult?,
+    val windowEnd: Long,
+    val epoch: Long,
+)
 
 /**
  * 기준과 측정을 모아 두었다가 **지연 → 시간 정렬 → 전달함수** 순으로 잰다.
@@ -20,6 +32,25 @@ data class TransferMeasurement(val delay: DelayResult, val transfer: TransferRes
  * 써 넣은 만큼 기준과 측정이 서로 다른 순간을 가리키게 된다. 시험이 전부
  * 단일 스레드라 이 길은 시험으로 걸리지 않고, 고리 용량을 넉넉히 잡아 둔
  * 탓에 측정 실패로도 안 걸린다 — **조용히 부정확한 값**으로 새어 나간다.
+ *
+ * ## 두 창은 **같은 표본 번호에서** 끝난다 (독립 검토 R6-01)
+ *
+ * 잠금 하나는 복사 도중의 쓰기를 막을 뿐, **두 고리의 꼬리가 같은 순간**
+ * 이라는 보장은 아니다. 재생 콜백이 128표본 먼저 들어온 순간에 꼬리끼리
+ * 견주면 실제 지연 300 이 **428** 로 나왔다(측정이 먼저면 172). 전달함수는
+ * 같은 배열 안에서 맞추므로 0dB·Coherence 1 로 멀쩡해 보여, 그 숫자를
+ * 의심할 길이 없었다. 장시간 기록에서는 **큐 진행차가 드리프트처럼 보인다.**
+ *
+ * 그래서 두 스트림을 **각자 0 부터 센 표본 번호**로 놓고, 덜 들어온 쪽의
+ * 개수(`windowEnd`)에서 **둘 다** 끝나게 뜬다. 앞서간 쪽은 그만큼
+ * 거슬러 뜬다.
+ *
+ * **이 번호가 기대는 전제**: 두 스트림의 표본 0 이 [reset] 뒤 **각자
+ * 처음 들어온 표본**이고, 중간에 빠지거나 끼어든 표본이 없다는 것이다.
+ * 따라서 [DelayResult.samples] 는 **표본 번호 좌표의 지연**이다 —
+ * 두 스트림의 **시작 시각 차이가 섞여 있어** 그 자체로 음향 지연이 아니다.
+ * 같은 epoch 안에서는 그 차이가 상수라 **시간에 따른 변화**는 볼 수 있다.
+ * 누락·삽입은 이 클래스가 알아챌 수 없다 — 들여보내는 쪽이 세어야 한다.
  *
  * **그 대가로 첫 측정까지 `maxLagSamples` 만큼(기본값에서 0.5초) 더
  * 기다린다.** 지연이 얼마로 나올지는 미리 모르므로, 최악(`maxLagSamples`)을
@@ -67,7 +98,10 @@ class TransferEngine(
         }
     }
 
-    /** 지연 보정까지 담을 만큼 넉넉히. */
+    /**
+     * 지연 보정까지 담을 만큼 넉넉히. **남는 몫이 한쪽이 앞서갈 수 있는
+     * 여유**다 — 그보다 더 앞서면 같은 번호의 창이 이미 덮어써져 재지 않는다.
+     */
     private val capacity = Integer.highestOneBit(span + maxLagSamples) * 2
 
     private val lock = Any()
@@ -76,6 +110,9 @@ class TransferEngine(
 
     /** [measure] 재진입을 막는다 — 겹쳐 부르면 뒤의 것이 `null` 을 받는다. */
     private val measuring = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** [reset] 마다 하나씩 는다. [lock] 안에서만 읽고 쓴다. */
+    private var epoch = 0L
 
     private val estimator = DelayEstimator(
         analysisSize = minOf(span, 32_768),
@@ -106,7 +143,8 @@ class TransferEngine(
      * 지금 쌓인 것으로 한 번 잰다.
      *
      * **둘 다 창을 가득 채우지 못했으면 재지 않는다** — 앞이 0 으로 채워진
-     * 창끼리 견주면 그 0 구간이 상관에 끼어든다. 기준은 [span] 뿐 아니라
+     * 창끼리 견주면 그 0 구간이 상관에 끼어든다. 두 창이 **같은 번호에서
+     * 끝나므로** 기준·측정 **둘 다** [span] 뿐 아니라
      * **[refLong] 전체**(= `span + maxLagSamples`)만큼 쌓여 있어야 한다 —
      * 지연을 구한 뒤 그만큼 거슬러 가야 하는데, 그 자리를 고리에서 **다시
      * 읽지 않고** 이미 떠 놓은 [refLong] 안에서 자르기 때문이다(잠금을
@@ -123,10 +161,19 @@ class TransferEngine(
         // 화면이 주기적으로 부르는 자리라 한 번 늦는 것이 정상이기 때문이다.
         if (!measuring.compareAndSet(false, true)) return null
         try {
+            val end: Long
+            val epochAt: Long
             synchronized(lock) {
-                if (refRing.written < refLong.size || measRing.written < span) return null
-                refRing.snapshot(refLong)
-                measRing.snapshot(measWindow)
+                // 두 창이 함께 끝날 자리 — 덜 들어온 쪽의 개수.
+                end = minOf(refRing.written, measRing.written)
+                if (end < refLong.size) return null
+                val refBack = refRing.written - end
+                val measBack = measRing.written - end
+                // 앞서간 쪽이 고리 여유를 넘으면 그 자리는 이미 덮어써졌다.
+                if (refBack + refLong.size > capacity || measBack + span > capacity) return null
+                refRing.snapshot(refLong, refBack.toInt())
+                measRing.snapshot(measWindow, measBack.toInt())
+                epochAt = epoch
             }
             // 여기부터는 고리를 다시 읽지 않는다 — 이미 떠 놓은 배열 안에서만 자른다.
 
@@ -134,21 +181,21 @@ class TransferEngine(
             System.arraycopy(refLong, refLong.size - span, refWindow, 0, span)
 
             val delay = estimator.estimate(refWindow, measWindow)
-            if (!delay.found) return TransferMeasurement(delay, null)
+            if (!delay.found) return TransferMeasurement(delay, null, end, epochAt)
 
             // **기준을 지연만큼 거슬러 뜬다** — 측정은 그만큼 늦게 들어왔다.
             val start = refLong.size - span - delay.samples
             // 지금은 도달하지 않는다 — estimator.estimate() 는 늘 0..maxLagSamples
             // 범위 안의 값만 내놓으므로(그 밖은 찾지 않는다), start 는 항상
             // 0 이상이다. refLong 을 그만큼 길게 뜬 것이 이 보장의 근거다.
-            if (start < 0) return TransferMeasurement(delay, null)
+            if (start < 0) return TransferMeasurement(delay, null, end, epochAt)
 
             averager.reset()
             for (k in 0 until averages) {
                 val at = k * hop
                 averager.addBlock(refLong, start + at, measWindow, at)
             }
-            return TransferMeasurement(delay, transferFunction(averager))
+            return TransferMeasurement(delay, transferFunction(averager), end, epochAt)
         } finally {
             measuring.set(false)
         }
@@ -156,5 +203,5 @@ class TransferEngine(
 
     fun delayMs(samples: Int): Double = samples * 1000.0 / sampleRate
 
-    fun reset() = synchronized(lock) { refRing.clear(); measRing.clear() }
+    fun reset() = synchronized(lock) { refRing.clear(); measRing.clear(); epoch++ }
 }
