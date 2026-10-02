@@ -205,7 +205,7 @@ class AcousticDriftRecordingTest {
         )
 
         val observations = mutableListOf<DriftObservation>()
-        var finalOutputKey: String? = null
+        var verdict: kr.joa.selahrta.transfer.SessionVerdict? = null
         try {
             val r = src.open(RequestedFormat(sampleRate = rate))
             assertTrue("입력을 못 열었다: $r", r is OpenResult.Opened)
@@ -283,18 +283,20 @@ class AcousticDriftRecordingTest {
                         (if (peak >= 0.99f) " !!클리핑" else "") + countsOf(o),
                 )
             }
-            // 끝의 출력 경로를 **멈추기 전에** 읽는다 — 마지막 관측 뒤의 변경도
-            // 판정에 넣는다(9회차 R9-01 ③).
-            finalOutputKey = keyOf(sink.track?.routedDevice)
+            // 끝의 출력 경로를 **멈추기 전에** 읽고, **그 자리에서 판정을 닫는다**.
+            // 마지막 관측 뒤의 변경도 넣고(9회차 R9-01 ③), 멈추고 닫는 동안 오는
+            // 통지는 「도중 변경」이 아니라 뒤늦은 통지로만 센다(10회차 R10-03 —
+            // 예전에는 정리한 뒤에 닫아, 정리 중 통지로 정상 수집이 무효가 됐다).
+            verdict = guard.finish(keyOf(sink.track?.routedDevice))
         } finally {
             runCatching { player.stop() }
             runCatching { src.close() }
         }
 
         // ---- 판정을 먼저 확정하고, 그다음에 적는다 (9회차 R9-03) ----
-        val verdict = guard.finish(finalOutputKey)
+        val closed = checkNotNull(verdict) { "판정을 닫기 전에 끝났다" }
         val analysis = DriftLogAnalyzer(sampleRate = rate).analyze(observations)
-        val report = driftSessionReport(mode, verdict, analysis, observations)
+        val report = driftSessionReport(mode, closed, analysis, observations)
         report.lines.forEach(::say)
         if (guard.lateEvents > 0) say("끝낸 뒤 통지 ${guard.lateEvents} 건 — 판정에 넣지 않았다")
         if (!report.passed) fail(report.failure)
