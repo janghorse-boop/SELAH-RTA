@@ -2,6 +2,7 @@ package kr.joa.selahrta.dsp
 
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.sqrt
 
 /** 기록 한 줄의 종류 — [MeasureOutcome] 의 갈래와 같다. */
 enum class ObservationKind { Measured, Busy, InsufficientData, RetentionExceeded }
@@ -51,6 +52,38 @@ data class DriftSegment(
     val stepSuspected: Boolean,
     val usable: Boolean,
     val startReason: String?,
+    val diagnostics: DriftDiagnostics,
+)
+
+/** 원래 관측 슬롯을 보존한 k차 쌍의 Pearson 상관. 쌍이 3개 미만이거나 분산이 0 이면 [r] 은 NaN. */
+data class SlotCorrelation(val lag: Int, val pairs: Int, val r: Double)
+
+/**
+ * 한 구간의 **진단** — 불확도 구간이 **아니다**(20회차 설계 검토).
+ *
+ * 20회차가 「양립 집합·자기상관을 하나 골라 자동으로 불확도로 내는 규칙」을 보류시켰다.
+ * 그래서 여기에는 채택·거절 판정도, 구간도 없다. **왜 이 자료로는 불확도를 낼 수
+ * 없는가**를 숫자로 보이기만 한다.
+ *
+ * @param compatibleLoPpm 무잡음 직선·정수화 가정 `|a + b·x − y| ≤ ½` 아래의 기울기 하한(ppm).
+ *   **그 가정에 조건부인 모형 진단**이다. 약한 잡음만 있어도 참값을 배제하는 좁은 집합이
+ *   나온다(20회차 R20-01: ±0.3 잡음, 참 +0.001 ppm 에서 2,000/2,000 배제). 닫힌 띠라
+ *   반올림 동률 경계에서는 정확한 집합보다 넓은 **외측 근사**다.
+ * @param compatibleEmpty 하한 > 상한 — 그 가정으로 설명되지 않는다. 잡음 때문인지, 비선형
+ *   지연·봉우리 전환·모형 오류 때문인지는 **정하지 않는다.**
+ * @param residualAcf 최소제곱 잔차의 k차(1..12) 자기상관 `Σ eᵢ·eᵢ₋ₖ / Σ eᵢ²` — **쓸 수 있는
+ *   관측만 당겨 붙인 열** 기준이다. 잔차가 모두 0 이면 NaN.
+ * @param slotResidualPearson 원래 관측 **슬롯**을 보존한 k차(1..6) 잔차 Pearson — 실패한
+ *   관측을 당겨 붙이지 않는다. 같은 자료에서 위와 값이 다르다(20회차 R20-04: 3차 0.793 대 0.867).
+ * @param maxGapSeconds 쓸 수 있는 관측 사이 가장 긴 공백(windowEnd 기준).
+ */
+data class DriftDiagnostics(
+    val compatibleLoPpm: Double,
+    val compatibleHiPpm: Double,
+    val compatibleEmpty: Boolean,
+    val residualAcf: List<Double>,
+    val slotResidualPearson: List<SlotCorrelation>,
+    val maxGapSeconds: Double,
 )
 
 data class DriftAnalysis(
@@ -126,6 +159,7 @@ class DriftLogAnalyzer(
 
         val segments = mutableListOf<DriftSegment>()
         var current = mutableListOf<DriftObservation>()
+        var currentSlots = mutableListOf<Int>()   // 원래 관측 슬롯(입력 차례) — 진단용
         var currentReason: String? = null
 
         // 버린 줄에서 일어난 사건도 다음 관측에서 끊어야 한다.
@@ -136,11 +170,12 @@ class DriftLogAnalyzer(
         var lastProgressed = false
 
         fun close() {
-            if (current.isNotEmpty()) segments += fit(current, currentReason)
+            if (current.isNotEmpty()) segments += fit(current, currentSlots, currentReason)
             current = mutableListOf()
+            currentSlots = mutableListOf()
         }
 
-        for (o in observations) {
+        for ((slot, o) in observations.withIndex()) {
             lastProgressed = false
             // 사건은 종류와 상관없이 본다.
             val prev = last
@@ -177,6 +212,7 @@ class DriftLogAnalyzer(
             lastProgressed = k == null ||
                 (k.session == o.session && k.epoch == o.epoch && o.windowEnd > k.windowEnd)
             current += o
+            currentSlots += slot
             lastKept = o
         }
         close()
@@ -184,7 +220,7 @@ class DriftLogAnalyzer(
     }
 
     /** 최소제곱 직선 `lag = a + b·windowEnd`. 불확도는 내지 않는다(위 KDoc). */
-    private fun fit(seg: List<DriftObservation>, reason: String?): DriftSegment {
+    private fun fit(seg: List<DriftObservation>, slots: List<Int>, reason: String?): DriftSegment {
         val n = seg.size
         val x0 = seg.first().windowEnd.toDouble()
         val xs = DoubleArray(n) { seg[it].windowEnd - x0 }
@@ -198,10 +234,9 @@ class DriftLogAnalyzer(
             sxy += (xs[i] - mx) * (ys[i] - my)
         }
         val slope = if (sxx > 0) sxy / sxx else 0.0
+        val res = DoubleArray(n) { ys[it] - (my + slope * (xs[it] - mx)) }
         var maxRes = 0.0
-        for (i in 0 until n) {
-            maxRes = max(maxRes, abs(ys[i] - (my + slope * (xs[i] - mx))))
-        }
+        for (r in res) maxRes = max(maxRes, abs(r))
         val span = (seg.last().windowEnd - seg.first().windowEnd).toDouble()
         val minutes = span / sampleRate / 60.0
         val step = maxRes > stepSamples
@@ -217,7 +252,55 @@ class DriftLogAnalyzer(
             stepSuspected = step,
             usable = n >= minPoints && minutes >= minMinutes && !step,
             startReason = reason,
+            diagnostics = diagnose(xs, ys, res, slots),
         )
+    }
+
+    /** [DriftDiagnostics] 를 낸다. 판정은 하지 않는다. */
+    private fun diagnose(xs: DoubleArray, ys: DoubleArray, res: DoubleArray, slots: List<Int>): DriftDiagnostics {
+        val n = xs.size
+        // 양립 집합: 모든 쌍 i > j 에서 (yᵢ − yⱼ ∓ 1)/(xᵢ − xⱼ). x 는 구간 안에서 늘어난다.
+        var lo = Double.NEGATIVE_INFINITY
+        var hi = Double.POSITIVE_INFINITY
+        for (i in 1 until n) for (j in 0 until i) {
+            val dx = xs[i] - xs[j]
+            if (dx <= 0) continue
+            val dy = ys[i] - ys[j]
+            lo = max(lo, (dy - 1) / dx)
+            hi = kotlin.math.min(hi, (dy + 1) / dx)
+        }
+        val den = res.sumOf { it * it }
+        val acf = (1..12).map { k ->
+            if (den == 0.0 || k >= n) Double.NaN
+            else (k until n).sumOf { res[it] * res[it - k] } / den
+        }
+        val bySlot = HashMap<Int, Double>(n * 2)
+        for (i in 0 until n) bySlot[slots[i]] = res[i]
+        val slotCorr = (1..6).map { k ->
+            val a = ArrayList<Double>()
+            val b = ArrayList<Double>()
+            for (i in 0 until n) {
+                val other = bySlot[slots[i] + k] ?: continue
+                a += res[i]; b += other
+            }
+            SlotCorrelation(k, a.size, pearson(a, b))
+        }
+        var gap = 0.0
+        for (i in 1 until n) gap = max(gap, (xs[i] - xs[i - 1]) / sampleRate)
+        return DriftDiagnostics(lo * 1e6, hi * 1e6, lo > hi, acf, slotCorr, gap)
+    }
+
+    private fun pearson(a: List<Double>, b: List<Double>): Double {
+        if (a.size < 3) return Double.NaN
+        val ma = a.average()
+        val mb = b.average()
+        var sab = 0.0; var saa = 0.0; var sbb = 0.0
+        for (i in a.indices) {
+            sab += (a[i] - ma) * (b[i] - mb)
+            saa += (a[i] - ma) * (a[i] - ma)
+            sbb += (b[i] - mb) * (b[i] - mb)
+        }
+        return if (saa == 0.0 || sbb == 0.0) Double.NaN else sab / sqrt(saa * sbb)
     }
 
     companion object {
