@@ -45,22 +45,34 @@ import java.util.concurrent.atomic.AtomicReference
  * - 출력 장치만 이 시험의 껍데기([CountingTrackSink])다. **언더런 수와 실제
  *   출력 경로**를 직접 읽어야 해서다. `AudioTrackSink` 는 그것을 밖에 내지 않는다.
  *
- * ## 통과·실패 (6회차 R6-05 의 교훈)
+ * ## 통과·실패 (6회차 R6-05, 8회차 R8-02·03·04 의 교훈)
  *
  * **잰 값으로 가르지 않는다.** 재지 못했으면 실패다:
- * 실제 출력이 USB 가 아님 · 실제 입력이 내장 마이크가 아님 · (10분 이상
- * 돌렸는데) 쓸 수 있는 구간이 하나도 없음.
+ *
+ * - `mode`·`minutes` 가 없거나 잘못됨 — 기본값으로 조용히 돌지 않는다.
+ * - 실제 출력이 **고른 그 USB 기기**가 아님 — 유선 헤드폰도 안 된다.
+ * - 입력이 내장 마이크로 확인되지 않음.
+ * - **도는 동안 출력·입력 경로나 활성 마이크 조합이 한 번이라도 바뀜** —
+ *   구간만 끊고 넘어가면 바뀐 뒤 다른 입력에서 잰 구간이 「쟀다」로 채택된다.
+ * - `trial`: 지연을 찾은 관측이 [TRIAL_MIN_FOUND] 개 미만.
+ * - `record`: 쓸 수 있는 구간이 하나도 없음.
  *
  * ## 돌리는 법
  *
  * ```
- * adb shell am instrument -w -r -e minutes 30 -e amplitude 0.1 \
+ * # 시운전(5분 이하) — 장비·경로·신호가 맞는지만 본다. 결론을 내지 않는다.
+ * adb shell am instrument -w -r -e mode trial -e minutes 2 -e amplitude 0.1 \
+ *   -e class 'kr.joa.selahrta.audio.AcousticDriftRecordingTest#음향_드리프트를_기록한다' \
+ *   kr.joa.selahrta.test/androidx.test.runner.AndroidJUnitRunner
+ *
+ * # 기록(10분 이상)
+ * adb shell am instrument -w -r -e mode record -e minutes 30 -e amplitude 0.1 \
  *   -e class 'kr.joa.selahrta.audio.AcousticDriftRecordingTest#음향_드리프트를_기록한다' \
  *   kr.joa.selahrta.test/androidx.test.runner.AndroidJUnitRunner
  * ```
  *
  * 기록은 `adb logcat -s ADRIFT`. **화면이 꺼지면 계측 시험이 죽는다** —
- * 화면 꺼짐을 늘려 두고 돌린다. 시운전은 `-e minutes 1`.
+ * 화면 꺼짐을 늘려 두고 돌린다.
  */
 class AcousticDriftRecordingTest {
 
@@ -72,13 +84,33 @@ class AcousticDriftRecordingTest {
     private fun args() = InstrumentationRegistry.getArguments()
     private fun context() = InstrumentationRegistry.getInstrumentation().targetContext
 
-    private fun minutes(): Double = args().getString("minutes")?.toDoubleOrNull() ?: 1.0
+    /** 시운전과 기록을 **이름으로** 가른다 — 기본값으로 조용히 돌지 않는다(R8-04). */
+    private enum class Mode { trial, record }
+
+    private fun mode(): Mode? = args().getString("mode")?.let { m -> Mode.entries.firstOrNull { it.name == m } }
+
+    /** 유한하고 0 보다 큰 값만. NaN·음수·0 은 관측 0개로 「통과」하던 자리다(R8-04). */
+    private fun minutes(): Double? =
+        args().getString("minutes")?.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0.0 }
+
     private fun amplitude(): Double = args().getString("amplitude")?.toDoubleOrNull() ?: 0.1
+
+    /**
+     * **USB 출력만.** `OutputKind.Wired` 는 유선 헤드폰·헤드셋도 받아 주므로
+     * 여기서는 쓰지 않는다(R8-03).
+     */
+    private fun isUsb(type: Int) = type == AudioDeviceInfo.TYPE_USB_DEVICE ||
+        type == AudioDeviceInfo.TYPE_USB_HEADSET || type == AudioDeviceInfo.TYPE_USB_ACCESSORY
 
     private fun usbOut(): AudioDeviceInfo? =
         context().getSystemService(AudioManager::class.java)
             .getDevices(AudioManager.GET_DEVICES_OUTPUTS)
-            .firstOrNull { SignalOutputChoice.matches(OutputKind.Wired, it.type) }
+            .firstOrNull { isUsb(it.type) }
+
+    /** 같은 기기인가 — id 는 다시 꽂으면 바뀌므로 종류·이름·주소로 견준다. */
+    private fun sameDevice(a: AudioDeviceInfo, b: AudioDeviceInfo) =
+        sameOutputKey(a.type, a.productName.toString(), a.address) ==
+            sameOutputKey(b.type, b.productName.toString(), b.address)
 
     private fun builtInMic() = InputDeviceScanner(context()).listAll().firstOrNull { it.kind == MicKind.BuiltIn }
 
@@ -117,9 +149,16 @@ class AcousticDriftRecordingTest {
                 .setTransferMode(AudioTrack.MODE_STREAM)
                 .build()
             if (t.state != AudioTrack.STATE_INITIALIZED) { t.release(); return false }
-            t.setPreferredDevice(wanted)
-            t.addOnRoutingChangedListener({ _ -> routeChanged.set(true) }, null)
-            t.play()
+            // **play() 까지 끝나야 게시한다.** 그 전에 터지면 track 필드가 비어
+            // 있어 부르는 쪽의 stop/release 가 이것을 못 본다(R8-05).
+            try {
+                t.setPreferredDevice(wanted)
+                t.addOnRoutingChangedListener({ _ -> routeChanged.set(true) }, null)
+                t.play()
+            } catch (e: Throwable) {
+                runCatching { t.release() }
+                throw e
+            }
             track = t
             return true
         }
@@ -141,6 +180,16 @@ class AcousticDriftRecordingTest {
 
     @Test
     fun 음향_드리프트를_기록한다() {
+        val modeArg = mode()
+        assertTrue("-e mode trial|record 를 정하십시오 — 기본값으로 돌지 않는다", modeArg != null)
+        val mode: Mode = modeArg!!
+        val minutesArg = minutes()
+        assertTrue("-e minutes 에 0 보다 큰 수를 주십시오: ${args().getString("minutes")}", minutesArg != null)
+        val minutes: Double = minutesArg!!
+        when (mode) {
+            Mode.trial -> assertTrue("시운전은 5분 이하: $minutes", minutes <= 5.0)
+            Mode.record -> assertTrue("기록은 10분 이상: $minutes", minutes >= 10.0)
+        }
         val out = usbOut()
         assertTrue("USB 출력 기기가 없다 — 인터페이스를 꽂으십시오", out != null)
         val mic = builtInMic()
@@ -157,16 +206,40 @@ class AcousticDriftRecordingTest {
         val inErrors = AtomicLong()
         val inRouteChanged = AtomicBoolean(false)
         val confirmed = AtomicReference<OpenedFormat?>(null)
+        // 시작 때 확인한 입력. 그 뒤에 온 확인이 다른 기기·다른 활성 조합이면
+        // 이 측정은 무효다 — 구간만 끊으면 바뀐 뒤의 구간이 채택된다(R8-02).
+        val baseline = AtomicReference<OpenedFormat?>(null)
+        val inputChanges = java.util.concurrent.CopyOnWriteArrayList<String>()
         val peakBits = AtomicLong(0)   // 지난 관측 뒤 입력 최대 절대값(Float bits)
         val src = MicSource(
             context(),
             mic,
-            onRoutingChanged = { inRouteChanged.set(true); say("!! 입력 경로가 바뀌었다 → ${it?.productName}") },
-            onRouteConfirmed = { confirmed.set(it) },
+            onRoutingChanged = {
+                inRouteChanged.set(true)
+                inputChanges += "입력 경로가 바뀌었다 → ${it?.productName}"
+                say("!! 입력 경로가 바뀌었다 → ${it?.productName}")
+            },
+            onRouteConfirmed = { f ->
+                confirmed.set(f)
+                val b = baseline.get()
+                if (b != null) {
+                    val why = when {
+                        f.micKind != MicKind.BuiltIn -> "입력이 내장 마이크가 아니게 됐다(${f.deviceLabel}/${f.micKind})"
+                        f.deviceKey != b.deviceKey -> "입력 기기가 바뀌었다(${b.deviceKey} → ${f.deviceKey})"
+                        else -> activeMicChangeKo(b.activeMics, f.activeMics)
+                    }
+                    if (why != null) {
+                        inputChanges += why
+                        inRouteChanged.set(true)
+                        say("!! $why")
+                    }
+                }
+            },
             onCaptureEnded = { inErrors.incrementAndGet(); say("!! 캡처가 끝났다: $it") },
         )
 
         val observations = mutableListOf<DriftObservation>()
+        var outputChanges = 0
         try {
             val r = src.open(RequestedFormat(sampleRate = rate))
             assertTrue("입력을 못 열었다: $r", r is OpenResult.Opened)
@@ -195,28 +268,31 @@ class AcousticDriftRecordingTest {
             say(
                 "HEAD session=$session model=${Build.MODEL} build=${Build.ID}/${Build.VERSION.INCREMENTAL} " +
                     "sdk=${Build.VERSION.SDK_INT} rate=$rate fft=8192 avg=16 maxLag=24000 intervalMs=$intervalMs " +
-                    "minutes=${minutes()} amplitude=${amplitude()} signal=Pink/Both(seed=SignalPlayer)",
+                    "mode=$mode minutes=$minutes amplitude=${amplitude()} signal=Pink/Both(seed=SignalPlayer)",
             )
             say("HEAD 출력 요청=${describe(out)} 실제=${describe(outRoute)}")
             say(
                 "HEAD 입력 요청=${mic!!.productName}(주소'${mic.address}') 확인=${inFmt?.deviceLabel ?: "아직"} " +
                     "kind=${inFmt?.micKind} source=${inFmt?.audioSource ?: opened.audioSource} " +
-                    "— 주소는 안드로이드의 표기일 뿐 물리 위치가 아니다",
+                    "활성마이크=${activeMicComboKo(inFmt?.activeMics.orEmpty())} " +
+                    "— 주소·활성 마이크는 안드로이드의 표기일 뿐 물리 위치의 증거가 아니다",
             )
             assertTrue("출력 경로를 알 수 없다", outRoute != null)
             assertTrue(
-                "출력이 USB 로 안 갔다 — 실제 ${describe(outRoute)}",
-                SignalOutputChoice.matches(OutputKind.Wired, outRoute!!.type),
+                "출력이 고른 USB 기기로 안 갔다 — 고른 ${describe(out)} / 실제 ${describe(outRoute)}",
+                isUsb(outRoute!!.type) && sameDevice(outRoute, out),
             )
             assertTrue(
                 "입력이 내장 마이크로 확인되지 않았다 — ${inFmt?.deviceLabel}/${inFmt?.micKind}",
                 inFmt != null && inFmt.micKind == MicKind.BuiltIn,
             )
             val outRouteId = outRoute.id
+            baseline.set(inFmt)
             sink.routeChanged.set(false)
             inRouteChanged.set(false)
+            inputChanges.clear()
 
-            val endAt = SystemClock.elapsedRealtime() + (minutes() * 60_000).toLong()
+            val endAt = SystemClock.elapsedRealtime() + (minutes * 60_000).toLong()
             while (SystemClock.elapsedRealtime() < endAt) {
                 Thread.sleep(intervalMs)
                 val now = SystemClock.elapsedRealtimeNanos()
@@ -224,8 +300,9 @@ class AcousticDriftRecordingTest {
                 val track = sink.track
                 val underruns = track?.underrunCount?.toLong() ?: -1L
                 val routeNow = track?.routedDevice?.id
-                val routeChanged = sink.routeChanged.getAndSet(false) or inRouteChanged.getAndSet(false) ||
-                    routeNow != outRouteId
+                val outChanged = sink.routeChanged.getAndSet(false) || routeNow != outRouteId
+                if (outChanged) outputChanges++
+                val routeChanged = inRouteChanged.getAndSet(false) || outChanged
                 val peak = java.lang.Float.intBitsToFloat(peakBits.getAndSet(0).toInt())
                 val ob = when (o) {
                     is MeasureOutcome.Measured -> DriftObservation(
@@ -258,21 +335,37 @@ class AcousticDriftRecordingTest {
         a.segments.forEachIndexed { i, s ->
             say(
                 "SEG #$i epoch=${s.epoch} 시작까닭=${s.startReason ?: "처음"} 관측=${s.points} " +
-                    "%.1f분 기울기=%.4f±%.4f ppm 최대잔차=%.2f 계단의심=${s.stepSuspected} 씀=${s.usable}"
-                        .format(s.minutes, s.ppm, s.ci95, s.maxResidual),
+                    "%.1f분 기울기=%.4f ppm(기술 통계) 정수1표본=%.4f ppm 최대잔차=%.2f 계단의심=${s.stepSuspected} 씀=${s.usable}"
+                        .format(s.minutes, s.ppm, s.resolutionPpm, s.maxResidual),
             )
             say("SEG #$i ${DriftLogAnalyzer.conclusion(s)}")
         }
 
-        // **재지 못했으면 실패.** 짧은 시운전은 건너뛰고 그렇다고 적는다.
-        if (minutes() >= 10.0) {
-            assertTrue(
+        // **도는 동안 경로가 바뀌었으면 이 측정은 못 쓴다** — 구간을 끊는 것으로
+        // 끝내면 바뀐 뒤 다른 입력의 구간이 채택된다(R8-02).
+        assertTrue("도는 동안 출력 경로가 바뀌었다 — 이 측정은 못 쓴다", outputChanges == 0)
+        assertTrue("도는 동안 입력이 바뀌었다 — 이 측정은 못 쓴다: $inputChanges", inputChanges.isEmpty())
+
+        // **재지 못했으면 실패.**
+        val found = observations.count { it.kind == ObservationKind.Measured && it.found }
+        when (mode) {
+            Mode.trial -> {
+                say("시운전 — 지연을 찾은 관측 $found 개. 이 결과로 결론을 내지 않는다")
+                assertTrue(
+                    "시운전에서 지연을 찾은 관측이 $found 개 — ${TRIAL_MIN_FOUND}개는 있어야 장비·경로·신호가 맞다고 본다",
+                    found >= TRIAL_MIN_FOUND,
+                )
+            }
+            Mode.record -> assertTrue(
                 "쓸 수 있는 구간이 하나도 없다 — 「돌렸다」를 「쟀다」로 적지 않는다",
                 a.segments.any { it.usable },
             )
-        } else {
-            say("시운전(${minutes()}분) — 「쓸 수 있는 구간」 단언을 건너뛴다. 이 결과로 결론을 내지 않는다")
         }
+    }
+
+    private companion object {
+        /** 시운전이 「돈다」고 볼 최소 관측. 10초 간격이라 1분이면 5개 남짓이다. */
+        const val TRIAL_MIN_FOUND = 3
     }
 
     private fun kindOf(o: MeasureOutcome) = when (o) {
