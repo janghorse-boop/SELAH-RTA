@@ -187,10 +187,21 @@ class ClockDriftMeasurementTest {
         val ioErrors = AtomicInteger(0)
         val tracker = ClockDriftTracker()
         var routeChanges = 0
-        // 경로 통지로 센 변경(조회 사이의 왕복까지) — 리스너 스레드가 늘린다.
+        // 측정 구간에 받은 경로 통지 수 — **경로 스레드에서만** 늘린다.
         val routeEvents = AtomicInteger(0)
-        // 측정 구간 동안만 센다. 준비·정리 중의 통지와 언더런은 넣지 않는다.
-        val measuring = AtomicBoolean(false)
+        // **경로 통지와 측정 시작·끝을 한 줄로 세운다**(16회차 R16-01). 리스너를 이
+        // 스레드의 Handler 에 달고, 시작·끝도 같은 큐에 장벽으로 넣는다 — 시작 장벽보다
+        // 먼저 쌓인 준비 중 통지는 감시가 꺼진 채 처리되고, 끝 장벽보다 먼저 쌓인 통지는
+        // **측정 중의 것으로** 센다. 끝 장벽 뒤의 정리 중 통지는 세지 않는다(R10-03).
+        // `measuringOnRoute` 는 이 스레드에서만 읽고 쓴다.
+        val routeThread = android.os.HandlerThread("drift-route").apply { start() }
+        val routeHandler = android.os.Handler(routeThread.looper)
+        var measuringOnRoute = false
+        fun onRouteThread(block: () -> Unit) {
+            val done = java.util.concurrent.CountDownLatch(1)
+            routeHandler.post { block(); done.countDown() }
+            assertTrue("경로 스레드가 응답하지 않는다", done.await(5, java.util.concurrent.TimeUnit.SECONDS))
+        }
         var underrunStart = 0
         var underrunEnd = 0
         val totalMs = (minutes() * 60_000).toLong()
@@ -231,24 +242,26 @@ class ClockDriftMeasurementTest {
             val inRouteId = inRoute.id
 
             // **경로 통지를 듣는다**(15회차 R15-03). 10초마다 id 만 견주면 그 사이에
-            // 다른 기기로 갔다 돌아온 것을 놓친다. 통지가 올 때 실제 경로가 기준과
-            // **다를 때만** 센다 — 같은 기기로 다시 알리는 통지로 거짓 실패하지 않게.
-            // [measuring] 이 켜진 동안만 센다 — 정리 중의 통지로 지난 자료를 무효로
-            // 만들지 않는다(10회차 R10-03 의 교훈).
+            // 다른 기기로 갔다 돌아온 것을 놓친다.
+            //
+            // **측정 중에 받은 통지는 현재 경로와 상관없이 센다**(16회차 R16-01). 콜백은
+            // Handler 에서 늦게 처리될 수 있고, 그때 `routedDevice` 는 **처리하는 순간**의
+            // 경로다 — A→B→A 왕복 뒤에 처리하면 A 라서, 예전에는 「같은 기기」로 보고
+            // 버렸다. 같은 기기로 돌아온 통지가 안전한 중복이라는 근거가 없으므로
+            // 연속성을 보일 수 없는 것으로 둔다. 같은 기기로 다시 알리는 통지가 실기기에서
+            // 오면 거짓 실패가 난다 — 시운전에서 드러날 것이다. 통지 때의 경로는 기록만 한다.
             t.addOnRoutingChangedListener({ rt ->
-                val now = rt.routedDevice?.id
-                if (measuring.get() && now != outRouteId) {
+                if (measuringOnRoute) {
                     routeEvents.incrementAndGet()
-                    say("!! 출력 경로 통지 — $outRouteId→$now")
+                    say("!! 출력 경로 통지(처리 시점 경로 ${rt.routedDevice?.id}, 기준 $outRouteId)")
                 }
-            }, null)
+            }, routeHandler)
             r.addOnRoutingChangedListener({ rt ->
-                val now = rt.routedDevice?.id
-                if (measuring.get() && now != inRouteId) {
+                if (measuringOnRoute) {
                     routeEvents.incrementAndGet()
-                    say("!! 입력 경로 통지 — $inRouteId→$now")
+                    say("!! 입력 경로 통지(처리 시점 경로 ${rt.routedDevice?.id}, 기준 $inRouteId)")
                 }
-            }, null)
+            }, routeHandler)
 
             // 무음을 계속 써 넣는다. **내용이 0 이라 아무 소리도 안 난다.**
             val silence = FloatArray(1024 * outChannels)
@@ -289,7 +302,8 @@ class ClockDriftMeasurementTest {
             // **여기서부터가 측정이다.** 준비 중의 언더런은 세지 않고, 이 시점의 수를
             // 기준으로 끝에서 늘어난 만큼만 센다(15회차 R15-03).
             underrunStart = t.underrunCount
-            measuring.set(true)
+            // 시작 장벽 — 그 전에 쌓인 준비 중 통지가 다 처리된 뒤에 감시를 켠다.
+            onRouteThread { measuringOnRoute = true }
             tracker.offer(outStamp(), inStamp())
 
             val stepMs = 10_000L
@@ -327,14 +341,16 @@ class ClockDriftMeasurementTest {
                 say("!! 끝에서 경로가 달랐다 — 출력 ${t.routedDevice?.id} 입력 ${r.routedDevice?.id}")
             }
             underrunEnd = t.underrunCount
-            measuring.set(false)
+            // 끝 장벽 — 그 전에 쌓인 통지는 측정 중의 것으로 센 뒤에 감시를 끈다.
+            // **한계**: 이 순간 안드로이드 쪽에서 아직 이 큐로 넘어오지 않은 통지는 못 본다.
+            onRouteThread { measuringOnRoute = false }
         } finally {
-            measuring.set(false)
             running.set(false)
             writer?.join(2_000)
             reader?.join(2_000)
             record?.let { runCatching { it.stop() }; it.release() }
             track?.let { runCatching { it.stop() }; it.release() }
+            routeThread.quitSafely()
         }
 
         // ---- 판정: 잰 값이 아니라 「쟀는가」 ----
