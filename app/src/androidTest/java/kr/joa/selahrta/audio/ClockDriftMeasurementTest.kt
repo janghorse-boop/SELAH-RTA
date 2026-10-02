@@ -187,6 +187,12 @@ class ClockDriftMeasurementTest {
         val ioErrors = AtomicInteger(0)
         val tracker = ClockDriftTracker()
         var routeChanges = 0
+        // 경로 통지로 센 변경(조회 사이의 왕복까지) — 리스너 스레드가 늘린다.
+        val routeEvents = AtomicInteger(0)
+        // 측정 구간 동안만 센다. 준비·정리 중의 통지와 언더런은 넣지 않는다.
+        val measuring = AtomicBoolean(false)
+        var underrunStart = 0
+        var underrunEnd = 0
         val totalMs = (minutes() * 60_000).toLong()
 
         var track: AudioTrack? = null
@@ -224,6 +230,26 @@ class ClockDriftMeasurementTest {
             val outRouteId = outRoute.id
             val inRouteId = inRoute.id
 
+            // **경로 통지를 듣는다**(15회차 R15-03). 10초마다 id 만 견주면 그 사이에
+            // 다른 기기로 갔다 돌아온 것을 놓친다. 통지가 올 때 실제 경로가 기준과
+            // **다를 때만** 센다 — 같은 기기로 다시 알리는 통지로 거짓 실패하지 않게.
+            // [measuring] 이 켜진 동안만 센다 — 정리 중의 통지로 지난 자료를 무효로
+            // 만들지 않는다(10회차 R10-03 의 교훈).
+            t.addOnRoutingChangedListener({ rt ->
+                val now = rt.routedDevice?.id
+                if (measuring.get() && now != outRouteId) {
+                    routeEvents.incrementAndGet()
+                    say("!! 출력 경로 통지 — $outRouteId→$now")
+                }
+            }, null)
+            r.addOnRoutingChangedListener({ rt ->
+                val now = rt.routedDevice?.id
+                if (measuring.get() && now != inRouteId) {
+                    routeEvents.incrementAndGet()
+                    say("!! 입력 경로 통지 — $inRouteId→$now")
+                }
+            }, null)
+
             // 무음을 계속 써 넣는다. **내용이 0 이라 아무 소리도 안 난다.**
             val silence = FloatArray(1024 * outChannels)
             writer = thread(name = "drift-out") {
@@ -260,6 +286,10 @@ class ClockDriftMeasurementTest {
             // **자리를 잡을 때까지 기다린다.** 시작 직후의 타임스탬프는 아직
             // 자리를 안 잡아 값이 튄다(안드로이드 문서 권고).
             Thread.sleep(3_000)
+            // **여기서부터가 측정이다.** 준비 중의 언더런은 세지 않고, 이 시점의 수를
+            // 기준으로 끝에서 늘어난 만큼만 센다(15회차 R15-03).
+            underrunStart = t.underrunCount
+            measuring.set(true)
             tracker.offer(outStamp(), inStamp())
 
             val stepMs = 10_000L
@@ -285,10 +315,21 @@ class ClockDriftMeasurementTest {
                 say(
                     "[${elapsed / 1000}초] 드리프트=$drift · 입력장=$blocks 무음장=${silentBlocks.get()}(%.2f%%)".format(silentPct) +
                         " · 쌍 ${now.validPairs}/${now.asked} (출력 놓침 ${now.outMissed} · 입력 놓침 ${now.inMissed})" +
-                        " · 경로변경 $routeChanges · 입출력오류 ${ioErrors.get()}",
+                        " · 경로변경 $routeChanges · 경로통지 ${routeEvents.get()} · 입출력오류 ${ioErrors.get()}" +
+                        " · 언더런 ${t.underrunCount - underrunStart}",
                 )
             }
+            // **정리하기 전에 끝을 확정한다**(15회차 R15-03 · 10회차 R10-03). 마지막
+            // 경로를 한 번 더 보고, 언더런을 읽고, 감시를 닫는다 — 그 뒤의 통지는
+            // 정리 때문에 오는 것이라 세지 않는다.
+            if (t.routedDevice?.id != outRouteId || r.routedDevice?.id != inRouteId) {
+                routeChanges++
+                say("!! 끝에서 경로가 달랐다 — 출력 ${t.routedDevice?.id} 입력 ${r.routedDevice?.id}")
+            }
+            underrunEnd = t.underrunCount
+            measuring.set(false)
         } finally {
+            measuring.set(false)
             running.set(false)
             writer?.join(2_000)
             reader?.join(2_000)
@@ -301,14 +342,24 @@ class ClockDriftMeasurementTest {
         say("=== 끝 ===")
         say("타임스탬프 쌍 ${final.validPairs}/${final.asked} · 출력 놓침 ${final.outMissed} · 입력 놓침 ${final.inMissed}")
         say("입력 장 ${totalBlocks.get()} · 무음 장 ${silentBlocks.get()} · 받은 프레임 ${readFrames.get()}")
-        say("경로 변경 $routeChanges 회 · 입출력 오류 ${ioErrors.get()} 회")
+        val underruns = underrunEnd - underrunStart
+        say("경로 변경(조회) $routeChanges 회 · 경로 통지 ${routeEvents.get()} 회 · 입출력 오류 ${ioErrors.get()} 회 · 측정 중 언더런 $underruns 회")
+        say("채택 쌍 ${final.acceptedPairs}/${final.validPairs} · 역행 ${final.regressions} · 마지막 물음 진행=${final.lastAdvanced}")
         when (val res = final.result) {
-            is DriftResult.Ppm -> say("드리프트 = %.3f ppm (분석 구간 %.0f초)".format(res.value, final.spanSeconds))
+            is DriftResult.Ppm -> say(
+                "드리프트 = %.3f ppm — 요청 %.0f초 중 분석 %.0f초".format(res.value, totalMs / 1000.0, final.spanSeconds),
+            )
             DriftResult.Unavailable -> say("드리프트 = **못 쟀다**(UNAVAILABLE) — 0 ppm 이 아니다")
         }
         // **이 시험은 재는 것이 목적이다.** 드리프트 값 자체로 통과·실패를 가르지
         // 않는다 — 문턱을 정할 근거가 없다. 다만 **못 쟀으면** 실패다.
-        val why = clockDriftVerdict(final, requestedSeconds = totalMs / 1000.0, ioErrors = ioErrors.get(), routeChanges = routeChanges)
+        val why = clockDriftVerdict(
+            final,
+            requestedSeconds = totalMs / 1000.0,
+            ioErrors = ioErrors.get(),
+            routeChanges = routeChanges + routeEvents.get(),
+            underruns = underruns,
+        )
         say(if (why == null) "RESULT PASS" else "RESULT FAIL — $why")
         assertTrue(why ?: "", why == null)
     }
