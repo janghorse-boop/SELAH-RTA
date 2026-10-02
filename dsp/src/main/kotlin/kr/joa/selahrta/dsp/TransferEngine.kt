@@ -7,13 +7,39 @@ package kr.joa.selahrta.dsp
  *   개수). 장시간 기록은 이 번호로 「언제의 지연인가」를 적는다.
  * @param epoch [TransferEngine.reset] 마다 바뀐다. **epoch 가 다른 값끼리는
  *   표본 번호가 이어지지 않는다** — 한 직선으로 맞추면 안 된다.
+ * @param timebase 이 측정의 **시간축이 검증됐는가**(6회차 R6-02). 엔진은 그것을
+ *   스스로 알 수 없으므로 기본이 [TimebaseStatus.Unverified] 다. **소비자는
+ *   [TimebaseStatus.Verified] 가 아니면 [transfer] 를 정상 측정 곡선으로 게시하지
+ *   않는다** — 합성 ±20/−50 ppm 에서 지연은 찾았는데 고역이 −1.8/−12 dB 로 무너졌다.
  */
 data class TransferMeasurement(
     val delay: DelayResult,
     val transfer: TransferResult?,
     val windowEnd: Long,
     val epoch: Long,
+    val timebase: TimebaseStatus,
 )
+
+/**
+ * 기준과 측정의 **시간축이 검증됐는가**(6회차 R6-02).
+ *
+ * 두 스트림의 시계가 다르면 평균 창 안에서 지연이 밀려 Coherence 와 고역이
+ * 무너지는데, 지연은 여전히 「찾았다」로 나온다. 엔진은 그것을 가리지 못한다.
+ * 그래서 **모름을 모름으로 싣는다.** 검증·보정 방법은 아직 정하지 않았다 —
+ * 이 타입은 그 결과를 실을 자리일 뿐이다.
+ */
+sealed interface TimebaseStatus {
+    /** 기본. 검증되지 않았다 — 「드리프트 없음」이 아니다. */
+    data object Unverified : TimebaseStatus
+
+    /**
+     * 부르는 쪽이 **근거를 적어** 검증됐다고 건 상태. 엔진이 확인한 것이 아니다.
+     * @param evidence 무엇으로 확인했는가(기록 문서·측정 세션 등). 비울 수 없다.
+     */
+    data class Verified(val evidence: String) : TimebaseStatus {
+        init { require(evidence.isNotBlank()) { "검증의 근거를 적어야 한다" } }
+    }
+}
 
 /**
  * [TransferEngine.measureOutcome] 의 결과 — **안 나왔으면 왜 안 나왔는지**까지.
@@ -159,6 +185,9 @@ class TransferEngine(
     /** [reset] 마다 하나씩 는다. [lock] 안에서만 읽고 쓴다. */
     private var epoch = 0L
 
+    /** 지금 epoch 의 시간축 상태. [lock] 안에서만. [reset] 하면 [TimebaseStatus.Unverified]. */
+    private var timebase: TimebaseStatus = TimebaseStatus.Unverified
+
     private val estimator = DelayEstimator(
         analysisSize = minOf(span, 32_768),
         maxLagSamples = maxLagSamples,
@@ -222,6 +251,7 @@ class TransferEngine(
         try {
             val end: Long
             val epochAt: Long
+            val timebaseAt: TimebaseStatus
             synchronized(lock) {
                 val refCount = refRing.written
                 val measCount = measRing.written
@@ -241,6 +271,7 @@ class TransferEngine(
                 refRing.snapshot(refLong, refBack.toInt())
                 measRing.snapshot(measWindow, measBack.toInt())
                 epochAt = epoch
+                timebaseAt = timebase
             }
             // 여기부터는 고리를 다시 읽지 않는다 — 이미 떠 놓은 배열 안에서만 자른다.
 
@@ -248,21 +279,21 @@ class TransferEngine(
             System.arraycopy(refLong, refLong.size - span, refWindow, 0, span)
 
             val delay = estimator.estimate(refWindow, measWindow)
-            if (!delay.found) return MeasureOutcome.Measured(TransferMeasurement(delay, null, end, epochAt))
+            if (!delay.found) return MeasureOutcome.Measured(TransferMeasurement(delay, null, end, epochAt, timebaseAt))
 
             // **기준을 지연만큼 거슬러 뜬다** — 측정은 그만큼 늦게 들어왔다.
             val start = refLong.size - span - delay.samples
             // 지금은 도달하지 않는다 — estimator.estimate() 는 늘 0..maxLagSamples
             // 범위 안의 값만 내놓으므로(그 밖은 찾지 않는다), start 는 항상
             // 0 이상이다. refLong 을 그만큼 길게 뜬 것이 이 보장의 근거다.
-            if (start < 0) return MeasureOutcome.Measured(TransferMeasurement(delay, null, end, epochAt))
+            if (start < 0) return MeasureOutcome.Measured(TransferMeasurement(delay, null, end, epochAt, timebaseAt))
 
             averager.reset()
             for (k in 0 until averages) {
                 val at = k * hop
                 averager.addBlock(refLong, start + at, measWindow, at)
             }
-            return MeasureOutcome.Measured(TransferMeasurement(delay, transferFunction(averager), end, epochAt))
+            return MeasureOutcome.Measured(TransferMeasurement(delay, transferFunction(averager), end, epochAt, timebaseAt))
         } finally {
             measuring.set(false)
         }
@@ -270,5 +301,14 @@ class TransferEngine(
 
     fun delayMs(samples: Int): Double = samples * 1000.0 / sampleRate
 
-    fun reset() = synchronized(lock) { refRing.clear(); measRing.clear(); epoch++ }
+    /**
+     * 지금 epoch 의 시간축 상태를 건다. **그 epoch 에만** 걸린다 — [reset] 하면 다시
+     * [TimebaseStatus.Unverified] 다. 이 상태는 고리를 뜰 때 함께 떠서 결과에 실린다.
+     */
+    fun setTimebase(status: TimebaseStatus) = synchronized(lock) { timebase = status }
+
+    fun reset() = synchronized(lock) {
+        refRing.clear(); measRing.clear(); epoch++
+        timebase = TimebaseStatus.Unverified
+    }
 }

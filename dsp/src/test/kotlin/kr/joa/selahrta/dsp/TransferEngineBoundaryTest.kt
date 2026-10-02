@@ -185,6 +185,46 @@ class TransferEngineBoundaryTest {
         assertEquals(1L, fresh.epoch)
     }
 
+    // ── 시간축이 검증됐는가 (6회차 R6-02) ─────────────────────────────────
+
+    /**
+     * 드리프트를 모르는 채로 정상 모양의 TF 를 내던 것(R6-02). 엔진은 시간축을
+     * 스스로 검증하지 못하므로 **기본이 「검증 안 됨」**이고, 결과에 그 상태를 싣는다.
+     */
+    @Test
+    fun `시간축은 기본이 검증 안 됨이다`() {
+        val e = engine()
+        val x = noise(20_000)
+        e.offerReference(x, 0, x.size); e.offerMeasurement(delayed(x, 300), 0, x.size)
+        assertEquals(TimebaseStatus.Unverified, e.measure()!!.timebase)
+    }
+
+    @Test
+    fun `근거를 적어 검증됐다고 걸면 결과에 실린다`() {
+        val e = engine()
+        e.setTimebase(TimebaseStatus.Verified("시험 — 같은 시계"))
+        val x = noise(20_000)
+        e.offerReference(x, 0, x.size); e.offerMeasurement(delayed(x, 300), 0, x.size)
+        assertEquals(TimebaseStatus.Verified("시험 — 같은 시계"), e.measure()!!.timebase)
+    }
+
+    /** 검증은 **그 epoch** 에 대한 것이다 — reset 하면 다시 검증 안 됨. */
+    @Test
+    fun `reset 하면 시간축은 다시 검증 안 됨이다`() {
+        val e = engine()
+        e.setTimebase(TimebaseStatus.Verified("앞 세션"))
+        e.reset()
+        val x = noise(20_000)
+        e.offerReference(x, 0, x.size); e.offerMeasurement(delayed(x, 300), 0, x.size)
+        assertEquals(TimebaseStatus.Unverified, e.measure()!!.timebase)
+    }
+
+    @Test
+    fun `근거 없는 검증은 받지 않는다`() {
+        val failed = runCatching { TimebaseStatus.Verified("  ") }
+        assertTrue("빈 근거를 받아 줬다", failed.isFailure)
+    }
+
     // ── 안 나온 까닭을 가른다 (7회차 §11 (c)) ─────────────────────────────
 
     @Test

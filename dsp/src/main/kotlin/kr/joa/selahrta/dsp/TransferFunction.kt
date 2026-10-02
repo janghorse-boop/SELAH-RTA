@@ -92,6 +92,11 @@ fun transferFunction(avg: SpectralAverager, refFloorDb: Double = -40.0): Transfe
     var peak = 0.0
     for (i in 1 until bins) if (avg.sxx[i] > peak) peak = avg.sxx[i]
     if (peak <= 0.0) return TransferResult(mag, coh, valid, avg.count)
+    // *(한때 여기에 절대 바닥 — 「표본당 전력 1e-20 아래는 수치상 0」— 을 두었다.
+    // 그것이 공통 배율만 다른 실제 신호를 통째로 지웠고(1e-11 배에서 유효 칸 4,049 → 0),
+    // 비교한 `peak/(count·N)` 은 표본당 전력도 아니어서 같은 순음이 FFT 크기에 따라
+    // 유효·무효가 갈렸다. 15회차 R15-01 로 거뒀다. DC 뿐인 기준의 찌꺼기는
+    // SpectralAverager 의 평균 계산에서 없앤다.)*
 
     val floor = peak * Math.pow(10.0, refFloorDb / 10.0)
 

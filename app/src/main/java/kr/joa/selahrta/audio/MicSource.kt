@@ -68,6 +68,17 @@ class MicSource(
     private val onRouteConfirmed: ((OpenedFormat) -> Unit)? = null,
     /** 캡처가 스스로 끝났을 때 알린다. 읽기 오류로 죽는 경우다. */
     private val onCaptureEnded: ((CaptureEnd) -> Unit)? = null,
+    /**
+     * **거르기 전의** 라우팅 통지가 왔다는 사실만 알린다(17회차 R17-01). 계측용이다.
+     *
+     * 아래 리스너는 통지를 **처리하는 순간**의 기기·주소·조합을 앞의 값과 견줘, 달라졌을
+     * 때만 [onRoutingChanged]·[onRouteConfirmed] 를 부른다. 통지가 늦게 처리되면(A→B→A
+     * 뒤) 지금 값이 원래와 같아 아무것도 알리지 않는다 — 화면에는 그게 맞지만, 측정의
+     * 연속성을 보이려는 계측은 그 사이에 통지가 있었다는 것 자체를 알아야 한다.
+     *
+     * 기본값 null — 화면 경로는 이것을 쓰지 않으므로 동작이 바뀌지 않는다.
+     */
+    private val onRawRoutingNotice: (() -> Unit)? = null,
 ) : AudioSource {
 
     override val labelKo: String = target?.productName ?: "내장 마이크"
@@ -374,6 +385,8 @@ class MicSource(
         // 알아채지 못하면 **다른 마이크의 소리에 옛 보정값을 그대로 적용**하게
         // 된다 — 화면의 숫자는 멀쩡해 보이는데 전혀 다른 값이다.
         routingListener = AudioRouting.OnRoutingChangedListener { routing ->
+            // **값을 견주기 전에** 알린다 — 아래 필터가 걸러도 통지가 있었다는 사실은 남는다.
+            onRawRoutingNotice?.invoke()
             val known = opened
             val now = routing.routedDevice?.let { scanner.infoOf(it) }
             if (now == null) {

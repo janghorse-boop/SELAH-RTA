@@ -54,6 +54,113 @@ fun estimateDrift(
     return DriftResult.Ppm((outRate / inRate - 1.0) * 1_000_000.0)
 }
 
+/**
+ * [ClockDriftTracker] 의 결과.
+ *
+ * @param validPairs 양쪽 타임스탬프가 **같은 물음에서** 함께 나온 쌍의 수.
+ * @param acceptedPairs 그 가운데 **기준이 되었거나 직전 채택 쌍보다 나아가** 채택된 수.
+ *   `validPairs` 와 다르다 — 멈춘 스트림도 타임스탬프는 준다(15회차 R15-02).
+ * @param regressions 직전 채택 쌍보다 프레임이나 시각이 **뒤로 간** 쌍의 수.
+ *   카운터 재시작·되감김이다. 하나라도 있으면 하나의 시계로 잇지 않는다.
+ * @param lastAdvanced **마지막 물음**이 나아가 채택됐는가. 아니면 끝에서 멈춘 기록이다.
+ * @param spanSeconds 기준 쌍에서 끝 쌍까지의 시간(출력 쪽 시각). 못 쟀으면 0.
+ */
+data class ClockDriftTrack(
+    val result: DriftResult,
+    val asked: Int,
+    val validPairs: Int,
+    val outMissed: Int,
+    val inMissed: Int,
+    val spanSeconds: Double,
+    val acceptedPairs: Int = 0,
+    val regressions: Int = 0,
+    val lastAdvanced: Boolean = false,
+)
+
+/**
+ * 타임스탬프를 여러 번 물어 **기준 쌍과 끝 쌍**을 고른다(6회차 R6-05).
+ *
+ * 예전 계측은 첫 물음을 기준으로 박아, 그때 한쪽이라도 못 받으면 뒤에 잘 받아도
+ * 끝까지 `Unavailable` 이었다. 그리고 판정은 결과를 보지 않고 「한 번이라도
+ * 받았나」만 물어, 못 쟀는데 통과할 수 있었다.
+ *
+ * - **기준**: 양쪽이 **같은 물음에서** 다 나온 첫 쌍. 다른 물음의 출력과 입력을
+ *   섞지 않는다 — 시점이 달라진다.
+ * - **끝**: 양쪽이 다 나오고 기준보다 **프레임과 시간이 둘 다 늘어난** 마지막 쌍.
+ *   멈춘 스트림의 쌍은 끝이 될 수 없다.
+ */
+class ClockDriftTracker {
+    private var first: Pair<ClockSample, ClockSample>? = null
+    private var last: Pair<ClockSample, ClockSample>? = null
+    private var asked = 0
+    private var pairs = 0
+    private var outMissed = 0
+    private var inMissed = 0
+    private var accepted = 0
+    private var regressions = 0
+    private var lastAdvanced = false
+
+    fun offer(out: ClockSample?, input: ClockSample?) {
+        asked++
+        lastAdvanced = false
+        if (out == null) outMissed++
+        if (input == null) inMissed++
+        if (out == null || input == null) return
+        pairs++
+        val f = first
+        if (f == null) { first = out to input; accepted++; lastAdvanced = true; return }
+        // **직전에 받아들인 쌍**보다 나아갔어야 한다 — 기준과만 견주면, 한 번 나아간
+        // 뒤 멈춘 스트림의 쌍(프레임은 그대로인데 시간만 흐른)을 끝으로 삼는다.
+        val p = last ?: f
+        val advanced = out.frames > p.first.frames && out.nanos > p.first.nanos &&
+            input.frames > p.second.frames && input.nanos > p.second.nanos
+        // **뒤로 간 것은 따로 센다**(15회차 R15-02). 예전에는 끝으로 안 삼았을 뿐
+        // 기억하지 않아, 재시작한 카운터가 다시 오르면 재시작 전의 기준과 이었다
+        // (출력이 20초에 0 으로 돌아갔는데 −500,000 ppm · 40초 · PASS).
+        val regressed = out.frames < p.first.frames || out.nanos < p.first.nanos ||
+            input.frames < p.second.frames || input.nanos < p.second.nanos
+        if (regressed) regressions++
+        if (advanced) { last = out to input; accepted++; lastAdvanced = true }
+    }
+
+    fun track(): ClockDriftTrack {
+        val f = first
+        val l = last
+        val result = if (f != null && l != null) estimateDrift(f.first, l.first, f.second, l.second) else DriftResult.Unavailable
+        val span = if (f != null && l != null && result is DriftResult.Ppm) (l.first.nanos - f.first.nanos) / 1e9 else 0.0
+        return ClockDriftTrack(result, asked, pairs, outMissed, inMissed, span, accepted, regressions, lastAdvanced)
+    }
+}
+
+/**
+ * 계측이 **쟀는가**. 잰 값으로 가르지 않는다 — 문턱을 정할 근거가 없다. 대신 못 쟀으면
+ * 그 까닭을 돌려준다. 통과면 null.
+ *
+ * - 결과가 `Ppm` 이 아니면 실패.
+ * - 분석 구간이 요청 시간의 **절반**에 못 미치면 실패 — 1분짜리 값을 「30분 측정」으로
+ *   적지 않는다. 절반은 실측으로 정한 값이 아니다.
+ * - 입출력 오류나 경로 변경, 출력 언더런이 한 번이라도 있었으면 실패.
+ * - 카운터가 되돌아갔으면 실패 — 구간을 나누는 대신 무효로 둔다(15회차 R15-02).
+ * - 마지막 물음이 나아가지 않았으면 실패 — 끝에서 멈춘 기록이다.
+ *
+ * **PASS 는 「요청 전체를 정상 측정했다」가 아니다.** 분석 구간이 요청의 절반만
+ * 되어도 통과하므로, 부르는 쪽은 「요청 X초 중 분석 Y초」를 함께 적는다.
+ */
+fun clockDriftVerdict(track: ClockDriftTrack, requestedSeconds: Double, ioErrors: Int, routeChanges: Int, underruns: Int = 0): String? = when {
+    ioErrors > 0 -> "도는 동안 입출력 오류가 $ioErrors 번 났다 — 이 측정은 못 쓴다"
+    routeChanges > 0 -> "도는 동안 경로가 $routeChanges 회 바뀌었다 — 이 측정은 못 쓴다"
+    underruns > 0 -> "도는 동안 출력 언더런이 $underruns 번 났다 — 이 측정은 못 쓴다"
+    track.regressions > 0 ->
+        "타임스탬프 카운터가 ${track.regressions} 번 되돌아갔다 — 하나의 시계로 잇지 않는다"
+    track.result !is DriftResult.Ppm ->
+        "드리프트를 못 쟀다 — 양쪽이 함께 나온 쌍 ${track.validPairs}/${track.asked}"
+    track.spanSeconds < requestedSeconds / 2 ->
+        "분석 구간이 %.0f초 — 요청 %.0f초의 절반에 못 미친다".format(track.spanSeconds, requestedSeconds)
+    !track.lastAdvanced ->
+        "마지막 물음에서 타임스탬프가 나아가지 않았다 — 끝에서 멈춘 기록이다(채택 ${track.acceptedPairs}/${track.validPairs})"
+    else -> null
+}
+
 private fun rateOrNull(first: ClockSample, last: ClockSample): Double? {
     val dFrames = last.frames - first.frames
     val dNanos = last.nanos - first.nanos
