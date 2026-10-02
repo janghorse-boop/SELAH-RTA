@@ -173,7 +173,35 @@ class ClockDriftMeasurementTest {
 
         track.play()
         record.startRecording()
-        say("출력 route=${track.routedDevice?.productName} 입력 route=${record.routedDevice?.productName}")
+
+        // **「고른 곳」이 아니라 「실제로 간 곳」을 본다.**
+        //
+        // `preferredDevice` 는 말 그대로 **선호**다. 안드로이드가 다른 길로
+        // 보낼 수 있고, 그러면 **엉뚱한 경로를 재고도 통과**한다. 다른
+        // 폰·다른 인터페이스에서 돌릴 때 그 함정에 빠지지 않도록 단언한다.
+        //
+        // route 는 열린 직후에 바로 안 잡힐 수 있어 잠깐 기다린다.
+        Thread.sleep(500)
+        val outRoute = track.routedDevice
+        val inRoute = record.routedDevice
+        say("실제 출력 route=${outRoute?.productName}(${outRoute?.let { kindOf(it.type) }}) id=${outRoute?.id}")
+        say("실제 입력 route=${inRoute?.productName}(${inRoute?.let { kindOf(it.type) }}) id=${inRoute?.id} 주소'${inRoute?.address}'")
+
+        assertTrue("출력 route 를 알 수 없다", outRoute != null)
+        assertTrue(
+            "출력이 USB 로 안 갔다 — 실제로는 ${outRoute!!.productName}(${kindOf(outRoute.type)})",
+            isUsb(outRoute),
+        )
+        assertTrue("입력 route 를 알 수 없다", inRoute != null)
+        assertTrue(
+            "입력이 내장 마이크가 아니다 — 실제로는 ${inRoute!!.productName}(${kindOf(inRoute.type)})",
+            inRoute.type == AudioDeviceInfo.TYPE_BUILTIN_MIC,
+        )
+
+        // 도는 동안 경로가 바뀌면 그 뒤 값은 다른 길의 값이다. 세어 둔다.
+        val outRouteId = outRoute.id
+        val inRouteId = inRoute.id
+        var routeChanges = 0
 
         // 무음을 계속 써 넣는다. **내용이 0 이라 아무 소리도 안 난다.**
         val silence = FloatArray(1024 * outChannels)
@@ -246,11 +274,20 @@ class ClockDriftMeasurementTest {
                 is DriftResult.Ppm -> "%.2f ppm".format(now.value)
                 DriftResult.Unavailable -> "**못 쟀다**"
             }
+            // **경로가 그대로인가.** 도중에 바뀌면 그 뒤 값은 다른 길의
+            // 값이라, 모르고 지나가면 엉뚱한 측정을 그대로 적게 된다.
+            val nowOut = track.routedDevice?.id
+            val nowIn = record.routedDevice?.id
+            if (nowOut != outRouteId || nowIn != inRouteId) {
+                routeChanges++
+                say("!! 경로가 바뀌었다 — 출력 $outRouteId→$nowOut 입력 $inRouteId→$nowIn")
+            }
+
             val blocks = totalBlocks.get()
             val silentPct = if (blocks > 0) silentBlocks.get() * 100.0 / blocks else 0.0
             say(
                 "[${elapsed / 1000}초] 드리프트=$drift · 입력장=${blocks} 무음장=${silentBlocks.get()}(%.2f%%)".format(silentPct) +
-                    " · 타임스탬프 출력 $outGot/$outAsk · 입력 $inGot/$inAsk",
+                    " · 타임스탬프 출력 $outGot/$outAsk · 입력 $inGot/$inAsk · 경로변경 $routeChanges",
             )
         }
 
@@ -268,6 +305,7 @@ class ClockDriftMeasurementTest {
         say("=== 끝 ===")
         say("출력 타임스탬프 $outGot/$outAsk · 입력 타임스탬프 $inGot/$inAsk")
         say("입력 장 ${totalBlocks.get()} · 무음 장 ${silentBlocks.get()} · 받은 프레임 ${readFrames.get()}")
+        say("경로 변경 $routeChanges 회")
         when (final) {
             is DriftResult.Ppm -> say("드리프트 = %.3f ppm".format(final.value))
             DriftResult.Unavailable -> say("드리프트 = **못 쟀다**(UNAVAILABLE) — 0 ppm 이 아니다")
@@ -281,5 +319,8 @@ class ClockDriftMeasurementTest {
             "타임스탬프를 한 번도 못 받았다 — 출력 $outGot/$outAsk, 입력 $inGot/$inAsk",
             outGot > 0 && inGot > 0,
         )
+        // **도중에 길이 바뀌었으면 그 측정은 못 쓴다.** 앞뒤가 다른 길의
+        // 값이라 드리프트가 아니라 길이 바뀐 것을 재게 된다.
+        assertTrue("도는 동안 경로가 $routeChanges 회 바뀌었다 — 이 측정은 못 쓴다", routeChanges == 0)
     }
 }
