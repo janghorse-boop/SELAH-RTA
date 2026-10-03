@@ -113,14 +113,14 @@ class AudioTrackSink(
      * — **값이 같아도** 사건은 사건으로 낸다(늦게 처리된 A→B→A 를 버리지 않으려는 것).
      */
     private val onRouteState: ((OutputRouteState) -> Unit)? = null,
-) : SignalSink {
+) : SignalSink, UnderrunReporting {
 
     private var track: AudioTrack? = null
 
     /**
      * 출력 언더런 누계. 트랙이 없거나 물어볼 수 없으면 **null(모름)** — 0 은 정상 카운터다(TF 설계 15장).
      */
-    fun underrunCount(): Int? = track?.let { t -> runCatching { t.underrunCount }.getOrNull() }
+    override fun underrunCount(): Int? = track?.let { t -> runCatching { t.underrunCount }.getOrNull() }
 
     override fun open(sampleRate: Int, frames: Int, channels: Int): Boolean {
         require(channels == 1 || channels == 2) { "채널 수는 1 또는 2 다: $channels" }

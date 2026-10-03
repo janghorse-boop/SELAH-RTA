@@ -122,6 +122,15 @@ class SignalOwnership {
      * 요청(대기 중인 TF 시작 포함)이 접수됐으면 거절한다(34회차 R34-01).
      */
     fun ownedStopAllowed(owner: SignalOwner): Boolean = latestRequestOwner == owner
+
+    /**
+     * 주인별 정지가 **대기 중이던 자기 요청만** 취소하고 다른 주인의 재생이 그대로 남았을 때, 마지막 요청의 주인을
+     * 그 재생의 주인으로 되돌린다(36회차 R36-01). 그 사이 다른 요청이 들어왔으면(마지막 주인이 [expected] 가
+     * 아니면) 그대로 둔다.
+     */
+    fun restoreLatest(expected: SignalOwner, to: SignalOwner) {
+        if (latestRequestOwner == expected) latestRequestOwner = to
+    }
 }
 
 /**

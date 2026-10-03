@@ -42,15 +42,15 @@ class PendingRmsVmTest {
         val c = field(vm, "controller") as CaptureController
         val root = File(app.cacheDir, "rms-probe-" + UUID.randomUUID())
         val store = RtaMeasurementStore(root)
-        val executor = field(field(vm, "signalCommands")!!, "executor") as ExecutorService
+        val executor = field(field(field(vm, "signals")!!, "commands")!!, "executor") as ExecutorService
         val player: SignalPlayer
         @Suppress("UNCHECKED_CAST")
         val input = field(c, "_measurement") as MutableStateFlow<MeasurementSnapshot?>
         init {
-            val old = field(vm, "player") as SignalPlayer
+            val old = field(field(vm, "signals")!!, "player") as SignalPlayer
             @Suppress("UNCHECKED_CAST") val callback = field(old, "onEnded") as (Long, String) -> Unit
             player = SignalPlayer(onEnded = callback, openSink = { Sink() }, warn = {})
-            main { setField(vm, "player", player); setField(vm, "rtaStore", store) }
+            main { setField(field(vm, "signals")!!, "player", player); setField(vm, "rtaStore", store) }
         }
         fun base() = main { c.baseState.value }
         fun play() {

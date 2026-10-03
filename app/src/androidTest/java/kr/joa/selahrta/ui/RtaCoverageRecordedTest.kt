@@ -80,14 +80,14 @@ class RtaCoverageRecordedTest {
             ]
         }
         val root = File(app.cacheDir, "cov-" + UUID.randomUUID())
-        val executor = field(field(vm, "signalCommands")!!, "executor") as ExecutorService
-        val old = field(vm, "player") as SignalPlayer
+        val executor = field(field(field(vm, "signals")!!, "commands")!!, "executor") as ExecutorService
+        val old = field(field(vm, "signals")!!, "player") as SignalPlayer
 
         @Suppress("UNCHECKED_CAST")
         val callback = field(old, "onEnded") as (Long, String) -> Unit
         val player = SignalPlayer(onEnded = callback, openSink = { Sink() }, warn = {})
         main {
-            setField(vm, "player", player)
+            setField(field(vm, "signals")!!, "player", player)
             setField(vm, "rtaStore", RtaMeasurementStore(root))
         }
 
