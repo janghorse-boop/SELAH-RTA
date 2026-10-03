@@ -1834,8 +1834,16 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             signals.askGeneration(SIGNAL_ASK_TIMEOUT_MS)
         }
 
-    /** 지금 나는 시험 신호가 **없는가** — 앞에 넣은 정지가 돈 뒤의 답. 모르면 false(교정 마법사, 41회차 R41-01). */
-    suspend fun awaitSignalQuiet(): Boolean = awaitSignalGeneration() == SignalPlayer.NONE
+    /**
+     * 시험 신호 재생 명령의 상태 — 앞에 넣은 정지가 돈 뒤의 답(교정 마법사, 41회차 R41-01). 대답이 없으면
+     * `Unknown` — 「내보내는 중」과 가른다(42회차 R42-01). 물리적인 무음 측정이 아니다.
+     */
+    suspend fun awaitSignalQuiet(): kr.joa.selahrta.calibration.SignalQuiet =
+        when (awaitSignalGeneration()) {
+            null -> kr.joa.selahrta.calibration.SignalQuiet.Unknown
+            SignalPlayer.NONE -> kr.joa.selahrta.calibration.SignalQuiet.Quiet
+            else -> kr.joa.selahrta.calibration.SignalQuiet.Playing
+        }
 
     /**
      * **한 측정 구간 내내 붙박여 있어야 하는 조건**(독립 검토 RMS-01).

@@ -81,12 +81,27 @@ interface WizardCapture {
     fun forWork(): WizardCapture = this
 
     /**
-     * 지금 나는 시험 신호가 **없는지** — 명령 줄 맨 뒤에서 물어, 앞에 넣은 정지가 실제로 돈 뒤의 답이다. 배경을
-     * 모으기 전에 부른다(41회차 R41-01: 끊긴 옛 작업의 소리가 새 작업의 배경에 섞였다). 모르면 false.
+     * 앱이 지금 시험 신호를 **내보내고 있지 않은지** — 명령 줄 맨 뒤에서 물어, 앞에 넣은 정지가 돈 뒤의 답이다. 배경을
+     * 모으기 전에 부른다(41회차 R41-01: 끊긴 옛 작업의 소리가 새 작업의 배경에 섞였다).
      *
-     * 기본은 참 — 소리를 내지 않는 가짜 캡처에는 남은 소리가 없다.
+     * 이것은 **재생 명령의 상태**다 — 방이 실제로 조용한지 잰 것이 아니다. 대답이 없으면(시간 초과·닫힘)
+     * [SignalQuiet.Unknown] — 「내보내는 중」으로 단정하지 않는다(42회차 R42-01).
+     *
+     * 기본은 [SignalQuiet.Quiet] — 소리를 내지 않는 가짜 캡처에는 남은 신호가 없다.
      */
-    suspend fun awaitSignalQuiet(): Boolean = true
+    suspend fun awaitSignalQuiet(): SignalQuiet = SignalQuiet.Quiet
+}
+
+/** 시험 신호 재생 명령의 상태. 물리적인 무음 측정이 아니다. */
+enum class SignalQuiet {
+    /** 내보내는 재생이 없다. */
+    Quiet,
+
+    /** 아직 내보내는 재생이 있다. */
+    Playing,
+
+    /** 묻지 못했다(대답 없음·닫힘). */
+    Unknown,
 }
 
 /** 한 단계를 돌린 결과. 못 한 까닭이 있으면 들고 온다. */
@@ -152,7 +167,11 @@ class WizardRunner(
         capture.stopSignal()
         // 이 작업의 정지는 **이 작업의 소리만** 끈다 — 끊긴 옛 작업의 소리가 아직 나면 배경이 그것을 잰다(41회차
         // R41-01). 남았으면 재지 않는다.
-        if (!capture.awaitSignalQuiet()) return RunOutcome.Failed(SIGNAL_STILL_PLAYING_KO)
+        when (capture.awaitSignalQuiet()) {
+            SignalQuiet.Quiet -> Unit
+            SignalQuiet.Playing -> return RunOutcome.Failed(SIGNAL_STILL_PLAYING_KO)
+            SignalQuiet.Unknown -> return RunOutcome.Failed(SIGNAL_STATE_UNKNOWN_KO)
+        }
         tap.startTarget()
         val filled = collect(tap, frames)
         tap.stop()
@@ -374,9 +393,16 @@ const val NOT_AUDIBLE_KO: String =
         "무언가 울리고 있었다면 그것도 같은 결과가 됩니다 — 조용한 상태에서 " +
         "다시 하십시오."
 
-/** 배경을 재려는데 시험 신호가 아직 난다(41회차 R41-01). 그 소리를 배경으로 재지 않는다. */
+/**
+ * 배경을 재려는데 앱이 시험 신호를 아직 내보내는 중이다(41회차 R41-01). 재생 **명령의 상태**로 아는 것이라 「내보내는
+ * 중」이라고만 적는다 — 방에서 실제로 들리는지는 재지 않았다.
+ */
 const val SIGNAL_STILL_PLAYING_KO: String =
-    "시험 신호가 아직 나고 있어 주변 소리를 재지 않았습니다. 신호를 멈춘 뒤 다시 눌러 보십시오."
+    "앱이 아직 시험 신호를 내보내는 중이라 주변 소리를 재지 않았습니다. 신호를 멈춘 뒤 다시 눌러 보십시오."
+
+/** 시험 신호가 멈췄는지 묻지 못했다(대답 없음·닫힘, 42회차 R42-01). 내보내는 중이라고 단정하지 않는다. */
+const val SIGNAL_STATE_UNKNOWN_KO: String =
+    "시험 신호가 멈췄는지 확인하지 못해 주변 소리를 재지 않았습니다. 잠시 뒤 다시 눌러 보십시오."
 
 /**
  * 교정 측정에 쓰는 신호 레벨.

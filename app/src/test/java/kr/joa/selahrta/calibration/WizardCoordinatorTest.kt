@@ -550,8 +550,12 @@ class WizardCoordinatorTest {
         override fun forWork(): WizardCapture =
             if (shareOwner) OwnedCapture(signals, now, shareOwner, owner, shared)
             else OwnedCapture(signals, now, shared = shared)
-        override suspend fun awaitSignalQuiet(): Boolean =
-            signals.askGeneration(1_000) == kr.joa.selahrta.audio.SignalPlayer.NONE
+        // VM 의 awaitSignalQuiet 와 같은 셈(그쪽은 CaptureViewModel 이 있어야 해 여기서 못 만든다).
+        override suspend fun awaitSignalQuiet(): SignalQuiet = when (signals.askGeneration(1_000)) {
+            null -> SignalQuiet.Unknown
+            kr.joa.selahrta.audio.SignalPlayer.NONE -> SignalQuiet.Quiet
+            else -> SignalQuiet.Playing
+        }
     }
 
     /**
@@ -754,6 +758,33 @@ class WizardCoordinatorTest {
             }
         } finally {
             signals.close()
+        }
+        assertEquals("배경을 한 장도 모으지 않았다", 0, ticks)
+    }
+
+    /**
+     * 신호 상태를 **묻지 못하면**(대답 없음·닫힘) 배경을 재지 않되, 「내보내는 중」이라고 단정하지 않는다(42회차
+     * R42-01). 예전에는 모름도 false 였고 문구는 「시험 신호가 아직 나고 있어」였다.
+     */
+    @Test
+    fun `신호 상태를 묻지 못하면 내보내는 중이라 단정하지 않고 배경을 재지 않는다`() {
+        val signals = kr.joa.selahrta.audio.SignalController(
+            host = InlineHost(),
+            commands = kr.joa.selahrta.audio.SerialCommands("wizard-probe") { it.run() },
+        )
+        signals.close() // 이제 묻는 말에 대답이 없다 — 재생은 한 번도 없었다
+        var ticks = 0
+        runTest {
+            val scope = TestScope(UnconfinedTestDispatcher(testScheduler))
+            val core = coordinator(scope)
+            val cap = OwnedCapture(signals, identity(0, "card=1;device=0"))
+            core.runInputCheck(cap, fft, rate) {
+                ticks++
+                cap.shared.tap?.onSpectrum(DoubleArray(bins) { 1e-9 })
+            }
+            testScheduler.advanceUntilIdle()
+            assertEquals(SIGNAL_STATE_UNKNOWN_KO, core.noticeKo.value)
+            assertNull(core.state.value.noiseFloorDb)
         }
         assertEquals("배경을 한 장도 모으지 않았다", 0, ticks)
     }
