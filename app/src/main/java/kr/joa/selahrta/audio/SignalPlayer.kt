@@ -172,9 +172,11 @@ class SignalPlayer(
         /**
          * 두 번 놓지 않는다. 실제로 놓은 쪽만 true 를 받는다.
          *
-         * **놓다가 터져도 「끝난 것」으로 둔다.** 다시 부를 수 없는데
-         * 끝나지 않은 것으로 남기면 상한이 영영 막혀, 그 뒤로 소리를
-         * 아예 낼 수 없게 된다.
+         * **놓다가 터져도 「시도는 끝난 것」으로 적는다**(`releaseAttempted`) — 다시
+         * 부르지 않는다. 그러나 **성공은 아니다**(`releaseOk = false`): 자리를
+         * 비켜 주지 않고 [releaseFailed] 로 세어져 상한에 남는다. 상한에 닿으면
+         * 새 재생을 열지 않는다 — 놓지 못한 자원 위에 더 쌓지 않는 쪽을 골랐다
+         * (독립 검증 RC02). 열기에 실패한 출력도 같은 길을 탄다(32회차 R32-02).
          */
         fun releaseOnce(): Boolean {
             if (!releaseStarted.compareAndSet(false, true)) return false
@@ -275,8 +277,15 @@ class SignalPlayer(
         // **늘 두 채널로 연다.** 「양쪽」일 때도 그렇다 — 채널 수에 따라
         // 버퍼 모양과 위상 셈이 갈라지면, 좌우 시험에서만 나는 버그가
         // 생긴다. 양쪽이면 같은 값을 두 칸에 넣는다.
-        if (!s.open(SAMPLE_RATE, FLOATS, CHANNELS)) {
-            s.release()
+        val opened = try {
+            s.open(SAMPLE_RATE, FLOATS, CHANNELS)
+        } catch (t: Throwable) {
+            // 열다가 터져도 **놓는다** — 예외는 그대로 올린다(부르는 쪽의 계약).
+            abandonFailedOpen(s)
+            throw t
+        }
+        if (!opened) {
+            abandonFailedOpen(s)
             return NONE
         }
 
@@ -293,6 +302,26 @@ class SignalPlayer(
         }
         thread?.start()
         return pb.id
+    }
+
+    /**
+     * 열기에 실패한 출력을 **정리 장부에 올려** 놓는다(32회차 R32-02).
+     *
+     * 예전에는 열기가 `false` 면 `release()` 의 결과를 버렸고, 열다가 예외가 나면 놓지도 않았다. 그래서 자원이
+     * 남아도 [pendingCount]·[failedReleaseCount] 가 0 이었다 — 그 둘을 「정리 완료」로 쓰는 TF 시작의 정리
+     * 기다림이 남은 자원을 보지 못했다(`docs/unverified.md` 3-5).
+     *
+     * 정상 재생과 **같은 장부·같은 놓기**([Playback.releaseOnce])를 쓴다. 놓기에 실패하면(또는 터지면) 장부에
+     * 남아 놓기 실패로 세어지고 상한([MAX_STUCK_PLAYBACKS])에도 든다. 재생 번호는 [NONE] — 나간 적 없는
+     * 재생이라 끝 소식을 낼 일이 없다. 명령 스레드에서 [start] 가 부른다.
+     */
+    private fun abandonFailedOpen(s: SignalSink) {
+        val pb = Playback(NONE, s, warn)
+        pb.running.set(false)
+        pb.faded.countDown()
+        stuck.addIfPending(pb) { it.isSlotFree }
+        pb.releaseOnce()
+        if (pb.isSlotFree) stuck.remove(pb)
     }
 
     private fun loop(pb: Playback, req: SignalRequest) {

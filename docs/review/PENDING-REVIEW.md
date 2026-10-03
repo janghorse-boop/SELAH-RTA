@@ -1138,6 +1138,42 @@ R6-04 부분 종결. Medium 넷을 고쳤습니다. **실기기·가짜 입출�
 
 ---
 
+44회차 「병합 가능」(지적 0) → **#157 병합(`96fe5b1`)**. 실제 역세로 전환·회전 중 캡처·재생은 실기기 몫으로 남음.
+
+---
+
+## 30. 열기에 실패한 출력도 정리 장부에 (32회차 R32-02)
+
+가지 `fix/signal-open-failure-cleanup`(main `96fe5b1` 기준). 32회차부터 「별도 미해결」로 들고 온 항목(`unverified` 3-5).
+
+**문제**: `SignalPlayer.start` 는 열기가 `false` 면 `release()` 의 결과를 버렸고, 열다가 예외가 나면 놓지도 않았다. 자원이 남아도 `pendingCount`·`failedReleaseCount` 가 0 이었다 — TF 시작의 정리 기다림(`awaitPlaybackCleanup`)이 그 둘을 「정리 완료」로 쓴다. `AudioTrackSink.open` 도 초기화·`play()` 실패에서 직접 `t.release()` 를 불러 결과를 버렸다.
+
+| 고친 것 | 시험(반례를 먼저 실패로 본 뒤) |
+|---|---|
+| `SignalPlayer.abandonFailedOpen(sink)` — 열기 실패(`false`)·예외에서 그 출력을 **정상 재생과 같은 장부**(`stuck`)에 올리고 같은 `releaseOnce()` 로 놓는다. 놓기 실패·놓다가 예외면 남아 `failedReleaseCount` 로 세어지고 상한(2)에도 든다. 열기 예외는 놓은 뒤 그대로 올린다 | `SignalPlayerOpenFailureTest` 7건 — 열기 false+놓기 실패 · 열기 false+놓기 성공(대조) · 열기 예외 · 열기 예외+놓기 실패 · 열기 예외+놓다가 예외(열기 예외가 가려지지 않음) · 기준 탭(`TappedSink`) 덧씌움 · 놓지 못한 실패가 상한에 이르면 새로 안 엶. 변이 「예외 경로에서 안 놓기」·「false 경로 옛 방식」 각 3건 실패 |
+| `SignalSink.open` 계약: **못 열었어도 부르는 쪽이 `release()` 를 부른다**, 구현은 열기 중 잡은 자원을 몰래 놓지 않는다. `AudioTrackSink` 초기화·`play()` 실패는 트랙을 쥔 채 `false` | — (JVM 밖) |
+| `FakeSink` 에 `openThrows`·`releaseResult`·`releaseThrows`·`holding` | — |
+
+**검증**: `--rerun-tasks` app·dsp **2,082건** 통과, 앱·계측 APK 조립.
+
+**남은 것**: `AudioTrackSink` 의 바뀐 실패 경로는 실제 `AudioTrack` 으로 돌려 보지 않았다. 플랫폼이 알려 주지 않는 자원은 이 장부로도 안 보인다(`unverified` 3-5).
+
+### 45회차 회신 뒤 (R45-01·02)
+
+판정 「병합 보류」(Medium 2). 플레이어 장부 수정과 32회차 원래 반례는 수용. 남은 두 경계는 이 커밋의 회귀가 아니라 **같은 계약을 생산 경계까지 따라가다** 나온 것.
+
+| 지적 | 고친 것 | 시험(반례를 먼저 실패로 본 뒤) |
+|---|---|---|
+| R45-01 — `SignalController` 가 `player.start` 의 열기 예외를 받지 않아 명령 밖으로 빠짐(실기기에선 명령 스레드가 죽음). 화면 Pink·포커스 쥔 채·TF 세션 안 끝남 | 예외를 받아 `NONE` 과 같은 길 — 장부 비움·포커스 놓기·**지금 의도일 때만** 알림·**그 시도의 TF 세션만** 끝냄. 원래 예외는 `SignalHost.warn`(VM 은 `Log.w`)으로 남김. 다시 던지지 않음 | `SignalControllerTest` 4건 — 일반·TF·옛 요청 A 의 늦은 게시가 새 B 화면을 안 지움·옛 TF 세션 A 가 새 세션 B 를 안 끝냄. 예외 처리를 뺀 변이에서 4건 실패 |
+| R45-02 — `AudioTrackSink` 가 트랙을 만든 뒤 필드에 넣기 전(출력 고르기 콜백 등)에 터지면 트랙이 장부 밖 | **만들자마자 `track = t`**, 그 뒤 실패(false·예외)는 모두 `release()` 로 | — (JVM 밖). 「코덱스 검토」의 원문 추출 시험을 새 소스로 다시 만들어 돌림: `R45_TRACK allocated=false releaseCalls=1` |
+| 권고: 영구 놓기 실패에도 「잠시 뒤 다시」 | TF 정리 대기 시간 초과에서 `failedRelease > 0` 이면 「소리 장치를 정리하지 못해 … 앱을 모두 닫았다가 다시 여십시오」 | 「놓기 실패가 남아 TF 를 못 열면 기다리라고 하지 않는다」 — 옛 문구로 돌린 변이에서 실패 |
+| 권고: `unverified` 3-5 의 32회차 현재형 · `releaseOnce` 옛 주석 | 당시 시제로 · 주석을 실제 동작(놓기 실패는 상한에 남음, RC02)에 맞춤 | — |
+
+「코덱스 검토」의 45회차 독립 시험 11건(추출 스크립트로 새 소스에서 다시 만듦): 10건 통과. **1건(`failedReleaseMakesNextTransferTimeoutWithoutOpening`)은 옛 문구 「정리가 끝나지 않아」를 단언해 실패** — 위 권고로 바꾼 문구다. 같은 시험의 동작 단언(열지 않음·세션 0·포커스 해제·화면 null)은 통과.
+**검증**: `--rerun-tasks` app·dsp **2,087건** 통과, 앱·계측 APK 조립.
+
+---
+
 ## 지난 회차에 보낸 것 — **판정이 다 났습니다**
 
 프로즈를 걷어내고 표로 남깁니다. **읽어야 할 것은 위의 새 절들**이고,

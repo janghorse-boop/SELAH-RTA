@@ -819,6 +819,9 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 onRouteState = onRouteState,
             )
             override fun nowMs(): Long = android.os.SystemClock.elapsedRealtime()
+            override fun warn(message: String) {
+                android.util.Log.w("SignalController", message)
+            }
         },
     )
 

@@ -271,8 +271,9 @@ sealed interface CleanupWait {
  * 옛 재생이 다 놓이기를 기다린다 — 명령 실행자에서, **TF 싱크를 열기 전에**(33회차 R33-01).
  *
  * 플레이어가 하나여도 `SignalPlayer` 는 남은 재생이 상한(2) 미만이면 다음 싱크를 연다. 그래서 TF 는
- * `pendingCount == 0` 이고 `failedReleaseCount == 0` 일 때만 연다. **열기 실패 자원처럼 이 두 수에 안
- * 잡히는 것은 이 함수가 보지 못한다** — `docs/unverified.md` 3-5.
+ * `pendingCount == 0` 이고 `failedReleaseCount == 0` 일 때만 연다. 열기에 실패한 출력도 이제 같은 장부에
+ * 오른다(32회차 R32-02, `SignalPlayer.abandonFailedOpen`). **두 수에 안 잡히는 것**(플랫폼이 알려 주지 않는
+ * 자원)은 이 함수도 보지 못한다 — `docs/unverified.md` 3-5.
  *
  * @param stillWanted 뜻이 그대로인가(의도 번호). false 면 곧바로 [CleanupWait.Abandoned].
  */

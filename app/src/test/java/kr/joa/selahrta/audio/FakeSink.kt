@@ -26,6 +26,12 @@ class FakeSink(
      * 않는 기기**를 흉내 내어 `join` 시간 초과를 만든다.
      */
     private val unblockOnStop: Boolean = true,
+    /** 열다가 예외를 던지는가 — 자원을 잡은 **뒤에** 던진다(32회차 R32-02). */
+    private val openThrows: Boolean = false,
+    /** [release] 가 돌려줄 값. false 면 놓기에 실패한 것이다. */
+    private val releaseResult: Boolean = true,
+    /** [release] 가 예외를 던지는가. */
+    private val releaseThrows: Boolean = false,
 ) : SignalSink {
 
     private val gate = CountDownLatch(1)
@@ -54,6 +60,9 @@ class FakeSink(
     val entered = CountDownLatch(1)
 
     override fun open(sampleRate: Int, frames: Int, channels: Int): Boolean {
+        // 자원은 잡는다 — 실패해도 놓아야 할 것이 남는 경로를 흉내 낸다(R32-02).
+        holding = true
+        if (openThrows) throw IllegalStateException("열다가 터졌다(가짜)")
         if (openFails) return false
         opened = true
         return true
@@ -78,10 +87,18 @@ class FakeSink(
     }
 
     override fun release(): Boolean {
-        released = true
         releaseCount.incrementAndGet()
+        if (releaseThrows) throw IllegalStateException("놓다가 터졌다(가짜)")
+        if (!releaseResult) return false
+        released = true
+        holding = false
         return true
     }
+
+    /** 열기에서 잡은 자원을 아직 쥐고 있는가 — 놓기에 성공해야 내려간다. */
+    @Volatile
+    var holding = false
+        private set
 
     /** 막아 둔 write 를 시험이 직접 푼다. */
     fun unblock() = gate.countDown()
