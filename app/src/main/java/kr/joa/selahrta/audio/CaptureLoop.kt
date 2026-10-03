@@ -111,6 +111,11 @@ fun runCaptureLoop(
     nowNs: () -> Long = System::nanoTime,
     /** 한 덩어리는 약 21ms(1024 프레임 @48kHz). FFT 4096 을 채우기에 알맞다. */
     framesPerBlock: Int = 1024,
+    /**
+     * 읽기 번호. **`read` 를 부르기 전에** +1 해 예약하고 그 읽기의 블록에 붙인다(TF 설계 3.3). 경로
+     * 스냅샷이 이 값을 그 순간에 읽으므로 읽는 중이던 블록도 경계 앞으로 간다. null 이면 번호 없음(0).
+     */
+    readSeq: java.util.concurrent.atomic.AtomicLong? = null,
 ) {
     // **버퍼를 한 번만 만든다.** 덩어리마다 새로 만들면 초당 50번 쓰레기가
     // 생겨 장시간 예배에서 GC 가 캡처를 멈춘다.
@@ -125,6 +130,7 @@ fun runCaptureLoop(
     var nextAnchorAt = 0L
 
     while (running.get()) {
+        val seq = readSeq?.incrementAndGet() ?: 0L
         val read = recorder.read(floats, framesPerBlock)
 
         // 이 덩어리의 자료가 손에 들어온 시각. 나중에 녹음과 그래프를 맞출 때
@@ -137,7 +143,7 @@ fun runCaptureLoop(
         if (read <= 0) {
             // 음수는 오류, 0 은 멈추는 중이다. 둘 다 이 덩어리는 버린다.
             callbacks.onBlock(
-                AudioBlock(floats, 0, sampleRate, ready),
+                AudioBlock(floats, 0, sampleRate, ready, seq),
                 BlockStats(0.0, 0.0, 0),
             )
             if (read < 0) {
@@ -164,6 +170,6 @@ fun runCaptureLoop(
             recorder.timestamp()?.let { callbacks.onAnchor(it, capturedFrames) }
         }
 
-        callbacks.onBlock(AudioBlock(floats, read, sampleRate, ready), blockStats(floats, read))
+        callbacks.onBlock(AudioBlock(floats, read, sampleRate, ready, seq), blockStats(floats, read))
     }
 }

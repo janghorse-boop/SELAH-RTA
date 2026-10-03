@@ -710,6 +710,10 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 onRoutingChanged = hooks.onRoutingChanged,
                 onRouteConfirmed = hooks.onRouteConfirmed,
                 onCaptureEnded = hooks.onCaptureEnded,
+                // **거르기 전의 통지와 통지마다의 경로**(TF 설계 3.3, 31회차 R31-02 · 32회차 R32-03).
+                // 예전에는 원시 통지가 앱에 연결돼 있지 않았다 — 계측 시험만 받았다.
+                onRawRoutingNotice = hooks.onRawRoutingNotice,
+                onRouteSnapshot = hooks.onRouteSnapshot,
             )
         },
         post = { block -> onMainThread(block) },

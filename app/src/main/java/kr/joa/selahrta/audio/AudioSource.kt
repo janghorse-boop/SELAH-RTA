@@ -17,6 +17,12 @@ class AudioBlock(
     val sampleRate: Int,
     /** 단조 시계 기준 시각(ns). 벽시계를 쓰지 않는다 — 시간 동기화의 기준이다. */
     val monotonicNs: Long,
+    /**
+     * 이 블록을 낸 읽기의 번호 — **읽기 전에 예약한다**(TF 설계 3.3, 33회차 R33-04). 열기마다 1 부터.
+     * 경로 스냅샷은 그 순간까지 **예약된** 번호를 적으므로, 읽는 중이던 블록도 경계 앞으로 간다.
+     * 번호를 매기지 않는 소스는 0.
+     */
+    val readSeq: Long = 0L,
 )
 
 /**
@@ -30,6 +36,11 @@ interface AudioSource {
 
     /** 사람에게 보여줄 이름. */
     val labelKo: String
+
+    /**
+     * 열기마다 바뀌는 캡처 번호(TF 설계 3.3). 번호를 매기지 않는 소스는 0.
+     */
+    val captureId: Long get() = 0L
 
     /**
      * 마이크를 연다. 성공하면 실제로 열린 형식을 돌려준다.

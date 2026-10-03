@@ -23,6 +23,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 private const val TAG = "MicSource"
 
+/** 앱 안에서 캡처마다 하나씩 — [RouteSnapshot.captureId]. 같은 객체를 다시 열어도 새 번호다. */
+private val nextCaptureId = java.util.concurrent.atomic.AtomicLong()
+
 /**
  * anchor 탐색 기록을 켤 것인가. **평소에는 끈다.**
  *
@@ -79,6 +82,13 @@ class MicSource(
      * 기본값 null — 화면 경로는 이것을 쓰지 않으므로 동작이 바뀌지 않는다.
      */
     private val onRawRoutingNotice: (() -> Unit)? = null,
+    /**
+     * 통지 **하나마다** 그 자리에서 다시 조회한 경로(TF 설계 3.3, 32회차 R32-03). [onRawRoutingNotice]
+     * 바로 뒤에, 값이 같아도 늘 부른다. 조회만 하고 이 객체의 상태는 바꾸지 않는다.
+     *
+     * 기본값 null — 화면·보정 쪽은 이것을 쓰지 않으므로 기존 동작이 바뀌지 않는다.
+     */
+    private val onRouteSnapshot: ((RouteSnapshot) -> Unit)? = null,
 ) : AudioSource {
 
     override val labelKo: String = target?.productName ?: "내장 마이크"
@@ -100,6 +110,18 @@ class MicSource(
     override fun channelLevels(): ChannelLevelSnapshot? = active?.channelLevels()
     @Volatile
     private var opened: OpenedFormat? = null
+
+    /** 열기마다 바뀌는 번호([RouteSnapshot.captureId]). 0 = 아직 안 엶. */
+    @Volatile
+    override var captureId: Long = 0L
+        private set
+
+    /** 읽기 번호 — 캡처 스레드가 `read` 전에 예약한다([AudioBlock.readSeq]). 열기마다 0 으로. */
+    private val readSeq = java.util.concurrent.atomic.AtomicLong()
+
+    /** 이 캡처의 통지 번호. 주 스레드의 리스너에서만. */
+    private var noticeSeq = 0L
+
     private var thread: Thread? = null
     private val running = AtomicBoolean(false)
 
@@ -279,6 +301,10 @@ class MicSource(
         // 된다(독립 검증 R01). 신원은 startRecording 뒤 [confirmRoute] 에서
         // 확정한다.
         record = rec
+        // 새 캡처 — 번호를 새로 시작한다. 옛 캡처의 늦은 블록·스냅샷은 captureId 로 가려진다.
+        captureId = nextCaptureId.incrementAndGet()
+        readSeq.set(0L)
+        noticeSeq = 0L
         val fmt = OpenedFormat(
             micKind = target?.kind ?: MicKind.BuiltIn,
             sampleRate = actualRate,
@@ -309,6 +335,24 @@ class MicSource(
      * 하단에서 후면으로 바뀌어도 「그대로」로 읽힌다(실측).
      */
     private fun confirmRoute(rec: AudioRecord): OpenedFormat? {
+        val fmt = computeRoute(rec) ?: return null
+        opened = fmt
+        // **지시서 22장의 로그.** 주소가 꼭 들어가야 한다 — 내장 마이크의
+        // 열쇠에는 주소가 없어(2026-09-23 결정) 로그만 보고는 어느 자리로
+        // 열렸는지 알 수 없고, 보정이 그 자리에 매인다(독립 재검토 CA-R03).
+        Log.i(
+            TAG,
+            "경로 확인: " +
+                fmt.diagnosticLinesKo().joinToString(" | ") { "${it.first}=${it.second}" },
+        )
+        return fmt
+    }
+
+    /**
+     * 지금 경로를 조회해 확인된 형식을 만든다. **이 객체의 상태(`opened`)를 바꾸지 않는다** — 그래서
+     * 통지마다 스냅샷([RouteSnapshot])을 떠도 아래 거르기 비교가 흔들리지 않는다. 모르면 null.
+     */
+    private fun computeRoute(rec: AudioRecord): OpenedFormat? {
         val provisional = opened ?: return null
         val info = rec.routedDevice?.let { scanner.infoOf(it) }
         if (info == null) {
@@ -347,15 +391,6 @@ class MicSource(
             activeMics = active,
             activeMicChangeKo = changeKo,
         )
-        opened = fmt
-        // **지시서 22장의 로그.** 주소가 꼭 들어가야 한다 — 내장 마이크의
-        // 열쇠에는 주소가 없어(2026-09-23 결정) 로그만 보고는 어느 자리로
-        // 열렸는지 알 수 없고, 보정이 그 자리에 매인다(독립 재검토 CA-R03).
-        Log.i(
-            TAG,
-            "경로 확인: " +
-                fmt.diagnosticLinesKo().joinToString(" | ") { "${it.first}=${it.second}" },
-        )
         return fmt
     }
 
@@ -387,6 +422,10 @@ class MicSource(
         routingListener = AudioRouting.OnRoutingChangedListener { routing ->
             // **값을 견주기 전에** 알린다 — 아래 필터가 걸러도 통지가 있었다는 사실은 남는다.
             onRawRoutingNotice?.invoke()
+            // **같아도 늘** 새로 조회한 경로를 낸다(TF 설계 3.3). 읽기 번호는 이 순간까지 예약된 것.
+            onRouteSnapshot?.let { emit ->
+                emit(RouteSnapshot(captureId, ++noticeSeq, computeRoute(rec), readSeq.get()))
+            }
             val known = opened
             val now = routing.routedDevice?.let { scanner.infoOf(it) }
             if (now == null) {
@@ -548,6 +587,7 @@ class MicSource(
             sampleRate = fmt.sampleRate,
             running = running,
             routeAlreadyConfirmed = { opened?.routeConfirmed == true },
+            readSeq = readSeq,
             callbacks = object : CaptureLoopCallbacks {
                 override fun onBlock(block: AudioBlock, stats: BlockStats) = onBlock(block, stats)
 
