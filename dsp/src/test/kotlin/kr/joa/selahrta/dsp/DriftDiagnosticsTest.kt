@@ -125,12 +125,14 @@ class DriftDiagnosticsTest {
     // ── 두 번째 30분 원자료 (2026-10-03, 세션 184a7daf) ──────────────────
 
     /**
-     * 기기가 낸 DIAG 줄(설치본 `0f34bc1`, 자기상관 1~6)과 **지금 분석기**가 같은
-     * 원자료에서 같은 숫자를 내는가. 7~12차는 기기 로그에 없어 여기서 처음 낸 값이다.
+     * 두 번째 원자료의 **OBS 줄만** 읽어 지금 분석기의 진단을 고정한다 — DIAG 줄은 읽지 않는다.
+     * 고정한 값은 22회차 검토자의 독립 재계산과 1e-9 안에서 맞았다. 기기의 DIAG 줄(설치본
+     * `0f34bc1`)은 소수 셋째 자리까지만 적으므로 그것과는 **표시 자릿수까지만** 견줄 수 있다
+     * (22회차 R22-02). 7~12차는 기기 로그에 없다.
      * 숫자는 이 원자료에서 뽑은 회귀값일 뿐 — 드리프트의 검출·부재·원인을 판정하지 않는다.
      */
     @Test
-    fun `두 번째 30분 원자료의 진단이 기기 로그와 같다`() {
+    fun `두 번째 30분 원자료의 진단을 고정한다`() {
         val obs = record30("../docs/verify/2026-10-03-device-remeasure-data/record30-184a7daf.txt")
         assertEquals(180, obs.size)
         val s = DriftLogAnalyzer(sampleRate = fs).analyze(obs).segments.single()
@@ -140,12 +142,12 @@ class DriftDiagnosticsTest {
         assertTrue("양립 집합이 비어야 한다", d.compatibleEmpty)
         assertEquals(6.233377659574468, d.compatibleLoPpm, 1e-9)
         assertEquals(-3.113376726886291, d.compatibleHiPpm, 1e-9)
-        // 기기 로그: -0.358,-0.227,0.726,-0.430,-0.155,0.478
+        // 기기 DIAG 줄(셋째 자리): -0.358,-0.227,0.726,-0.430,-0.155,0.478
         assertEquals(-0.3579265724638608, d.residualAcf[0], 1e-9)
         assertEquals(0.7261218318851571, d.residualAcf[2], 1e-9)
         assertEquals(0.4775497622033845, d.residualAcf[5], 1e-9)
         assertEquals(0.11662798383009462, d.residualAcf[11], 1e-9)
-        // 기기 로그: 0.798(173쌍)
+        // 기기 DIAG 줄(셋째 자리): 0.798(173쌍)
         assertEquals(173, d.slotResidualPearson[2].pairs)
         assertEquals(0.797546030190001, d.slotResidualPearson[2].r, 1e-9)
         assertEquals(20.074666666666666, d.maxGapSeconds, 1e-6)
