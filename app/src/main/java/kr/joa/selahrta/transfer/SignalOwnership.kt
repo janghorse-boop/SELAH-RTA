@@ -53,19 +53,16 @@ class SignalOwnership {
     /**
      * **정착 중** — 마지막 요청이 주인별 정지로 취소됐고, 그 뒤 실제로 무엇이 나고 있는지 명령 스레드가 아직 알려
      * 주지 않았다(37회차 R37-01). 이 사이에는 앞서 받은 요청의 소리가 아직 날 수 있으므로 **어느 주인의 정지든**
-     * 명령 스레드로 넘긴다 — 거기서 실제 재생의 주인과 맞을 때만 멈춘다. 새 요청·전체 정지·TF 시작이 오면 풀린다.
+     * 명령 스레드로 넘긴다 — 거기서 실제 재생과 맞춰 본다([StopDebt]). 새 요청·전체 정지·TF 시작이 오면 풀린다.
      */
     var settling: Boolean = false
         private set
 
-    /**
-     * 정착 중에 받은 주인별 정지의 **대상 전부**(38회차 R38-01). 명령 큐는 마지막 명령만 돌리므로 정지마다 이
-     * 묶음을 통째로 들고 간다 — 앞 정지가 생략돼도 마지막 명령이 그 뜻까지 이행한다. 정착 중이 풀리면 빈다.
-     */
-    private var pendingStopTargets: Set<SignalOwner> = emptySet()
-
     private var lastSessionId = 0L
     private var lastAttemptId = 0L
+
+    /** 지금까지 낸 마지막 시도 번호. 정지의 **상한**으로 쓴다 — 이 뒤에 받은 시도는 그 정지에 걸리지 않는다. */
+    val latestAttemptId: Long get() = lastAttemptId
 
     /** 요청을 받을지에 대한 답. */
     sealed interface Admission {
@@ -126,20 +123,16 @@ class SignalOwnership {
         return ended
     }
 
-    /** 받은 주인별 정지. [targets] 는 정착 중에 받은 정지 대상 전부 — 명령 스레드는 실제 재생이 이 중 하나면 멈춘다. */
-    data class OwnedStop(val targets: Set<SignalOwner>, val endedSession: Long)
-
     /**
-     * [owner] 의 주인별 정지를 받았다([ownedStopAllowed] 가 참이었다). 마지막 요청은 취소됐으니 그 주인을 비우고
-     * **정착 중**으로 둔다 — 실제로 남은 재생의 주인은 명령 스레드가 [settle] 로 알려 준다(37회차 R37-01). 대상은
-     * 정착 중에 받은 것과 합쳐 돌려준다(38회차 R38-01). TF 세션이 살아 있었으면 끝내고 그 번호를 함께 돌려준다.
+     * 주인별 정지를 받았다([ownedStopAllowed] 가 참이었다). 마지막 요청은 취소됐으니 그 주인을 비우고 **정착 중**으로
+     * 둔다 — 실제로 남은 재생의 주인은 명령 스레드가 [settle] 로 알려 준다(37회차 R37-01). 무엇을 멈출지는 여기서
+     * 정하지 않는다 — [StopDebt] 가 쥔다. TF 세션이 살아 있었으면 끝내고 그 번호를 돌려준다.
      */
-    fun onOwnedStopAccepted(owner: SignalOwner): OwnedStop {
+    fun onOwnedStopAccepted(): Long {
         val ended = onIntentRaised(globalStop = false)
         latestRequestOwner = null
         settling = true
-        pendingStopTargets = pendingStopTargets + owner
-        return OwnedStop(pendingStopTargets, ended)
+        return ended
     }
 
     /**
@@ -171,10 +164,54 @@ class SignalOwnership {
         endSettling()
     }
 
-    /** 정착 중을 푼다 — 모은 정지 대상도 낡았다(새 요청·TF 시작·전체 정지·정착). */
+    /** 정착 중을 푼다(새 요청·TF 시작·전체 정지·정착). 아직 이행 안 된 정지는 [StopDebt] 에 그대로 남는다. */
     private fun endSettling() {
         settling = false
-        pendingStopTargets = emptySet()
+    }
+}
+
+/**
+ * **아직 이행 안 된 정지**(39회차 R39-01). 주 스레드가 정지를 받을 때 적고, 명령 스레드가 **다음에 도는 명령의
+ * 맨 앞에서** 실제 재생과 맞춰 갚는다 — 시작이든 정지든. 명령 큐는 마지막 명령만 돌리므로 정지의 뜻을 그 명령
+ * 안에만 두면 생략과 함께 사라진다(38회차 R38-01 · 39회차 R39-01: 정지 → 새 요청 → 실행 전 취소).
+ *
+ * 각 정지는 **시도 번호의 상한**과 함께 적는다. 상한 = 정지를 받은 순간의 [SignalOwnership.latestAttemptId].
+ * 그 뒤에 받은 시도는 번호가 커서 걸리지 않는다 — 같은 주인의 새 시도가 옛 정지에 꺼지지 않는다. 그래서 새 요청을
+ * 받았다고 이 기록을 지울 까닭이 없다.
+ *
+ * 갚고 나면 비운다. 비워도 되는 까닭: 상한 이하의 시도 중 아직 열리지 않은 것은, 그 정지가 의도 번호를 올렸으므로
+ * 이제 열리지 않는다. 스레드 사이에서 쓰므로 잠근다.
+ */
+class StopDebt {
+    /** 전체 정지의 상한 — 이 번호 이하의 시도는 주인과 상관없이 멈춘다(0 = 없음). */
+    private var allUpTo = 0L
+
+    /** 주인별 정지의 상한 — 그 주인의 이 번호 이하 시도만 멈춘다. */
+    private val ownerUpTo = HashMap<SignalOwner, Long>()
+
+    /** 전체 정지를 적는다. 주 스레드에서. */
+    @Synchronized
+    fun stopAll(upTo: Long) {
+        allUpTo = maxOf(allUpTo, upTo)
+    }
+
+    /** [owner] 의 정지를 적는다. 주 스레드에서. */
+    @Synchronized
+    fun stopOwner(owner: SignalOwner, upTo: Long) {
+        ownerUpTo[owner] = maxOf(ownerUpTo[owner] ?: 0L, upTo)
+    }
+
+    /**
+     * 지금 재생([active])이 적힌 정지에 걸리는가를 보고 **기록을 비운다**. 참이면 부르는 쪽이 멈춘다. 명령 스레드에서
+     * 명령의 맨 앞에.
+     */
+    @Synchronized
+    fun settleAgainst(active: PlaybackAttempt?): Boolean {
+        val hit = active != null &&
+            (active.attemptId <= allUpTo || active.attemptId <= (ownerUpTo[active.owner] ?: 0L))
+        allUpTo = 0L
+        ownerUpTo.clear()
+        return hit
     }
 }
 

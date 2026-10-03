@@ -390,6 +390,134 @@ class SignalControllerTest {
         flush(host)
     }
 
+    // ── R39-01: 새 요청 접수가 아직 이행 안 된 정지를 지우지 않는다 ─────────────
+
+    /**
+     * A 정지 → B 새 요청 접수 → B 가 실행 전에 취소 → 큐. 명령 큐는 마지막 것만 돌리므로 A 정지와 B 시작이 모두
+     * 생략된다. 예전에는 새 요청 접수가 모은 정지 대상을 비워, 마지막 B 정지가 A 를 남겼다
+     * (`shown=Pink released=false sinks=1`).
+     */
+    @Test
+    fun `정지 뒤 새 요청이 실행 전에 취소돼도 앞의 정지가 이행된다`() {
+        val aSink = FakeSink()
+        val host = FakeHost(aSink)
+        host.deferMain = true
+        val c = controller(host)
+        val a = SignalOwner.Response(c.newOwnerId())
+        val b = SignalOwner.Wizard(c.newOwnerId())
+        c.playSignal(TestSignal.Pink, 0.15, a)
+        flush(host)
+        c.stopSignalOwnedBy(a)
+        c.playSignal(TestSignal.Custom, owner = b)
+        c.stopSignalOwnedBy(b)
+        flush(host)
+        assertTrue(ended(aSink))
+        assertNull(host.shown)
+        assertEquals("B 의 싱크는 열리지 않았다", 1, host.opened.size)
+    }
+
+    /** 같은 것을 전체 정지로: 전체 정지 → B 새 요청 → B 취소 → 큐. */
+    @Test
+    fun `전체 정지 뒤 새 요청이 실행 전에 취소돼도 전체 정지가 이행된다`() {
+        val aSink = FakeSink()
+        val host = FakeHost(aSink)
+        host.deferMain = true
+        val c = controller(host)
+        val a = SignalOwner.Response(c.newOwnerId())
+        val b = SignalOwner.Wizard(c.newOwnerId())
+        c.playSignal(TestSignal.Pink, 0.15, a)
+        flush(host)
+        c.stopSignal()
+        c.playSignal(TestSignal.Custom, owner = b)
+        c.stopSignalOwnedBy(b)
+        flush(host)
+        assertTrue(ended(aSink))
+        assertNull(host.shown)
+        assertFalse(host.focusHeld)
+    }
+
+    /** 대조군: 같은 주인 A 의 새 시도가 실제로 열린 뒤 B 가 취소되면 새 A 는 남는다 — 옛 정지의 상한 밖이다. */
+    @Test
+    fun `옛 정지는 같은 주인의 새 시도를 끄지 않는다`() {
+        val oldSink = FakeSink()
+        val newSink = FakeSink()
+        val host = FakeHost(oldSink, newSink)
+        host.deferMain = true
+        val c = controller(host)
+        val a = SignalOwner.Response(c.newOwnerId())
+        val b = SignalOwner.Wizard(c.newOwnerId())
+        c.playSignal(TestSignal.Pink, 0.15, a)
+        flush(host)
+        c.stopSignalOwnedBy(a)
+        c.playSignal(TestSignal.Pink, 0.15, a)
+        held.drain() // 새 A 가 열렸다
+        assertTrue(newSink.opened)
+        c.playSignal(TestSignal.Custom, owner = b)
+        c.stopSignalOwnedBy(b)
+        flush(host)
+        assertTrue(ended(oldSink))
+        assertFalse("새 A 는 옛 정지에 걸리지 않는다", ended(newSink))
+        assertEquals(TestSignal.Pink, host.shown)
+    }
+
+    /** 대조군: 같은 주인의 새 시도가 **아직 큐에서 기다릴 때** 옛 정지와 겹쳐도, 새 시도는 열리고 남는다. */
+    @Test
+    fun `옛 정지와 같은 주인의 대기 중 새 시도가 겹쳐도 새 시도는 남는다`() {
+        val oldSink = FakeSink()
+        val newSink = FakeSink()
+        val host = FakeHost(oldSink, newSink)
+        host.deferMain = true
+        val c = controller(host)
+        val a = SignalOwner.Response(c.newOwnerId())
+        c.playSignal(TestSignal.Pink, 0.15, a)
+        flush(host)
+        c.stopSignalOwnedBy(a)
+        c.playSignal(TestSignal.Pink, 0.15, a)
+        flush(host)
+        assertTrue(ended(oldSink))
+        assertTrue(newSink.opened)
+        assertFalse(ended(newSink))
+        assertEquals(TestSignal.Pink, host.shown)
+    }
+
+    /** 대조군: 정지 기록이 없으면 B 만 취소돼도 A 는 그대로다(R36-01). */
+    @Test
+    fun `앞의 정지 없이 B 만 취소되면 A 는 그대로다`() {
+        val aSink = FakeSink()
+        val host = FakeHost(aSink)
+        host.deferMain = true
+        val c = controller(host)
+        val a = SignalOwner.Response(c.newOwnerId())
+        val b = SignalOwner.Wizard(c.newOwnerId())
+        c.playSignal(TestSignal.Pink, 0.15, a)
+        flush(host)
+        c.playSignal(TestSignal.Custom, owner = b)
+        c.stopSignalOwnedBy(b)
+        flush(host)
+        assertFalse(ended(aSink))
+        assertEquals(TestSignal.Pink, host.shown)
+    }
+
+    /** 대조군: 앞의 정지 뒤 **TF 시작**이 접수되면 A 는 멈추고 TF 는 열린다. */
+    @Test
+    fun `정지 뒤 TF 시작은 열리고 앞의 재생은 멈춘다`() {
+        val aSink = FakeSink()
+        val tfSink = FakeSink()
+        val host = FakeHost(aSink, tfSink)
+        host.deferMain = true
+        val c = controller(host)
+        val a = SignalOwner.Response(c.newOwnerId())
+        c.playSignal(TestSignal.Pink, 0.15, a)
+        flush(host)
+        c.stopSignalOwnedBy(a)
+        val session = c.playTransferSignal()
+        flush(host)
+        assertTrue(ended(aSink))
+        assertTrue(tfSink.opened)
+        assertFalse(ended(tfSink))
+        assertEquals(session, c.transferSession)
+    }
+
     /** 대조군: 취소 뒤 되돌리기 전에 **다른 새 주인 C** 가 접수됐으면 옛 작업들의 정지는 C 를 끄지 못한다(R34-01). */
     @Test
     fun `되돌리기 전에 다른 새 주인이 접수되면 옛 주인들의 정지는 거절된다`() {

@@ -140,7 +140,7 @@ class SignalOwnershipTest {
         own.admit(a)
         own.admit(b)
         assertFalse(own.ownedStopAllowed(a))
-        own.onOwnedStopAccepted(b)
+        own.onOwnedStopAccepted()
         assertTrue(own.settling)
         assertNull(own.latestRequestOwner)
         assertTrue("앞선 주인의 소리가 아직 날 수 있다", own.ownedStopAllowed(a))
@@ -153,12 +153,12 @@ class SignalOwnershipTest {
         val b = SignalOwner.Wizard(2)
         own.admit(a)
         own.admit(b)
-        own.onOwnedStopAccepted(b)
+        own.onOwnedStopAccepted()
         own.settle(a)
         assertFalse(own.settling)
         assertTrue(own.ownedStopAllowed(a))
         assertFalse(own.ownedStopAllowed(b))
-        own.onOwnedStopAccepted(a)
+        own.onOwnedStopAccepted()
         own.settle(null)
         assertFalse(own.ownedStopAllowed(a))
     }
@@ -169,36 +169,50 @@ class SignalOwnershipTest {
         val b = SignalOwner.Wizard(2)
         val c = SignalOwner.Wizard(3)
 
-        val byAdmit = SignalOwnership().apply { admit(a); admit(b); onOwnedStopAccepted(b); admit(c) }
+        val byAdmit = SignalOwnership().apply { admit(a); admit(b); onOwnedStopAccepted(); admit(c) }
         assertFalse(byAdmit.settling)
         assertFalse(byAdmit.ownedStopAllowed(a))
         assertTrue(byAdmit.ownedStopAllowed(c))
 
-        val byTransfer = SignalOwnership().apply { admit(a); admit(b); onOwnedStopAccepted(b); beginTransfer() }
+        val byTransfer = SignalOwnership().apply { admit(a); admit(b); onOwnedStopAccepted(); beginTransfer() }
         assertFalse(byTransfer.settling)
         assertFalse(byTransfer.ownedStopAllowed(a))
 
-        val byGlobal = SignalOwnership().apply { admit(a); admit(b); onOwnedStopAccepted(b); onIntentRaised(globalStop = true) }
+        val byGlobal = SignalOwnership().apply { admit(a); admit(b); onOwnedStopAccepted(); onIntentRaised(globalStop = true) }
         assertFalse(byGlobal.settling)
         assertFalse(byGlobal.ownedStopAllowed(a))
     }
 
+    // ── 아직 이행 안 된 정지 (38회차 R38-01 · 39회차 R39-01) ───────────────────
+
     @Test
-    fun `정착 중 받은 정지 대상은 모이고 정착 중이 풀리면 빈다 — R38-01`() {
+    fun `주인별 정지는 그 주인의 상한 이하 시도에만 걸린다`() {
         val a = SignalOwner.Response(1)
         val b = SignalOwner.Wizard(2)
+        val debt = StopDebt()
+        debt.stopOwner(a, upTo = 3)
+        assertTrue(StopDebt().apply { stopOwner(a, 3) }.settleAgainst(PlaybackAttempt(a, 3)))
+        assertFalse("같은 주인의 새 시도는 걸리지 않는다", StopDebt().apply { stopOwner(a, 3) }.settleAgainst(PlaybackAttempt(a, 4)))
+        assertFalse("다른 주인은 걸리지 않는다", debt.settleAgainst(PlaybackAttempt(b, 2)))
+    }
+
+    @Test
+    fun `전체 정지는 주인과 상관없이 상한 이하 시도에 걸린다`() {
+        val a = SignalOwner.Response(1)
+        assertTrue(StopDebt().apply { stopAll(5) }.settleAgainst(PlaybackAttempt(SignalOwner.Transfer(1), 5)))
+        assertFalse(StopDebt().apply { stopAll(5) }.settleAgainst(PlaybackAttempt(a, 6)))
+    }
+
+    @Test
+    fun `정지가 여럿 쌓여도 하나도 잃지 않고 갚으면 빈다`() {
+        val a = SignalOwner.Response(1)
         val z = SignalOwner.Response(3)
-        val own = SignalOwnership()
-        own.admit(a)
-        own.admit(b)
-        assertEquals(setOf(b), own.onOwnedStopAccepted(b).targets)
-        assertEquals(setOf(b, a), own.onOwnedStopAccepted(a).targets)
-        assertEquals("뒤에 온 무관한 정지도 앞의 대상을 들고 간다", setOf(b, a, z), own.onOwnedStopAccepted(z).targets)
-        own.admit(a)
-        assertEquals("새 요청 뒤에는 그 주인만", setOf(a), own.onOwnedStopAccepted(a).targets)
-        own.settle(null)
-        own.admit(b)
-        assertEquals(setOf(b), own.onOwnedStopAccepted(b).targets)
+        val debt = StopDebt()
+        debt.stopOwner(a, 2)
+        debt.stopOwner(z, 4) // 뒤에 온 무관한 정지가 앞의 것을 지우지 않는다
+        assertTrue(debt.settleAgainst(PlaybackAttempt(a, 1)))
+        assertFalse("갚은 뒤엔 비었다", debt.settleAgainst(PlaybackAttempt(a, 1)))
+        assertFalse("재생이 없으면 걸릴 것이 없다", StopDebt().apply { stopAll(9) }.settleAgainst(null))
     }
 
     // ── 입구 관문 ────────────────────────────────────────────────────────
