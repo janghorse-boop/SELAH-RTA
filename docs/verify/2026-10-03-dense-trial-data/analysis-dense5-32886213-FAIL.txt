@@ -1,0 +1,3 @@
+파일 docs/verify/2026-10-03-dense-trial-data/dense5-32886213-FAIL.txt · OBS 291 · 세션 1
+# 세션 32886213 · 판정 RESULT FAIL · SESSION VALID
+  규칙 1 — 해석하지 않는다
