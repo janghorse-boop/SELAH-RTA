@@ -295,9 +295,12 @@ class DriftSessionGuardTest {
         val diag = r.lines.filter { it.startsWith("DIAG #") }
         assertEquals("구간마다 DIAG 한 줄", 1, diag.size)
         val d = diag.single()
-        for (word in listOf("양립", "무잡음 가정", "자기상관", "슬롯", "최대 공백", "불확도가 아니다")) {
+        for (word in listOf("양립", "무잡음 가정", "외측 근사", "모형 진단", "자기상관 1~12", "슬롯", "최대 공백", "불확도가 아니다")) {
             assertTrue("「$word」이 없다: $d", word in d)
         }
+        // 계산한 자기상관 12개를 다 적는다(21회차 비차단 권고 — 예전에는 1~6 만 찍었다).
+        val acfField = d.substringAfter("자기상관 1~12=").substringBefore(" ·")
+        assertEquals("자기상관 개수: $acfField", 12, acfField.split(",").size)
         for (banned in listOf("95%", "유의", "신뢰구간 [")) {
             assertTrue("「$banned」을 말했다: ${r.lines}", r.lines.none { banned in it })
         }

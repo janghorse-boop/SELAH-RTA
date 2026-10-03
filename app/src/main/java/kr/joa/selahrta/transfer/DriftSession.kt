@@ -251,13 +251,14 @@ fun driftSessionReport(
             "%.1f분 기울기=%.4f ppm 1표본환산=%.4f ppm 최대잔차=%.2f 계단의심=${s.stepSuspected} 길이조건=${s.points >= 20 && s.minutes >= 10.0}"
                 .format(s.minutes, s.ppm, s.resolutionPpm, s.maxResidual)
         val d = s.diagnostics
-        val acf = d.residualAcf.take(6).joinToString(",") { "%.3f".format(it) }
+        // 계산한 12개를 다 적는다(21회차 비차단 권고 — 예전에는 1~6 만 찍었다).
+        val acf = d.residualAcf.joinToString(",") { "%.3f".format(it) }
         val slot = d.slotResidualPearson.joinToString(",") { "%.3f(%d쌍)".format(it.r, it.pairs) }
         // **진단이지 불확도가 아니다**(20회차 설계 검토). 양립 집합은 무잡음 직선·정수화
         // 가정에 조건부이고, 자기상관은 「왜 구간을 못 내는가」를 보일 뿐 채택·거절을 하지 않는다.
-        lines += "DIAG #$i 불확도가 아니다 — 양립 집합(무잡음 가정)=" +
+        lines += "DIAG #$i 모형 진단 — 불확도가 아니다 — 양립 집합(무잡음 가정·외측 근사)=" +
             (if (d.compatibleEmpty) "공집합" else "[%.4f, %.4f] ppm".format(d.compatibleLoPpm, d.compatibleHiPpm)) +
-            " · 잔차 자기상관 1~6=$acf · 슬롯 잔차 상관 1~6=$slot · 최대 공백 %.1f초".format(d.maxGapSeconds)
+            " · 잔차 자기상관 1~12=$acf · 슬롯 잔차 상관 1~6=$slot · 최대 공백 %.1f초".format(d.maxGapSeconds)
         val adopt = mode == DriftMode.Record && valid && s.usable
         lines += if (adopt) {
             "SEG #$i 채택 — ${DriftLogAnalyzer.conclusion(s)}"
