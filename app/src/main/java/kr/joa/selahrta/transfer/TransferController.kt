@@ -101,13 +101,24 @@ class TransferController(
 
     private var startedAtMs = 0L
     private var outputConfirmed = false
-    private var lastUnderruns: Int? = null
+
+    /**
+     * 이 세션에서 한 번이라도 무장했는가 — 그 뒤로는 **측정 구간**이다(36회차 R36-02). 출력 사건은 재확인
+     * 중이어도 언제나 멈추고, 시작 때의 입력 확인(`confirmedFormat()`)으로는 다시 무장하지 않는다.
+     */
+    private var everArmed = false
+
+    /** 무장 때 읽은 출력 언더런 누계(36회차 R36-04). [baselineKnown] 이 false 면 「모름」. */
+    private var underrunBaseline = 0
+    private var baselineKnown = false
 
     /** 무장 뒤 입력 통지로 무장을 풀고 다시 확인을 기다리는 중이면 그 시작 시각. */
     private var rearmSinceMs: Long? = null
 
     private val inputPort = object : TransferInputPort {
-        override fun onRawNotice(captureId: Long) = onInputNotice(captureId)
+        // 원시 통지는 쓰지 않는다 — 처리 시점의 캡처 번호를 읽어 재열기 뒤 늦은 옛 통지를 가르지 못한다(36회차
+        // 남은 경계). 같은 리스너가 바로 뒤에 **만든 시점의 캡처 번호를 지닌** 스냅샷을 낸다 — 그것으로 끊는다.
+        override fun onRawNotice(captureId: Long) = Unit
         override fun onSnapshot(snapshot: RouteSnapshot) = onInputSnapshot(snapshot)
         override fun onBlock(captureId: Long, block: AudioBlock, stats: BlockStats) {
             ingest.offerMeasurement(captureId, block, stats)
@@ -138,7 +149,8 @@ class TransferController(
         capture.bindInput(inputPort)
         ticker.newSession()
         outputConfirmed = false
-        lastUnderruns = null
+        everArmed = false
+        baselineKnown = false
         rearmSinceMs = null
         generation++
         startedAtMs = nowMs()
@@ -187,9 +199,10 @@ class TransferController(
 
     private fun onOutputRoute(attempt: PlaybackAttempt, st: OutputRouteState) {
         if (session == 0L || attempt.transferSession != session) return
-        val armed = ingest.arm != null
-        if (armed) {
-            // 무장 뒤의 출력 사건은 값과 상관없이 불연속 — 멈춘다(같은 키여도, A→B→A).
+        if (everArmed) {
+            // 첫 무장 뒤의 출력 사건은 값과 상관없이 불연속 — **입력 재확인 중이어도** 멈춘다(같은 키여도,
+            // A→B→A). *(처음엔 지금 무장돼 있을 때만 보아, 재확인 중 사건을 준비 단계로 받아 확인 안 된 출력에서
+            // 다시 게시했다 — 36회차 R36-02)*
             if (st.origin == RouteOrigin.Event) stop("출력 경로가 바뀌었습니다. 다시 시작하십시오.")
             return
         }
@@ -198,8 +211,9 @@ class TransferController(
         if (outputConfirmed) tryArmFromStart()
     }
 
-    /** 시작 때의 확인으로 무장 — 그 순간의 읽기 번호가 경계다. */
+    /** 시작 때의 확인으로 무장 — 그 순간의 읽기 번호가 경계다. **첫 무장에만** 쓴다(R36-02). */
     private fun tryArmFromStart() {
+        if (everArmed) return
         val f = capture.confirmedFormat()
         if (inputProblem(f) != null) return
         arm(capture.currentCaptureId(), capture.currentReadSeq())
@@ -210,6 +224,12 @@ class TransferController(
         ingest.arm(session, captureId, readSeqFloor)
         ticker.newEpoch()
         rearmSinceMs = null
+        everArmed = true
+        // 첫 평균 창을 받기 전에 출력 언더런 기준을 잡는다(36회차 R36-04). 못 읽으면 「모름」 — 기준이 생긴
+        // 시점부터 새로 모은다.
+        val u = signal.transferUnderruns(session)
+        baselineKnown = u != null
+        underrunBaseline = u ?: 0
         _state.value = _state.value.copy(
             inputOk = true,
             statusKo = "재는 중입니다",
@@ -219,32 +239,38 @@ class TransferController(
         )
     }
 
-    private fun onInputNotice(captureId: Long) {
-        if (session == 0L) return
-        val a = ingest.arm ?: return // 무장 전 통지는 준비 중의 일 — 스냅샷으로 다시 판단한다.
-        if (captureId != a.captureId) return
-        // 무장 뒤 입력 통지 — 그 자리에서 무장을 풀고 게시를 막는다(3.3).
-        generation++
-        ingest.disarm()
-        rearmSinceMs = nowMs()
-        _state.value = _state.value.copy(
-            inputOk = false,
-            statusKo = "입력 경로가 바뀌어 다시 확인합니다",
-            graphs = null,
-            clip = null,
-        )
-    }
-
+    /**
+     * 입력 경로 통지마다 오는 스냅샷(3.3). 캡처 번호는 **만든 시점**의 것이다.
+     *
+     * - 무장 중이면 통지 자체가 불연속 — 그 자리에서 무장을 풀고 게시를 막는다. 같은 스냅샷이 내장·48 kHz·모노이고
+     *   출력이 확인돼 있으면 곧바로 다시 무장한다(새 읽기 번호 경계).
+     * - 재확인 중이면 맞는 스냅샷에서 다시 무장한다. **출력 확인을 공통 관문으로** 본다(R36-02).
+     * - 첫 무장 전이면 출력이 확인됐을 때 이 스냅샷으로 무장할 수 있다.
+     */
     private fun onInputSnapshot(snap: RouteSnapshot) {
         if (session == 0L) return
         if (snap.captureId != capture.currentCaptureId()) return
         val ok = inputProblem(snap.format) == null
-        val waitingRearm = rearmSinceMs != null
-        if (waitingRearm && ok) {
-            arm(snap.captureId, snap.readSeqAtSnapshot)
-        } else if (!ingest.isArmed() && !waitingRearm && ok && outputConfirmed) {
-            arm(snap.captureId, snap.readSeqAtSnapshot)
+        val a = ingest.arm
+        if (a != null) {
+            if (snap.captureId != a.captureId) return
+            generation++
+            ingest.disarm()
+            rearmSinceMs = nowMs()
+            _state.value = _state.value.copy(
+                inputOk = false,
+                statusKo = "입력 경로가 바뀌어 다시 확인합니다",
+                graphs = null,
+                clip = null,
+            )
+            if (ok && outputConfirmed) arm(snap.captureId, snap.readSeqAtSnapshot)
+            return
         }
+        if (rearmSinceMs != null) {
+            if (ok && outputConfirmed) arm(snap.captureId, snap.readSeqAtSnapshot)
+            return
+        }
+        if (!everArmed && ok && outputConfirmed) arm(snap.captureId, snap.readSeqAtSnapshot)
     }
 
     // ── 박자 (5·6장) ───────────────────────────────────────────────────
@@ -278,15 +304,25 @@ class TransferController(
             ticker.step(TickResult.Stale)
             return
         }
-        // 언더런 — 모르면 게시하지 않는다, 늘면 그 구간을 버린다(3.2).
+        // 언더런(3.2). **모르면 게시하지 않은 박자로 센다** — 옛 결과(Stale)로 보지 않는다(36회차 R36-03). 그래야
+        // 오래됨 표시·지움·멈춤이 그대로 걸린다.
         val u = signal.transferUnderruns(session)
         if (u == null) {
-            ticker.step(TickResult.Stale)
+            apply(ticker.step(TickResult.Busy), null)
+            if (_state.value.graphs != null) {
+                _state.value = _state.value.copy(statusKo = "출력 끊김 여부를 확인할 수 없습니다")
+            }
             return
         }
-        val prev = lastUnderruns
-        lastUnderruns = u
-        if (prev != null && u > prev) {
+        if (!baselineKnown) {
+            // 무장 때 기준을 못 읽었다 — 그 사이 끊겼는지 모르므로 지금부터 새로 모은다(R36-04).
+            underrunBaseline = u
+            baselineKnown = true
+            resync("출력 상태를 확인했습니다. 다시 모읍니다")
+            return
+        }
+        if (u > underrunBaseline) {
+            underrunBaseline = u
             resync("출력이 끊겨 다시 모읍니다")
             return
         }
@@ -299,7 +335,12 @@ class TransferController(
                 TickResult.Measured(m.windowEnd, m.delay.found && m.transfer != null)
             }
         }
-        when (val act = ticker.step(result)) {
+        apply(ticker.step(result), outcome)
+    }
+
+    /** 박자 판정이 시킨 일을 한다. [outcome] 은 게시·못 맞춤에 쓴다(없으면 null). */
+    private fun apply(act: TickAction, outcome: MeasureOutcome?) {
+        when (act) {
             TickAction.Wait -> Unit
             TickAction.Publish -> publish(outcome as MeasureOutcome.Measured)
             is TickAction.KeepOld -> _state.value = _state.value.copy(ticksSincePublish = act.ticksSince)
@@ -399,7 +440,6 @@ class TransferController(
         signal.bindTransfer(null, null, null)
     }
 
-    private fun TransferIngest.isArmed() = arm != null
 
     companion object {
         /** 엔진 기본 설정(FFT 8192 · 평균 16 · 50% 겹침)의 평균 창 = 8192 + 15·4096. */

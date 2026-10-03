@@ -134,7 +134,8 @@ private fun LeftPanel(
             else -> Unit
         }
         if (state.ticksSincePublish in 1..2) {
-            Text("마지막 결과 ${state.ticksSincePublish}초 전", color = SelahColors.TextSecondary, fontSize = 11.sp)
+            // 박자 수다 — 1초 대기 뒤 계산하므로 엄밀한 경과 초가 아니다(36회차 권고).
+            Text("마지막 결과 ${state.ticksSincePublish}박자 전", color = SelahColors.TextSecondary, fontSize = 11.sp)
         }
         if (state.graphs != null && state.statusKo != null) {
             Text(state.statusKo, color = SelahColors.Warn, fontSize = 11.sp)

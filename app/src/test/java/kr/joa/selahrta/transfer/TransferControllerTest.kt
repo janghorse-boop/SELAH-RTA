@@ -179,30 +179,38 @@ class TransferControllerTest {
     }
 
     @Test
-    fun `무장 뒤 입력 통지 다음 같은 경로 스냅샷이면 곧바로 다시 무장한다`() {
+    fun `무장 뒤 같은 경로 스냅샷이면 그 자리에서 끊고 곧바로 다시 무장한다`() {
         startAndArm()
-        cap.port!!.onRawNotice(5)
-        assertNull("통지 순간 무장이 풀린다", c.beginTick())
+        val before = c.beginTick()!!
         cap.port!!.onSnapshot(RouteSnapshot(5, 1, builtIn(), readSeqAtSnapshot = 140))
         assertNotNull("같은 경로면 3초를 기다리지 않고 다시 무장", c.beginTick())
+        c.finishTick(before, measured(100_000))
+        assertNull("끊기 전에 시작한 계산은 게시되지 않는다", c.state.value.graphs)
         assertTrue(sig.stops.isEmpty())
+    }
+
+    @Test
+    fun `원시 통지만으로는 끊지 않는다 — 처리 시점의 캡처 번호라 옛 통지를 못 가린다`() {
+        startAndArm()
+        cap.port!!.onRawNotice(5)
+        assertNotNull(c.beginTick())
     }
 
     @Test
     fun `무장 뒤 입력 통지 다음 확인이 안 서면 3초 뒤 멈춘다`() {
         startAndArm()
         now = 1_000
-        cap.port!!.onRawNotice(5)
         cap.port!!.onSnapshot(RouteSnapshot(5, 1, builtIn(kind = MicKind.Usb), 140))
+        assertNull("맞지 않는 스냅샷이면 무장이 풀린 채로 기다린다", c.beginTick())
         now = 1_000 + TransferController.CONFIRM_LIMIT_MS
         assertNull(c.beginTick())
         assertEquals(1, sig.stops.size)
     }
 
     @Test
-    fun `옛 캡처의 통지와 스냅샷은 무시한다`() {
+    fun `옛 캡처의 스냅샷은 무시한다`() {
         startAndArm()
-        cap.port!!.onRawNotice(4)
+        cap.port!!.onSnapshot(RouteSnapshot(4, 9, builtIn(kind = MicKind.Usb), 999))
         assertNotNull(c.beginTick())
     }
 
@@ -246,7 +254,6 @@ class TransferControllerTest {
     fun `계산 중에 무장이 풀린 결과는 버린다`() {
         startAndArm()
         val t = c.beginTick()!!
-        cap.port!!.onRawNotice(5)
         cap.port!!.onSnapshot(RouteSnapshot(5, 1, builtIn(), 140))
         c.finishTick(t, measured(100_000))
         assertNull("옛 세대의 결과가 게시되지 않았다", c.state.value.graphs)
@@ -302,5 +309,99 @@ class TransferControllerTest {
         c.stop(null)
         assertNull(cap.port)
         assertNull(sig.tap)
+    }
+
+    // ── 36회차 R36-02 ── 첫 무장 뒤 출력 사건은 재확인 중에도 멈춘다 ─────────
+
+    @Test
+    fun `대조 — 첫 무장 전 준비 중 출력 사건은 허용된다`() {
+        c.start()
+        sig.onRoute!!(PlaybackAttempt(SignalOwner.Transfer(1), 1), route(origin = RouteOrigin.Event))
+        assertTrue(sig.stops.isEmpty())
+        assertNotNull("확인된 사건이면 무장한다", c.beginTick())
+    }
+
+    @Test
+    fun `입력 재확인 중 같은 키 출력 사건이 와도 멈춘다`() {
+        startAndArm()
+        cap.port!!.onSnapshot(RouteSnapshot(5, 1, builtIn(kind = MicKind.Usb), 140)) // 재확인 중
+        sig.onRoute!!(PlaybackAttempt(SignalOwner.Transfer(1), 1), route(origin = RouteOrigin.Event))
+        assertEquals(1, sig.stops.size)
+        assertFalse(c.state.value.running)
+    }
+
+    /** 36회차 반례 — 재확인 중 출력이 폰 스피커로 바뀐 뒤 내장 입력 스냅샷이 오면 다시 무장해 게시했다. */
+    @Test
+    fun `재확인 중 출력이 스피커로 바뀌면 새 입력 확인이 와도 다시 무장하지 않는다`() {
+        startAndArm()
+        val port = cap.port!! // 멈추면 통로가 떼어진다 — 늦게 오는 스냅샷을 흉내 내려고 붙잡아 둔다.
+        port.onSnapshot(RouteSnapshot(5, 1, builtIn(kind = MicKind.Usb), 140))
+        sig.onRoute!!(
+            PlaybackAttempt(SignalOwner.Transfer(1), 1),
+            OutputRouteState(RouteOrigin.Event, UMC, false, AudioDeviceInfo.TYPE_BUILTIN_SPEAKER, "spk"),
+        )
+        assertNull("멈추면 입력 통로를 뗀다", cap.port)
+        port.onSnapshot(RouteSnapshot(5, 2, builtIn(), 160))
+        assertNull(c.beginTick())
+        assertFalse(c.state.value.running)
+    }
+
+    // ── 36회차 R36-03 ── 언더런을 모르면 게시하지 않은 박자로 센다 ──────────
+
+    @Test
+    fun `게시 뒤 언더런을 연달아 모르면 오래됨을 거쳐 지운다`() {
+        startAndArm()
+        c.finishTick(c.beginTick()!!, measured(100_000))
+        assertNotNull(c.state.value.graphs)
+        sig.underruns = null
+        c.finishTick(c.beginTick()!!, measured(150_000))
+        assertEquals(1, c.state.value.ticksSincePublish)
+        assertEquals("출력 끊김 여부를 확인할 수 없습니다", c.state.value.statusKo)
+        c.finishTick(c.beginTick()!!, measured(200_000))
+        c.finishTick(c.beginTick()!!, measured(250_000))
+        assertNull("3박자면 지운다", c.state.value.graphs)
+    }
+
+    @Test
+    fun `언더런을 모르다 다시 알게 되면 게시가 이어진다`() {
+        startAndArm()
+        c.finishTick(c.beginTick()!!, measured(100_000))
+        sig.underruns = null
+        c.finishTick(c.beginTick()!!, measured(150_000))
+        sig.underruns = 0
+        c.finishTick(c.beginTick()!!, measured(200_000))
+        assertNotNull(c.state.value.graphs)
+        assertNull(c.state.value.statusKo)
+    }
+
+    // ── 36회차 R36-04 ── 무장 뒤 첫 박자 전의 언더런 ────────────────────────
+
+    @Test
+    fun `무장에서 첫 결과 사이 언더런이 늘면 게시하지 않는다`() {
+        sig.underruns = 0
+        startAndArm()
+        sig.underruns = 1
+        c.finishTick(c.beginTick()!!, measured(100_000))
+        assertNull(c.state.value.graphs)
+        assertEquals("출력이 끊겨 다시 모읍니다", c.state.value.statusKo)
+    }
+
+    @Test
+    fun `무장 때 기준을 못 읽었으면 기준이 생긴 시점부터 새로 모은다`() {
+        sig.underruns = null
+        startAndArm()
+        sig.underruns = 0
+        c.finishTick(c.beginTick()!!, measured(100_000))
+        assertNull("기준이 막 생긴 박자는 게시하지 않는다", c.state.value.graphs)
+        c.finishTick(c.beginTick()!!, measured(150_000))
+        assertNotNull(c.state.value.graphs)
+    }
+
+    @Test
+    fun `대조 — 시작 전 누계가 0 이 아니어도 늘지 않으면 게시한다`() {
+        sig.underruns = 7
+        startAndArm()
+        c.finishTick(c.beginTick()!!, measured(100_000))
+        assertNotNull(c.state.value.graphs)
     }
 }
