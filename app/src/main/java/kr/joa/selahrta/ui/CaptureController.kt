@@ -223,6 +223,9 @@ class CaptureController(
     /** 지금 측정의 캡처 번호. 안 돌면 0. */
     fun currentCaptureId(): Long = active?.source?.captureId ?: 0L
 
+    /** 지금 측정의 예약된 읽기 번호. 안 돌면 0. */
+    fun currentReadSeq(): Long = active?.source?.readSeqNow ?: 0L
+
     /**
      * 수명주기를 밖에 알린다. **바뀔 때만**, 주 스레드에서.
      *

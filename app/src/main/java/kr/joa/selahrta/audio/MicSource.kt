@@ -119,6 +119,8 @@ class MicSource(
     /** 읽기 번호 — 캡처 스레드가 `read` 전에 예약한다([AudioBlock.readSeq]). 열기마다 0 으로. */
     private val readSeq = java.util.concurrent.atomic.AtomicLong()
 
+    override val readSeqNow: Long get() = readSeq.get()
+
     /** 이 캡처의 통지 번호. 주 스레드의 리스너에서만. */
     private var noticeSeq = 0L
 

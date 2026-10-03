@@ -42,6 +42,9 @@ interface AudioSource {
      */
     val captureId: Long get() = 0L
 
+    /** 지금까지 **예약된** 읽기 번호([AudioBlock.readSeq]). 번호를 매기지 않는 소스는 0. */
+    val readSeqNow: Long get() = 0L
+
     /**
      * 마이크를 연다. 성공하면 실제로 열린 형식을 돌려준다.
      *

@@ -892,6 +892,46 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     fun transferUnderruns(session: Long): Int? =
         transferSink?.takeIf { it.first.transferSession == session }?.second?.underrunCount()
 
+    /** Transfer Function 이 신호 쪽을 보는 창(TF 설계 4장). 주 스레드에서. */
+    val transferSignalPort: kr.joa.selahrta.transfer.TransferSignalPort =
+        object : kr.joa.selahrta.transfer.TransferSignalPort {
+            override fun transferOutputSettingIsWired() = this@CaptureViewModel.transferOutputSettingIsWired()
+            override fun transferOutputLabel() = this@CaptureViewModel.transferOutputLabel()
+            override fun playTransferSignal() = this@CaptureViewModel.playTransferSignal()
+            override fun stopSignal(reasonKo: String?) = this@CaptureViewModel.stopSignal(reasonKo)
+            override fun transferUnderruns(session: Long) = this@CaptureViewModel.transferUnderruns(session)
+            override fun bindTransfer(
+                tapFactory: ((PlaybackAttempt) -> ((FloatArray, Int, Int) -> Unit)?)?,
+                onRoute: ((PlaybackAttempt, kr.joa.selahrta.audio.OutputRouteState) -> Unit)?,
+                onSessionEnded: ((Long, String?) -> Unit)?,
+            ) {
+                transferTapFactory = tapFactory
+                onTransferRoute = onRoute
+                onTransferSessionEnded = onSessionEnded
+            }
+        }
+
+    /** Transfer Function 이 입력 쪽을 보는 창(TF 설계 3.3). 주 스레드에서. */
+    val transferCapturePort: kr.joa.selahrta.transfer.TransferCapturePort =
+        object : kr.joa.selahrta.transfer.TransferCapturePort {
+            override val running: Boolean get() = controller.running
+            override fun confirmedFormat() = controller.confirmedFormat()
+            override fun currentCaptureId() = controller.currentCaptureId()
+            override fun currentReadSeq() = controller.currentReadSeq()
+            override fun bindInput(port: kr.joa.selahrta.transfer.TransferInputPort?) {
+                controller.transferInput = port
+            }
+        }
+
+    /** 출력 설정이 「유선」인가 — TF 간편 측정의 시작 조건(TF 설계 3.2). 실제 USB 인지는 경로 확인이 가린다. */
+    fun transferOutputSettingIsWired(): Boolean =
+        controller.baseState.value.meterSettings.signalOutput.kind == kr.joa.selahrta.audio.OutputKind.Wired
+
+    /** 기존 규칙이 고를 출력 기기의 이름 — 시작 **전**에 화면에 보인다. 없으면 null. */
+    fun transferOutputLabel(): String? = outputDeviceOf(
+        kr.joa.selahrta.audio.SignalOutputChoice.wantedKind(controller.baseState.value.meterSettings.signalOutput),
+    )?.productName?.toString()
+
     /** TF 세션이 (어느 길로든) 끝났다. **주 스레드에서** 세션 번호와 까닭(모르면 null)으로 부른다. */
     var onTransferSessionEnded: ((session: Long, reasonKo: String?) -> Unit)? = null
 
