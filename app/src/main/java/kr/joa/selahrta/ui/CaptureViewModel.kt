@@ -801,7 +801,14 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 onRoute = { note ->
                     onMainThread { controller.update { it.copy(signalRouteKo = note) } }
                 },
+                // TF 의 재생이면 **판정할 수 있는 경로 보고**를 TF 로 넘긴다(TF 설계 3.2). 붙잡은 시도와 함께.
+                onRouteState = if (attempt?.owner is SignalOwner.Transfer) {
+                    { st -> onMainThread { onTransferRoute?.invoke(attempt, st) } }
+                } else {
+                    null
+                },
             )
+            if (attempt?.owner is SignalOwner.Transfer) transferSink = attempt to base
             // TF 의 재생에만 기준 탭을 단다. 다른 재생의 싱크에는 탭이 없다.
             val tap = if (attempt?.owner is SignalOwner.Transfer) {
                 transferTapFactory?.invoke(attempt)
@@ -871,6 +878,19 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      */
     @Volatile
     var transferTapFactory: ((PlaybackAttempt) -> ((FloatArray, Int, Int) -> Unit)?)? = null
+
+    /** TF 재생의 실제 출력 경로 보고(TF 설계 3.2). **주 스레드에서** 그 재생의 시도와 함께 부른다. */
+    var onTransferRoute: ((PlaybackAttempt, kr.joa.selahrta.audio.OutputRouteState) -> Unit)? = null
+
+    /** 마지막으로 연 TF 재생의 싱크. 언더런 수를 읽는 데만 쓴다. */
+    @Volatile
+    private var transferSink: Pair<PlaybackAttempt, kr.joa.selahrta.audio.AudioTrackSink>? = null
+
+    /**
+     * 그 세션의 TF 재생의 출력 언더런 누계. 다른 세션이거나 모르면 **null** — 0 은 정상 카운터다.
+     */
+    fun transferUnderruns(session: Long): Int? =
+        transferSink?.takeIf { it.first.transferSession == session }?.second?.underrunCount()
 
     /** TF 세션이 (어느 길로든) 끝났다. **주 스레드에서** 세션 번호와 까닭(모르면 null)으로 부른다. */
     var onTransferSessionEnded: ((session: Long, reasonKo: String?) -> Unit)? = null

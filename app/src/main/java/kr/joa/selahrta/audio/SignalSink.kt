@@ -107,9 +107,20 @@ class AudioTrackSink(
      * 주므로, `play()` 뒤에 한 번 묻고 **바뀔 때마다** 다시 알린다.
      */
     private val onRoute: ((String) -> Unit)? = null,
+    /**
+     * 실제 경로를 **판정할 수 있는 모양으로** 알린다(TF 설계 3.2, 30회차 R30-02). [onRoute] 는 화면에 적을
+     * 문장이라 판정에 못 쓴다. 연 직후 한 번([RouteOrigin.Initial]), 그 뒤 경로 사건마다([RouteOrigin.Event])
+     * — **값이 같아도** 사건은 사건으로 낸다(늦게 처리된 A→B→A 를 버리지 않으려는 것).
+     */
+    private val onRouteState: ((OutputRouteState) -> Unit)? = null,
 ) : SignalSink {
 
     private var track: AudioTrack? = null
+
+    /**
+     * 출력 언더런 누계. 트랙이 없거나 물어볼 수 없으면 **null(모름)** — 0 은 정상 카운터다(TF 설계 15장).
+     */
+    fun underrunCount(): Int? = track?.let { t -> runCatching { t.underrunCount }.getOrNull() }
 
     override fun open(sampleRate: Int, frames: Int, channels: Int): Boolean {
         require(channels == 1 || channels == 2) { "채널 수는 1 또는 2 다: $channels" }
@@ -211,7 +222,26 @@ class AudioTrackSink(
         wanted: android.media.AudioDeviceInfo?,
         requestRejected: Boolean,
     ) {
-        val report = onRoute ?: return
+        if (onRoute == null && onRouteState == null) return
+        val report: (String) -> Unit = onRoute ?: {}
+        val wantedKey = wanted?.let {
+            sameOutputKey(it.type, it.productName.toString(), it.address)
+        }
+        fun state(origin: RouteOrigin) {
+            val emit = onRouteState ?: return
+            val actual = runCatching { t.routedDevice }.getOrNull()
+            emit(
+                OutputRouteState(
+                    origin = origin,
+                    requestedKey = wantedKey,
+                    requestRejected = requestRejected,
+                    actualType = actual?.type,
+                    actualKey = actual?.let {
+                        sameOutputKey(it.type, it.productName.toString(), it.address)
+                    },
+                ),
+            )
+        }
         fun say() {
             val actual = runCatching { t.routedDevice }.getOrNull()
             val actualKo = actual?.productName?.toString() ?: "확인 전"
@@ -227,9 +257,10 @@ class AudioTrackSink(
             )
         }
         say()
+        state(RouteOrigin.Initial)
         runCatching {
             t.addOnRoutingChangedListener(
-                { _ -> say() },
+                { _ -> say(); state(RouteOrigin.Event) },
                 android.os.Handler(android.os.Looper.getMainLooper()),
             )
         }
@@ -265,3 +296,43 @@ class AudioTrackSink(
  */
 internal fun sameOutputKey(type: Int, productName: String, address: String): String =
     "$type|$productName|$address"
+
+/** 경로 보고가 어디서 왔나(TF 설계 3.2). */
+enum class RouteOrigin {
+    /** 트랙을 연 직후 한 번 물어본 값. */
+    Initial,
+
+    /** 경로 바뀜 리스너로 온 사건. 값이 같아 보여도 사건이다. */
+    Event,
+}
+
+/**
+ * 출력의 요청·실제 경로(TF 설계 3.2). 키는 [sameOutputKey](종류·이름·주소) — id 는 다시 꽂으면 바뀐다.
+ *
+ * @param requestedKey 고른 기기. 고르지 않았으면 null.
+ * @param actualType·actualKey 실제로 붙은 곳. 아직 모르면 null.
+ */
+data class OutputRouteState(
+    val origin: RouteOrigin,
+    val requestedKey: String?,
+    val requestRejected: Boolean,
+    val actualType: Int?,
+    val actualKey: String?,
+)
+
+/** USB 출력 종류 — 「유선」(3.5 잭 포함)과 다르다. */
+val USB_OUTPUT_TYPES: Set<Int> = setOf(
+    android.media.AudioDeviceInfo.TYPE_USB_DEVICE,
+    android.media.AudioDeviceInfo.TYPE_USB_HEADSET,
+    android.media.AudioDeviceInfo.TYPE_USB_ACCESSORY,
+)
+
+/**
+ * **고른 USB 기기에 실제로 붙었는가**(TF 설계 3.2). 요청이 거절되지 않았고, 실제 종류가 USB 이고, 실제
+ * 키가 고른 키와 같을 때만 참. 3.5 잭으로 나가거나 아직 모르면 거짓.
+ */
+fun isConfirmedUsbOutput(st: OutputRouteState): Boolean =
+    !st.requestRejected &&
+        st.requestedKey != null &&
+        st.actualType != null && st.actualType in USB_OUTPUT_TYPES &&
+        st.actualKey == st.requestedKey
