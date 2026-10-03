@@ -93,5 +93,5 @@ class WizardCaptureBridge(
      */
     override fun forWork(): WizardCapture = WizardCaptureBridge(vm)
 
-    override suspend fun awaitSignalQuiet(): Boolean = vm.awaitSignalQuiet()
+    override suspend fun awaitSignalQuiet(): kr.joa.selahrta.calibration.SignalQuiet = vm.awaitSignalQuiet()
 }
