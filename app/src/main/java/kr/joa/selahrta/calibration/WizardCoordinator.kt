@@ -87,8 +87,22 @@ class WizardCoordinator(
      * 전경 상태는 건드리지 않는다 — 까닭은 [WizardWork] 머리말 참고.
      */
     fun stopWork() {
+        stopRunningSignal()
         work.stop()
         _busyKo.value = null
+    }
+
+    /**
+     * 지금 도는 작업의 창. 끊을 때 **그 작업의 소리를 그 자리에서** 멈추는 데 쓴다(41회차 R41-01).
+     *
+     * 작업마다 주인이 달라([WizardCapture.forWork]) 새 작업의 정지는 옛 작업의 소리를 끄지 못한다. 끊긴 옛 작업의
+     * `finally` 에만 맡기면, 그것이 늦을 때 새 작업이 옛 소리 위에서 배경을 잰다.
+     */
+    private var runningCapture: WizardCapture? = null
+
+    private fun stopRunningSignal() {
+        runningCapture?.stopSignal()
+        runningCapture = null
     }
 
     /**
@@ -97,6 +111,7 @@ class WizardCoordinator(
      * 이것만 소리를 막는다. 탭 이동·닫기는 [stopWork] 로 끊기만 한다.
      */
     fun onBackground() {
+        stopRunningSignal()
         work.onBackground()
         _busyKo.value = null
     }
@@ -246,6 +261,10 @@ class WizardCoordinator(
             // 이 작업만의 창 — 소리의 주인을 작업마다 새로 받는다. 취소된 옛 작업의 늦은 `finally` 가
             // 새 작업의 소리를 끄지 않게([WizardCapture.forWork]).
             val workCapture = capture.forWork()
+            runningCapture = workCapture
+            // **이번 점검의 클리핑만** 본다 — 기준선을 지금 잡는다. 새 창의 기준선은 0 이라 세션에 쌓인 옛 클리핑이
+            // 이번 점검을 막았다(41회차 R41-02). 기준·대상 측정은 runner 가 재기 직전에 잡는다.
+            workCapture.markClippingBaseline()
             val tap = MeasurementTap(fftSize, sampleRate)
             val runner = WizardRunner(workCapture, tick, mayPlay = ::mayPlay)
             workCapture.installTap(tap)
@@ -306,6 +325,7 @@ class WizardCoordinator(
                 _busyKo.value = null
                 workCapture.removeTap(tap)
                 workCapture.stopSignal()
+                if (runningCapture === workCapture) runningCapture = null
             }
         }
     }
@@ -467,6 +487,7 @@ class WizardCoordinator(
             // 이 작업만의 창 — 소리의 주인을 작업마다 새로 받는다. 취소된 옛 작업의 늦은 `finally` 가
             // 새 작업의 소리를 끄지 않게([WizardCapture.forWork]).
             val workCapture = capture.forWork()
+            runningCapture = workCapture
             val tap = MeasurementTap(fftSize, sampleRate)
             val runner = WizardRunner(workCapture, tick, mayPlay = ::mayPlay)
             workCapture.installTap(tap)
@@ -530,6 +551,7 @@ class WizardCoordinator(
                 _busyKo.value = null
                 workCapture.removeTap(tap)
                 workCapture.stopSignal()
+                if (runningCapture === workCapture) runningCapture = null
             }
         }
     }

@@ -92,4 +92,6 @@ class WizardCaptureBridge(
      * `finally` 가 그 뒤 시작한 새 작업의 소리를 껐다. 잘린 수 기준선도 작업마다 따로 잡힌다.
      */
     override fun forWork(): WizardCapture = WizardCaptureBridge(vm)
+
+    override suspend fun awaitSignalQuiet(): Boolean = vm.awaitSignalQuiet()
 }
