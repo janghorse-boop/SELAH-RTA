@@ -1,7 +1,7 @@
 # Transfer Function 간편 화면·배선 — 실험용 앱 연결 단계 설계
 
-상태: **설계 4판 — 32회차 검토 뒤, TF 가 기존 플레이어를 같이 쓰는 방향으로 바꿈. 코드는 아직 없다.** 다시 검토를 받은 뒤 구현한다.
-작성: 2026-10-03 · 기준 커밋: `main` 의 `eec8133`(PR #152 병합본) · 1판 `8b25e88` · 2판 `1668953` · 3판 `4c888a7`
+상태: **설계 5판 — 33회차 검토 뒤 고침(공유 플레이어 방향 유지). 코드는 아직 없다.** 검토에 「남은 위험을 구현 시험으로 잡는 조건으로 구현에 들어가도 되는지」를 함께 묻는다(14장).
+작성: 2026-10-03 · 기준 커밋: `main` 의 `eec8133`(PR #152 병합본) · 1판 `8b25e88` · 2판 `1668953` · 3판 `4c888a7` · 4판 `675ceb1`
 
 > ## 이 단계는 **1차 MVP 출시 완료가 아니다**
 >
@@ -36,8 +36,9 @@
 
 ## 32회차 지적과 4판에서 바꾼 것 — **방향 전환**
 
-32회차: R31-04 닫힘, R31-03 의 교대 반례 해결, 8장 띠·KDoc 유지. 30~32회차 High 셋(R30-01·R31-01·R32-01)이 모두
-「TF 가 자기 플레이어를 따로 갖는다」에서 나왔으므로, 담당자 승인(2026-10-03 「진행」)으로 **TF 가 앱의 유일한
+32회차: R31-04 닫힘, R31-03 의 교대 반례 해결, 8장 띠·KDoc 유지. 30~32회차 High 셋(R30-01·R31-01·R32-01)은 **모두
+두 플레이어 사이의 소유·인계와 얽혀 있었으므로**(그것만이 원인이라는 뜻은 아니다 — 33회차가 짚었듯 플레이어가
+하나여도 정리 미완·취소된 작업의 정지·명령 생략이 남는다), 담당자 승인(2026-10-03 「진행」)으로 **TF 가 앱의 유일한
 플레이어를 같이 쓰는 방향**으로 바꿨다.
 
 | 지적 | 바꾼 곳 |
@@ -47,6 +48,20 @@
 | R32-03 Medium — 같은 경로 통지 뒤 확인 생략, 블록 세대 경합 | **3.3** — 경로 리스너가 **통지마다 새 스냅샷**(`onRouteSnapshot`)을 내고, 블록에 `captureId`·`blockSeq` 를 붙이며, 넣기·reset·무장·ClipLedger 를 **`TransferIngest` 한 자물쇠**로 |
 | R32-04 Medium — 박자 표 누락 | **6.1** — 옛 결과 → Retention → Busy/부족 → 창 진행 없음 → 못 맞춤 → 게시 의 **순서식 표**, `lastObserved`/`lastPublished` 분리, epoch 마다 처음 값, 못 맞춤 10박자 |
 | 그 밖 | 3.1·3.2 — 출력은 사용자 설정 「유선」 + 실제 USB 경로 확인. 4.2 — `nextTap` 으로 TF 재생에만 탭. 4.4 — `onTransferPlaybackEnded` 로 재생 끝을 받는다(UI 값으로 짐작하지 않음) |
+
+## 33회차 지적과 5판에서 바꾼 것
+
+33회차: 공유 플레이어 방향 수용(`SoundOwner` 를 되살리라는 뜻 아님), R32-04 반례 닫힘, V/M/C·띠·KDoc 유지.
+R32-02(열기 실패 자원)는 **해결이 아니라 별도 미해결**로 남는다.
+
+| 지적 | 바꾼 곳 |
+|---|---|
+| R33-01 High — 플레이어 하나여도 옛 재생이 덜 정리된 채 새 싱크를 연다(상한 2) | **4.3** — TF 시작 명령은 명령 실행자에서 옛 재생을 멈춘 뒤 **`pendingCount == 0` 이고 `failedReleaseCount == 0` 일 때만** TF 싱크를 연다. 100 ms 마다 최대 2초 다시 보고, 안 되면 열지 않고 세션을 끝낸다. 열기 실패 자원처럼 이 둘에 안 잡히는 것은 남은 위험(R32-02) |
+| R33-02 Medium — 취소된 FR·마법사의 `finally` 가 새 TF 를 끈다 | **4.1** — 재생마다 **주인**(`SignalOwner`)을 적고, FR·마법사의 `finally` 는 **주인별 정지**(`stopSignalOwnedBy(owner)`) — 지금 재생의 주인이 자기일 때만 멈춘다. 사람의 정지·포커스·백그라운드·닫기는 지금처럼 **전체 정지** |
+| R33-03 Medium — 명령 큐가 최신 것만 실행해 정지·끝 알림이 생략됨 | **4.4** — TF 세션의 끝을 **명령 실행에 기대지 않는다.** `signalIntent` 를 올리는 모든 길(정지·백그라운드·포커스·noisy·onCleared·다른 시작)에서 **주 스레드에서 그 자리에서** `endTransferSession(까닭)` — 게시 금지·무장 풀기가 그때 일어난다. 쓰기 오류(`onEnded`)는 생략되지 않는 `postAlways` 길로 같은 끝을 낸다. `onTransferPlaybackEnded` 는 물리적 정지의 **참고 소식**일 뿐 정확성에 쓰지 않는다 |
+| R33-04 Medium — 읽었지만 아직 안 넘긴 블록이 경계를 지난다 | **3.3** — 블록 번호를 **읽기 전에 예약**(`readSeq`)하고, 스냅샷은 그 순간까지 **예약된** 번호를 적는다 — 읽는 중이던 블록도 경계 앞으로 간다. 「2초 모으니 몫이 작다」는 문장은 거둔다(재지 않았다) |
+| R33-05 Low — 「10초 동안」 | **6.1** — 「못 맞춤 관측 10회」로 |
+| 구현 조건 | **4.2** — `nextTap` 은 `try/finally` 로 비운다. 경로·탭 콜백은 임시 칸이 아니라 열 때 붙잡은 **불변 재생 세션**(세션 번호·세대)을 쓴다 |
 
 이 문서가 기대는 것: 개발지시서([`../../review/SELAH_RTA_간편_정밀_Transfer_Function_개발지시서.md`](../../review/SELAH_RTA_간편_정밀_Transfer_Function_개발지시서.md)),
 화면 구조 검토 안 2([`../../review/2026-10-01-transfer-function-ui-structure-review.md`](../../review/2026-10-01-transfer-function-ui-structure-review.md)),
@@ -175,14 +190,14 @@ raw 1 · 확인은 처음 1번뿐, 22→24→22: raw 2 · 확인 1번뿐), 3판�
 MicSource 의 경로 리스너 (주 스레드 Handler)
   ① onRawRoutingNotice()                 — 지금처럼 값을 견주기 전에
   ② onRouteSnapshot(RouteSnapshot)        — 새 칸. 같아도 늘 낸다
-       RouteSnapshot(captureId, noticeSeq, format: OpenedFormat?, blockSeqAtSnapshot)
+       RouteSnapshot(captureId, noticeSeq, format: OpenedFormat?, readSeqAtSnapshot)
        format = 그 자리에서 다시 조회한 경로(confirmRoute 와 같은 조회). 모르면 null
   ③ 기존 필터와 onRoutingChanged / onRouteConfirmed — 그대로(화면·보정 쪽은 바뀌지 않는다)
   → SourceHooks(새 칸 둘) → CaptureController → TF
 ```
 
 - `captureId` 는 `MicSource` 의 열기마다 바뀌는 번호 — **옛 캡처의 늦은 스냅샷·블록**을 가린다.
-- `noticeSeq` 는 통지마다 +1. `blockSeqAtSnapshot` 은 스냅샷을 뜬 순간까지 캡처 스레드가 넘긴 블록의 순번.
+- `noticeSeq` 는 통지마다 +1. `readSeqAtSnapshot` 은 스냅샷을 뜬 순간까지 캡처 스레드가 **예약한** 읽기 번호(아래).
 - 구현에서 `confirmRoute` 의 부작용(`opened` 갱신)을 확인해, 한 통지에 조회가 겹치지 않게 한다.
 - 「입력 사건」으로 보는 것: 원시 통지 · 입력 재열기(`captureId` 바뀜) · 읽기 오류(`onCaptureEnded`) ·
   캡처 중단. 조합 변경은 원시 통지에 실려 온다(스냅샷의 조합으로 본다).
@@ -192,24 +207,28 @@ MicSource 의 경로 리스너 (주 스레드 Handler)
 *(3판은 「블록을 넘기기 직전에 지금 세대를 읽는다」였다. 32회차: 그러면 사건 전에 읽힌 옛 블록이 새
 세대로 붙을 수 있고, 검사 → reset → offer 사이의 경합도 남는다.)*
 
-- 캡처 스레드가 블록마다 **`blockSeq`**(열기마다 0 부터)를 붙인다 — 세대를 뒤늦게 붙이지 않고 **블록의
-  출처 번호**를 붙인다.
+- 캡처 스레드는 `AudioRecord.read` 를 **부르기 전에** 원자 값 `readSeq` 를 +1 해 번호를 **예약**하고, 그 읽기로 나온
+  블록에 그 번호를 붙인다(열기마다 0 부터). 세대를 뒤늦게 붙이지 않고 **블록의 출처 번호**를 붙인다.
+  *(4판은 「넘긴 블록」의 번호를 스냅샷에 적었다. 33회차: 이미 읽었지만 아직 안 넘긴 블록이 스냅샷 10 뒤에 11 을
+  받아 새 무장에 들어간다. 예약 번호를 적으면 **읽는 중이던 블록**도 그 번호 이하라 경계 앞으로 간다.)*
 - TF 쪽에 **`TransferIngest`** 하나를 두고, 다음을 **모두 같은 자물쇠 안에서** 한다:
   `offerReference`(기준 탭) · `offerMeasurement`(블록) · `ClipLedger` 기록 · 엔진 `reset()` · 무장 · 무장 풀기.
 - 측정 블록을 받는 조건(자물쇠 안에서 한 번에 본다): 무장됨 · `captureId` 가 무장 때와 같음 ·
-  `blockSeq > 무장 때의 blockSeqAtSnapshot`. 기준 표본도 무장됨일 때만 받는다 — 그래서 `reset()` 뒤 두 흐름의
+  `blockSeq > 무장 때의 readSeqAtSnapshot`. 기준 표본도 무장됨일 때만 받는다 — 그래서 `reset()` 뒤 두 흐름의
   표본 0 이 무장 뒤 첫 표본이 된다(엔진의 전제).
-- 경계 밖: `AudioRecord` 안의 버퍼에 이미 들어 있던 표본은 블록 순번으로 가를 수 없다 — 그 몫은 보장 밖이다.
-  다만 무장 뒤 첫 결과까지 각 흐름 93,632표본(약 2초)을 새로 모으므로 첫 블록 한둘의 몫은 작다(재지 않았다).
+- 경계 밖: `AudioRecord` 안의 버퍼에 이미 들어 있던 표본(통지 전에 녹음됐지만 스냅샷 뒤의 읽기로 나오는 것)은
+  블록 번호로 가를 수 없다 — **보장 밖이고 그 크기는 재지 않았다.** *(4판의 「2초를 새로 모으니 첫 블록 몫은
+  작다」는 근거 없는 문장이라 거둔다 — R33-04.)*
 
 #### 무장 — 준비와 측정의 경계
 
 **무장** = 출력 확인(3.2) **그리고** 내장·48 kHz·모노인 **새 스냅샷**(또는 시작 때의 확인)이 둘 다 선 순간.
-`TransferIngest` 자물쇠 안에서: 엔진 `reset()` · `ClipLedger` 비움 · `captureId`·`blockSeqAtSnapshot` 기억 · 무장.
+`TransferIngest` 자물쇠 안에서: 엔진 `reset()` · `ClipLedger` 비움 · `captureId`·`readSeqAtSnapshot` 기억 · 무장.
+시작 때의 확인으로 무장할 때는 그 순간의 `readSeq` 를 경계로 삼는다.
 
 - 무장 **전**의 통지(준비 중): 실패로 보지 않는다. 그 통지의 스냅샷으로 다시 판단한다(3초 상한 안에서).
 - 무장 **뒤**의 입력 통지: 그 자리(주 스레드)에서 **무장을 풀고**(자물쇠 안) 게시 금지 · 곡선 지움. 같은
-  통지의 스냅샷이 내장·48 kHz·모노면 **곧바로 다시 무장**한다(새 `blockSeqAtSnapshot` 으로, 소리는 계속).
+  통지의 스냅샷이 내장·48 kHz·모노면 **곧바로 다시 무장**한다(새 `readSeqAtSnapshot` 으로, 소리는 계속).
   스냅샷이 null 이거나 내장이 아니면 3초 안에 다음 통지의 스냅샷을 기다리고, 없으면 멈춘다.
 - 무장 뒤의 출력 사건: 3.2 대로 멈춘다(출력은 다시 무장하지 않는다 — 소리가 다른 데로 났을 수 있다).
 - 스냅샷 없이 블록만 계속 오는 경우(통지가 없음)는 무장이 그대로다 — 앱 큐에 들어오지 않은 플랫폼
@@ -237,8 +256,9 @@ MicSource 의 경로 리스너 (주 스레드 Handler)
 
 *(3판의 `SoundOwner` 는 「`stop()` 반환 + `pendingCount == 0` 뒤에만 놓는다」였다. 32회차가 실제
 `SignalPlayer` 와 가짜 싱크로 보였다 — 열기가 실패하거나 열기 중 예외가 나면 둘 다 채워도 가짜 자원이
-남는다(R32-02). 4판에는 그 조건에 기대는 인계가 없다. 열기 실패 자원의 추적은 **기존 플레이어의 성질**이라
-TF 와 별개로 `docs/unverified.md` 에 적는다.)*
+남는다(R32-02). 4판부터는 그 조건을 「인계 완료」로 쓰지 않는다. 다만 열기 실패 자원은 **해결된 것이 아니라
+별도 미해결**이다 — 남은 자원이 출력 경로에 영향을 주면 TF 결과에도 닿을 수 있으므로 「TF 와 무관」이라 하지
+않는다. `docs/unverified.md` 3-5 에 적고 따로 고친다(4.3 의 시작 조건이 잡지 못하는 남은 위험).)*
 
 **TF 세션** = TF 화면의 [시작] 부터 정리(4.4) 끝까지. `CaptureViewModel` 이 `transferSession: Long`
 (0 = 없음)을 주 스레드에서 쥔다.
@@ -258,6 +278,14 @@ TF 세션 중이면 TF 가 부른 것이 아닌 요청은 **거절**하고 「Tr
   `viewModelScope`(주 스레드)에서 돌고 취소도 주 스레드에서 하므로, 취소된 작업은 다음 재개에서 그 줄에
   닿지 못한다. 그래도 그 줄에 명시적 검사를 둔다 — TF 를 빨리 닫아 관문이 열린 뒤에도 취소된 작업은
   소리를 내지 못한다.
+- **주인별 정지** (R33-02): 취소된 FR·마법사의 `finally` 는 지금 「신호가 나고 있으면 `stopSignal()`」이다
+  (FR 1392행, `WizardCoordinator` 305·526행) — **전체 정지**라서, TF 시작이 그 작업을 취소한 **뒤에** 돌면 막 연
+  TF 재생을 끈다(33회차가 실제 `WizardWork`·`SerialCommands` 로 재현: `executed=[stop]`). 그래서 재생마다
+  **주인**을 적는다 — `SignalOwner = User | Response(jobId) | Wizard(workId) | Transfer(sessionId)`.
+  `playSignal` 이 그 요청의 주인을 받아 명령 실행자의 `activeOwner` 에 둔다. FR·마법사의 `finally` 와 단계 사이의
+  끄기는 **`stopSignalOwnedBy(owner)`** 를 부른다 — 주 스레드에서 「지금 재생의 주인 = 이 주인」일 때만 정지
+  의도를 올리고, 명령 실행자에서 다시 한 번 `activeOwner == owner` 일 때만 멈춘다. 아니면 아무것도 하지 않는다.
+  사람의 정지 단추·포커스 손실·noisy·백그라운드·`onCleared` 는 지금처럼 **전체 정지**다.
 - 그 밖의 `playSignal` 호출(세기·채널·주파수 바꾸기, 1714~1760행)은 **지금 재생 중인 신호를 다시 트는**
   것이다. TF 세션 중에는 관문에 막히고, TF 가 끝난 뒤에는 TF 가 이미 소리를 멈췄으므로
   (`playingSignal == null`) 다시 틀 대상이 없다.
@@ -267,11 +295,15 @@ TF 세션 중이면 TF 가 부른 것이 아닌 요청은 **거절**하고 「Tr
 기존 플레이어의 `openSink` 는 싱크를 **열 때마다** 불린다(`SignalPlayer.start` 266행, 명령 실행자 안).
 명령 실행자 전용 칸 `nextTap: ReferenceTap?` 를 두고:
 
-- TF 의 시작 명령은 `startSignalOnCommandThread` 에서 `player.start()` 바로 앞에 `nextTap = 이 세션의 탭`,
-  바로 뒤에 `nextTap = null`.
-- `openSink` 는 `val base = AudioTrackSink(... onRouteState ...)`; `nextTap` 이 있으면 `TappedSink(base, tap)`.
-- 탭은 `TransferIngest.offerReference(sessionId, …)` 로 넘긴다 — 세션 번호가 지금 세션이고 무장됐을 때만
-  받는다(3.3). 끝난 세션의 늦은 표본은 버려진다.
+- TF 의 시작 명령은 `startSignalOnCommandThread` 에서 **`nextTap = 이 재생의 탭; try { player.start() } finally
+  { nextTap = null }`**. 열기 중 예외가 나도 탭이 다음 일반 재생에 남지 않는다(33회차: 평문 대입이면 다음 일반
+  싱크까지 탭이 남음 `[9,9]`).
+- `openSink` 는 열 때 `nextTap` 을 **한 번 읽어 지역 값으로 붙잡고**, `val base = AudioTrackSink(... onRouteState =
+  { st -> route(session, st) } ...)`; 탭이 있으면 `TappedSink(base, tap)`.
+- **불변 재생 세션**: 탭과 경로 콜백은 열 때 만든 `PlaybackSession(sessionId, playGeneration)` 값을 **붙잡는다** —
+  나중에 바뀌는 칸을 읽지 않는다. 그래서 늦게 온 경로 보고·탭 표본이 어느 재생의 것인지 늘 가려진다.
+- 탭은 `TransferIngest.offerReference(session, …)` 로 넘긴다 — 세션이 지금 세션이고 무장됐을 때만 받는다(3.3).
+  끝난 세션의 늦은 표본은 버려진다.
 - **TF 시작은 늘 새로 연다** — `startSignalOnCommandThread` 의 「주파수만 바뀌었으면 다시 열지 않는다」
   지름길은 `Custom` 신호에만 걸리므로 핑크에는 해당하지 않지만, TF 요청에는 명시적으로 지름길을 쓰지 않게
   한다. 그래야 탭이 붙은 새 싱크가 열린다.
@@ -284,11 +316,17 @@ TF 세션 중이면 TF 가 부른 것이 아닌 요청은 **거절**하고 「Tr
 1. 3.3 입력 조건 — 캡처 중·확인됨(그 뒤 사건 없음)·내장·48 kHz·모노. 아니면 그 상태만 적고 끝(소리 없음).
 2. 출력 설정 = 「유선」(3.2). 아니면 「출력 설정을 유선(USB-C)으로 바꾼 뒤 시작하십시오」. 기존 규칙이 고를
    기기 이름을 시작 **전**에 보인다.
-3. `cancelResponse()` · `wizard.stopWork()` · 지금 신호가 나고 있으면 그대로 둔다(4의 새 재생이 정규 길에서
-   옛 재생을 정리하고 연다 — 기존 플레이어가 이미 하는 일이다).
+3. `cancelResponse()` · `wizard.stopWork()` — 늘. 그 작업들의 `finally` 는 주인별 정지라 TF 재생을 끄지 못한다(4.1).
 4. `transferSession = 새 번호` · `vm.playTransferSignal(sessionId)` — 그 안에서 `signalIntent` 를 올리고 명령
-   실행자에 시작을 넣는다. 포커스 거절이면 기존 길이 「다른 앱이 소리를 쓰고 있어 …」로 멈춘다.
-5. 출력 확인(3.2, 3초)과 입력 스냅샷으로 **무장**(3.3).
+   실행자에 시작을 넣는다.
+5. **명령 실행자에서**(R33-01): 옛 재생이 있으면 정규 길대로 멈춘다(`player.stop()`). 그 뒤
+   **`player.pendingCount == 0` 이고 `player.failedReleaseCount == 0`** 일 때만 다음으로 간다. 아니면 100 ms 마다
+   최대 2초(단조 시각) 다시 본다 — 이 기다림은 의도 번호가 바뀌면(멈춤·닫기) 즉시 끝난다. 2초 뒤에도 남으면
+   **TF 싱크를 열지 않고** 세션을 끝낸다 「이전 소리 정리가 끝나지 않아 시작하지 못했습니다」. *(33회차: 플레이어가
+   하나여도 `SignalPlayer` 는 남은 재생이 상한 2 미만이면 다음 싱크를 연다 — `opens=2, pending=1,
+   oldReleased=false` 재현.)* 열기 실패 자원처럼 이 두 수에 안 잡히는 것은 남은 위험이다(R32-02, unverified 3-5).
+6. 포커스 획득(기존 길 — 거절이면 「다른 앱이 소리를 쓰고 있어 …」로 끝) → 탭을 붙여 연다(4.2).
+7. 출력 확인(3.2, 3초)과 입력 스냅샷으로 **무장**(3.3).
 
 **시작 전 레벨 안내**(지시서 27장): 시작 단추 옆에 「스피커에서 핑크 잡음이 납니다. 스피커 볼륨을 낮춘 뒤
 시작하고 천천히 올리십시오. 세기 0.2 는 디지털 진폭이며 실제 음압의 안전을 보장하지 않습니다」.
@@ -299,26 +337,34 @@ TF 세션 중이면 TF 가 부른 것이 아닌 요청은 **거절**하고 「Tr
 (`noisy`) · 출력 확인 실패·무장 뒤 출력 사건 · 쓰기 오류(`onEnded`) · 입력 조건 깨짐(다시 무장 실패) ·
 6장의 멈춤 조건.
 
-- **포커스 손실·덕·noisy·ON_STOP·onCleared 는 기존 플레이어가 이미 멈춘다**(`interruptions` 콜백 →
-  `stopSignal()`, `onBackground()`, `onCleared` 의 `signalCommands.close { … }`). TF 는 그 결과를 받아 세션을
-  끝낸다. **UI 의 `playingSignal` 을 보고 짐작하지 않는다**(그것은 정지가 줄에 서기 전에 먼저 null 이 된다 —
-  R31-01). 대신 `CaptureViewModel` 이 TF 세션의 재생이 **어떤 길로든** 끝나면(정지 명령이 실행자에서 돌았거나,
-  `onEnded` 가 그 세대를 끝냈거나, 시작이 실패했거나) **명령 실행자에서** `onTransferPlaybackEnded(sessionId,
-  까닭)` 을 부른다. TF 는 세션 번호가 맞을 때만 받는다.
-- TF 쪽에서 시작하는 멈춤(멈춤 단추·닫기·경로 실패·6장)은 `vm.stopSignal()` 을 부른다 — 기존과 같은 정지
-  의도 번호(`lastSignalStopIntent`)를 올리는 길이다.
+#### 세션의 끝은 명령 실행에 기대지 않는다 (R33-03)
 
-**요청을 받은 그 자리에서**(주 스레드): TF 세대 +1 · `TransferIngest` 무장 풀기 · 「게시 금지」. 진행 중이던
-계산이 끝나도 6장 1번에서 버려진다. **물리적 정리**(플레이어 정지·포커스 놓기)는 기존 명령 실행자가 한다.
-TF 는 `transferSession = 0` 을 **정지 명령을 줄에 세운 뒤** 주 스레드에서 놓는다 — 그 뒤 들어온
-`playSignal` 은 같은 실행자에서 정지 **다음**에 돈다(차례가 지켜진다). **앞으로 돌아와도 저절로 다시 틀지
-않는다.**
+*(4판은 「정지 명령을 줄에 세운 뒤 세션을 놓으면 그 뒤 `playSignal` 은 정지 다음에 돈다」, 「재생 끝은 명령
+실행자의 `onTransferPlaybackEnded`」였다. 33회차: `SerialCommands.post` 는 차례대로 다 돌리지 않고 **최신 명령만**
+돌린다 — TF 정지 → 세션 0 → 일반 시작이면 정지와 그 안의 끝 알림이 생략됐다(`events=[regular-start]`).
+포커스 손실을 물리 정지 완료로만 알면 그 사이 게시될 수도 있다.)*
+
+- **논리적 끝 = 주 스레드에서 그 자리**: `CaptureViewModel` 에서 `signalIntent` 를 올리는 **모든 길** —
+  `stopSignal()`(정지 단추·포커스 손실·덕·noisy 가 모이는 곳) · `onBackground()` · `onCleared` · 다른 주인의 시작
+  (TF 세션 중엔 관문에 막히지만, 세션이 막 끝나는 경계에서도) · TF 자신의 멈춤 — 에서, TF 세션이 살아 있으면
+  **그 줄에서 곧바로** `endTransferSession(까닭)` 을 부른다. 그 안에서: TF 세대 +1 · `TransferIngest` 무장 풀기 ·
+  게시 금지 · 곡선 지움 · `transferSession = 0`. 명령이 생략되든 늦든 **TF 쪽 끝은 이미 났다.**
+- **쓰기 오류**(`onEnded`)는 생략되지 않는 `postAlways` 길로 오고, 그 재생이 TF 세션의 것이면 같은
+  `endTransferSession` 을 주 스레드로 넘겨 부른다.
+- **TF 시작이 생략·교체되는 경우**: TF 시작 명령이 더 새 명령에 덮여 안 돌았다면, 그 새 명령을 만든 길이 이미
+  위의 논리적 끝을 냈다(의도 번호를 올린 그 자리). 시작 명령이 돌았는데 2초 정리 조건·포커스·열기에서 실패하면
+  명령 실행자가 실패 까닭을 주 스레드로 넘겨 `endTransferSession` 을 부른다.
+- **물리적 정리**(플레이어 정지·포커스 놓기)는 지금처럼 기존 명령 실행자가 한다. 생략된 정지는 뒤따른 명령의
+  정규 길이 옛 재생을 정리한다(기존 동작). `onTransferPlaybackEnded` 는 **참고 소식**으로만 두고 정확성에 쓰지
+  않는다.
+- **앞으로 돌아와도 저절로 다시 틀지 않는다.**
 
 ### 4.5 느린 시작과 닫기가 겹칠 때
 
 기존 플레이어가 이미 데인 자리(SRLR-01·02·04, SRLRO-01)를 그대로 쓴다: 시작·정지는 같은 명령 실행자에서
 차례로 돌고, 늦게 끝난 시작은 의도 번호(`signalIsCurrent`)가 가리며, 정지 의도가 지름길을 막는다. TF 가
-더하는 것은 세션 번호 하나 — 늦게 열린 재생의 탭 표본·경로 보고는 세션이 다르면 버린다.
+더하는 것은 세션 번호와 주인 — 늦게 열린 재생의 탭 표본·경로 보고는 붙잡은 재생 세션이 지금과 다르면 버린다.
+**기존 명령 실행자의 「최신 것만 실행」 규칙은 바꾸지 않는다** — TF 의 정확성이 그 규칙에 기대지 않게 했다.
 
 ## 5. 재는 박자
 
@@ -363,7 +409,8 @@ TF 는 `transferSession = 0` 을 **정지 명령을 줄에 세운 뒤** 주 스�
   5번(못 맞춤)도 여기에 센다 — 그래서 맞춤을 한 번도 못 찾은 채 10박자면 멈춘다.
 - 게시 뒤 `staleTicks` 1~2 → 남은 곡선에 「마지막 결과 n초 전」. **3** → 곡선 지움 「새 자료가 들어오지
   않습니다 — 입력이나 출력이 멈췄을 수 있습니다」(소리는 계속, 다음 게시가 오면 다시 그린다).
-- `notFoundTicks = 10`(어느 구간이든, 게시가 끼면 0) → 멈춤 「10초 동안 기준과 측정의 맞춤을 찾지 못했습니다」.
+- `notFoundTicks = 10`(못 맞춤 **관측 10회** — Busy 등이 사이에 끼면 10초보다 길다. 게시가 끼면 0) → 멈춤
+  「기준과 측정의 맞춤을 연달아 10번 찾지 못했습니다」. *(4판은 「10초 동안」 — 횟수를 시간으로 적었다, R33-05)*
 
 ### 6.2 다시 맞추기 — 시도 횟수로 센다 (R31-03)
 
@@ -506,16 +553,20 @@ TF 는 `transferSession = 0` 을 **정지 명령을 줄에 세운 뒤** 주 스�
 |---|---|
 | 상태 함수 | 3.3 표·6장·9장 우선순위의 각 줄이 그 조건에서만 나온다(순수 함수 `TransferUiState`) |
 | **입구 관문·생산 작업 (R32-01)** | 가짜 플레이어·가짜 FR/마법사로: ① TF 세션 중 도구·FR·마법사의 `playSignal` → 거절, `signalIntent` 그대로 ② TF 시작은 플레이어가 비어 있어도 `cancelResponse`·`stopWork` 를 부른다 ③ 배경 수집 중이던 FR 을 TF 시작이 취소 → TF 를 빨리 닫아 관문이 열린 뒤에도 그 FR 은 `playSignal` 하지 않는다(`ensureActive`) ④ 마법사 같음 ⑤ 기존 신호가 나는 중 TF 시작 → 정규 길이 옛 재생을 정리하고 탭이 붙은 새 싱크를 연다 ⑥ TF 요청은 지름길(retune)을 쓰지 않는다 |
+| **정리 미완이면 열지 않음 (R33-01)** | 실제 `SignalPlayer` + 가짜 싱크의 `write` 를 붙들어: 옛 재생 `pendingCount=1` → TF 싱크를 열지 않고(`opens` 그대로) 2초 뒤 「이전 소리 정리가 끝나지 않아…」로 세션 끝 · 기다리는 중 멈춤 → 즉시 끝 · `failedReleaseCount>0` 도 같음 · 정리가 끝나면(`pending 0`) 연다 |
+| **주인별 정지 (R33-02)** | 실제 `WizardWork`·`SerialCommands`·가짜 캡처로: 취소 → TF 시작 → 옛 `finally` 순서에서 옛 작업의 `stopSignalOwnedBy(Wizard)` 는 아무것도 안 함, TF 재생 그대로(33회차 반례 `executed=[stop]` 이 사라짐) · FR 도 같음 · 사람의 정지는 전체 정지 그대로 |
+| **세션 끝 (R33-03)** | 실제 `SerialCommands` 로: TF 정지 → 일반 시작이 정지를 덮어도 TF 세션은 정지 요청 줄에서 이미 끝(게시 금지·무장 풀기) · 포커스 손실 직후, 물리 정지 전에 끝난 계산은 게시되지 않음 · TF 시작이 덮여 안 돌아도 세션이 끝남 · `onEnded`(postAlways)로도 끝 · 시작 실패(정리 조건·포커스·열기)도 끝 |
+| **탭 해제** | 열기 예외에서도 `nextTap` 이 비워진다 — 다음 일반 싱크에 탭 없음(33회차 `[9,9]` 반례) · 늦은 경로 보고는 붙잡은 재생 세션으로 가린다 |
 | **기준 탭** | `nextTap` 은 TF 시작 명령의 `player.start` 동안만 있다 — 다른 재생의 싱크에는 탭이 없다. 끝난 세션의 늦은 탭 표본은 `TransferIngest` 가 버린다 |
 | **재생 끝 알림** | 정지 명령·`onEnded`·시작 실패·포커스 손실·ON_STOP·onCleared 마다 `onTransferPlaybackEnded(세션, 까닭)` 가 명령 실행자에서 한 번 온다. UI `playingSignal` 로 짐작하지 않는다 |
 | **시작 관문** | 입력 미확인·사건 뒤 미확인·비내장·비 48k·캡처 멈춤이면 플레이어를 **열지 않는다**. 확인 뒤에도 저절로 시작하지 않는다. 포커스 거절이면 열지 않는다 |
 | **느린 시작·닫기** | 가짜 싱크의 `open` 을 늦춰 그 사이 닫기 → 열린 뒤 곧바로 정리. 멈춤 **요청 순간** 게시 금지(정리 전에 끝난 계산도 버림). 늦은 경로 보고·늦은 결과는 버린다 |
 | **중단 경로** | 포커스 손실·덕·noisy·ON_STOP·onCleared 마다 기존 길이 멈추고 TF 세션이 끝나며 곡선 지움. 멈춤 요청 순간 무장 풀기·게시 금지. 복귀 시 재생 안 함 |
 | **출력 확인** | 요청 USB·실제 폰 스피커 → 게시 안 함·멈춤. 실제 키 다름 → 같음. 3초(단조) 안에 확인 없음 → 멈춤. 무장 전 사건 → 다시 확인, **무장 뒤 사건은 같은 키여도** 멈춤(A→B→A) |
-| **입력 사건 (R31-02 · R32-03)** | `MicSource` 의 경로 리스너가 **같은 통지에도** 스냅샷을 낸다(원문 리스너 + 가짜 플랫폼 값: 같은 통지 · 22→24→22 지연 통지 — 32회차 반례) · 스냅샷이 내장·48k 면 곧바로 재무장(3초 뒤 거짓 멈춤 없음) · 스냅샷 null/비내장 → 3초 뒤 멈춤 · 준비 중 통지는 실패 아님 · `blockSeq ≤ blockSeqAtSnapshot` 블록 버림 · 옛 `captureId` 의 늦은 블록·스냅샷 버림 · 읽기 오류 직후 블록 버림 · `TransferIngest` 의 검사·offer·reset·ledger 가 같은 자물쇠(검사 → reset → offer 경합을 두 스레드로 재현) |
+| **입력 사건 (R31-02 · R32-03)** | `MicSource` 의 경로 리스너가 **같은 통지에도** 스냅샷을 낸다(원문 리스너 + 가짜 플랫폼 값: 같은 통지 · 22→24→22 지연 통지 — 32회차 반례) · 스냅샷이 내장·48k 면 곧바로 재무장(3초 뒤 거짓 멈춤 없음) · 스냅샷 null/비내장 → 3초 뒤 멈춤 · 준비 중 통지는 실패 아님 · `blockSeq ≤ readSeqAtSnapshot` 블록 버림 · **읽는 중이던 블록**(번호 예약 뒤·전달 전)도 경계 앞(R33-04) · 옛 `captureId` 의 늦은 블록·스냅샷 버림 · 읽기 오류 직후 블록 버림 · `TransferIngest` 의 검사·offer·reset·ledger 가 같은 자물쇠(검사 → reset → offer 경합을 두 스레드로 재현) |
 | **언더런** | 언더런 수 증가 → reset·세대 +1·곡선 지움. `underrunCount()` 의 null(모름)과 0 을 구별 |
 | **게시 규칙** | 계산 중 reset/close → 옛 결과 버림. 옛 epoch 버림. 같은 `windowEnd` 반복 → 게시 안 함 |
-| **박자·다시 맞추기 (R31-03 · R32-04)** | 6.1 표의 순서 — 옛 결과는 세지 않음 · 같은 창 `found=false` 는 4번(창 진행 없음)으로 · 모으는 구간 `found=false` 10박자 → 멈춤(32회차 반례: 100박자에도 0 이던 것) · 게시 뒤 못 맞춤 10박자 → 멈춤, 게시가 끼면 0 · epoch 가 바뀌면 두 창 기준 −1 · `I→R→reset` 교대 3번 → 멈춤 · Busy 가 끼어도 시도 횟수 유지 · 복구 성공 뒤 다음 독립 실패는 1부터 · 수동 재시작은 0부터 · 게시 뒤 1~2박자 「마지막 결과 n초 전」, 3박자 지움 |
+| **박자·다시 맞추기 (R31-03 · R32-04)** | 6.1 표의 순서 — 옛 결과는 세지 않음 · 같은 창 `found=false` 는 4번(창 진행 없음)으로 · 모으는 구간 `found=false` 10박자 → 멈춤(32회차 반례: 100박자에도 0 이던 것) · 못 맞춤 관측 10회 → 멈춤(Busy 가 끼어도 관측 수로), 게시가 끼면 0 · epoch 가 바뀌면 두 창 기준 −1 · `I→R→reset` 교대 3번 → 멈춤 · Busy 가 끼어도 시도 횟수 유지 · 복구 성공 뒤 다음 독립 실패는 1부터 · 수동 재시작은 0부터 · 게시 뒤 1~2박자 「마지막 결과 n초 전」, 3박자 지움 |
 | **그래프 상태 (R31-04)** | 크기 모두 −∞·코히런스 유한 → 크기만 「표시 가능한 칸 없음」, 코히런스 그림 · 크기 모두 축 아래·코히런스 유한 → 같음 · 둘 다 그릴 칸 없음 → 「그릴 수 있는 칸이 없습니다」 · 기준 유효 0 → 둘 다 없음 · 한쪽만 비유한 · 코히런스 숨김·안정화 중 |
 | **띠** | 미검증 결과로 만든 상태는 늘 띠를 가진다. `Verified` 라도 다른 경고는 남는다. 변이(띠 조건 뒤집기)를 잡는다 |
 | **코히런스 진단** | 30회차 반례(전체 0.99 · 표시 대역 0.10)에서 표시 대역 값 0.10 을 낸다. 빈 집합·숨김·안정화 중 |
@@ -537,24 +588,32 @@ TF 는 `transferSession = 0` 을 **정지 명령을 줄에 세운 뒤** 주 스�
   `onRoutingChanged`·`onRouteConfirmed` 는 그대로.
 - `ui/CaptureController.kt` — `SourceHooks` 에 `onRawRoutingNotice`·`onRouteSnapshot` 칸, `onBlock` 에서 TF 로 넘기는 자리.
 - `ui/CaptureViewModel.kt` — `MicSource` 에 두 콜백 연결 · `transferSession` 과 `playSignal` 입구 관문 ·
-  `playTransferSignal(sessionId)` · 명령 실행자 전용 `nextTap` 과 `openSink` 의 탭 감싸기 · TF 요청은 지름길 없음 ·
-  `onTransferPlaybackEnded` · FR 의 신호 시작 자리에 `ensureActive()`.
-- 교정 마법사의 신호 시작 자리 — `ensureActive()`.
+  `SignalOwner` 와 `activeOwner`·`stopSignalOwnedBy(owner)` · `playTransferSignal(sessionId)` · 명령 실행자의 2초 정리
+  조건(`pendingCount`·`failedReleaseCount`) · `nextTap` 의 `try/finally` 와 불변 `PlaybackSession` · TF 요청은 지름길 없음 ·
+  `signalIntent` 를 올리는 모든 길에서 `endTransferSession` · `onEnded` 에서도 · FR 신호 시작 자리 `ensureActive()`,
+  FR `finally`(1392행)와 단계 사이 끄기(1361행)는 `stopSignalOwnedBy(Response)`.
+- `audio/MicSource.kt`·캡처 루프 — 읽기 **전** `readSeq` 예약.
+- `calibration/WizardCoordinator.kt` — 신호 시작 자리 `ensureActive()`, `finally`(305·526행 등)의 끄기는
+  `stopSignalOwnedBy(Wizard)`(`WizardCaptureBridge` 에 주인별 정지 칸).
 - `ui/screens/AnalyzeScreens.kt`(문 한 줄) · `ui/SelahApp.kt`(문·BackHandler·`ON_STOP`) ·
   `dsp/.../TransferEngine.kt`(KDoc 계약 문장만) · `res/values/strings.xml` · `docs/unverified.md`(열기 실패 자원 추적 — 기존 플레이어의 성질).
 
 **건드리지 않는다**: `Navigation.kt` · `AnalyzeModes` · 설정 화면 · 기존 플레이어의 출력 선택 규칙·포커스·
 백그라운드·의도 번호 규칙 · DSP 계산.
 
-## 14. 검토에 묻는 것 (4판)
+## 14. 검토에 묻는 것 (5판)
 
-1. **4장 — 기존 플레이어 하나를 같이 쓰는 것**이 R30-01·R31-01·R32-01·R32-02 를 닫는가. 특히 입구 관문(의도 번호를
-   올리기 전 거절), 늘 하는 생산 작업 취소와 `ensureActive`, `nextTap` 으로 TF 재생에만 탭, 정지 명령을 줄에 세운
-   뒤 세션을 놓는 차례, `onTransferPlaybackEnded`.
-2. **3.2** — 출력 설정 「유선」 + 실제 경로 USB 확인으로 출력 쪽이 충분한가(3.5 잭은 확인 실패로 멈춤).
-3. **3.3** — 통지마다의 스냅샷, `captureId`·`blockSeq`, `TransferIngest` 한 자물쇠가 R32-03 을 닫는가.
-4. **6.1** — 순서식 판정 표가 R32-04 를 닫는가(`found=false` 의 10박자, epoch 별 기준).
-5. 열기 실패 자원을 TF 범위 밖(기존 플레이어의 성질, `unverified` 에 적음)으로 두는 것이 맞는가.
+1. **4.3 5번**(R33-01) — `pendingCount == 0` · `failedReleaseCount == 0` 을 2초까지 기다린 뒤에만 TF 싱크를 여는 조건,
+   그리고 이 두 수에 안 잡히는 열기 실패 자원을 **남은 위험**(R32-02, unverified 3-5)으로 두는 것.
+2. **4.1 주인별 정지**(R33-02) — `SignalOwner`·`activeOwner`·`stopSignalOwnedBy` 로 취소된 작업의 `finally` 가 TF 를
+   끄지 못하게 한 것, 사람·포커스·백그라운드·닫기는 전체 정지로 남긴 것.
+3. **4.4 세션의 끝**(R33-03) — `signalIntent` 를 올리는 모든 길에서 주 스레드로 곧바로 `endTransferSession`,
+   `onEnded` 는 `postAlways`, 기존 큐의 「최신 것만」 규칙은 그대로.
+4. **3.3 읽기 번호 예약**(R33-04)과 그 경계 밖(AudioRecord 내부 버퍼)을 보장 밖으로 둔 것.
+5. **구현에 들어가도 되는가.** 30~33회차의 남은 위험은 대부분 「실제 큐·코루틴·플레이어의 경합」이었고, 이번
+   회차까지 그 반례들을 12장의 시험 항목으로 옮겼다. **12장의 시험(특히 R31~R33 반례를 그대로 재현하는 것)을
+   구현의 합격 조건으로 삼는 조건으로** 구현에 들어가고, 구현 PR 을 다시 검토받는 길을 제안한다. 설계로 더
+   닫아야 할 것이 남았다면 무엇인지.
 
 ## 15. 구현 노트 (31회차 「추가 확인 사항」)
 

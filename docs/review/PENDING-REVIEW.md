@@ -917,6 +917,24 @@ R6-04 부분 종결. Medium 넷을 고쳤습니다. **실기기·가짜 입출�
 
 ---
 
+### 33회차 회신 뒤 — 설계 5판 (R33-01~05, 공유 플레이어 유지)
+
+판정 「구현·병합 보류」(High 1 · Medium 3 · Low 1). 공유 플레이어 방향 수용, R32-04 닫힘. R32-02 는 별도 미해결로 유지.
+
+| 지적 | 5판 |
+|---|---|
+| R33-01 High | 4.3 5번 — 명령 실행자에서 옛 재생 정지 뒤 `pendingCount == 0`·`failedReleaseCount == 0` 일 때만 TF 싱크를 엶(2초, 멈춤 시 즉시 끝). 안 되면 열지 않고 세션 끝 |
+| R33-02 Medium | 4.1 — `SignalOwner`·`activeOwner`·`stopSignalOwnedBy(owner)`. FR·마법사 `finally` 는 주인별 정지, 사람·포커스·백그라운드·닫기는 전체 정지 |
+| R33-03 Medium | 4.4 — `signalIntent` 를 올리는 모든 길에서 주 스레드로 곧바로 `endTransferSession`(게시 금지·무장 풀기). `onEnded` 는 `postAlways`. `onTransferPlaybackEnded` 는 참고만 |
+| R33-04 Medium | 3.3 — 읽기 **전** `readSeq` 예약, 스냅샷은 예약된 번호. 「2초면 몫이 작다」 거둠 |
+| R33-05 Low | 6.1 — 「못 맞춤 관측 10회」 |
+| 구현 조건 | 4.2 — `nextTap` `try/finally`, 불변 `PlaybackSession` |
+| 문장 좁힘 | 「High 셋 모두 별도 플레이어 때문」·「열기 실패 자원은 TF 와 무관」을 좁힘 |
+
+**14장 5번에서 묻습니다**: 12장 시험(R31~R33 반례 재현)을 합격 조건으로 삼아 구현에 들어가도 되는지.
+
+---
+
 ## 지난 회차에 보낸 것 — **판정이 다 났습니다**
 
 프로즈를 걷어내고 표로 남깁니다. **읽어야 할 것은 위의 새 절들**이고,
