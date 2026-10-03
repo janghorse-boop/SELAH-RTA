@@ -7,7 +7,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -73,6 +72,10 @@ class TransferIngestTest {
     /**
      * 두 스레드 — 캡처 스레드는 번호를 올려 가며 블록을 넣고, 주 스레드는 그 사이에 그 순간의 번호로 다시
      * 무장한다. 다시 무장한 뒤 엔진에 든 표본은 **모두 경계보다 큰 번호의 블록**에서 왔어야 한다.
+     *
+     * 번호 올리기는 잠금 밖이라 「경계 이하 번호를 예약한 블록이 무장 뒤에 도착하는」 경쟁은 그대로 일어난다. 다만
+     * **넣기와 그 기록**은 시험의 잠금으로 묶고 무장도 그 안에서 한다 — 그러지 않으면 넣기와 기록 사이에 무장이 끼어
+     * 무장 뒤 블록이 「앞」으로 세어진다(38회차 기준 실행에서 블록 4개 차이로 실패한 것은 이 시험 쪽 경쟁이었다).
      */
     @Test
     fun `다시 무장하는 동안 들어오는 블록이 경계를 넘지 않는다`() {
@@ -80,28 +83,31 @@ class TransferIngestTest {
         val ingest = TransferIngest(engine)
         ingest.arm(1, 1, 0)
         val seq = AtomicLong()
-        val accepted = Collections.synchronizedList(ArrayList<Long>())
+        val gate = Any()
+        val after = ArrayList<Long>()
         val run = AtomicBoolean(true)
         val started = CountDownLatch(1)
         val t = Thread {
             started.countDown()
             while (run.get()) {
                 val s = seq.incrementAndGet()
-                if (ingest.offerMeasurement(1, block(s, 64), quiet)) accepted += s
+                synchronized(gate) {
+                    if (ingest.offerMeasurement(1, block(s, 64), quiet)) after += s
+                }
             }
         }
         t.start()
         assertTrue(started.await(5, TimeUnit.SECONDS))
         Thread.sleep(20)
         val floor = seq.get()
-        accepted.clear()
-        ingest.arm(1, 1, floor)
-        val frozen = ArrayList(accepted)
+        synchronized(gate) {
+            after.clear()
+            ingest.arm(1, 1, floor)
+        }
         Thread.sleep(20)
         run.set(false)
         t.join(5_000)
 
-        val after = accepted.toList().drop(frozen.size)
         assertTrue("무장 뒤 받은 블록이 있어야 시험이 뜻이 있다", after.isNotEmpty())
         assertTrue("무장 뒤 받은 블록은 모두 경계($floor)보다 크다", after.all { it > floor })
         assertEquals("엔진에는 무장 뒤 받은 블록만 있다", after.size * 64L, engine.measurementCount)

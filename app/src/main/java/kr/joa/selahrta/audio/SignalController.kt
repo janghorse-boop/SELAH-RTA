@@ -354,7 +354,8 @@ class SignalController(
      * 1. 주 스레드에서 마지막으로 받은 요청의 주인이 그 주인이 아니면 아무것도 안 한다(34회차 R34-01). 다만
      *    앞선 주인별 정지가 아직 **정착 중**이면 받는다 — 앞서 받은 요청의 소리가 아직 날 수 있다(37회차 R37-01 B).
      * 2. 받으면 정지 뜻을 올리고 정착 중으로 둔 뒤 명령 스레드에 넣는다. **화면을 미리 끄지 않는다**(36회차 R36-01).
-     * 3. 명령 스레드에서 실제로 재생 중인 주인이 그 주인이거나 아무것도 없으면 멈추고 화면을 끈다. **다른 주인의
+     * 3. 명령 스레드에서 실제로 재생 중인 주인이 **정착 중에 받은 정지 대상 중 하나**거나 아무것도 없으면 멈추고
+     *    화면을 끈다 — 대상은 정지마다 통째로 들고 가므로 앞 정지 명령이 생략돼도 잃지 않는다(38회차 R38-01). **다른 주인의
      *    재생이 남아 있으면**(그 주인의 대기 중 요청만 취소된 것) 그 재생은 그대로 두고 화면도 그 재생으로 되돌린다.
      * 4. 남은 재생의 주인(없으면 null)으로 정착한다 — **이 정지의 의도 번호가 아직 최신일 때만**. 그 사이 새 요청·
      *    전체 정지·TF 시작이 있었으면 그쪽이 이미 주인을 정했다(37회차 R37-01 A).
@@ -367,10 +368,13 @@ class SignalController(
         if (!ownership.ownedStopAllowed(owner)) return
         val intent = signalIntent.incrementAndGet()
         lastSignalStopIntent.set(intent)
-        noteTransferEndedByIntent(ownership.onOwnedStopAccepted(), null)
+        val accepted = ownership.onOwnedStopAccepted(owner)
+        noteTransferEndedByIntent(accepted.endedSession, null)
+        // 정착 중에 받은 정지 대상 전부를 들고 간다 — 이 명령이 앞 정지 명령을 덮어도 그 뜻은 남는다(38회차 R38-01).
+        val targets = accepted.targets
         commands.post {
             val active = playbackLedger.activeOwner
-            val remaining = if (active == null || active == owner) {
+            val remaining = if (active == null || active in targets) {
                 stopSignalOnCommandThread()
                 publishSignal(intent, null, null)
                 null

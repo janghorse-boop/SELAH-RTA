@@ -58,6 +58,12 @@ class SignalOwnership {
     var settling: Boolean = false
         private set
 
+    /**
+     * 정착 중에 받은 주인별 정지의 **대상 전부**(38회차 R38-01). 명령 큐는 마지막 명령만 돌리므로 정지마다 이
+     * 묶음을 통째로 들고 간다 — 앞 정지가 생략돼도 마지막 명령이 그 뜻까지 이행한다. 정착 중이 풀리면 빈다.
+     */
+    private var pendingStopTargets: Set<SignalOwner> = emptySet()
+
     private var lastSessionId = 0L
     private var lastAttemptId = 0L
 
@@ -79,7 +85,7 @@ class SignalOwnership {
             return Admission.Rejected("Transfer Function 이 소리를 내는 중입니다.")
         }
         latestRequestOwner = owner
-        settling = false
+        endSettling()
         return Admission.Accepted(PlaybackAttempt(owner, ++lastAttemptId))
     }
 
@@ -99,7 +105,7 @@ class SignalOwnership {
         transferSession = session
         val owner = SignalOwner.Transfer(session)
         latestRequestOwner = owner
-        settling = false
+        endSettling()
         return TransferStart(PlaybackAttempt(owner, ++lastAttemptId), ended)
     }
 
@@ -115,21 +121,25 @@ class SignalOwnership {
         transferSession = 0L
         if (globalStop) {
             latestRequestOwner = null
-            settling = false
+            endSettling()
         }
         return ended
     }
 
+    /** 받은 주인별 정지. [targets] 는 정착 중에 받은 정지 대상 전부 — 명령 스레드는 실제 재생이 이 중 하나면 멈춘다. */
+    data class OwnedStop(val targets: Set<SignalOwner>, val endedSession: Long)
+
     /**
-     * 주인별 정지를 받았다([ownedStopAllowed] 가 참이었다). 마지막 요청은 취소됐으니 그 주인을 비우고 **정착 중**으로
-     * 둔다 — 실제로 남은 재생의 주인은 명령 스레드가 [settle] 로 알려 준다(37회차 R37-01). TF 세션이 살아 있었으면
-     * 끝내고 그 번호를 돌려준다.
+     * [owner] 의 주인별 정지를 받았다([ownedStopAllowed] 가 참이었다). 마지막 요청은 취소됐으니 그 주인을 비우고
+     * **정착 중**으로 둔다 — 실제로 남은 재생의 주인은 명령 스레드가 [settle] 로 알려 준다(37회차 R37-01). 대상은
+     * 정착 중에 받은 것과 합쳐 돌려준다(38회차 R38-01). TF 세션이 살아 있었으면 끝내고 그 번호를 함께 돌려준다.
      */
-    fun onOwnedStopAccepted(): Long {
+    fun onOwnedStopAccepted(owner: SignalOwner): OwnedStop {
         val ended = onIntentRaised(globalStop = false)
         latestRequestOwner = null
         settling = true
-        return ended
+        pendingStopTargets = pendingStopTargets + owner
+        return OwnedStop(pendingStopTargets, ended)
     }
 
     /**
@@ -158,7 +168,13 @@ class SignalOwnership {
      */
     fun settle(active: SignalOwner?) {
         latestRequestOwner = active
+        endSettling()
+    }
+
+    /** 정착 중을 푼다 — 모은 정지 대상도 낡았다(새 요청·TF 시작·전체 정지·정착). */
+    private fun endSettling() {
         settling = false
+        pendingStopTargets = emptySet()
     }
 }
 

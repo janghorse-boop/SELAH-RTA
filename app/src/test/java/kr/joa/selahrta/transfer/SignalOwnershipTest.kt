@@ -140,7 +140,7 @@ class SignalOwnershipTest {
         own.admit(a)
         own.admit(b)
         assertFalse(own.ownedStopAllowed(a))
-        own.onOwnedStopAccepted()
+        own.onOwnedStopAccepted(b)
         assertTrue(own.settling)
         assertNull(own.latestRequestOwner)
         assertTrue("앞선 주인의 소리가 아직 날 수 있다", own.ownedStopAllowed(a))
@@ -153,12 +153,12 @@ class SignalOwnershipTest {
         val b = SignalOwner.Wizard(2)
         own.admit(a)
         own.admit(b)
-        own.onOwnedStopAccepted()
+        own.onOwnedStopAccepted(b)
         own.settle(a)
         assertFalse(own.settling)
         assertTrue(own.ownedStopAllowed(a))
         assertFalse(own.ownedStopAllowed(b))
-        own.onOwnedStopAccepted()
+        own.onOwnedStopAccepted(a)
         own.settle(null)
         assertFalse(own.ownedStopAllowed(a))
     }
@@ -169,18 +169,36 @@ class SignalOwnershipTest {
         val b = SignalOwner.Wizard(2)
         val c = SignalOwner.Wizard(3)
 
-        val byAdmit = SignalOwnership().apply { admit(a); admit(b); onOwnedStopAccepted(); admit(c) }
+        val byAdmit = SignalOwnership().apply { admit(a); admit(b); onOwnedStopAccepted(b); admit(c) }
         assertFalse(byAdmit.settling)
         assertFalse(byAdmit.ownedStopAllowed(a))
         assertTrue(byAdmit.ownedStopAllowed(c))
 
-        val byTransfer = SignalOwnership().apply { admit(a); admit(b); onOwnedStopAccepted(); beginTransfer() }
+        val byTransfer = SignalOwnership().apply { admit(a); admit(b); onOwnedStopAccepted(b); beginTransfer() }
         assertFalse(byTransfer.settling)
         assertFalse(byTransfer.ownedStopAllowed(a))
 
-        val byGlobal = SignalOwnership().apply { admit(a); admit(b); onOwnedStopAccepted(); onIntentRaised(globalStop = true) }
+        val byGlobal = SignalOwnership().apply { admit(a); admit(b); onOwnedStopAccepted(b); onIntentRaised(globalStop = true) }
         assertFalse(byGlobal.settling)
         assertFalse(byGlobal.ownedStopAllowed(a))
+    }
+
+    @Test
+    fun `정착 중 받은 정지 대상은 모이고 정착 중이 풀리면 빈다 — R38-01`() {
+        val a = SignalOwner.Response(1)
+        val b = SignalOwner.Wizard(2)
+        val z = SignalOwner.Response(3)
+        val own = SignalOwnership()
+        own.admit(a)
+        own.admit(b)
+        assertEquals(setOf(b), own.onOwnedStopAccepted(b).targets)
+        assertEquals(setOf(b, a), own.onOwnedStopAccepted(a).targets)
+        assertEquals("뒤에 온 무관한 정지도 앞의 대상을 들고 간다", setOf(b, a, z), own.onOwnedStopAccepted(z).targets)
+        own.admit(a)
+        assertEquals("새 요청 뒤에는 그 주인만", setOf(a), own.onOwnedStopAccepted(a).targets)
+        own.settle(null)
+        own.admit(b)
+        assertEquals(setOf(b), own.onOwnedStopAccepted(b).targets)
     }
 
     // ── 입구 관문 ────────────────────────────────────────────────────────
