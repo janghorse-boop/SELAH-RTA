@@ -28,6 +28,10 @@ class SourceHooks(
     val onRoutingChanged: (InputDeviceInfo?) -> Unit,
     val onRouteConfirmed: (OpenedFormat) -> Unit,
     val onCaptureEnded: (CaptureEnd) -> Unit,
+    /** 거르기 전의 원시 경로 통지(TF 설계 3.3). 기본은 아무것도 안 한다. */
+    val onRawRoutingNotice: () -> Unit = {},
+    /** 통지마다 새로 조회한 경로(TF 설계 3.3). 기본은 아무것도 안 한다. */
+    val onRouteSnapshot: (kr.joa.selahrta.audio.RouteSnapshot) -> Unit = {},
 )
 
 /**
@@ -208,6 +212,19 @@ class CaptureController(
 
     /** 돌고 있는가. */
     val running: Boolean get() = active != null
+
+    /**
+     * Transfer Function 의 입력 통로(TF 설계 3.3). TF 화면이 열려 있을 때만 쥔다. 블록은 캡처 스레드에서,
+     * 나머지는 주 스레드에서 이리로 간다.
+     */
+    @Volatile
+    var transferInput: kr.joa.selahrta.transfer.TransferInputPort? = null
+
+    /** 지금 측정의 캡처 번호. 안 돌면 0. */
+    fun currentCaptureId(): Long = active?.source?.captureId ?: 0L
+
+    /** 지금 측정의 예약된 읽기 번호. 안 돌면 0. */
+    fun currentReadSeq(): Long = active?.source?.readSeqNow ?: 0L
 
     /**
      * 수명주기를 밖에 알린다. **바뀔 때만**, 주 스레드에서.
@@ -532,6 +549,8 @@ class CaptureController(
         // 사람이 멈춘 뒤 늦게 도착한 오류는 버린다. 그러지 않으면 정상
         // 종료가 「다른 앱이 마이크를 가져갔습니다」로 뒤집힌다(F04).
         if (!generation.accepts(session)) return
+        // TF 는 끝난 캡처의 블록을 더 받지 않는다(TF 설계 3.3 — 읽기 오류도 입력 사건).
+        transferInput?.onCaptureEnded(active?.source?.captureId ?: 0L)
 
         // 기기가 빠져서 끝난 것이면 **분리 정책을 여기서 실행한다.**
         // 목록 변경보다 읽기 오류가 먼저 오는 순서에서는 `active` 가 이미
@@ -584,6 +603,9 @@ class CaptureController(
                 onRoutingChanged = { to -> post { onRoutingChanged(mySession, to) } },
                 onRouteConfirmed = { fmt -> post { onRouteConfirmed(mySession, fmt) } },
                 onCaptureEnded = { end -> post { onCaptureEnded(mySession, end) } },
+                // TF 로 가는 두 소식(TF 설계 3.3). 옛 캡처의 것은 받는 쪽이 captureId 로 가린다.
+                onRawRoutingNotice = { post { transferInput?.onRawNotice(currentCaptureId()) } },
+                onRouteSnapshot = { snap -> post { transferInput?.onSnapshot(snap) } },
             ),
         )
         // **몇 채널로 열지를 기기가 알린 것으로 정한다.** 4채널을
@@ -686,6 +708,10 @@ class CaptureController(
         // 종료가 늦어진 옛 스레드가 새 측정의 엔진과 명령 큐를 만지는 것을
         // 여기서 막는다(독립 재검증 F02).
         if (active !== session) return
+
+        // Transfer Function 이 열려 있으면 측정 블록을 넘긴다(TF 설계 3.3). 받는 쪽이 캡처 번호·읽기
+        // 번호로 경계를 가른다.
+        transferInput?.onBlock(session.source.captureId, block, stats)
 
         // 주 스레드가 시킨 일(엔진 교체·reset·곡선)을 먼저 한다.
         // 덩어리와 덩어리 사이가 DSP 상태를 바꿔도 안전한 자리다.
@@ -849,6 +875,8 @@ class CaptureController(
         // 캡처 콜백이 한두 번 더 올 수 있는데, 그때 이 검사에 걸려야
         // 이미 끝난 측정이 화면을 건드리지 못한다(독립 재검증 F02).
         val ending = active
+        // TF 는 멈춘 캡처의 블록을 더 받지 않는다(TF 설계 3.3).
+        active?.source?.captureId?.let { transferInput?.onCaptureEnded(it) }
         active = null
         generation.end()
 

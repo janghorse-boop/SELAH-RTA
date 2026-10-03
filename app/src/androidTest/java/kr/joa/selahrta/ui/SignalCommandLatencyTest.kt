@@ -76,8 +76,11 @@ class SignalCommandLatencyTest {
     @After
     fun 치운다() {
         val m = vm ?: return
-        val commands = m.javaClass.getDeclaredField("signalCommands")
-            .apply { isAccessible = true }.get(m) as SerialCommands
+        // 신호 명령은 SignalController 로 옮겼다(36회차 뒤).
+        val signals = m.javaClass.getDeclaredField("signals")
+            .apply { isAccessible = true }.get(m)!!
+        val commands = signals.javaClass.getDeclaredField("commands")
+            .apply { isAccessible = true }.get(signals) as SerialCommands
         val executor = commands.javaClass.getDeclaredField("executor")
             .apply { isAccessible = true }.get(commands) as ExecutorService
 

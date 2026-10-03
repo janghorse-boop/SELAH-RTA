@@ -997,12 +997,19 @@ internal fun AxisModePill(mode: AxisMode, onToggle: () -> Unit) {
     )
 }
 
+/**
+ * 「전달함수 ▸」 문을 여는 동작(TF 설계 1장, 안 2). `SelahApp` 이 내려준다. 없으면 문을 그리지 않는다.
+ * 분석 모드 넷(RTA·Spectrum·Spectrogram·FR)과 그 고르개는 그대로 두고, 끝에 모양이 다른 문 하나만 단다.
+ */
+val LocalTransferDoor = androidx.compose.runtime.staticCompositionLocalOf<(() -> Unit)?> { null }
+
 @Composable
 internal fun AnalyzeModes(
     current: ViewMode,
     onPick: (ViewMode) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val openTransfer = LocalTransferDoor.current
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         ViewMode.entries.filter { it.section == NavSection.Analyze }.forEach { m ->
             val on = m == current
@@ -1020,6 +1027,18 @@ internal fun AnalyzeModes(
                     .clickable { onPick(m) }
                     .padding(horizontal = 10.dp, vertical = 5.dp)
                     .semantics { stateDescription = if (on) "선택됨" else "선택 안 됨" },
+            )
+        }
+        if (openTransfer != null) {
+            Text(
+                "전달함수 ▸",
+                color = SelahColors.TextPrimary,
+                fontSize = 10.sp,
+                softWrap = false,
+                modifier = Modifier
+                    .border(1.dp, SelahColors.Outline, RoundedCornerShape(999.dp))
+                    .clickable { openTransfer() }
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
             )
         }
     }

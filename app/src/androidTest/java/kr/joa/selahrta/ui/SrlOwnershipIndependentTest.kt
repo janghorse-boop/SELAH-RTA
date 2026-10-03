@@ -70,19 +70,19 @@ class SrlOwnershipIndependentTest {
         val vm = main { ViewModelProvider(store, ViewModelProvider.AndroidViewModelFactory(app))[CaptureViewModel::class.java] }
         val sinks = Collections.synchronizedList(ArrayList<Sink>())
         val player: SignalPlayer
-        val commands = field(vm, "signalCommands") as SerialCommands
+        val commands = field(field(vm, "signals")!!, "commands") as SerialCommands
         val executor = field(commands, "executor") as ExecutorService
         val interruptions = field(vm, "interruptions") as AudioInterruptions
         val ended = CountDownLatch(1)
         var cleared = false
         init {
-            val old = field(vm, "player") as SignalPlayer
+            val old = field(field(vm, "signals")!!, "player") as SignalPlayer
             @Suppress("UNCHECKED_CAST") val callback = field(old, "onEnded") as ((Long, String) -> Unit)
             player = SignalPlayer(
                 onEnded = { g, r -> callback(g, r); ended.countDown() },
                 openSink = { factory().also { sinks.add(it) } }, warn = {},
             )
-            main { setField(vm, "player", player) }
+            main { setField(field(vm, "signals")!!, "player", player) }
         }
         fun base(): CaptureUiState = main { (field(vm, "controller") as CaptureController).baseState.value }
         fun drain() {

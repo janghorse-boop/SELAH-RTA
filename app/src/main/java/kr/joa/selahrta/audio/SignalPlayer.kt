@@ -24,6 +24,14 @@ private const val TAG = "SignalPlayer"
 const val MEASURE_AMPLITUDE = 0.15
 
 /**
+ * Transfer Function 간편 측정이 내는 핑크 잡음의 세기(디지털 진폭).
+ *
+ * 2026-10-02~03 음향 드리프트 기록·1초 간격 시운전에서 쓴 값이다(0.4~0.6 m, UMC404HD → D3V). **실제
+ * 음압의 안전을 보장하는 값이 아니다** — 화면이 시작 전에 볼륨을 낮추라고 안내한다(TF 설계 4.3).
+ */
+const val TRANSFER_AMPLITUDE = 0.2
+
+/**
  * 시험용 소리를 **스피커로 내보낸다**(명세 16장의 SignalGenerator 를
  * 현장에서 쓸 수 있게 한 것).
  *
