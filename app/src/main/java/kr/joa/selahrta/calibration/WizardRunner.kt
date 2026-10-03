@@ -70,6 +70,23 @@ interface WizardCapture {
      */
     fun playSignal(signal: TestSignal, amplitude: Double)
     fun stopSignal()
+
+    /**
+     * 작업 하나가 쓸 창 — 소리의 주인을 **작업마다** 새로 받는다. [WizardWork.stop] 은 취소만 걸고 곧바로 다음
+     * 작업을 받으므로, 취소된 옛 작업의 `finally` 가 새 작업이 소리를 낸 **뒤에** 돌 수 있다. 주인이 같으면 그
+     * 정지가 새 작업의 소리를 끈다(36회차 「추가 경계」). 작업은 시작하자마자 이것을 받아 그 안에서만 쓴다.
+     *
+     * 기본은 자기 자신 — 소리를 내지 않는 가짜 캡처에는 나눌 주인이 없다.
+     */
+    fun forWork(): WizardCapture = this
+
+    /**
+     * 지금 나는 시험 신호가 **없는지** — 명령 줄 맨 뒤에서 물어, 앞에 넣은 정지가 실제로 돈 뒤의 답이다. 배경을
+     * 모으기 전에 부른다(41회차 R41-01: 끊긴 옛 작업의 소리가 새 작업의 배경에 섞였다). 모르면 false.
+     *
+     * 기본은 참 — 소리를 내지 않는 가짜 캡처에는 남은 소리가 없다.
+     */
+    suspend fun awaitSignalQuiet(): Boolean = true
 }
 
 /** 한 단계를 돌린 결과. 못 한 까닭이 있으면 들고 온다. */
@@ -133,6 +150,9 @@ class WizardRunner(
         frames: Int = 40,
     ): RunOutcome<List<Double>> {
         capture.stopSignal()
+        // 이 작업의 정지는 **이 작업의 소리만** 끈다 — 끊긴 옛 작업의 소리가 아직 나면 배경이 그것을 잰다(41회차
+        // R41-01). 남았으면 재지 않는다.
+        if (!capture.awaitSignalQuiet()) return RunOutcome.Failed(SIGNAL_STILL_PLAYING_KO)
         tap.startTarget()
         val filled = collect(tap, frames)
         tap.stop()
@@ -353,6 +373,10 @@ const val NOT_AUDIBLE_KO: String =
         "올라가 있는지, 마이크가 가려지지 않았는지 보십시오. 잡음을 잴 때 이미 " +
         "무언가 울리고 있었다면 그것도 같은 결과가 됩니다 — 조용한 상태에서 " +
         "다시 하십시오."
+
+/** 배경을 재려는데 시험 신호가 아직 난다(41회차 R41-01). 그 소리를 배경으로 재지 않는다. */
+const val SIGNAL_STILL_PLAYING_KO: String =
+    "시험 신호가 아직 나고 있어 주변 소리를 재지 않았습니다. 신호를 멈춘 뒤 다시 눌러 보십시오."
 
 /**
  * 교정 측정에 쓰는 신호 레벨.

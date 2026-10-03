@@ -87,8 +87,22 @@ class WizardCoordinator(
      * 전경 상태는 건드리지 않는다 — 까닭은 [WizardWork] 머리말 참고.
      */
     fun stopWork() {
+        stopRunningSignal()
         work.stop()
         _busyKo.value = null
+    }
+
+    /**
+     * 지금 도는 작업의 창. 끊을 때 **그 작업의 소리를 그 자리에서** 멈추는 데 쓴다(41회차 R41-01).
+     *
+     * 작업마다 주인이 달라([WizardCapture.forWork]) 새 작업의 정지는 옛 작업의 소리를 끄지 못한다. 끊긴 옛 작업의
+     * `finally` 에만 맡기면, 그것이 늦을 때 새 작업이 옛 소리 위에서 배경을 잰다.
+     */
+    private var runningCapture: WizardCapture? = null
+
+    private fun stopRunningSignal() {
+        runningCapture?.stopSignal()
+        runningCapture = null
     }
 
     /**
@@ -97,6 +111,7 @@ class WizardCoordinator(
      * 이것만 소리를 막는다. 탭 이동·닫기는 [stopWork] 로 끊기만 한다.
      */
     fun onBackground() {
+        stopRunningSignal()
         work.onBackground()
         _busyKo.value = null
     }
@@ -243,9 +258,16 @@ class WizardCoordinator(
         forgetEvidence(evidence)
 
         work.start {
+            // 이 작업만의 창 — 소리의 주인을 작업마다 새로 받는다. 취소된 옛 작업의 늦은 `finally` 가
+            // 새 작업의 소리를 끄지 않게([WizardCapture.forWork]).
+            val workCapture = capture.forWork()
+            runningCapture = workCapture
+            // **이번 점검의 클리핑만** 본다 — 기준선을 지금 잡는다. 새 창의 기준선은 0 이라 세션에 쌓인 옛 클리핑이
+            // 이번 점검을 막았다(41회차 R41-02). 기준·대상 측정은 runner 가 재기 직전에 잡는다.
+            workCapture.markClippingBaseline()
             val tap = MeasurementTap(fftSize, sampleRate)
-            val runner = WizardRunner(capture, tick, mayPlay = ::mayPlay)
-            capture.installTap(tap)
+            val runner = WizardRunner(workCapture, tick, mayPlay = ::mayPlay)
+            workCapture.installTap(tap)
             try {
                 _busyKo.value = "주변 소리를 재는 중입니다. 잠시 조용히 해 주십시오."
                 val noise = when (val r = runner.measureNoiseFloor(tap)) {
@@ -261,8 +283,8 @@ class WizardCoordinator(
                 // **적기 직전에 신원을 대조한다**(독립 재검토 CAR-02 추가분).
                 // 40장을 모으는 사이에 채널이 바뀌면, ch1 의 배경이 ch0 의
                 // 이름으로 적힌다 — 검토자가 그 순서를 재현했다.
-                if (!stillHere(capture, startId)) {
-                    _noticeKo.value = stampGateKo(startId, capture.identity)
+                if (!stillHere(workCapture, startId)) {
+                    _noticeKo.value = stampGateKo(startId, workCapture.identity)
                     return@start
                 }
                 _state.update {
@@ -283,17 +305,17 @@ class WizardCoordinator(
                     }
 
                     is RunOutcome.Done -> {
-                        if (!stillHere(capture, startId)) {
+                        if (!stillHere(workCapture, startId)) {
                             // 배경만 적히고 DSP 는 다른 입력의 것이 된다 —
                             // 그 짝은 짝이 아니다. **배경도 함께 버린다.**
                             forgetEvidence(evidence)
-                            _noticeKo.value = stampGateKo(startId, capture.identity)
+                            _noticeKo.value = stampGateKo(startId, workCapture.identity)
                             return@start
                         }
                         _state.update {
                             it.copy(
                                 dsp = r.value,
-                                clipped = capture.clippedSinceMark,
+                                clipped = workCapture.clippedSinceMark,
                                 dspByKey = it.dspByKey + (evidence to r.value),
                             )
                         }
@@ -301,8 +323,9 @@ class WizardCoordinator(
                 }
             } finally {
                 _busyKo.value = null
-                capture.removeTap(tap)
-                capture.stopSignal()
+                workCapture.removeTap(tap)
+                workCapture.stopSignal()
+                if (runningCapture === workCapture) runningCapture = null
             }
         }
     }
@@ -461,9 +484,13 @@ class WizardCoordinator(
         val stepNoise = st.noiseFloorByKey[stepEvidence]
 
         work.start {
+            // 이 작업만의 창 — 소리의 주인을 작업마다 새로 받는다. 취소된 옛 작업의 늦은 `finally` 가
+            // 새 작업의 소리를 끄지 않게([WizardCapture.forWork]).
+            val workCapture = capture.forWork()
+            runningCapture = workCapture
             val tap = MeasurementTap(fftSize, sampleRate)
-            val runner = WizardRunner(capture, tick, mayPlay = ::mayPlay)
-            capture.installTap(tap)
+            val runner = WizardRunner(workCapture, tick, mayPlay = ::mayPlay)
+            workCapture.installTap(tap)
             try {
                 _busyKo.value = "${stepNameKo(step)} 재는 중입니다."
                 val outcome = if (step == MeasureStep.Target) {
@@ -482,7 +509,7 @@ class WizardCoordinator(
                         // 붙이기 전에 입력이 바뀔 수 있다 — 그때 「지금
                         // 열린 것」을 읽으면 **ch0 의 장에 ch1 의 이름표**가
                         // 붙는다. 이름표를 고치는 대신 **장을 버린다.**
-                        val endId = capture.identity
+                        val endId = workCapture.identity
                         if (endId == null || !endId.sameAs(startId)) {
                             discardStep(step)
                             _noticeKo.value = stampGateKo(startId, endId)
@@ -497,7 +524,7 @@ class WizardCoordinator(
                                     // 않아 모자라다.
                                     referenceCalKey = startId.calKey,
                                     referenceIdentity = startId,
-                                    referenceOffsetDb = capture.openedOffsetDb,
+                                    referenceOffsetDb = workCapture.openedOffsetDb,
                                     referenceEvidenceKey = stepEvidence,
                                 )
                                 MeasureStep.Target -> it.copy(
@@ -522,8 +549,9 @@ class WizardCoordinator(
                 }
             } finally {
                 _busyKo.value = null
-                capture.removeTap(tap)
-                capture.stopSignal()
+                workCapture.removeTap(tap)
+                workCapture.stopSignal()
+                if (runningCapture === workCapture) runningCapture = null
             }
         }
     }

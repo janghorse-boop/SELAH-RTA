@@ -1,7 +1,9 @@
 package kr.joa.selahrta.calibration
 
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -13,6 +15,7 @@ import kr.joa.selahrta.dsp.MeasurementTap
 import kr.joa.selahrta.dsp.ThirdOctave
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -504,6 +507,318 @@ class WizardCoordinatorTest {
         assertNull("곡선이 남았다", core.curve)
         assertNull("CAL 이 남았다", core.state.value.cal)
         assertFalse(core.state.value.readyToMeasure())
+    }
+
+    // ── 작업마다 소리의 주인 (36회차 「추가 경계」) ─────────────────────────
+
+    /**
+     * **실제 신호 조율기**에 주인별로 잇는 캡처. [forWork] 마다 새 주인을 받는다 — `WizardCaptureBridge` 와 같은
+     * 계약이다(그쪽은 `CaptureViewModel` 이 있어야 해 JVM 에서 만들지 못한다). [shareOwner] 면 작업이 주인을
+     * 나누지 않는다 — 고치기 전의 bridge 와 같다.
+     */
+    /** 작업 창들이 함께 쓰는 기록 — 시험이 창 나누기에 기대지 않고 순서를 쥔다. */
+    private class Shared {
+        var plays = 0
+        var removed = 0
+        var tap: MeasurementTap? = null
+    }
+
+    private class OwnedCapture(
+        val signals: kr.joa.selahrta.audio.SignalController,
+        val now: CaptureIdentity,
+        val shareOwner: Boolean = false,
+        val owner: kr.joa.selahrta.transfer.SignalOwner =
+            kr.joa.selahrta.transfer.SignalOwner.Wizard(signals.newOwnerId()),
+        val shared: Shared = Shared(),
+    ) : WizardCapture {
+        override val openedDeviceKey: String? get() = now.calKey.deviceKey
+        override val openedCalKey: CalibrationKey? get() = now.calKey
+        override val identity: CaptureIdentity? get() = now
+        override val openedOffsetDb: Double? = null
+        override val clippedSinceMark: Boolean = false
+        override fun markClippingBaseline() = Unit
+        override fun installTap(tap: MeasurementTap) { shared.tap = tap }
+        override fun removeTap(tap: MeasurementTap) {
+            shared.removed++
+            if (shared.tap === tap) shared.tap = null
+        }
+        override fun playSignal(signal: TestSignal, amplitude: Double) {
+            shared.plays++
+            signals.playSignal(signal, amplitude, owner)
+        }
+        override fun stopSignal() = signals.stopSignalOwnedBy(owner)
+        override fun forWork(): WizardCapture =
+            if (shareOwner) OwnedCapture(signals, now, shareOwner, owner, shared)
+            else OwnedCapture(signals, now, shared = shared)
+        override suspend fun awaitSignalQuiet(): Boolean =
+            signals.askGeneration(1_000) == kr.joa.selahrta.audio.SignalPlayer.NONE
+    }
+
+    /**
+     * 작업 하나의 tick — **그 작업이 시작한 뒤** 소리가 났으면 [gate] 에서 기다린다. [nonCancellable] 이면 취소에도
+     * 깨지 않아 끊어도 finally 가 늦는다.
+     */
+    private fun gatedTick(
+        cap: OwnedCapture,
+        gate: kotlinx.coroutines.CompletableDeferred<Unit>,
+        nonCancellable: Boolean,
+    ): suspend () -> Unit {
+        var startPlays = -1
+        return {
+            if (startPlays < 0) startPlays = cap.shared.plays
+            if (cap.shared.plays > startPlays) {
+                if (nonCancellable) {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { gate.await() }
+                    currentCoroutineContext().ensureActive()
+                } else {
+                    gate.await()
+                }
+            }
+            cap.shared.tap?.onSpectrum(DoubleArray(bins) { 1e-9 })
+        }
+    }
+
+    /** 화면·포커스 가짜. 명령도 주 스레드 넘기기도 그 자리에서 돈다 — 순서는 코루틴 쪽이 쥔다. */
+    private class InlineHost(vararg sinks: kr.joa.selahrta.audio.FakeSink) : kr.joa.selahrta.audio.SignalHost {
+        val sinks = java.util.ArrayDeque(sinks.toList())
+        var shown: TestSignal? = null
+        override fun postMain(block: () -> Unit) = block()
+        override fun acquireFocus() = true
+        override fun releaseFocus() = Unit
+        override fun showSignal(playing: TestSignal?, noticeKo: String?) { shown = playing }
+        override fun showPlaying(playing: TestSignal?) { shown = playing }
+        override fun showNotice(noticeKo: String?) = Unit
+        override fun userRequest(signal: TestSignal, amplitude: Double?) =
+            kr.joa.selahrta.audio.SignalRequest(signal, amplitude ?: kr.joa.selahrta.audio.DEFAULT_AMPLITUDE)
+        override fun openSink(onRouteState: ((kr.joa.selahrta.audio.OutputRouteState) -> Unit)?) =
+            sinks.pollFirst() ?: kr.joa.selahrta.audio.FakeSink()
+        override fun nowMs() = 0L
+    }
+
+    /**
+     * 끊긴 옛 작업의 `finally` 가 **새 작업이 소리를 낸 뒤에** 돈다. `stopWork` 는 「재는 중」을 곧바로 지우므로 새
+     * 작업이 그 사이 시작할 수 있다. 예전에는 bridge 하나가 주인 하나를 끝까지 써서, 옛 `finally` 의 주인별 정지가
+     * 새 작업의 소리를 껐다.
+     */
+    /** @return 옛 작업의 정리 **직후** 새 작업의 소리가 꺼져 있었는가, 그때 화면에 보인 신호. */
+    private fun lateFinallyOfOldWork(shareOwner: Boolean): Pair<Boolean, TestSignal?> {
+        val oldSink = kr.joa.selahrta.audio.FakeSink()
+        val newSink = kr.joa.selahrta.audio.FakeSink()
+        val host = InlineHost(oldSink, newSink)
+        val signals = kr.joa.selahrta.audio.SignalController(
+            host = host,
+            commands = kr.joa.selahrta.audio.SerialCommands("wizard-probe") { it.run() },
+        )
+        val seen = arrayOfNulls<Pair<Boolean, TestSignal?>>(1)
+        try {
+            runLateFinally(signals, shareOwner, oldSink, newSink) {
+                seen[0] = (newSink.stopped || newSink.released) to host.shown
+            }
+            return seen[0]!!
+        } finally {
+            signals.close()
+        }
+    }
+
+    private fun runLateFinally(
+        signals: kr.joa.selahrta.audio.SignalController,
+        shareOwner: Boolean,
+        oldSink: kr.joa.selahrta.audio.FakeSink,
+        newSink: kr.joa.selahrta.audio.FakeSink,
+        afterOldFinally: () -> Unit,
+    ) = runTest {
+        val scope = TestScope(StandardTestDispatcher(testScheduler))
+        val core = coordinator(scope)
+        run {
+            val cap = OwnedCapture(signals, identity(0, "card=1;device=0"), shareOwner)
+            val oldGate = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val newGate = kotlinx.coroutines.CompletableDeferred<Unit>()
+
+            // 옛 작업: 소리를 낸 뒤의 기다림은 **취소에도 깨지 않는다** — 그래서 끊어도 finally 가 늦는다.
+            core.runInputCheck(cap, fft, rate, gatedTick(cap, oldGate, nonCancellable = true))
+            testScheduler.advanceUntilIdle()
+            assertTrue("전제 — 옛 작업이 소리를 냈다", oldSink.opened)
+
+            core.stopWork()
+            core.runInputCheck(cap, fft, rate, gatedTick(cap, newGate, nonCancellable = false))
+            testScheduler.advanceUntilIdle()
+            assertTrue("전제 — 새 작업이 소리를 냈다", newSink.opened)
+            assertEquals("전제 — 옛 작업의 정리는 아직이다", 0, cap.shared.removed)
+
+            oldGate.complete(Unit) // 이제야 옛 작업의 finally
+            testScheduler.advanceUntilIdle()
+            assertEquals("전제 — 옛 작업의 정리가 돌았다", 1, cap.shared.removed)
+            afterOldFinally()
+            newGate.complete(Unit)
+            core.stopWork()
+            testScheduler.advanceUntilIdle()
+        }
+    }
+
+    @Test
+    fun `끊긴 옛 작업의 늦은 정리가 새 작업의 소리를 끄지 않는다`() {
+        val (cut, shown) = lateFinallyOfOldWork(shareOwner = false)
+        assertFalse("새 작업의 소리가 꺼졌다", cut)
+        assertEquals(TestSignal.Pink, shown)
+    }
+
+    /** 대조: 작업이 주인을 나누지 않으면(고치기 전의 bridge) 옛 정리가 새 소리를 끈다 — 위 시험이 그 차이를 가른다. */
+    @Test
+    fun `대조 — 주인을 나누지 않으면 옛 정리가 새 작업의 소리를 끈다`() {
+        val (cut, _) = lateFinallyOfOldWork(shareOwner = true)
+        assertTrue(cut)
+    }
+
+    // ── 41회차: 끊을 때 옛 소리를 멈추고, 배경 전에 확인한다 (R41-01) ─────────────
+
+    /**
+     * 끊긴 옛 작업의 finally 가 늦어도, 새 작업이 배경을 모으는 동안 **옛 소리는 이미 멈춰 있다** — `stopWork` 가 그
+     * 작업의 소리를 그 자리에서 멈춘다. 예전에는 새 작업의 정지가 새 주인 것이라 거절돼, 배경 40장 내내 옛 소리가
+     * 났다(`oldPlaybackDuringBackground=40`).
+     */
+    @Test
+    fun `끊긴 옛 작업의 소리는 새 작업이 배경을 모으기 전에 멈춘다`() {
+        val oldSink = kr.joa.selahrta.audio.FakeSink()
+        val newSink = kr.joa.selahrta.audio.FakeSink()
+        val host = InlineHost(oldSink, newSink)
+        val signals = kr.joa.selahrta.audio.SignalController(
+            host = host,
+            commands = kr.joa.selahrta.audio.SerialCommands("wizard-probe") { it.run() },
+        )
+        var oldActiveDuringBackground = 0
+        var backgroundTicks = 0
+        try {
+            runTest {
+                val scope = TestScope(StandardTestDispatcher(testScheduler))
+                val core = coordinator(scope)
+                val cap = OwnedCapture(signals, identity(0, "card=1;device=0"))
+                val oldGate = kotlinx.coroutines.CompletableDeferred<Unit>()
+                core.runInputCheck(cap, fft, rate, gatedTick(cap, oldGate, nonCancellable = true))
+                testScheduler.advanceUntilIdle()
+                assertTrue("전제 — 옛 작업이 소리를 냈다", oldSink.opened)
+
+                core.stopWork()
+                val newGate = kotlinx.coroutines.CompletableDeferred<Unit>()
+                var startPlays = -1
+                core.runInputCheck(cap, fft, rate) {
+                    if (startPlays < 0) startPlays = cap.shared.plays
+                    if (cap.shared.plays == startPlays) {
+                        backgroundTicks++
+                        if (!(oldSink.stopped || oldSink.released)) oldActiveDuringBackground++
+                    } else {
+                        newGate.await() // 새 작업도 소리를 낸 뒤 붙든다 — 끝까지 돌아 제 정리를 하지 않게
+                    }
+                    cap.shared.tap?.onSpectrum(DoubleArray(bins) { 1e-9 })
+                }
+                testScheduler.advanceUntilIdle()
+                // 끊을 때 옛 소리를 멈추지 않으면, 배경 전 확인이 그 소리를 보고 이번 점검을 거절한다(오염 대신 거절).
+                assertNotEquals("옛 소리 때문에 배경을 재지 못했다", SIGNAL_STILL_PLAYING_KO, core.noticeKo.value)
+                assertTrue("새 작업이 배경을 모으지 못했다", backgroundTicks >= 40)
+                assertEquals("전제 — 옛 작업의 정리는 아직이다", 0, cap.shared.removed)
+                oldGate.complete(Unit)
+                newGate.complete(Unit)
+                core.stopWork()
+                testScheduler.advanceUntilIdle()
+            }
+        } finally {
+            signals.close()
+        }
+        assertTrue("새 작업이 배경을 모으지 못했다", backgroundTicks >= 40)
+        assertEquals("배경을 모으는 동안 옛 소리가 났다", 0, oldActiveDuringBackground)
+    }
+
+    /** 다른 시험 신호가 나는 채로 점검을 시작하면 **배경을 재지 않고** 그 까닭을 알린다. */
+    @Test
+    fun `시험 신호가 나는 채로는 배경을 재지 않는다`() {
+        val toolSink = kr.joa.selahrta.audio.FakeSink()
+        val host = InlineHost(toolSink)
+        val signals = kr.joa.selahrta.audio.SignalController(
+            host = host,
+            commands = kr.joa.selahrta.audio.SerialCommands("wizard-probe") { it.run() },
+        )
+        var ticks = 0
+        try {
+            runTest {
+                val scope = TestScope(UnconfinedTestDispatcher(testScheduler))
+                val core = coordinator(scope)
+                val cap = OwnedCapture(signals, identity(0, "card=1;device=0"))
+                signals.playSignal(TestSignal.Custom, owner = kr.joa.selahrta.transfer.SignalOwner.User)
+                assertTrue("전제 — 도구 신호가 난다", toolSink.opened)
+                core.runInputCheck(cap, fft, rate) {
+                    ticks++
+                    cap.shared.tap?.onSpectrum(DoubleArray(bins) { 1e-9 })
+                }
+                testScheduler.advanceUntilIdle()
+                assertEquals(SIGNAL_STILL_PLAYING_KO, core.noticeKo.value)
+                assertNull(core.state.value.noiseFloorDb)
+            }
+        } finally {
+            signals.close()
+        }
+        assertEquals("배경을 한 장도 모으지 않았다", 0, ticks)
+    }
+
+    // ── 41회차: 입력 점검의 클리핑 기준선 (R41-02) ───────────────────────────
+
+    /**
+     * bridge 와 같은 클리핑 셈 — 누적 수는 세션 내내 쌓이고, 창마다 기준선을 갖는다. [forWork] 의 새 창은 기준선 0
+     * 에서 시작한다(작업마다 새 bridge).
+     */
+    private class ClipCounter { var cumulative = 0L }
+
+    private class ClipCapture(
+        val now: CaptureIdentity,
+        val counter: ClipCounter = ClipCounter(),
+    ) : WizardCapture {
+        var tap: MeasurementTap? = null
+        private var baseline = 0L
+        override val openedDeviceKey: String? get() = now.calKey.deviceKey
+        override val openedCalKey: CalibrationKey? get() = now.calKey
+        override val identity: CaptureIdentity? get() = now
+        override val openedOffsetDb: Double? = null
+        override val clippedSinceMark: Boolean get() = counter.cumulative > baseline
+        override fun markClippingBaseline() { baseline = counter.cumulative }
+        override fun installTap(tap: MeasurementTap) { this.tap = tap }
+        override fun removeTap(tap: MeasurementTap) { if (this.tap === tap) this.tap = null }
+        override fun playSignal(signal: TestSignal, amplitude: Double) = Unit
+        override fun stopSignal() = Unit
+        override fun forWork(): WizardCapture = ClipCapture(now, counter).also { last = it }
+        var last: ClipCapture? = null
+    }
+
+    /** 배경은 조용히, 신호는 크게 — DSP 점검까지 통과시켜 `clipped` 가 적히게 한다. [during] 은 신호 구간마다. */
+    private fun passingTick(cap: ClipCapture, during: () -> Unit = {}): suspend () -> Unit {
+        var pushed = 0
+        return {
+            pushed++
+            if (pushed > 40) during()
+            val level = if (pushed <= 40) 1e-9 else 1e-3
+            cap.last?.tap?.onSpectrum(DoubleArray(bins) { level })
+        }
+    }
+
+    @Test
+    fun `세션에 쌓인 옛 클리핑은 이번 입력 점검을 막지 않는다`() = runTest {
+        val scope = TestScope(UnconfinedTestDispatcher(testScheduler))
+        val core = coordinator(scope)
+        val cap = ClipCapture(identity(0, "card=1;device=0"))
+        cap.counter.cumulative = 5 // 앞선 단계에서 찌그러졌다
+        core.runInputCheck(cap, fft, rate, passingTick(cap))
+        testScheduler.advanceUntilIdle()
+        assertNotNull("전제 — DSP 점검이 끝났다", core.state.value.dsp)
+        assertFalse("이번 점검에는 클리핑이 없었다", core.state.value.clipped)
+    }
+
+    @Test
+    fun `이번 입력 점검 중의 클리핑은 잡는다`() = runTest {
+        val scope = TestScope(UnconfinedTestDispatcher(testScheduler))
+        val core = coordinator(scope)
+        val cap = ClipCapture(identity(0, "card=1;device=0"))
+        cap.counter.cumulative = 5
+        core.runInputCheck(cap, fft, rate, passingTick(cap) { cap.counter.cumulative = 6 })
+        testScheduler.advanceUntilIdle()
+        assertNotNull("전제 — DSP 점검이 끝났다", core.state.value.dsp)
+        assertTrue(core.state.value.clipped)
     }
 }
 

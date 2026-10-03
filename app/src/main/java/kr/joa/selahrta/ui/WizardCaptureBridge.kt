@@ -20,7 +20,12 @@ import kr.joa.selahrta.dsp.MeasurementTap
  * 에서 돈다. 통로를 붙이고 떼는 일을 거기서 치면 「받는 중에 목록이
  * 바뀌는」 순간이 아예 없다(독립 검토 R05 가 짚은 자리의 반대쪽 끝).
  */
-class WizardCaptureBridge(private val vm: CaptureViewModel) : WizardCapture {
+class WizardCaptureBridge(
+    private val vm: CaptureViewModel,
+    /** 이 창이 내는 소리의 주인. 작업마다 [forWork] 로 새 창·새 주인을 받는다. */
+    private val owner: kr.joa.selahrta.transfer.SignalOwner =
+        kr.joa.selahrta.transfer.SignalOwner.Wizard(vm.newOwnerId()),
+) : WizardCapture {
 
     override val openedDeviceKey: String?
         get() = vm.state.value.opened?.deviceKey
@@ -73,14 +78,20 @@ class WizardCaptureBridge(private val vm: CaptureViewModel) : WizardCapture {
 
     override fun removeTap(tap: MeasurementTap) = vm.removeMeasurementTap(tap)
 
-    /**
-     * 이 마법사가 내는 소리의 주인(TF 설계 4.1). 정리 코드(`finally`)의 끄기는 **이 주인의 소리만**
+    /*
+     * 소리는 [owner] 의 것으로 내고 끈다(TF 설계 4.1). 정리 코드(`finally`)의 끄기는 **이 주인의 소리만**
      * 끈다 — 전체 정지였을 때는, 마법사를 취소하며 시작한 Transfer Function 재생을 늦게 껐다(33회차 R33-02).
      */
-    private val owner = kr.joa.selahrta.transfer.SignalOwner.Wizard(vm.newOwnerId())
-
     override fun playSignal(signal: TestSignal, amplitude: Double) =
         vm.playSignal(signal, amplitude, owner)
 
     override fun stopSignal() = vm.stopSignalOwnedBy(owner)
+
+    /**
+     * 작업마다 새 주인을 지닌 새 창. 예전에는 bridge 하나가 주인 하나를 끝까지 썼다 — 취소된 옛 작업의 늦은
+     * `finally` 가 그 뒤 시작한 새 작업의 소리를 껐다. 잘린 수 기준선도 작업마다 따로 잡힌다.
+     */
+    override fun forWork(): WizardCapture = WizardCaptureBridge(vm)
+
+    override suspend fun awaitSignalQuiet(): Boolean = vm.awaitSignalQuiet()
 }
