@@ -1,0 +1,2 @@
+파일 docs/verify/2026-10-03-dense-trial-data/dense5-32886213-FAIL.txt · SESSION VALID=True · RESULT PASS=False · OBS 291
+규칙 1 — 해석하지 않는다
