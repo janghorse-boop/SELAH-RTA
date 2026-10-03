@@ -1,7 +1,9 @@
 package kr.joa.selahrta.calibration
 
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -504,6 +506,164 @@ class WizardCoordinatorTest {
         assertNull("곡선이 남았다", core.curve)
         assertNull("CAL 이 남았다", core.state.value.cal)
         assertFalse(core.state.value.readyToMeasure())
+    }
+
+    // ── 작업마다 소리의 주인 (36회차 「추가 경계」) ─────────────────────────
+
+    /**
+     * **실제 신호 조율기**에 주인별로 잇는 캡처. [forWork] 마다 새 주인을 받는다 — `WizardCaptureBridge` 와 같은
+     * 계약이다(그쪽은 `CaptureViewModel` 이 있어야 해 JVM 에서 만들지 못한다). [shareOwner] 면 작업이 주인을
+     * 나누지 않는다 — 고치기 전의 bridge 와 같다.
+     */
+    /** 작업 창들이 함께 쓰는 기록 — 시험이 창 나누기에 기대지 않고 순서를 쥔다. */
+    private class Shared {
+        var plays = 0
+        var removed = 0
+        var tap: MeasurementTap? = null
+    }
+
+    private class OwnedCapture(
+        val signals: kr.joa.selahrta.audio.SignalController,
+        val now: CaptureIdentity,
+        val shareOwner: Boolean = false,
+        val owner: kr.joa.selahrta.transfer.SignalOwner =
+            kr.joa.selahrta.transfer.SignalOwner.Wizard(signals.newOwnerId()),
+        val shared: Shared = Shared(),
+    ) : WizardCapture {
+        override val openedDeviceKey: String? get() = now.calKey.deviceKey
+        override val openedCalKey: CalibrationKey? get() = now.calKey
+        override val identity: CaptureIdentity? get() = now
+        override val openedOffsetDb: Double? = null
+        override val clippedSinceMark: Boolean = false
+        override fun markClippingBaseline() = Unit
+        override fun installTap(tap: MeasurementTap) { shared.tap = tap }
+        override fun removeTap(tap: MeasurementTap) {
+            shared.removed++
+            if (shared.tap === tap) shared.tap = null
+        }
+        override fun playSignal(signal: TestSignal, amplitude: Double) {
+            shared.plays++
+            signals.playSignal(signal, amplitude, owner)
+        }
+        override fun stopSignal() = signals.stopSignalOwnedBy(owner)
+        override fun forWork(): WizardCapture =
+            if (shareOwner) OwnedCapture(signals, now, shareOwner, owner, shared)
+            else OwnedCapture(signals, now, shared = shared)
+    }
+
+    /**
+     * 작업 하나의 tick — **그 작업이 시작한 뒤** 소리가 났으면 [gate] 에서 기다린다. [nonCancellable] 이면 취소에도
+     * 깨지 않아 끊어도 finally 가 늦는다.
+     */
+    private fun gatedTick(
+        cap: OwnedCapture,
+        gate: kotlinx.coroutines.CompletableDeferred<Unit>,
+        nonCancellable: Boolean,
+    ): suspend () -> Unit {
+        var startPlays = -1
+        return {
+            if (startPlays < 0) startPlays = cap.shared.plays
+            if (cap.shared.plays > startPlays) {
+                if (nonCancellable) {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { gate.await() }
+                    currentCoroutineContext().ensureActive()
+                } else {
+                    gate.await()
+                }
+            }
+            cap.shared.tap?.onSpectrum(DoubleArray(bins) { 1e-9 })
+        }
+    }
+
+    /** 화면·포커스 가짜. 명령도 주 스레드 넘기기도 그 자리에서 돈다 — 순서는 코루틴 쪽이 쥔다. */
+    private class InlineHost(vararg sinks: kr.joa.selahrta.audio.FakeSink) : kr.joa.selahrta.audio.SignalHost {
+        val sinks = java.util.ArrayDeque(sinks.toList())
+        var shown: TestSignal? = null
+        override fun postMain(block: () -> Unit) = block()
+        override fun acquireFocus() = true
+        override fun releaseFocus() = Unit
+        override fun showSignal(playing: TestSignal?, noticeKo: String?) { shown = playing }
+        override fun showPlaying(playing: TestSignal?) { shown = playing }
+        override fun showNotice(noticeKo: String?) = Unit
+        override fun userRequest(signal: TestSignal, amplitude: Double?) =
+            kr.joa.selahrta.audio.SignalRequest(signal, amplitude ?: kr.joa.selahrta.audio.DEFAULT_AMPLITUDE)
+        override fun openSink(onRouteState: ((kr.joa.selahrta.audio.OutputRouteState) -> Unit)?) =
+            sinks.pollFirst() ?: kr.joa.selahrta.audio.FakeSink()
+        override fun nowMs() = 0L
+    }
+
+    /**
+     * 끊긴 옛 작업의 `finally` 가 **새 작업이 소리를 낸 뒤에** 돈다. `stopWork` 는 「재는 중」을 곧바로 지우므로 새
+     * 작업이 그 사이 시작할 수 있다. 예전에는 bridge 하나가 주인 하나를 끝까지 써서, 옛 `finally` 의 주인별 정지가
+     * 새 작업의 소리를 껐다.
+     */
+    /** @return 옛 작업의 정리 **직후** 새 작업의 소리가 꺼져 있었는가, 그때 화면에 보인 신호. */
+    private fun lateFinallyOfOldWork(shareOwner: Boolean): Pair<Boolean, TestSignal?> {
+        val oldSink = kr.joa.selahrta.audio.FakeSink()
+        val newSink = kr.joa.selahrta.audio.FakeSink()
+        val host = InlineHost(oldSink, newSink)
+        val signals = kr.joa.selahrta.audio.SignalController(
+            host = host,
+            commands = kr.joa.selahrta.audio.SerialCommands("wizard-probe") { it.run() },
+        )
+        val seen = arrayOfNulls<Pair<Boolean, TestSignal?>>(1)
+        try {
+            runLateFinally(signals, shareOwner, oldSink, newSink) {
+                seen[0] = (newSink.stopped || newSink.released) to host.shown
+            }
+            return seen[0]!!
+        } finally {
+            signals.close()
+        }
+    }
+
+    private fun runLateFinally(
+        signals: kr.joa.selahrta.audio.SignalController,
+        shareOwner: Boolean,
+        oldSink: kr.joa.selahrta.audio.FakeSink,
+        newSink: kr.joa.selahrta.audio.FakeSink,
+        afterOldFinally: () -> Unit,
+    ) = runTest {
+        val scope = TestScope(StandardTestDispatcher(testScheduler))
+        val core = coordinator(scope)
+        run {
+            val cap = OwnedCapture(signals, identity(0, "card=1;device=0"), shareOwner)
+            val oldGate = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val newGate = kotlinx.coroutines.CompletableDeferred<Unit>()
+
+            // 옛 작업: 소리를 낸 뒤의 기다림은 **취소에도 깨지 않는다** — 그래서 끊어도 finally 가 늦는다.
+            core.runInputCheck(cap, fft, rate, gatedTick(cap, oldGate, nonCancellable = true))
+            testScheduler.advanceUntilIdle()
+            assertTrue("전제 — 옛 작업이 소리를 냈다", oldSink.opened)
+
+            core.stopWork()
+            core.runInputCheck(cap, fft, rate, gatedTick(cap, newGate, nonCancellable = false))
+            testScheduler.advanceUntilIdle()
+            assertTrue("전제 — 새 작업이 소리를 냈다", newSink.opened)
+            assertEquals("전제 — 옛 작업의 정리는 아직이다", 0, cap.shared.removed)
+
+            oldGate.complete(Unit) // 이제야 옛 작업의 finally
+            testScheduler.advanceUntilIdle()
+            assertEquals("전제 — 옛 작업의 정리가 돌았다", 1, cap.shared.removed)
+            afterOldFinally()
+            newGate.complete(Unit)
+            core.stopWork()
+            testScheduler.advanceUntilIdle()
+        }
+    }
+
+    @Test
+    fun `끊긴 옛 작업의 늦은 정리가 새 작업의 소리를 끄지 않는다`() {
+        val (cut, shown) = lateFinallyOfOldWork(shareOwner = false)
+        assertFalse("새 작업의 소리가 꺼졌다", cut)
+        assertEquals(TestSignal.Pink, shown)
+    }
+
+    /** 대조: 작업이 주인을 나누지 않으면(고치기 전의 bridge) 옛 정리가 새 소리를 끈다 — 위 시험이 그 차이를 가른다. */
+    @Test
+    fun `대조 — 주인을 나누지 않으면 옛 정리가 새 작업의 소리를 끈다`() {
+        val (cut, _) = lateFinallyOfOldWork(shareOwner = true)
+        assertTrue(cut)
     }
 }
 

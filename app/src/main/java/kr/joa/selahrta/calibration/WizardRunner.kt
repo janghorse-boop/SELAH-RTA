@@ -70,6 +70,15 @@ interface WizardCapture {
      */
     fun playSignal(signal: TestSignal, amplitude: Double)
     fun stopSignal()
+
+    /**
+     * 작업 하나가 쓸 창 — 소리의 주인을 **작업마다** 새로 받는다. [WizardWork.stop] 은 취소만 걸고 곧바로 다음
+     * 작업을 받으므로, 취소된 옛 작업의 `finally` 가 새 작업이 소리를 낸 **뒤에** 돌 수 있다. 주인이 같으면 그
+     * 정지가 새 작업의 소리를 끈다(36회차 「추가 경계」). 작업은 시작하자마자 이것을 받아 그 안에서만 쓴다.
+     *
+     * 기본은 자기 자신 — 소리를 내지 않는 가짜 캡처에는 나눌 주인이 없다.
+     */
+    fun forWork(): WizardCapture = this
 }
 
 /** 한 단계를 돌린 결과. 못 한 까닭이 있으면 들고 온다. */
