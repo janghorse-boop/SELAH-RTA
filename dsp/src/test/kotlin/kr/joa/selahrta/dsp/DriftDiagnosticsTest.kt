@@ -81,8 +81,10 @@ class DriftDiagnosticsTest {
     // ── 실제 30분 원자료 (2026-10-02, 세션 2776783f) ─────────────────────
 
     /** `docs/verify/` 에 커밋된 ADRIFT 로그에서 OBS 줄을 읽는다. 원자료를 고치지 않는다. */
-    private fun record30(): List<DriftObservation> {
-        val f = File("../docs/verify/2026-10-02-acoustic-drift-data/record30-2776783f.txt")
+    private fun record30(
+        path: String = "../docs/verify/2026-10-02-acoustic-drift-data/record30-2776783f.txt",
+    ): List<DriftObservation> {
+        val f = File(path)
         assertTrue("원자료가 없다: ${f.absolutePath}", f.exists())
         val re = Regex("""OBS session=(\S+) kind=(\S+) epoch=(-?\d+) windowEnd=(\d+) lag=(-?\d+) found=(\w+) .*underruns=(-?\d+) outErr=(\d+) inErr=(\d+) routeChanged=(\w+)""")
         return f.readLines(Charsets.UTF_8).mapNotNull { re.find(it) }.map { m ->
@@ -118,5 +120,34 @@ class DriftDiagnosticsTest {
         assertEquals(162, d.slotResidualPearson[2].pairs)
         assertEquals(0.8671969412597894, d.slotResidualPearson[2].r, 1e-9)
         assertEquals(40.128, d.maxGapSeconds, 1e-6)
+    }
+
+    // ── 두 번째 30분 원자료 (2026-10-03, 세션 184a7daf) ──────────────────
+
+    /**
+     * 기기가 낸 DIAG 줄(설치본 `0f34bc1`, 자기상관 1~6)과 **지금 분석기**가 같은
+     * 원자료에서 같은 숫자를 내는가. 7~12차는 기기 로그에 없어 여기서 처음 낸 값이다.
+     * 숫자는 이 원자료에서 뽑은 회귀값일 뿐 — 드리프트의 검출·부재·원인을 판정하지 않는다.
+     */
+    @Test
+    fun `두 번째 30분 원자료의 진단이 기기 로그와 같다`() {
+        val obs = record30("../docs/verify/2026-10-03-device-remeasure-data/record30-184a7daf.txt")
+        assertEquals(180, obs.size)
+        val s = DriftLogAnalyzer(sampleRate = fs).analyze(obs).segments.single()
+        assertEquals(178, s.points)
+        assertEquals(0.0020431311957858967, s.ppm, 1e-12)
+        val d = s.diagnostics
+        assertTrue("양립 집합이 비어야 한다", d.compatibleEmpty)
+        assertEquals(6.233377659574468, d.compatibleLoPpm, 1e-9)
+        assertEquals(-3.113376726886291, d.compatibleHiPpm, 1e-9)
+        // 기기 로그: -0.358,-0.227,0.726,-0.430,-0.155,0.478
+        assertEquals(-0.3579265724638608, d.residualAcf[0], 1e-9)
+        assertEquals(0.7261218318851571, d.residualAcf[2], 1e-9)
+        assertEquals(0.4775497622033845, d.residualAcf[5], 1e-9)
+        assertEquals(0.11662798383009462, d.residualAcf[11], 1e-9)
+        // 기기 로그: 0.798(173쌍)
+        assertEquals(173, d.slotResidualPearson[2].pairs)
+        assertEquals(0.797546030190001, d.slotResidualPearson[2].r, 1e-9)
+        assertEquals(20.074666666666666, d.maxGapSeconds, 1e-6)
     }
 }

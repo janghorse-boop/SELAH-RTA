@@ -1,0 +1,23 @@
+--------- beginning of main
+10-03 16:16:28.528 I/ADRIFT  (19447): 입력 확인 SM-S918N kind=BuiltIn 활성마이크=Mic 22(그룹 0·0)
+10-03 16:16:30.089 I/ADRIFT  (19447): HEAD session=63f4c2bc model=SM-S918N build=BP4A.251205.006/S918NKSS8FZI1 sdk=36 rate=48000 fft=8192 avg=16 maxLag=24000 intervalMs=10000 mode=Trial minutes=2.0 amplitude=0.2 signal=Pink/Both(seed=SignalPlayer)
+10-03 16:16:30.090 I/ADRIFT  (19447): HEAD 출력 요청=USB-Audio - UMC404HD 192k(종류11, 주소'card=1;device=0', id=2150) 실제=USB-Audio - UMC404HD 192k(종류11, 주소'card=1;device=0', id=2150)
+10-03 16:16:30.091 I/ADRIFT  (19447): HEAD 입력 요청=SM-S918N(주소'bottom') 기준=BuiltIn|SM-S918N 내장=true 활성조합='22' source=VoiceRecognition — 주소·활성 마이크는 안드로이드의 표기일 뿐 물리 위치의 증거가 아니다
+10-03 16:16:40.332 I/ADRIFT  (19447): OBS session=63f4c2bc kind=Measured epoch=0 windowEnd=552960 lag=10342 found=true sharpness=4.407 mono=230291923626771 underruns=0 outErr=0 inErr=0 routeChanged=false outRoute=2150 peak=0.5315
+10-03 16:16:50.370 I/ADRIFT  (19447): OBS session=63f4c2bc kind=Measured epoch=0 windowEnd=1044480 lag=10341 found=true sharpness=5.618 mono=230302165035569 underruns=0 outErr=0 inErr=0 routeChanged=false outRoute=2150 peak=0.5208
+10-03 16:17:00.404 I/ADRIFT  (19447): OBS session=63f4c2bc kind=Measured epoch=0 windowEnd=1526784 lag=10344 found=true sharpness=2.037 mono=230312203416398 underruns=0 outErr=0 inErr=0 routeChanged=false outRoute=2150 peak=0.5655
+10-03 16:17:10.448 I/ADRIFT  (19447): OBS session=63f4c2bc kind=Measured epoch=0 windowEnd=2008064 lag=10343 found=true sharpness=5.466 mono=230322237961186 underruns=0 outErr=0 inErr=0 routeChanged=false outRoute=2150 peak=0.5027
+10-03 16:17:20.488 I/ADRIFT  (19447): OBS session=63f4c2bc kind=Measured epoch=0 windowEnd=2490368 lag=10341 found=true sharpness=5.423 mono=230332281239359 underruns=0 outErr=0 inErr=0 routeChanged=false outRoute=2150 peak=0.5325
+10-03 16:17:30.530 I/ADRIFT  (19447): OBS session=63f4c2bc kind=Measured epoch=0 windowEnd=2972672 lag=10344 found=true sharpness=2.613 mono=230342321224668 underruns=0 outErr=0 inErr=0 routeChanged=false outRoute=2150 peak=0.5248
+10-03 16:17:40.589 I/ADRIFT  (19447): OBS session=63f4c2bc kind=Measured epoch=0 windowEnd=3454976 lag=10343 found=true sharpness=5.013 mono=230352362860029 underruns=0 outErr=0 inErr=0 routeChanged=false outRoute=2150 peak=0.5622
+10-03 16:17:50.632 I/ADRIFT  (19447): OBS session=63f4c2bc kind=Measured epoch=0 windowEnd=3937280 lag=10341 found=true sharpness=4.679 mono=230362422574035 underruns=0 outErr=0 inErr=0 routeChanged=false outRoute=2150 peak=0.5471
+10-03 16:18:00.675 I/ADRIFT  (19447): OBS session=63f4c2bc kind=Measured epoch=0 windowEnd=4419584 lag=10344 found=true sharpness=2.484 mono=230372464675282 underruns=0 outErr=0 inErr=0 routeChanged=false outRoute=2150 peak=0.5620
+10-03 16:18:10.712 I/ADRIFT  (19447): OBS session=63f4c2bc kind=Measured epoch=0 windowEnd=4900864 lag=10343 found=true sharpness=5.105 mono=230382507403976 underruns=0 outErr=0 inErr=0 routeChanged=false outRoute=2150 peak=0.5327
+10-03 16:18:20.752 I/ADRIFT  (19447): OBS session=63f4c2bc kind=Measured epoch=0 windowEnd=5383168 lag=10341 found=true sharpness=5.416 mono=230392545635899 underruns=0 outErr=0 inErr=0 routeChanged=false outRoute=2150 peak=0.5103
+10-03 16:18:30.805 I/ADRIFT  (19447): OBS session=63f4c2bc kind=Measured epoch=0 windowEnd=5865472 lag=10344 found=true sharpness=2.884 mono=230402585628187 underruns=0 outErr=0 inErr=0 routeChanged=false outRoute=2150 peak=0.5076
+10-03 16:18:31.030 I/ADRIFT  (19447): SESSION VALID
+10-03 16:18:31.030 I/ADRIFT  (19447): 관측 12 · 서로 다른 창 12 · 중복 0 · 버림 {} · 못 찾음 0 · 마지막 관측 진행=true
+10-03 16:18:31.030 I/ADRIFT  (19447): SEG #0 epoch=0 시작까닭=처음 관측=12 1.8분 기울기=0.1378 ppm 1표본환산=0.1882 ppm 최대잔차=1.88 계단의심=false 길이조건=false
+10-03 16:18:31.030 I/ADRIFT  (19447): DIAG #0 불확도가 아니다 — 양립 집합(무잡음 가정)=공집합 · 잔차 자기상관 1~6=-0.448,-0.422,0.725,-0.326,-0.298,0.468 · 슬롯 잔차 상관 1~6=-0.463(11쌍),-0.526(10쌍),0.968(9쌍),-0.474(8쌍),-0.552(7쌍),0.954(6쌍) · 최대 공백 10.2초
+10-03 16:18:31.030 I/ADRIFT  (19447): SEG #0 채택 안 함 — 시운전 — 결론을 내지 않는다
+10-03 16:18:31.030 I/ADRIFT  (19447): RESULT PASS
