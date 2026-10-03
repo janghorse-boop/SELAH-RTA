@@ -32,8 +32,13 @@ class SignalControllerTest {
         }
     }
 
-    /** 화면·포커스·싱크의 가짜. 주 스레드 넘기기는 그 자리에서 돈다(시험 스레드 하나). */
+    /**
+     * 화면·포커스·싱크의 가짜. 주 스레드 넘기기는 기본으로 그 자리에서 돈다(시험 스레드 하나). [deferMain] 이면
+     * [main] 에 쌓아 두고 시험이 차례를 쥔다 — 명령 큐와 주 스레드 큐를 따로 돌려야 보이는 순서가 있다(37회차 R37-01).
+     */
     private class FakeHost(vararg sinks: FakeSink) : SignalHost {
+        var deferMain = false
+        val main = Held()
         val sinks = ArrayDeque(sinks.toList())
         val opened = ArrayList<FakeSink>()
         var shown: TestSignal? = null
@@ -43,7 +48,9 @@ class SignalControllerTest {
         var now = 0L
         /** 읽을 때마다 시계가 이만큼 흐른다(0 이면 멈춘 시계). */
         var tickPerRead = 0L
-        override fun postMain(block: () -> Unit) = block()
+        override fun postMain(block: () -> Unit) {
+            if (deferMain) main.execute { block() } else block()
+        }
         override fun acquireFocus(): Boolean = focusOk.also { if (it) focusHeld = true }
         override fun releaseFocus() { focusHeld = false }
         override fun showSignal(playing: TestSignal?, noticeKo: String?) { shown = playing; notice = noticeKo }
@@ -140,6 +147,191 @@ class SignalControllerTest {
         assertFalse(ended(tfSink))
         assertEquals(session, c.transferSession)
         assertEquals(TestSignal.Pink, host.shown)
+    }
+
+    // ── R37-01: 취소 뒤 주인을 되돌리기 전후의 정지 ─────────────────────────
+
+    /** 명령 큐도 주 스레드 큐도 빈 때까지 돌린다. */
+    private fun flush(host: FakeHost) {
+        do {
+            held.drain()
+            host.main.drain()
+        } while (held.queue.isNotEmpty() || host.main.queue.isNotEmpty())
+    }
+
+    /**
+     * (A) B 의 대기 요청을 취소한 뒤 「A 로 되돌리기」가 주 스레드에 늦게 닿는다. 그 사이 **같은 주인 B 의 새 요청**이
+     * 접수·실행됐다. 예전에는 늦은 되돌리기가 주인 값만 보고 B 를 A 로 덮어, 새 B 의 정지가 거절됐다
+     * (`shown=Pink released=false`).
+     */
+    @Test
+    fun `늦게 닿은 되돌리기가 같은 주인의 새 요청을 덮지 않는다`() {
+        val aSink = FakeSink()
+        val bSink = FakeSink()
+        val host = FakeHost(aSink, bSink)
+        host.deferMain = true
+        val c = controller(host)
+        val a = SignalOwner.Response(c.newOwnerId())
+        val b = SignalOwner.Wizard(c.newOwnerId())
+        c.playSignal(TestSignal.Custom, owner = a)
+        flush(host)
+        c.playSignal(TestSignal.Pink, 0.15, b)
+        c.stopSignalOwnedBy(b)
+        held.drain() // A 를 남기고 되돌리기를 주 스레드에 넣었다 — 아직 안 돌았다.
+        c.playSignal(TestSignal.Pink, 0.15, b) // 같은 주인의 새 요청
+        held.drain()
+        assertTrue("새 B 가 열렸다", bSink.opened)
+        host.main.drain() // 늦은 되돌리기
+        c.stopSignalOwnedBy(b)
+        flush(host)
+        assertTrue("새 B 의 정지가 받아들여졌다", ended(bSink))
+        assertNull(host.shown)
+    }
+
+    /**
+     * (B) A 가 실제로 나는 중 B 의 요청이 대기하다 취소된다. 그 취소가 명령 스레드에서 돌기 **전에** A 의 작업도 끝나
+     * 제 소리를 멈추라고 한다. 예전에는 마지막 요청의 주인이 아직 B 라서 A 의 정지가 입구에서 버려졌고, B 의 취소는
+     * A 를 남겼다(`shown=Pink released=false`).
+     */
+    @Test
+    fun `취소가 정착되기 전에 온 실제 주인의 정지를 잃지 않는다`() {
+        val aSink = FakeSink()
+        val host = FakeHost(aSink)
+        host.deferMain = true
+        val c = controller(host)
+        val a = SignalOwner.Response(c.newOwnerId())
+        val b = SignalOwner.Wizard(c.newOwnerId())
+        c.playSignal(TestSignal.Pink, 0.15, a)
+        flush(host)
+        c.playSignal(TestSignal.Custom, owner = b)
+        c.stopSignalOwnedBy(b)
+        c.stopSignalOwnedBy(a)
+        flush(host)
+        assertTrue("A 의 소리가 멈췄다", ended(aSink))
+        assertNull(host.shown)
+        assertEquals("B 의 싱크는 열리지 않았다", 1, host.opened.size)
+    }
+
+    /** (B) 와 같되 A 의 정지가 B 취소의 **명령이 돈 뒤, 되돌리기 전**에 온다. */
+    @Test
+    fun `취소 명령이 돈 뒤 되돌리기 전에 온 실제 주인의 정지도 잃지 않는다`() {
+        val aSink = FakeSink()
+        val host = FakeHost(aSink)
+        host.deferMain = true
+        val c = controller(host)
+        val a = SignalOwner.Response(c.newOwnerId())
+        val b = SignalOwner.Wizard(c.newOwnerId())
+        c.playSignal(TestSignal.Pink, 0.15, a)
+        flush(host)
+        c.playSignal(TestSignal.Custom, owner = b)
+        c.stopSignalOwnedBy(b)
+        held.drain() // A 를 남겼다. 되돌리기는 주 스레드 큐에.
+        c.stopSignalOwnedBy(a)
+        flush(host)
+        assertTrue(ended(aSink))
+        assertNull(host.shown)
+    }
+
+    /** 대조군: 취소 뒤 되돌리기 전에 **다른 새 주인 C** 가 접수됐으면 옛 작업들의 정지는 C 를 끄지 못한다(R34-01). */
+    @Test
+    fun `되돌리기 전에 다른 새 주인이 접수되면 옛 주인들의 정지는 거절된다`() {
+        val aSink = FakeSink()
+        val cSink = FakeSink()
+        val host = FakeHost(aSink, cSink)
+        host.deferMain = true
+        val c = controller(host)
+        val a = SignalOwner.Response(c.newOwnerId())
+        val b = SignalOwner.Wizard(c.newOwnerId())
+        val newer = SignalOwner.Wizard(c.newOwnerId())
+        c.playSignal(TestSignal.Pink, 0.15, a)
+        flush(host)
+        c.playSignal(TestSignal.Custom, owner = b)
+        c.stopSignalOwnedBy(b)
+        held.drain()
+        c.playSignal(TestSignal.Pink, 0.15, newer)
+        held.drain()
+        host.main.drain()
+        c.stopSignalOwnedBy(a)
+        c.stopSignalOwnedBy(b)
+        flush(host)
+        assertTrue("C 가 열렸다", cSink.opened)
+        assertFalse("C 는 옛 정지로 멈추지 않았다", ended(cSink))
+        assertEquals(TestSignal.Pink, host.shown)
+        c.stopSignalOwnedBy(newer)
+        flush(host)
+        assertTrue(ended(cSink))
+    }
+
+    /** 되돌리기 전에 전체 정지가 들어오면 늦은 되돌리기는 아무 주인도 되살리지 않는다. */
+    @Test
+    fun `되돌리기 전 전체 정지 뒤 늦은 되돌리기는 무시된다`() {
+        val aSink = FakeSink()
+        val host = FakeHost(aSink)
+        host.deferMain = true
+        val c = controller(host)
+        val a = SignalOwner.Response(c.newOwnerId())
+        val b = SignalOwner.Wizard(c.newOwnerId())
+        c.playSignal(TestSignal.Pink, 0.15, a)
+        flush(host)
+        c.playSignal(TestSignal.Custom, owner = b)
+        c.stopSignalOwnedBy(b)
+        held.drain()
+        c.stopSignal()
+        flush(host)
+        assertTrue(ended(aSink))
+        assertNull("늦은 게시가 화면을 되살리지 않았다", host.shown)
+        // 이제 나는 소리가 없다 — 새 사용자 신호가 옛 A 의 늦은 정지에 꺼지지 않는다.
+        val userSink = FakeSink()
+        host.sinks.add(userSink)
+        c.playSignal(TestSignal.Custom, owner = SignalOwner.User)
+        c.stopSignalOwnedBy(a)
+        flush(host)
+        assertTrue(userSink.opened)
+        assertFalse(ended(userSink))
+    }
+
+    /** 되돌리기 전에 TF 시작이 접수되면 옛 작업의 정지는 TF 를 끄지 못하고 TF 가 열린다. */
+    @Test
+    fun `되돌리기 전 TF 시작 뒤 옛 작업의 정지는 거절된다`() {
+        val aSink = FakeSink()
+        val tfSink = FakeSink()
+        val host = FakeHost(aSink, tfSink)
+        host.deferMain = true
+        val c = controller(host)
+        val a = SignalOwner.Response(c.newOwnerId())
+        val b = SignalOwner.Wizard(c.newOwnerId())
+        c.playSignal(TestSignal.Pink, 0.15, a)
+        flush(host)
+        c.playSignal(TestSignal.Custom, owner = b)
+        c.stopSignalOwnedBy(b)
+        held.drain()
+        val session = c.playTransferSignal()
+        c.stopSignalOwnedBy(a)
+        c.stopSignalOwnedBy(b)
+        flush(host)
+        assertTrue(ended(aSink))
+        assertTrue(tfSink.opened)
+        assertFalse(ended(tfSink))
+        assertEquals(session, c.transferSession)
+    }
+
+    /** 되돌리기 전에 닫혀도 남는 소리가 없다. */
+    @Test
+    fun `되돌리기 전 닫기도 소리를 남기지 않는다`() {
+        val aSink = FakeSink()
+        val host = FakeHost(aSink)
+        host.deferMain = true
+        val c = controller(host)
+        val a = SignalOwner.Response(c.newOwnerId())
+        val b = SignalOwner.Wizard(c.newOwnerId())
+        c.playSignal(TestSignal.Pink, 0.15, a)
+        flush(host)
+        c.playSignal(TestSignal.Custom, owner = b)
+        c.stopSignalOwnedBy(b)
+        held.drain()
+        c.close()
+        flush(host)
+        assertTrue(ended(aSink))
     }
 
     // ── TF 세션의 끝 ─────────────────────────────────────────────────────

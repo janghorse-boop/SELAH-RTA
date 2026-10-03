@@ -9,6 +9,7 @@ import kr.joa.selahrta.audio.TestSignal
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.concurrent.CountDownLatch
@@ -127,6 +128,59 @@ class SignalOwnershipTest {
         own.admit(response)
         assertTrue(own.ownedStopAllowed(response))
         assertFalse(own.ownedStopAllowed(SignalOwner.Response(8)))
+    }
+
+    // ── 정착 중 (37회차 R37-01) ──────────────────────────────────────────
+
+    @Test
+    fun `주인별 정지를 받으면 정착 중이 되고 그 사이 어느 주인의 정지든 명령 쪽으로 넘긴다`() {
+        val own = SignalOwnership()
+        val a = SignalOwner.Response(1)
+        val b = SignalOwner.Wizard(2)
+        own.admit(a)
+        own.admit(b)
+        assertFalse(own.ownedStopAllowed(a))
+        own.onOwnedStopAccepted()
+        assertTrue(own.settling)
+        assertNull(own.latestRequestOwner)
+        assertTrue("앞선 주인의 소리가 아직 날 수 있다", own.ownedStopAllowed(a))
+    }
+
+    @Test
+    fun `정착하면 남은 재생의 주인만 정지할 수 있다`() {
+        val own = SignalOwnership()
+        val a = SignalOwner.Response(1)
+        val b = SignalOwner.Wizard(2)
+        own.admit(a)
+        own.admit(b)
+        own.onOwnedStopAccepted()
+        own.settle(a)
+        assertFalse(own.settling)
+        assertTrue(own.ownedStopAllowed(a))
+        assertFalse(own.ownedStopAllowed(b))
+        own.onOwnedStopAccepted()
+        own.settle(null)
+        assertFalse(own.ownedStopAllowed(a))
+    }
+
+    @Test
+    fun `새 요청·TF 시작·전체 정지는 정착 중을 푼다`() {
+        val a = SignalOwner.Response(1)
+        val b = SignalOwner.Wizard(2)
+        val c = SignalOwner.Wizard(3)
+
+        val byAdmit = SignalOwnership().apply { admit(a); admit(b); onOwnedStopAccepted(); admit(c) }
+        assertFalse(byAdmit.settling)
+        assertFalse(byAdmit.ownedStopAllowed(a))
+        assertTrue(byAdmit.ownedStopAllowed(c))
+
+        val byTransfer = SignalOwnership().apply { admit(a); admit(b); onOwnedStopAccepted(); beginTransfer() }
+        assertFalse(byTransfer.settling)
+        assertFalse(byTransfer.ownedStopAllowed(a))
+
+        val byGlobal = SignalOwnership().apply { admit(a); admit(b); onOwnedStopAccepted(); onIntentRaised(globalStop = true) }
+        assertFalse(byGlobal.settling)
+        assertFalse(byGlobal.ownedStopAllowed(a))
     }
 
     // ── 입구 관문 ────────────────────────────────────────────────────────

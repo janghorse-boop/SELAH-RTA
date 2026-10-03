@@ -50,6 +50,14 @@ class SignalOwnership {
     var transferSession: Long = 0L
         private set
 
+    /**
+     * **정착 중** — 마지막 요청이 주인별 정지로 취소됐고, 그 뒤 실제로 무엇이 나고 있는지 명령 스레드가 아직 알려
+     * 주지 않았다(37회차 R37-01). 이 사이에는 앞서 받은 요청의 소리가 아직 날 수 있으므로 **어느 주인의 정지든**
+     * 명령 스레드로 넘긴다 — 거기서 실제 재생의 주인과 맞을 때만 멈춘다. 새 요청·전체 정지·TF 시작이 오면 풀린다.
+     */
+    var settling: Boolean = false
+        private set
+
     private var lastSessionId = 0L
     private var lastAttemptId = 0L
 
@@ -71,6 +79,7 @@ class SignalOwnership {
             return Admission.Rejected("Transfer Function 이 소리를 내는 중입니다.")
         }
         latestRequestOwner = owner
+        settling = false
         return Admission.Accepted(PlaybackAttempt(owner, ++lastAttemptId))
     }
 
@@ -90,6 +99,7 @@ class SignalOwnership {
         transferSession = session
         val owner = SignalOwner.Transfer(session)
         latestRequestOwner = owner
+        settling = false
         return TransferStart(PlaybackAttempt(owner, ++lastAttemptId), ended)
     }
 
@@ -98,11 +108,27 @@ class SignalOwnership {
      * 그 자리에서 부른다. TF 세션이 살아 있으면 끝내고 그 번호를 돌려준다(없으면 0).
      *
      * 전체 정지라면 [latestRequestOwner] 도 비운다 — 그 뒤 들어온 주인별 정지는 거를 대상이 없다.
+     * 주인별 정지는 [onOwnedStopAccepted] 를 쓴다.
      */
     fun onIntentRaised(globalStop: Boolean): Long {
         val ended = transferSession
         transferSession = 0L
-        if (globalStop) latestRequestOwner = null
+        if (globalStop) {
+            latestRequestOwner = null
+            settling = false
+        }
+        return ended
+    }
+
+    /**
+     * 주인별 정지를 받았다([ownedStopAllowed] 가 참이었다). 마지막 요청은 취소됐으니 그 주인을 비우고 **정착 중**으로
+     * 둔다 — 실제로 남은 재생의 주인은 명령 스레드가 [settle] 로 알려 준다(37회차 R37-01). TF 세션이 살아 있었으면
+     * 끝내고 그 번호를 돌려준다.
+     */
+    fun onOwnedStopAccepted(): Long {
+        val ended = onIntentRaised(globalStop = false)
+        latestRequestOwner = null
+        settling = true
         return ended
     }
 
@@ -118,18 +144,21 @@ class SignalOwnership {
     }
 
     /**
-     * 주인별 정지를 받아도 되는가. **마지막으로 받은 요청의 주인이 그 주인일 때만** — 이미 다른 주인의
-     * 요청(대기 중인 TF 시작 포함)이 접수됐으면 거절한다(34회차 R34-01).
+     * 주인별 정지를 받아도 되는가. **마지막으로 받은 요청의 주인이 그 주인일 때**, 또는 **정착 중**일 때 —
+     * 이미 다른 주인의 요청(대기 중인 TF 시작 포함)이 접수됐으면 거절한다(34회차 R34-01). 정착 중에는 앞서
+     * 받은 요청의 소리가 아직 날 수 있어 그 주인의 정지를 버리면 소리가 남는다(37회차 R37-01 B) — 명령 스레드가
+     * 실제 재생의 주인과 맞춰 본다.
      */
-    fun ownedStopAllowed(owner: SignalOwner): Boolean = latestRequestOwner == owner
+    fun ownedStopAllowed(owner: SignalOwner): Boolean = settling || latestRequestOwner == owner
 
     /**
-     * 주인별 정지가 **대기 중이던 자기 요청만** 취소하고 다른 주인의 재생이 그대로 남았을 때, 마지막 요청의 주인을
-     * 그 재생의 주인으로 되돌린다(36회차 R36-01). 그 사이 다른 요청이 들어왔으면(마지막 주인이 [expected] 가
-     * 아니면) 그대로 둔다.
+     * 주인별 정지의 명령이 돌고 난 뒤의 실제 재생 주인([active], 없으면 null)으로 정착한다(36회차 R36-01).
+     * **부르는 쪽은 그 정지의 의도 번호가 아직 최신일 때만 부른다** — 주인 값만으로는 그 사이 같은 주인의 새
+     * 요청을 가리지 못한다(37회차 R37-01 A).
      */
-    fun restoreLatest(expected: SignalOwner, to: SignalOwner) {
-        if (latestRequestOwner == expected) latestRequestOwner = to
+    fun settle(active: SignalOwner?) {
+        latestRequestOwner = active
+        settling = false
     }
 }
 
