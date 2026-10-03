@@ -2324,6 +2324,11 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { settingsStore.setThemeMode(m) }
     }
 
+    /** 세로 화면을 어느 쪽으로 세우는가. 화면 방향만 바뀐다 — 엔진·입력은 건드리지 않는다. */
+    fun setPortraitMode(m: kr.joa.selahrta.ui.PortraitMode) {
+        viewModelScope.launch { settingsStore.setPortraitMode(m) }
+    }
+
     /**
      * FFT 길이를 고른다. **다음 측정부터 적용된다.**
      *

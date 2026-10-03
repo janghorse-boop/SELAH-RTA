@@ -89,6 +89,7 @@ fun SettingsScreen(
     onLeqWindow: (LeqWindow) -> Unit,
     /** 화면 밝기 한 벌. **기기 설정이 아니라 여기서 고른 것을 쓴다.** */
     onThemeMode: (ThemeMode) -> Unit,
+    onPortraitMode: (kr.joa.selahrta.ui.PortraitMode) -> Unit,
     /** FFT 길이. **다음 측정부터 적용된다**(측정 중 바꾸면 싱크가 끊긴다). */
     onFftSize: (Int) -> Unit,
     onPreferredInput: (String?) -> Unit,
@@ -433,6 +434,19 @@ fun SettingsScreen(
             capture.meterSettings.themeMode,
             { it.labelKo },
             onThemeMode,
+        )
+        ChoiceRow(
+            "세로 화면 방향",
+            // 2026-10-03 담당자 요구: 폰 아래쪽 마이크를 스피커로 향하면 화면이 거꾸로 서서 읽기 어렵다.
+            // **할 수 있는 만큼만 적는다** — 자동이 모든 폰에서 거꾸로 세로를 허용하는 것은 아니다.
+            "폰 아래쪽을 스피커로 향해 잴 때처럼 폰을 뒤집어 들면, 「자동」은 화면도 따라 뒤집습니다. " +
+                "폰에 따라 거꾸로 세로를 지원하지 않거나, 탁자에 눕혀 두면 방향을 정하지 못할 수 있습니다 — " +
+                "그때는 「거꾸로 고정」을 고르십시오. 분석 화면은 이 설정과 상관없이 가로입니다. " +
+                "화면 방향은 측정에 쓰는 마이크를 바꾸지 않습니다.",
+            kr.joa.selahrta.ui.PortraitMode.entries,
+            capture.meterSettings.portraitMode,
+            { it.labelKo },
+            onPortraitMode,
         )
 
         // **주의사항 상자를 뺐다**(담당자 지시 2026-09-28). 한 번 읽으면

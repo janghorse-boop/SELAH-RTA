@@ -18,6 +18,7 @@ import kr.joa.selahrta.domain.DefaultSegmentRanges
 import kr.joa.selahrta.domain.SegmentRange
 import kr.joa.selahrta.dsp.TimeWeight
 import kr.joa.selahrta.dsp.Weighting
+import kr.joa.selahrta.ui.PortraitMode
 import kr.joa.selahrta.ui.theme.ThemeMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
@@ -134,6 +135,11 @@ data class MeterSettings(
      * 사용자가 고른 적 없는 일이다.
      */
     val themeMode: ThemeMode = ThemeMode.Dark,
+    /**
+     * 세로 화면을 어느 쪽으로 세우는가(2026-10-03 담당자 요구). **분석 구역(가로)에는 걸리지 않는다** —
+     * 규칙은 [kr.joa.selahrta.ui.orientationFor]. 읽는 자세의 선택일 뿐 마이크 선택과는 상관없다.
+     */
+    val portraitMode: PortraitMode = PortraitMode.DEFAULT,
     /**
      * FFT 길이. 길수록 저역이 또렷하고 반응이 느려진다.
      *
@@ -268,6 +274,7 @@ class MeterSettingsStore(private val context: Context) {
     private val analysisWeightingKey = stringPreferencesKey("analysisWeighting")
     private val timeWeightKey = stringPreferencesKey("timeWeight")
     private val themeModeKey = stringPreferencesKey("themeMode")
+    private val portraitModeKey = stringPreferencesKey("portraitMode")
     private val fftSizeKey = intPreferencesKey("fftSize")
     private val leqWindowKey = longPreferencesKey("leqWindowMs")
     private val audioFormatKey = stringPreferencesKey("audioFormat")
@@ -315,6 +322,7 @@ class MeterSettingsStore(private val context: Context) {
                 } ?: TimeWeight.Slow,
                 // **모르는 이름이면 다크다.** 저장된 것이 상했을 때
                 // 흰 화면으로 떨어지지 않게 한다.
+                portraitMode = portraitModeOf(p[portraitModeKey]),
                 themeMode = p[themeModeKey]?.let { n ->
                     ThemeMode.entries.firstOrNull { it.name == n }
                 } ?: ThemeMode.Dark,
@@ -412,6 +420,7 @@ class MeterSettingsStore(private val context: Context) {
 
     suspend fun setTimeWeight(t: TimeWeight) = write { it[timeWeightKey] = t.name }
     suspend fun setThemeMode(m: ThemeMode) = write { it[themeModeKey] = m.name }
+    suspend fun setPortraitMode(m: PortraitMode) = write { it[portraitModeKey] = m.name }
 
     /** 목록에 없는 길이는 저장하지 않는다. */
     suspend fun setFftSize(n: Int) {
@@ -554,3 +563,7 @@ data class KnownDevice(
     val name: String,
     val kind: MicKind,
 )
+
+/** 저장된 세로 선택. **모르는 이름이거나 없으면 기본값**(자동) — 손상된 값으로 화면을 거꾸로 세우지 않는다. */
+fun portraitModeOf(name: String?): PortraitMode =
+    name?.let { n -> PortraitMode.entries.firstOrNull { it.name == n } } ?: PortraitMode.DEFAULT

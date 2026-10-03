@@ -1116,6 +1116,26 @@ R6-04 부분 종결. Medium 넷을 고쳤습니다. **실기기·가짜 입출�
 
 **검증**: `--rerun-tasks` app·dsp **2,070건** 통과, 앱·계측 APK 조립.
 
+43회차 「병합 가능」(지적 0) → **#156 병합(`d72d0da`)**.
+
+---
+
+## 29. 세로 화면을 거꾸로도 — 자동 / 정상 고정 / 거꾸로 고정
+
+가지 `feat/reverse-portrait`(main `d72d0da` 기준). 담당자 요구(2026-10-03, 「코덱스 검토」 창 경유): 폰 아래쪽 마이크를 스피커로 향하면 세로 화면이 거꾸로 서서 읽기 어렵고, 뒤집어도 안 바뀐다. 결정과 까닭: [`docs/decisions/2026-10-03-reverse-portrait.md`](../decisions/2026-10-03-reverse-portrait.md).
+
+| 바꾼 것 | 시험 |
+|---|---|
+| `PortraitMode { Auto, Upright, UpsideDown }`(기본 자동). `orientationFor(inAnalysis, portrait)` 한 자리 — 분석은 `SENSOR_LANDSCAPE`, 세로는 `SENSOR_PORTRAIT` / `PORTRAIT` / `REVERSE_PORTRAIT` | `OrientationPolicyTest` 5건 — 자동을 옛 `PORTRAIT` 로, 거꾸로 고정을 `PORTRAIT` 로 바꾼 변이에서 각각 실패 |
+| `LockLandscape`(분석에 들어갈 때 돌아갈 값을 붙잡음) → `ApplyOrientation`(두 값이 바뀔 때마다 지금 값으로 다시 요청). `MainActivity` 는 시작 때 기본값 | 「분석을 나오면 지금의 세로 선택으로 돌아간다」(규칙 수준) |
+| `MeterSettings.portraitMode` 저장(`portraitMode` 열쇠, 모르는 이름이면 자동 — `portraitModeOf`), VM `setPortraitMode`, 설정 「화면」 구역 「세로 화면 방향」 줄 | 저장 이름 되살리기·모르면 자동 |
+
+**설정 문구**: 「자동」이 모든 폰에서 거꾸로 세로를 허용하지 않는다는 것, 탁자 위에서는 방향을 못 정할 수 있다는 것, 분석은 상관없이 가로라는 것, 화면 방향이 측정 마이크를 바꾸지 않는다는 것을 적었다.
+
+**검증**: `--rerun-tasks` app·dsp **2,075건** 통과, 앱·계측 APK 조립(계측 시험 두 곳에 새 인자 `onPortraitMode` 를 넘김 — 실행은 안 함).
+
+**실기기 몫(아직 — 소리 없음)**: 자동 전환이 실제로 되는지, 시스템 회전 잠금과의 관계, 탁자 위, 거꾸로 세로에서 화면 요소·대화상자·키보드·시스템 막대·컷아웃·터치, 회전 중 캡처·재생이 끊기지 않는지. `ApplyOrientation` 자체는 JVM 시험 밖.
+
 ---
 
 ## 지난 회차에 보낸 것 — **판정이 다 났습니다**
