@@ -31,6 +31,9 @@ interface SignalSink {
      *   열어 두고 한쪽만 내보내는 길은 없다.
      * @return 열었으면 true. 못 열면 false — 부르는 쪽이 「내보내는 중」으로
      *   남기지 않도록 반드시 본다.
+     *
+     * **못 열었어도(false·예외) 부르는 쪽이 [release] 를 부른다**(32회차 R32-02). 열기 중에 잡은 자원은 여기서
+     * 몰래 놓지 않고 [release] 로 놓는다 — 그래야 놓기의 성공·실패가 플레이어의 정리 장부에 남는다.
      */
     fun open(sampleRate: Int, frames: Int, channels: Int): Boolean
 
@@ -163,8 +166,11 @@ class AudioTrackSink(
             return false
         }
 
+        // **실패해도 여기서 놓지 않는다**(32회차 R32-02). 쥔 채 false 를 돌려주면 플레이어가 정리 장부에 올린 뒤
+        // [release] 로 놓는다 — 그래야 놓기의 성공·실패가 `failedReleaseCount` 에 남는다. 예전에는 여기서 직접
+        // `t.release()` 를 불러 그 결과를 버렸고, 터지면 예외가 그대로 나갔다.
         if (t.state != AudioTrack.STATE_INITIALIZED) {
-            t.release()
+            track = t
             return false
         }
 
@@ -184,8 +190,8 @@ class AudioTrackSink(
         // **play() 도 실패할 수 있다.** 생성자만 감싸고 여기를 빼 두면,
         // 실패했는데 「내보내는 중」으로 남는다(독립 검증 P9-05).
         if (!runCatching { t.play() }.isSuccess) {
-            t.release()
             Log.w(SINK_TAG, "play() 가 실패했다")
+            track = t // 놓기는 부르는 쪽이 [release] 로 — 위와 같은 까닭(R32-02)
             return false
         }
 

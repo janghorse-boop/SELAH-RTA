@@ -1138,6 +1138,28 @@ R6-04 부분 종결. Medium 넷을 고쳤습니다. **실기기·가짜 입출�
 
 ---
 
+44회차 「병합 가능」(지적 0) → **#157 병합(`96fe5b1`)**. 실제 역세로 전환·회전 중 캡처·재생은 실기기 몫으로 남음.
+
+---
+
+## 30. 열기에 실패한 출력도 정리 장부에 (32회차 R32-02)
+
+가지 `fix/signal-open-failure-cleanup`(main `96fe5b1` 기준). 32회차부터 「별도 미해결」로 들고 온 항목(`unverified` 3-5).
+
+**문제**: `SignalPlayer.start` 는 열기가 `false` 면 `release()` 의 결과를 버렸고, 열다가 예외가 나면 놓지도 않았다. 자원이 남아도 `pendingCount`·`failedReleaseCount` 가 0 이었다 — TF 시작의 정리 기다림(`awaitPlaybackCleanup`)이 그 둘을 「정리 완료」로 쓴다. `AudioTrackSink.open` 도 초기화·`play()` 실패에서 직접 `t.release()` 를 불러 결과를 버렸다.
+
+| 고친 것 | 시험(반례를 먼저 실패로 본 뒤) |
+|---|---|
+| `SignalPlayer.abandonFailedOpen(sink)` — 열기 실패(`false`)·예외에서 그 출력을 **정상 재생과 같은 장부**(`stuck`)에 올리고 같은 `releaseOnce()` 로 놓는다. 놓기 실패·놓다가 예외면 남아 `failedReleaseCount` 로 세어지고 상한(2)에도 든다. 열기 예외는 놓은 뒤 그대로 올린다 | `SignalPlayerOpenFailureTest` 7건 — 열기 false+놓기 실패 · 열기 false+놓기 성공(대조) · 열기 예외 · 열기 예외+놓기 실패 · 열기 예외+놓다가 예외(열기 예외가 가려지지 않음) · 기준 탭(`TappedSink`) 덧씌움 · 놓지 못한 실패가 상한에 이르면 새로 안 엶. 변이 「예외 경로에서 안 놓기」·「false 경로 옛 방식」 각 3건 실패 |
+| `SignalSink.open` 계약: **못 열었어도 부르는 쪽이 `release()` 를 부른다**, 구현은 열기 중 잡은 자원을 몰래 놓지 않는다. `AudioTrackSink` 초기화·`play()` 실패는 트랙을 쥔 채 `false` | — (JVM 밖) |
+| `FakeSink` 에 `openThrows`·`releaseResult`·`releaseThrows`·`holding` | — |
+
+**검증**: `--rerun-tasks` app·dsp **2,082건** 통과, 앱·계측 APK 조립.
+
+**남은 것**: `AudioTrackSink` 의 바뀐 실패 경로는 실제 `AudioTrack` 으로 돌려 보지 않았다. 플랫폼이 알려 주지 않는 자원은 이 장부로도 안 보인다(`unverified` 3-5).
+
+---
+
 ## 지난 회차에 보낸 것 — **판정이 다 났습니다**
 
 프로즈를 걷어내고 표로 남깁니다. **읽어야 할 것은 위의 새 절들**이고,

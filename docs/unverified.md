@@ -223,7 +223,14 @@ README 의 진행 표에 「Recording A~F 의 어느 글자가 어디까지인�
 
 - 지금 앱은 「`pendingCount == 0` 이면 다 놓였다」에 기대어 다른 일을 하지 않는다 — 그래서 **당장의 오동작으로
   재현된 것은 아니다.** 새 코드가 그 조건을 「정리 완료」로 쓰면 틀린다(TF 설계 3판이 그렇게 썼다가 4판에서 거둠).
-- 고칠 일: 열기 실패·예외 경로의 자원도 추적하거나, 실패한 열기에서 확실히 놓는다. **아직 하지 않았다.**
+- **고쳤다(2026-10-03, `fix/signal-open-failure-cleanup`).** 열기가 `false` 거나 예외가 나면 그 출력도 정상
+  재생과 같은 장부·같은 놓기(`SignalPlayer.abandonFailedOpen`)를 거친다 — 놓기 실패·놓다가 예외는
+  `failedReleaseCount` 로 세어지고 상한에도 든다. 열기 예외는 놓은 뒤 그대로 올린다. `SignalSink.open` 계약:
+  못 열었어도 부르는 쪽이 `release()` 를 부르고, 구현은 열기 중 잡은 자원을 몰래 놓지 않는다.
+  `AudioTrackSink` 의 초기화 실패·`play()` 실패도 트랙을 쥔 채 `false` 를 돌려 같은 길로 놓게 했다.
+  JVM 시험: `SignalPlayerOpenFailureTest` 7건(가짜 출력·기준 탭 덧씌움).
+- **남은 것**: `AudioTrackSink` 의 바뀐 실패 경로는 실제 `AudioTrack` 으로 돌려 보지 않았다(JVM 밖). 플랫폼이
+  알려 주지 않는 자원(예: 드라이버 안의 것)은 이 장부로도 보이지 않는다.
 
 ## 3-6. Transfer Function 간편 화면 — 실험용 연결이 아직 확인하지 않은 것 (2026-10-03)
 
