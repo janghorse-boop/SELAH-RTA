@@ -42,7 +42,7 @@ enum class ViewMode(val labelKo: String, val section: NavSection) {
      * 머리로 맞춰 봐야 했다. 지금은 차트 위에 후보를 표식으로 찍고 바로
      * 아래에 정확한 주파수를 적는다.
      *
-     * **분석 구역은 가로로만 본다**(`LockLandscape`, 2026-09-25 담당자 지시).
+     * **분석 구역은 가로로만 본다**(`orientationFor`·`ApplyOrientation`, 2026-09-25 담당자 지시).
      * 31밴드는 가로로 늘어선 그림이라 세로에서는 막대가 실오라기처럼 보인다.
      * 잠금은 화면이 아니라 **구역**에 걸려 있다(`SelahApp`) — 화면마다 걸면
      * RTA↔FR 을 오갈 때 폰이 한 번 섰다가 다시 눕는다.

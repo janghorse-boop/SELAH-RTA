@@ -174,7 +174,7 @@ fun RtaScreen(
     }
 
     val running = capture.measure is MeasureState.Running
-    // 눕히는 일은 분석 **구역**이 한다(`SelahApp` 의 `LockLandscape`), 이 화면이
+    // 눕히는 일은 분석 **구역**이 한다(`SelahApp` 의 `ApplyOrientation`), 이 화면이
     // 아니다. 그래도 세로 배치를 남겨 두는 까닭은 **잠금이 듣지 않는 자리가
     // 있어서**다 — 화면 분할·접는 폰에서는 방향 요청이 무시돼 세로로 뜬다.
     // 그때 빈 화면을 보이는 것보다는 좁게라도 그리는 편이 낫다.

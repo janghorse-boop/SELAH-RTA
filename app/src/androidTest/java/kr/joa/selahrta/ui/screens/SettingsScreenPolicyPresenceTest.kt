@@ -55,6 +55,7 @@ class SettingsScreenPolicyPresenceTest {
                     onTimeWeight = {},
                     onLeqWindow = {},
                     onThemeMode = {},
+                    onPortraitMode = {},
                     onFftSize = {},
                     onPreferredInput = {},
                     onForgetDevice = {},

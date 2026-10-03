@@ -436,8 +436,11 @@ fun SelahApp() {
             // 화면마다 걸지 않고 여기서 거는 까닭: RTA 와 FR 이 각자 잠그면
             // 오갈 때마다 앞 화면의 잠금이 풀렸다 걸려, 폰이 한 번 섰다가 다시
             // 눕는다. 구역에 걸어 두면 분석 안에서 움직이는 동안은 계속 걸려
-            // 있다. 분석을 떠나면 `onDispose` 가 원래 방향으로 돌려놓는다.
-            if (screen?.section == NavSection.Analyze) LockLandscape()
+            // 있다. 분석을 떠나면 **지금의 세로 선택**으로 돌아간다(`ApplyOrientation`).
+            ApplyOrientation(
+                inAnalysis = screen?.section == NavSection.Analyze,
+                portrait = capture.meterSettings.portraitMode,
+            )
 
             // **분석에 들어오면 곧바로 쌓기 시작한다**(2026-09-27 담당자 지시:
             // 「분석 버튼을 누르면 보이지 않지만 시작을 해 달라」).
@@ -514,6 +517,7 @@ fun SelahApp() {
                             onTimeWeight = vm::setTimeWeight,
                             onLeqWindow = vm::setLeqWindow,
                             onThemeMode = vm::setThemeMode,
+                            onPortraitMode = vm::setPortraitMode,
                             onPreferredInput = vm::setPreferredInput,
                             onForgetDevice = vm::forgetDevice,
                             onInputChannel = vm::setInputChannel,

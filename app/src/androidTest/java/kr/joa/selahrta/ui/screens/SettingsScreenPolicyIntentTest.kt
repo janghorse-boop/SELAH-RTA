@@ -107,6 +107,7 @@ class SettingsScreenPolicyIntentTest {
                         onTimeWeight = {},
                         onLeqWindow = {},
                         onThemeMode = {},
+                        onPortraitMode = {},
                         onFftSize = {},
                         onPreferredInput = {},
                         onForgetDevice = {},
