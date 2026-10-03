@@ -16,11 +16,13 @@ import kr.joa.selahrta.dsp.MeasureOutcome
 import kr.joa.selahrta.dsp.ObservationKind
 import kr.joa.selahrta.dsp.TransferEngine
 import kr.joa.selahrta.transfer.DriftArgs
+import kr.joa.selahrta.transfer.DriftInterval
 import kr.joa.selahrta.transfer.DriftSessionGuard
 import kr.joa.selahrta.transfer.InputSnapshot
 import kr.joa.selahrta.transfer.TappedSink
 import kr.joa.selahrta.transfer.driftSessionReport
 import kr.joa.selahrta.transfer.parseDriftArgs
+import kr.joa.selahrta.transfer.parseDriftInterval
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -67,6 +69,11 @@ import java.util.concurrent.atomic.AtomicLong
  * adb shell am instrument -w -r -e mode record -e minutes 30 -e amplitude 0.1 \
  *   -e class 'kr.joa.selahrta.audio.AcousticDriftRecordingTest#음향_드리프트를_기록한다' \
  *   kr.joa.selahrta.test/androidx.test.runner.AndroidJUnitRunner
+ *
+ * # 촘촘한 시운전 — 3관측 되풀이의 참 주기를 보려고. 시운전에서만 1~10초(기본 10초).
+ * adb shell am instrument -w -r -e mode trial -e minutes 5 -e intervalMs 1000 -e amplitude 0.2 \
+ *   -e class 'kr.joa.selahrta.audio.AcousticDriftRecordingTest#음향_드리프트를_기록한다' \
+ *   kr.joa.selahrta.test/androidx.test.runner.AndroidJUnitRunner
  * ```
  *
  * 기록은 `adb logcat -s ADRIFT`. **화면이 꺼지면 계측 시험이 죽는다** —
@@ -76,7 +83,6 @@ class AcousticDriftRecordingTest {
 
     private val tag = "ADRIFT"
     private val rate = 48_000
-    private val intervalMs = 10_000L
 
     private fun say(line: String) = Log.i(tag, line)
     private fun args() = InstrumentationRegistry.getArguments()
@@ -174,6 +180,9 @@ class AcousticDriftRecordingTest {
         val parsed = parseDriftArgs(args().getString("mode"), args().getString("minutes"))
         if (parsed is DriftArgs.Rejected) fail(parsed.why)
         val (mode, minutes) = parsed as DriftArgs.Accepted
+        val interval = parseDriftInterval(mode, args().getString("intervalMs"))
+        if (interval is DriftInterval.Rejected) fail(interval.why)
+        val intervalMs = (interval as DriftInterval.Accepted).ms
 
         val out = usbOut()
         assertTrue("USB 출력 기기가 없다 — 인터페이스를 꽂으십시오", out != null)

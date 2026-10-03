@@ -213,6 +213,42 @@ fun parseDriftArgs(mode: String?, minutes: String?): DriftArgs {
     }
 }
 
+/** 관측 간격의 기본값. 기록의 판정 규칙(설계 4장)은 **이 간격으로** 정했다. */
+const val DRIFT_INTERVAL_MS_DEFAULT = 10_000L
+
+/** 촘촘한 시운전의 가장 짧은 간격. 지연 추정 창(32,768표본 ≈ 0.68초)이 겹치지 않는 선. */
+const val DRIFT_INTERVAL_MS_MIN = 1_000L
+
+sealed interface DriftInterval {
+    data class Accepted(val ms: Long) : DriftInterval
+    data class Rejected(val why: String) : DriftInterval
+}
+
+/**
+ * `-e intervalMs` 를 읽는다. 없으면 10초.
+ *
+ * **바꿀 수 있는 것은 시운전뿐이다.** 3관측 간격의 되풀이(2026-10-03 기록)는 10초
+ * 간격으로는 참 주기를 가릴 수 없다 — 그보다 짧은 주기가 접혀 보일 수 있다. 그래서
+ * 촘촘히 보는 길을 열되, 기록의 판정 규칙은 10초 간격으로 **재기 전에** 정했으므로
+ * 기록에서는 간격을 바꾸지 않는다.
+ */
+fun parseDriftInterval(mode: DriftMode, intervalMs: String?): DriftInterval {
+    if (intervalMs == null) return DriftInterval.Accepted(DRIFT_INTERVAL_MS_DEFAULT)
+    val ms = intervalMs.toLongOrNull()
+        ?: return DriftInterval.Rejected("-e intervalMs 는 정수 밀리초 — 받은 값: $intervalMs")
+    if (mode == DriftMode.Record && ms != DRIFT_INTERVAL_MS_DEFAULT) {
+        return DriftInterval.Rejected(
+            "기록의 관측 간격은 ${DRIFT_INTERVAL_MS_DEFAULT}ms 다 — 판정 규칙을 그 간격으로 정했다: $ms",
+        )
+    }
+    if (ms !in DRIFT_INTERVAL_MS_MIN..DRIFT_INTERVAL_MS_DEFAULT) {
+        return DriftInterval.Rejected(
+            "시운전 간격은 ${DRIFT_INTERVAL_MS_MIN}~${DRIFT_INTERVAL_MS_DEFAULT}ms: $ms",
+        )
+    }
+    return DriftInterval.Accepted(ms)
+}
+
 /** [driftSessionReport] 의 결과. [lines] 는 그 차례대로 ADRIFT 에 적는다. */
 data class SessionReport(val lines: List<String>, val passed: Boolean, val failure: String?)
 

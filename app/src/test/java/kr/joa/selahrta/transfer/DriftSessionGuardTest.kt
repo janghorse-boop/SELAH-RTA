@@ -381,4 +381,29 @@ class DriftSessionGuardTest {
         assertEquals(DriftArgs.Accepted(DriftMode.Record, 11.0), parseDriftArgs("record", "11"))
         assertEquals(DriftArgs.Accepted(DriftMode.Record, 30.0), parseDriftArgs("record", "30"))
     }
+
+    // ── 관측 간격 (3관측 되풀이를 촘촘히 보려고) ─────────────────────────
+
+    @Test
+    fun `간격을 안 주면 10초다`() {
+        assertEquals(DriftInterval.Accepted(10_000), parseDriftInterval(DriftMode.Trial, null))
+        assertEquals(DriftInterval.Accepted(10_000), parseDriftInterval(DriftMode.Record, null))
+    }
+
+    /** 기록의 판정 규칙은 10초 간격으로 재기 전에 정했다 — 기록에서는 못 바꾼다. */
+    @Test
+    fun `기록에서는 간격을 바꾸지 못한다`() {
+        assertTrue(parseDriftInterval(DriftMode.Record, "1000") is DriftInterval.Rejected)
+        assertTrue(parseDriftInterval(DriftMode.Record, "9999") is DriftInterval.Rejected)
+        assertEquals(DriftInterval.Accepted(10_000), parseDriftInterval(DriftMode.Record, "10000"))
+    }
+
+    @Test
+    fun `시운전은 1초에서 10초 사이만 받는다`() {
+        assertEquals(DriftInterval.Accepted(1_000), parseDriftInterval(DriftMode.Trial, "1000"))
+        assertEquals(DriftInterval.Accepted(2_500), parseDriftInterval(DriftMode.Trial, "2500"))
+        for (bad in listOf("999", "0", "-1000", "10001", "1.5", "abc", "")) {
+            assertTrue("$bad 를 받아 줬다", parseDriftInterval(DriftMode.Trial, bad) is DriftInterval.Rejected)
+        }
+    }
 }
