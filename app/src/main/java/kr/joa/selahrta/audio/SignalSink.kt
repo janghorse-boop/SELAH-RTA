@@ -166,13 +166,14 @@ class AudioTrackSink(
             return false
         }
 
-        // **실패해도 여기서 놓지 않는다**(32회차 R32-02). 쥔 채 false 를 돌려주면 플레이어가 정리 장부에 올린 뒤
-        // [release] 로 놓는다 — 그래야 놓기의 성공·실패가 `failedReleaseCount` 에 남는다. 예전에는 여기서 직접
-        // `t.release()` 를 불러 그 결과를 버렸고, 터지면 예외가 그대로 나갔다.
-        if (t.state != AudioTrack.STATE_INITIALIZED) {
-            track = t
-            return false
-        }
+        // **만들자마자 쥔다**(45회차 R45-02). 아래의 상태 조회·출력 고르기·play·경로 보고는 모두 실패할 수 있다 —
+        // 그 전에 이 필드에 두어야, 어디서 실패하든(false 든 예외든) 플레이어가 정리 장부에 올린 뒤 [release] 로
+        // 놓는다. 예전에는 출력 고르기 콜백이 던지면 트랙이 지역 변수에만 있어 장부가 「정리 완료」로 보였다.
+        track = t
+
+        // **실패해도 여기서 놓지 않는다**(32회차 R32-02). 쥔 채 false 를 돌려주면 그 놓기의 성공·실패가
+        // `failedReleaseCount` 에 남는다. 예전에는 여기서 직접 `t.release()` 를 불러 그 결과를 버렸다.
+        if (t.state != AudioTrack.STATE_INITIALIZED) return false
 
         // **고른 자리가 있으면 그리로 못박는다.** 실패해도 그냥 간다 —
         // 안드로이드가 고른 자리로 나가고, 그것은 예전 동작이다.
@@ -191,11 +192,9 @@ class AudioTrackSink(
         // 실패했는데 「내보내는 중」으로 남는다(독립 검증 P9-05).
         if (!runCatching { t.play() }.isSuccess) {
             Log.w(SINK_TAG, "play() 가 실패했다")
-            track = t // 놓기는 부르는 쪽이 [release] 로 — 위와 같은 까닭(R32-02)
-            return false
+            return false // 놓기는 부르는 쪽이 [release] 로 — 위와 같은 까닭(R32-02)
         }
 
-        track = t
         reportRoute(t, wanted, requestRejected)
         return true
     }

@@ -5,6 +5,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -61,6 +62,8 @@ class SignalControllerTest {
         override fun openSink(onRouteState: ((OutputRouteState) -> Unit)?): SignalSink =
             (sinks.pollFirst() ?: FakeSink()).also { opened += it }
         override fun nowMs(): Long { now += tickPerRead; return now }
+        val warnings = ArrayList<String>()
+        override fun warn(message: String) { warnings += message }
     }
 
     private val held = Held()
@@ -618,6 +621,82 @@ class SignalControllerTest {
         c.close()
         flush(host)
         assertTrue(ended(aSink))
+    }
+
+    // ── 45회차 R45-01: 열기 예외도 「열지 못함」으로 끝낸다 ─────────────────────
+
+    /**
+     * 출력이 열다가 예외를 던진다. 예전에는 그 예외가 명령 밖으로 빠져(실기기에서는 명령 스레드가 죽는다) 화면은
+     * 「재생 중」, 포커스는 쥔 채였다(`shown=Pink focus=true`). 이제 못 연 것과 같은 길로 끝난다.
+     */
+    @Test
+    fun `열기 예외는 명령 밖으로 나가지 않고 화면과 포커스를 정리한다`() {
+        val sink = FakeSink(openThrows = true)
+        val host = FakeHost(sink)
+        val c = controller(host)
+        c.playSignal(TestSignal.Pink, owner = SignalOwner.User)
+        held.drain() // 예외가 빠져나오면 여기서 시험이 터진다
+        assertNull(host.shown)
+        assertFalse(host.focusHeld)
+        assertNotNull("못 연 까닭을 알린다", host.notice)
+        assertFalse("열기에서 잡은 자원은 놓였다", sink.holding)
+        assertTrue("진단이 남는다", host.warnings.any { it.contains("열다가") })
+    }
+
+    @Test
+    fun `TF 열기 예외는 그 세션을 끝낸다`() {
+        val host = FakeHost(FakeSink(openThrows = true))
+        val c = controller(host)
+        val ended = ArrayList<Long>()
+        c.onTransferSessionEnded = { s, _ -> ended += s }
+        val session = c.playTransferSignal()
+        held.drain()
+        assertEquals(listOf(session), ended)
+        assertEquals(0L, c.transferSession)
+        assertFalse(host.focusHeld)
+    }
+
+    /** 옛 요청 A 의 열기 예외 소식이 주 스레드에 늦게 닿아도, 그 사이 시작한 새 요청 B 의 화면을 지우지 않는다. */
+    @Test
+    fun `옛 요청의 열기 예외가 새 요청의 화면을 지우지 않는다`() {
+        val host = FakeHost(FakeSink(openThrows = true), FakeSink())
+        host.deferMain = true
+        val c = controller(host)
+        c.playSignal(TestSignal.Pink, owner = SignalOwner.User)
+        held.drain() // A 가 터졌고, 그 게시는 주 스레드 큐에
+        c.playSignal(TestSignal.Custom, owner = SignalOwner.User) // B
+        flush(host)
+        assertEquals(TestSignal.Custom, host.shown)
+        assertTrue(host.opened.last().opened)
+    }
+
+    /** 옛 TF 세션 A 의 열기 예외가 늦게 닿아도 새 세션 B 는 살아 있다(기대한 세션만 끝낸다). */
+    @Test
+    fun `옛 TF 세션의 열기 예외가 새 세션을 끝내지 않는다`() {
+        val host = FakeHost(FakeSink(openThrows = true), FakeSink())
+        host.deferMain = true
+        val c = controller(host)
+        val a = c.playTransferSignal()
+        held.drain()
+        val b = c.playTransferSignal()
+        flush(host)
+        assertNotEquals(a, b)
+        assertEquals(b, c.transferSession)
+    }
+
+    /** 놓기에 **실패한** 것이 남아 TF 를 못 열면 「잠시 뒤」가 아니라 앱을 다시 열라고 한다 — 기다려도 안 풀린다. */
+    @Test
+    fun `놓기 실패가 남아 TF 를 못 열면 기다리라고 하지 않는다`() {
+        val host = FakeHost(FakeSink(openFails = true, releaseResult = false), FakeSink())
+        val c = controller(host)
+        c.playSignal(TestSignal.Pink, owner = SignalOwner.User) // 열기 실패, 놓기도 실패 — 장부에 남는다
+        held.drain()
+        host.tickPerRead = 500L
+        c.playTransferSignal()
+        held.drain()
+        assertEquals("TF 싱크는 열리지 않았다", 1, host.opened.size)
+        assertTrue(host.notice!!.contains("앱을 모두 닫았다가 다시 여십시오"))
+        assertFalse(host.notice!!.contains("잠시 뒤"))
     }
 
     // ── TF 세션의 끝 ─────────────────────────────────────────────────────

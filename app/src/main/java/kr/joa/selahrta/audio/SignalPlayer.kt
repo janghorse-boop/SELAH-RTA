@@ -172,9 +172,11 @@ class SignalPlayer(
         /**
          * 두 번 놓지 않는다. 실제로 놓은 쪽만 true 를 받는다.
          *
-         * **놓다가 터져도 「끝난 것」으로 둔다.** 다시 부를 수 없는데
-         * 끝나지 않은 것으로 남기면 상한이 영영 막혀, 그 뒤로 소리를
-         * 아예 낼 수 없게 된다.
+         * **놓다가 터져도 「시도는 끝난 것」으로 적는다**(`releaseAttempted`) — 다시
+         * 부르지 않는다. 그러나 **성공은 아니다**(`releaseOk = false`): 자리를
+         * 비켜 주지 않고 [releaseFailed] 로 세어져 상한에 남는다. 상한에 닿으면
+         * 새 재생을 열지 않는다 — 놓지 못한 자원 위에 더 쌓지 않는 쪽을 골랐다
+         * (독립 검증 RC02). 열기에 실패한 출력도 같은 길을 탄다(32회차 R32-02).
          */
         fun releaseOnce(): Boolean {
             if (!releaseStarted.compareAndSet(false, true)) return false

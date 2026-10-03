@@ -44,6 +44,9 @@ interface SignalHost {
 
     /** 단조 시각(ms). */
     fun nowMs(): Long
+
+    /** 진단을 남긴다(예: 열기 예외의 원래 내용). 기본은 버린다. 아무 스레드에서나. */
+    fun warn(message: String) {}
 }
 
 /** 출력 언더런 누계를 알려 주는 싱크. 모르면 null — 0 은 정상 카운터다. */
@@ -283,7 +286,7 @@ class SignalController(
         if (isTransfer) {
             if (playGeneration != SignalPlayer.NONE) stopSignalOnCommandThread()
             when (
-                awaitPlaybackCleanup(
+                val wait = awaitPlaybackCleanup(
                     pending = { player.pendingCount },
                     failedRelease = { player.failedReleaseCount },
                     stillWanted = { signalIsCurrent(intent) },
@@ -294,7 +297,12 @@ class SignalController(
                 CleanupWait.Clean -> Unit
                 CleanupWait.Abandoned -> return
                 is CleanupWait.Timeout -> {
-                    val why = "이전 소리 정리가 끝나지 않아 시작하지 못했습니다. 잠시 뒤 다시 시작하십시오."
+                    // 놓기에 **실패한** 것이 남았으면 기다려도 풀리지 않는다 — 「잠시 뒤」라고 하지 않는다(45회차 권고).
+                    val why = if (wait.failedRelease > 0) {
+                        "소리 장치를 정리하지 못해 시작하지 못했습니다. 기다려도 풀리지 않으니 앱을 모두 닫았다가 다시 여십시오."
+                    } else {
+                        "이전 소리 정리가 끝나지 않아 시작하지 못했습니다. 잠시 뒤 다시 시작하십시오."
+                    }
                     publishSignal(intent, null, why)
                     endTransferFromCommand(attempt, why)
                     return
@@ -319,6 +327,12 @@ class SignalController(
         nextAttempt = attempt
         val gen = try {
             player.start(req)
+        } catch (t: Throwable) {
+            // **열기 예외도 「열지 못함」과 같은 길로 끝낸다**(45회차 R45-01). 플레이어는 그 출력을 이미 정리 장부에
+            // 올려 놓고 예외를 올린다(R32-02). 여기서 다시 던지면 명령 스레드가 죽고, 화면은 「재생 중」·포커스는
+            // 쥔 채·TF 세션은 끝나지 않은 채 남았다. 원래 예외는 진단으로 남긴다.
+            host.warn("출력을 열다가 예외가 났다: $t")
+            SignalPlayer.NONE
         } finally {
             nextAttempt = null
         }
