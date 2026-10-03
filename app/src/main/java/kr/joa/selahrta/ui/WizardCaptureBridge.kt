@@ -73,8 +73,14 @@ class WizardCaptureBridge(private val vm: CaptureViewModel) : WizardCapture {
 
     override fun removeTap(tap: MeasurementTap) = vm.removeMeasurementTap(tap)
 
-    override fun playSignal(signal: TestSignal, amplitude: Double) =
-        vm.playSignal(signal, amplitude)
+    /**
+     * 이 마법사가 내는 소리의 주인(TF 설계 4.1). 정리 코드(`finally`)의 끄기는 **이 주인의 소리만**
+     * 끈다 — 전체 정지였을 때는, 마법사를 취소하며 시작한 Transfer Function 재생을 늦게 껐다(33회차 R33-02).
+     */
+    private val owner = kr.joa.selahrta.transfer.SignalOwner.Wizard(vm.newOwnerId())
 
-    override fun stopSignal() = vm.stopSignal()
+    override fun playSignal(signal: TestSignal, amplitude: Double) =
+        vm.playSignal(signal, amplitude, owner)
+
+    override fun stopSignal() = vm.stopSignalOwnedBy(owner)
 }

@@ -28,6 +28,13 @@ import kr.joa.selahrta.audio.SignalChannels
 import kr.joa.selahrta.audio.SignalRequest
 import kr.joa.selahrta.audio.MEASURE_AMPLITUDE
 import kr.joa.selahrta.audio.SignalPlayer
+import kr.joa.selahrta.audio.TRANSFER_AMPLITUDE
+import kr.joa.selahrta.transfer.CleanupWait
+import kr.joa.selahrta.transfer.PlaybackAttempt
+import kr.joa.selahrta.transfer.PlaybackLedger
+import kr.joa.selahrta.transfer.SignalOwner
+import kr.joa.selahrta.transfer.SignalOwnership
+import kr.joa.selahrta.transfer.awaitPlaybackCleanup
 import kr.joa.selahrta.audio.OpenFailure
 import kr.joa.selahrta.audio.OpenResult
 import kr.joa.selahrta.audio.OpenedFormat
@@ -84,6 +91,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 
 /**
@@ -774,7 +782,10 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         // 되는 기기가 있다(실기기에서 쟀다). 그러면 마법사 2·4단계가
         // **아무것도 못 잰 채로** 넘어간다.
         openSink = {
-            kr.joa.selahrta.audio.AudioTrackSink(
+            // **이 재생의 시도를 열 때 한 번 읽어 붙잡는다**(TF 설계 4.2, 34회차 R34-02). 열 때는
+            // 플레이어의 세대가 아직 없다. 나중에 바뀌는 칸을 콜백이 읽지 않게 지역 값으로 둔다.
+            val attempt = nextAttempt
+            val base = kr.joa.selahrta.audio.AudioTrackSink(
                 preferredOutput = {
                     val st = controller.baseState.value
                     outputDeviceOf(
@@ -787,6 +798,13 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                     onMainThread { controller.update { it.copy(signalRouteKo = note) } }
                 },
             )
+            // TF 의 재생에만 기준 탭을 단다. 다른 재생의 싱크에는 탭이 없다.
+            val tap = if (attempt?.owner is SignalOwner.Transfer) {
+                transferTapFactory?.invoke(attempt)
+            } else {
+                null
+            }
+            if (tap != null) kr.joa.selahrta.transfer.TappedSink(base, tap) else base
         },
         onEnded = { generation, reason ->
             // **생명주기 소식이라 버리면 안 된다**(독립 검토 SRLR-04).
@@ -799,10 +817,13 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             // 한다 — 주 스레드에서 보면 그 사이에 명령 스레드가 값을
             // 바꿔 둘이 어긋난다.
             signalCommands.postAlways {
+                // 어느 시도의 재생이었나 — 세대로 푼다(열 때 세대가 없어 연 뒤에 이어 두었다).
+                val endedAttempt = playbackLedger.attemptOf(generation)
                 if (generation == playGeneration) {
                     val intent = activeSignalIntent
                     playGeneration = SignalPlayer.NONE
                     activeSignalRequest = null
+                    playbackLedger.cleared()
                     // **스스로 끝난 길에서도 지킴이를 놓는다**(스윕이 다
                     // 훑었거나 오류로 끝났거나). 안 놓으면 방송 수신기가
                     // 남아, 다음에 이어폰을 뽑을 때 안 틀었는데
@@ -810,6 +831,8 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                     interruptions.release()
                     publishSignal(intent, null, reason)
                 }
+                // TF 의 재생이 스스로 끝났으면 **그 세션만** 끝낸다(34회차 R34-02).
+                endTransferFromCommand(endedAttempt, reason)
             }
         },
     )
@@ -821,6 +844,53 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      * 나눠 가지면 「멈췄다」와 「막 시작했다」가 서로를 덮는다.
      */
     private var playGeneration = SignalPlayer.NONE
+
+    /**
+     * **누가 낸 소리인가** — 주 스레드 쪽 판단(TF 설계 4장). 마지막으로 받은 요청의 주인과 살아 있는
+     * TF 세션을 쥔다. 취소된 FR·마법사의 정리 코드가 남의 재생을 끄지 않게 하고(R33-02·R34-01), TF
+     * 세션의 끝을 명령 실행에 기대지 않고 그 자리에서 낸다(R33-03). **주 스레드에서만** 부른다.
+     */
+    private val ownership = SignalOwnership()
+
+    /** 실제 재생의 주인, 시도 번호 ↔ 세대. **명령 스레드 전용.** */
+    private val playbackLedger = PlaybackLedger()
+
+    /**
+     * 지금 여는 재생의 시도. `openSink` 가 열 때 한 번 읽는다. **명령 스레드 전용** —
+     * `try { player.start() } finally { nextAttempt = null }` 로만 쓴다(열기 예외에도 남지 않게).
+     */
+    private var nextAttempt: PlaybackAttempt? = null
+
+    /**
+     * TF 재생의 기준 탭을 만들 곳. 싱크를 열 때 **명령 스레드에서** 그 시도로 부른다. null 을 돌려주면
+     * 탭을 달지 않는다. TF 화면이 쥔다.
+     */
+    @Volatile
+    var transferTapFactory: ((PlaybackAttempt) -> ((FloatArray, Int, Int) -> Unit)?)? = null
+
+    /** TF 세션이 (어느 길로든) 끝났다. **주 스레드에서** 세션 번호와 까닭(모르면 null)으로 부른다. */
+    var onTransferSessionEnded: ((session: Long, reasonKo: String?) -> Unit)? = null
+
+    private var lastOwnerId = 0L
+
+    /** 작업마다 새 주인 번호. 주 스레드에서. */
+    fun newOwnerId(): Long = ++lastOwnerId
+
+    /** 주 스레드에서 TF 세션을 끝낸다 — **기대한 세션일 때만**(34회차 R34-02). */
+    private fun endTransferSession(expected: Long, reasonKo: String?) {
+        if (ownership.endTransfer(expected)) onTransferSessionEnded?.invoke(expected, reasonKo)
+    }
+
+    /** 의도 번호를 올린 자리에서 TF 세션이 끝났으면 알린다(33회차 R33-03). 주 스레드에서. */
+    private fun noteTransferEndedByIntent(ended: Long, reasonKo: String?) {
+        if (ended != 0L) onTransferSessionEnded?.invoke(ended, reasonKo)
+    }
+
+    /** 명령 스레드에서 그 시도가 TF 의 것이면 주 스레드로 넘겨 그 세션만 끝낸다. */
+    private fun endTransferFromCommand(attempt: PlaybackAttempt?, reasonKo: String?) {
+        val session = attempt?.transferSession ?: 0L
+        if (session != 0L) onMainThread { endTransferSession(session, reasonKo) }
+    }
 
     /** 지금 도는 재생이 어느 의도로 시작됐나. 명령 스레드 전용. */
     private var activeSignalIntent = 0L
@@ -907,6 +977,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     private fun stopSignalOnCommandThread() {
         playGeneration = SignalPlayer.NONE
         activeSignalRequest = null
+        playbackLedger.cleared()
         try {
             player.stop()
         } finally {
@@ -956,7 +1027,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             // 이미 멎었으면 조용히 지나간다 — 안 틀었는데 「멈췄습니다」가
             // 뜨면 무슨 일이 난 줄 안다.
             if (controller.baseState.value.playingSignal == null) return@onMainThread
-            stopSignal()
+            stopSignal(reason)
             controller.update { st -> st.copy(signalNoticeKo = reason) }
         }
     }
@@ -1283,6 +1354,8 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             fftSize = spec.first,
         )
 
+        // 이 작업이 내는 소리의 주인(TF 설계 4.1). 정리 코드는 **이 주인의 소리만** 끈다.
+        val responseOwner = SignalOwner.Response(newOwnerId())
         responseJob = viewModelScope.launch {
             val tap = kr.joa.selahrta.dsp.MeasurementTap(spec.first, spec.second)
             installMeasurementTap(tap)
@@ -1349,7 +1422,12 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                     return@launch
                 }
                 val playHere = controller.baseState.value.responsePlayHere
-                if (playHere) playSignal(TestSignal.Pink, MEASURE_AMPLITUDE)
+                if (playHere) {
+                    // **취소된 작업은 소리를 열지 않는다**(32회차 R32-01). TF 시작이 이 작업을 취소한 뒤
+                    // 관문이 다시 열려도, 이 줄에 닿기 전에 멈춘다.
+                    ensureActive()
+                    playSignal(TestSignal.Pink, MEASURE_AMPLITUDE, responseOwner)
+                }
                 controller.update { st ->
                     st.copy(responsePhase = ResponsePhase.Signal, responseProgress = 0f)
                 }
@@ -1358,7 +1436,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                     controller.update { st -> st.copy(responseProgress = p) }
                 }
                 tap.stop()
-                if (playHere) stopSignal()
+                if (playHere) stopSignalOwnedBy(responseOwner)
                 val signalFrames = tap.drainTarget()
                 if (!signalOk && signalFrames.size < ROOM_MIN_FRAMES) {
                     failResponse("소리를 트는 동안 장이 모자랐습니다. 다시 재 보십시오.")
@@ -1389,7 +1467,10 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
                 removeMeasurementTap(tap)
                 // **어디서 빠져나오든 소리는 끈다.** 취소된 경우까지
                 // 포함이다 — 예배당에서 핑크 잡음이 계속 나면 회중이 듣는다.
-                if (controller.baseState.value.playingSignal != null) stopSignal()
+                //
+                // **이 작업이 낸 소리만** 끈다(33회차 R33-02). 전체 정지였을 때는, 이 작업을 취소하며
+                // 시작한 TF 재생을 여기서 늦게 껐다.
+                stopSignalOwnedBy(responseOwner)
             }
         }
     }
@@ -1484,8 +1565,21 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      * 스피커에서 나온 소리가 제 마이크로 돌아오므로 하울링 탐지를 확인할
      * 수 있다.
      */
-    fun playSignal(signal: TestSignal, amplitude: Double? = null) {
+    fun playSignal(
+        signal: TestSignal,
+        amplitude: Double? = null,
+        owner: SignalOwner = SignalOwner.User,
+    ) {
         if (signalClosed) return
+        // **의도 번호를 올리기 전에 받을지 정한다**(TF 설계 4.1). TF 가 소리를 내는 동안에는 다른
+        // 주인의 시작을 거절한다 — 번호를 올리지 않으므로 TF 재생을 덮지 못한다.
+        val attempt = when (val a = ownership.admit(owner)) {
+            is SignalOwnership.Admission.Accepted -> a.attempt
+            is SignalOwnership.Admission.Rejected -> {
+                controller.update { st -> st.copy(signalNoticeKo = a.reasonKo) }
+                return
+            }
+        }
         // **사람의 뜻은 여기서 정해진다.** 번호를 주 스레드에서 올려,
         // 늦게 끝난 옛 명령이 이 뜻을 되돌리지 못하게 한다(SRLR-02).
         val intent = signalIntent.incrementAndGet()
@@ -1504,7 +1598,33 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         // **화면은 먼저 바꾼다.** 소리를 여는 데 실기기에서 150ms 가
         // 걸린다 — 그 동안 눌러도 아무 일이 없으면 사람은 한 번 더 누른다.
         controller.update { st -> st.copy(playingSignal = signal, signalNoticeKo = null) }
-        postSignalCommand { startSignalOnCommandThread(intent, signal, req) }
+        postSignalCommand { startSignalOnCommandThread(intent, signal, req, attempt) }
+    }
+
+    /**
+     * Transfer Function 의 신호를 튼다 — **핑크 · 양쪽 · [TRANSFER_AMPLITUDE] 고정**(TF 설계 4.2·4.3).
+     * 사람의 세기·채널 설정을 읽지 않는다. 같은 명령 스레드의 정규 길(포커스 포함)을 지난다.
+     *
+     * 차례(34회차 R34-02): ① 옛 TF 세션 끝 ② 새 세션 등록 ③ 의도 번호 증가·제출. ③의 증가는 이 세션의
+     * 시작이라 세션 끝 규칙에서 빠진다. FR 작업은 **늘** 취소한다(32회차 R32-01) — 교정 마법사의
+     * 취소는 그것을 쥔 화면 쪽이 함께 한다.
+     *
+     * @return 새 세션 번호. 닫힌 뒤면 0.
+     */
+    fun playTransferSignal(): Long {
+        if (signalClosed) return 0L
+        cancelResponse()
+        val start = ownership.beginTransfer()
+        noteTransferEndedByIntent(start.endedSession, "새로 시작했습니다.")
+        val intent = signalIntent.incrementAndGet()
+        val req = SignalRequest(
+            signal = TestSignal.Pink,
+            amplitude = TRANSFER_AMPLITUDE,
+            channels = kr.joa.selahrta.audio.SignalChannels.Both,
+        )
+        controller.update { st -> st.copy(playingSignal = TestSignal.Pink, signalNoticeKo = null) }
+        postSignalCommand { startSignalOnCommandThread(intent, TestSignal.Pink, req, start.attempt) }
+        return start.session
     }
 
     /**
@@ -1512,8 +1632,14 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      *
      * 여기서 걸리는 시간이 주 스레드에 닿지 않는 것이 요점이다.
      */
-    private fun startSignalOnCommandThread(intent: Long, signal: TestSignal, req: SignalRequest) {
+    private fun startSignalOnCommandThread(
+        intent: Long,
+        signal: TestSignal,
+        req: SignalRequest,
+        attempt: PlaybackAttempt,
+    ) {
         if (!signalIsCurrent(intent)) return
+        val isTransfer = attempt.owner is SignalOwner.Transfer
 
         // **주파수만 바뀌었으면 다시 열지 않는다**(담당자 지시 2026-09-29:
         // 「아주 부드럽게」). 같은 AudioTrack 에서 값만 바꾸면 위상이 이어져
@@ -1525,7 +1651,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         // 되돌렸다 — 화면은 3kHz 인데 귀로는 1kHz 를 들으며 공진을
         // 판단하게 된다. 실기기에서 1,007Hz 로 재현했다.
         val old = activeSignalRequest
-        if (req.signal == TestSignal.Custom && old?.signal == TestSignal.Custom &&
+        if (!isTransfer && req.signal == TestSignal.Custom && old?.signal == TestSignal.Custom &&
             req.safeAmplitude == old.safeAmplitude && req.channels == old.channels &&
             // **멈추라는 말이 있었으면 지름길을 쓰지 않는다**(SRLRO-01).
             //
@@ -1541,6 +1667,32 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
 
+        // **TF 는 옛 재생이 다 놓인 뒤에만 연다**(TF 설계 4.3 5번, 33회차 R33-01). 플레이어가 하나여도
+        // `SignalPlayer` 는 남은 재생이 상한(2) 미만이면 다음 싱크를 연다 — 덜 정리된 옛 소리와 겹친다.
+        // 멈춘 뒤 `pendingCount`·`failedReleaseCount` 가 0 이 되기를 상한까지 기다린다. 열기 실패 자원처럼
+        // 이 두 수에 안 잡히는 것은 여기서 못 본다(unverified 3-5).
+        if (isTransfer) {
+            if (playGeneration != SignalPlayer.NONE) stopSignalOnCommandThread()
+            when (
+                val w = awaitPlaybackCleanup(
+                    pending = { player.pendingCount },
+                    failedRelease = { player.failedReleaseCount },
+                    stillWanted = { signalIsCurrent(intent) },
+                    nowMs = { android.os.SystemClock.elapsedRealtime() },
+                    sleepMs = { Thread.sleep(it) },
+                )
+            ) {
+                CleanupWait.Clean -> Unit
+                CleanupWait.Abandoned -> return
+                is CleanupWait.Timeout -> {
+                    val why = "이전 소리 정리가 끝나지 않아 시작하지 못했습니다. 잠시 뒤 다시 시작하십시오."
+                    publishSignal(intent, null, why)
+                    endTransferFromCommand(attempt, why)
+                    return
+                }
+            }
+        }
+
         // **포커스를 못 얻으면 틀지 않는다**(독립 검토 SRLR-06).
         //
         // 처음에는 「다른 앱 하나 때문에 예배 준비가 멈추면 안 된다」며
@@ -1550,12 +1702,10 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         // 누르게 하는 편이 낫다.
         if (!interruptions.acquire()) {
             stopSignalOnCommandThread()
-            publishSignal(
-                intent,
-                null,
-                "다른 앱이 소리를 쓰고 있어 테스트 신호를 시작하지 못했습니다. " +
-                    "그 앱을 멈춘 뒤 다시 눌러 보십시오.",
-            )
+            val why = "다른 앱이 소리를 쓰고 있어 테스트 신호를 시작하지 못했습니다. " +
+                "그 앱을 멈춘 뒤 다시 눌러 보십시오."
+            publishSignal(intent, null, why)
+            endTransferFromCommand(attempt, why)
             return
         }
         // 지킴이를 건 뒤에 뜻이 바뀌었으면 **건 것을 도로 놓는다.**
@@ -1564,10 +1714,18 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
 
-        val gen = player.start(req)
+        // **이 시도를 열 때만 둔다**(TF 설계 4.2). 열기 중 예외가 나도 다음 일반 재생에 남지 않게
+        // `finally` 로 비운다(33회차 — 평문 대입이면 다음 일반 싱크까지 탭이 남았다).
+        nextAttempt = attempt
+        val gen = try {
+            player.start(req)
+        } finally {
+            nextAttempt = null
+        }
         playGeneration = gen
         activeSignalRequest = if (gen != SignalPlayer.NONE) req else null
         activeSignalIntent = intent
+        if (gen != SignalPlayer.NONE) playbackLedger.opened(attempt, gen) else playbackLedger.cleared()
         // 여는 동안 사람이 멈췄을 수 있다. 그러면 **연 것을 도로 닫는다.**
         if (!signalIsCurrent(intent)) {
             stopSignalOnCommandThread()
@@ -1578,7 +1736,9 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
         // 실패하면 내보내는 쪽의 종료 소식도 오지 않으므로, 여기서 안
         // 놓으면 방송 수신기와 포커스가 영영 남는다.
         if (!ok) interruptions.release()
-        publishSignal(intent, if (ok) signal else null, signalStartNoticeKo(ok))
+        val notice = signalStartNoticeKo(ok)
+        publishSignal(intent, if (ok) signal else null, notice)
+        if (!ok) endTransferFromCommand(attempt, notice)
     }
 
     /**
@@ -1609,16 +1769,42 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
      * `stop()` 하나가 최대 129ms 걸린다 — 그만큼 손가락이 멎으면 「눌렸나」
      * 싶어 한 번 더 누르게 된다.
      */
-    fun stopSignal() {
+    fun stopSignal(reasonKo: String? = null) {
         // **뜻을 먼저 올린다.** 이 뒤에 끝나는 옛 시작은 화면을 못 되돌린다.
         //
         // **멈추라고 한 그 번호를 따로 남긴다**(SRLRO-01). 이 정지가 뒤에
         // 온 시작에 덮이더라도, 그 시작은 지름길 대신 정규 길을 지나야 한다.
         lastSignalStopIntent.set(signalIntent.incrementAndGet())
+        // **TF 세션은 여기서 곧바로 끝난다**(33회차 R33-03). 명령 큐는 최신 명령만 돌리므로 아래 정지가
+        // 생략될 수 있다 — 세션의 끝을 그 실행에 기대지 않는다.
+        noteTransferEndedByIntent(ownership.onIntentRaised(globalStop = true), reasonKo)
         controller.update { st -> st.copy(playingSignal = null) }
         // **소리를 멈춘 뒤에 놓는다.** 먼저 놓으면 놓는 그 순간에 다른
         // 앱이 소리를 시작해 마지막 30ms 램프와 겹친다.
         postSignalCommand { stopSignalOnCommandThread() }
+    }
+
+    /**
+     * **그 주인이 낸 소리일 때만** 멈춘다(TF 설계 4.1, 33회차 R33-02 · 34회차 R34-01).
+     *
+     * 취소된 FR·마법사 작업의 정리 코드가 부른다. 예전에는 전체 정지([stopSignal])라서, 그 작업을
+     * 취소하며 시작한 TF 재생을 정리 코드가 늦게 돌아 껐다. 이제:
+     * 1. 주 스레드에서 **마지막으로 받은 요청의 주인**이 그 주인이 아니면 아무것도 안 한다 — 대기 중인
+     *    TF 시작이 이미 접수됐을 수 있다.
+     * 2. 같으면 정지 뜻을 올리고 명령 스레드에 정지를 넣는다.
+     * 3. 명령 스레드에서 **실제로 재생 중인 주인**이 그 주인일 때만 멈춘다.
+     *
+     * 사람의 정지·포커스 손실·이어폰 뽑힘·백그라운드·닫기는 지금처럼 [stopSignal](전체 정지)이다.
+     */
+    fun stopSignalOwnedBy(owner: SignalOwner) {
+        if (!ownership.ownedStopAllowed(owner)) return
+        lastSignalStopIntent.set(signalIntent.incrementAndGet())
+        noteTransferEndedByIntent(ownership.onIntentRaised(globalStop = false), null)
+        controller.update { st -> st.copy(playingSignal = null) }
+        postSignalCommand {
+            val active = playbackLedger.activeOwner
+            if (active == null || active == owner) stopSignalOnCommandThread()
+        }
     }
 
     /**
@@ -3796,6 +3982,7 @@ class CaptureViewModel(app: Application) : AndroidViewModel(app) {
     override fun onCleared() {
         signalClosed = true
         signalIntent.incrementAndGet()
+        noteTransferEndedByIntent(ownership.onIntentRaised(globalStop = true), null)
         // **주 스레드에서 멈추려 들지 않는다**(독립 검토 SRLR-01, High).
         //
         // 예전에는 `shutdownNow()` 로 끊고 여기서 `player.stop()` 을

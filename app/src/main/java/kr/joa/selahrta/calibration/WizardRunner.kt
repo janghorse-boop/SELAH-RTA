@@ -1,5 +1,6 @@
 package kr.joa.selahrta.calibration
 
+import kotlinx.coroutines.ensureActive
 import kr.joa.selahrta.audio.MEASURE_AMPLITUDE
 import kr.joa.selahrta.audio.TestSignal
 import kr.joa.selahrta.dsp.CalibrationCurve
@@ -108,8 +109,14 @@ class WizardRunner(
     private val mayPlay: () -> Boolean = { true },
 ) {
 
-    /** 소리를 내도 되면 낸다. 안 되면 그 자리에서 실패로 돌린다. */
-    private fun playOrRefuse(): RunOutcome.Failed? {
+    /**
+     * 소리를 내도 되면 낸다. 안 되면 그 자리에서 실패로 돌린다.
+     *
+     * **취소된 작업은 소리를 열지 않는다**(TF 설계 4.1, 32회차 R32-01) — Transfer Function 이 이 작업을
+     * 취소한 뒤 관문이 다시 열려도 이 줄에서 멈춘다.
+     */
+    private suspend fun playOrRefuse(): RunOutcome.Failed? {
+        kotlin.coroutines.coroutineContext.ensureActive()
         if (!mayPlay()) return RunOutcome.Failed(LEFT_SCREEN_KO)
         capture.playSignal(TestSignal.Pink, MEASURE_LEVEL)
         return null
