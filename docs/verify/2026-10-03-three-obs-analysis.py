@@ -78,10 +78,19 @@ for path in RECORDS:
     r2, amp, f = best
     ts = sum(mi) / len(mi)
     print("  사인 최적: R2=%.3f f=%.5f Hz (겉보기 주기 %.2f초) 진폭 %.2f표본" % (r2, f, 1 / f, amp))
-    aliases = sorted({round(1 / (k / ts + s * f), 2) for k in range(0, 4) for s in (1, -1) if k / ts + s * f > 0})
-    print("  간격 %.4f초로 같은 모양이 되는 참 주기 후보(일부): %s" % (ts, aliases))
+    # 4) 후보 — **평균 간격으로 균일 관측을 가정한 근사**(k/평균간격 ± f). 불규칙 관측에서
+    #    정확한 접힘 대칭이 아니다(25회차 R25-02). 그래서 후보마다 **실제 시각으로 다시** 맞춘다
+    #    (후보 ±0.003 Hz 안의 최적). k 를 어디서 끊느냐는 탐색 선택이다 — 여기서는 0~5.
+    cands = sorted({k / ts + s * f for k in range(0, 6) for s in (1, -1) if k / ts + s * f > 0})
+    print("  균일 간격(%.4f초) 근사 후보를 실제 시각으로 다시 맞춤 — 주기:R2" % ts)
+    refit = []
+    for c in cands:
+        r2c, fc = max((sine_fit(t, res, c + j * 2e-5)[0], c + j * 2e-5) for j in range(-150, 151))
+        refit.append("%.3f:%.3f" % (1 / fc, r2c))
+    print("   ", " ".join(refit))
 
-# 4) 타임스탬프 — 누적 ppm × 구간 길이 = 처음 쌍 대비 어긋남(표본)
+# 5) 타임스탬프 — 표시된 누적 ppm × 표시된 구간 초 × 명목 48 kHz.
+#    원래 입력·출력 프레임 위치를 되살린 것이 **아니다**(로그에 frame/nanos 쌍이 없다, R25-04).
 xs = []
 with open(TIMESTAMP, encoding="utf-8") as f:
     for line in f:
@@ -92,5 +101,5 @@ t = [T for T, _ in xs]
 off = [p * 1e-6 * T * FS for T, p in xs]
 e, _ = detrend(t, off)
 den = sum(v * v for v in e)
-print("== timestamp30 어긋남 잔차 표준편차 %.1f표본" % math.sqrt(den / len(e)))
+print("== timestamp30 명목 표본 환산열의 직선 잔차 RMS %.6f표본" % math.sqrt(den / len(e)))
 print("  자기상관 1~6:", [round(sum(e[i] * e[i - k] for i in range(k, len(e))) / den, 3) for k in range(1, 7)])

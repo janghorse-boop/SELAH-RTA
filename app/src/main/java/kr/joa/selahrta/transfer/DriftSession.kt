@@ -216,7 +216,11 @@ fun parseDriftArgs(mode: String?, minutes: String?): DriftArgs {
 /** 관측 간격의 기본값. 기록의 판정 규칙(설계 4장)은 **이 간격으로** 정했다. */
 const val DRIFT_INTERVAL_MS_DEFAULT = 10_000L
 
-/** 촘촘한 시운전의 가장 짧은 간격. 지연 추정 창(32,768표본 ≈ 0.68초)이 겹치지 않는 선. */
+/**
+ * 촘촘한 시운전의 가장 짧은 간격. 지연 추정 창은 32,768표본(≈ 0.68초)이다 — 다만 창이
+ * 겹치지 않는 것은 **표본 좌표가 관측마다 32,768 이상 나아갈 때**뿐이고, 벽시계 1초로
+ * 보증되지 않는다. 원자료의 `windowEnd` 걸음으로 확인한다(25회차 R25-03).
+ */
 const val DRIFT_INTERVAL_MS_MIN = 1_000L
 
 sealed interface DriftInterval {
