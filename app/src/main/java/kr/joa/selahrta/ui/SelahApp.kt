@@ -111,6 +111,8 @@ fun SelahApp() {
     var wizardOpen by rememberSaveable { mutableStateOf(false) }
     var wizardExample by rememberSaveable { mutableStateOf(false) }
     var profilesOpen by rememberSaveable { mutableStateOf(false) }
+    // Transfer Function 간편(실험용)도 **위에 덮는 화면**이다(TF 설계 1장, 안 2).
+    var transferOpen by rememberSaveable { mutableStateOf(false) }
     var mode by rememberSaveable { mutableStateOf(ViewMode.Spl) }
 
     val vm: CaptureViewModel = viewModel()
@@ -194,6 +196,15 @@ fun SelahApp() {
     val deviceBuild = remember { DeviceBuildInfo.current() }
 
     val wizard: CalibrationWizardViewModel = viewModel()
+    // TF 세션 조율(TF 설계 3~6장). 신호·입력은 vm 의 포트로. 교정 마법사 작업은 시작할 때 멈춘다.
+    val transfer = remember(vm) {
+        kr.joa.selahrta.transfer.TransferController(
+            signal = vm.transferSignalPort,
+            capture = vm.transferCapturePort,
+            nowMs = { android.os.SystemClock.elapsedRealtime() },
+            stopWizardWork = { wizard.stopWork() },
+        )
+    }
     val wizardState by wizard.state.collectAsStateWithLifecycle()
     val wizardNotice by wizard.noticeKo.collectAsStateWithLifecycle()
     val wizardBusy by wizard.busyKo.collectAsStateWithLifecycle()
@@ -383,392 +394,429 @@ fun SelahApp() {
     // 아래 탭(`bottomBar`)도 이 값을 보므로 Scaffold 보다 먼저 셈한다.
     val screen: ViewMode? = if (section == NavSection.Settings) null else mode
 
-    Scaffold(
-        containerColor = SelahColors.Background,
-        bottomBar = {
-            AppBottomArea(
-                section = section,
-                screen = screen,
-                playingSignal = capture.playingSignal,
-                signalToneHz = capture.signalToneHz,
-                signalChannels = capture.signalChannels,
-                signalNoticeKo = capture.signalNoticeKo,
-                onStopSignal = vm::stopSignal,
-                onDismissSignalNotice = vm::dismissSignalNotice,
-            ) { picked ->
-                section = picked
-                // **탭을 옮기면 마법사를 닫는다.** 마법사는 탭 내용 위에
-                // 덮여 있어서, 닫지 않으면 다른 탭으로 가도 그대로 얹혀
-                // 있다(기기에서 확인).
-                wizardOpen = false
-                wizard.stopWork()
-                profilesOpen = false
-                // 측정·분석으로 오면 그 구역에서 마지막에 보던 칩으로 돌아간다.
-                //
-                // **칩이 보이는지와 무관하다.** 예전에는 `hasModeChips` 로
-                // 감쌌는데, 분석에 RTA 하나만 남아 칩이 사라지자(2026-09-24)
-                // 이 줄이 통째로 건너뛰어졌다 — 아래 탭은 「분석」인데 화면은
-                // 측정이 그대로 떠 있었다(기기에서 확인). 칩은 **보여 주는**
-                // 일이고 이것은 **어디로 가느냐**라, 애초에 같은 조건일 까닭이
-                // 없었다. 도구·설정은 `defaultMode` 가 그대로 돌려준다.
-                mode = picked.defaultMode(mode)
-            }
-        },
-    ) { inner ->
-        // **분석은 구역째 눕힌다**(2026-09-25 담당자 지시: 「RTA와 FR은 모두
-        // 가로형으로만 보이면 좋을 것 같습니다」).
-        //
-        // 화면마다 걸지 않고 여기서 거는 까닭: RTA 와 FR 이 각자 잠그면
-        // 오갈 때마다 앞 화면의 잠금이 풀렸다 걸려, 폰이 한 번 섰다가 다시
-        // 눕는다. 구역에 걸어 두면 분석 안에서 움직이는 동안은 계속 걸려
-        // 있다. 분석을 떠나면 `onDispose` 가 원래 방향으로 돌려놓는다.
-        if (screen?.section == NavSection.Analyze) LockLandscape()
-
-        // **분석에 들어오면 곧바로 쌓기 시작한다**(2026-09-27 담당자 지시:
-        // 「분석 버튼을 누르면 보이지 않지만 시작을 해 달라」).
-        //
-        // 스펙트로그램은 시간이 쌓여야 쓸모가 생긴다 — 열고 나서 30초를
-        // 기다려야 그림이 차면 정작 궁금한 순간은 이미 지나 있다. RTA 를
-        // 보는 동안 미리 쌓아 두면 넘어가는 즉시 읽을 것이 있다.
-        //
-        // **구역을 떠나면 끈다.** 칸 2049개를 곱하고 줄이는 일을 예배
-        // 내내 하면 배터리로 돌아온다. 화면마다 켜고 끄지 않는 까닭은
-        // RTA↔Spectrum 을 오갈 때마다 엔진이 꺼졌다 켜져 그 사이의 장이
-        // 스펙트로그램에서 빈틈이 되기 때문이다.
-        val analyzing = screen?.section == NavSection.Analyze
-        DisposableEffect(analyzing) {
-            vm.setSpectrumEnabled(analyzing)
-            onDispose { if (analyzing) vm.setSpectrumEnabled(false) }
-        }
-        val spectrogram = rememberSpectrogramFeed(capture, running = analyzing)
-
-        Column(Modifier.fillMaxSize().padding(inner)) {
-            // **RTA 에서는 머리글을 접는다**(2026-09-24 담당자 지시: 「SELAH RTA
-            // 제목 포함, USB MIC·미보정 표시도 없어도 된다 — RTA 만 해당」).
-            //
-            // 눕힌 화면은 세로가 380dp 안팎뿐이라, 머리글 한 줄이 차트의
-            // 가로축 주파수 눈금을 화면 밖으로 밀어냈다. RTA 는 「어느 대역이
-            // 솟았나」를 보는 화면이라 기기·보정 배지 없이도 읽힌다.
-            //
-            // **Spectrum 도 같이 접는다**(2026-09-25). 지시를 받을 때는 없던
-            // 화면이지만 사정이 똑같다 — 눕혀서 차트만 띄우는 화면이고, 접어
-            // 사라지는 「미보정」 배지는 **차트 설명 줄이 대신 적는다**
-            // (`세로 SPL(미보정 · 참고용)`). 배지가 그냥 없어지는 것이
-            // 아니므로 접어도 된다.
-            //
-            // **FR 과 측정에서는 접지 않는다.** FR 은 단추가 있는 스크롤
-            // 화면이라 머리글이 차트를 밀지 않고, 측정은 절대 음압을 읽는
-            // 화면이라 배지를 숨기면 안 된다.
-            if (screen !in CHART_ONLY_MODES) TopBrandBar(capture)
-
-            if (section.hasModeChips) {
-                // RTA 는 차트가 화면을 꽉 채우는 화면이라 칩도 낮게 그린다.
-                // 이 줄은 측정(SPL·기록)에만 나온다. 분석은 고르개를 차트
-                // 안에서 그린다([NavSection.hasOwnModeSwitch]).
-                ModeChips(section, mode) { picked ->
-                    mode = picked
-                    // 칩을 누르면 아래 탭도 따라온다. 두 줄이 서로 다른 곳을
-                    // 가리키면 지금 어디 있는지 알 수 없다.
-                    section = picked.section
+    // 분석 화면의 「전달함수 ▸」 문(TF 설계 1장). 분석 모드 넷은 그대로 두고 문 하나만 단다.
+    androidx.compose.runtime.CompositionLocalProvider(
+        kr.joa.selahrta.ui.screens.LocalTransferDoor provides { transferOpen = true },
+    ) {
+        Scaffold(
+            containerColor = SelahColors.Background,
+            bottomBar = {
+                AppBottomArea(
+                    section = section,
+                    screen = screen,
+                    playingSignal = capture.playingSignal,
+                    signalToneHz = capture.signalToneHz,
+                    signalChannels = capture.signalChannels,
+                    signalNoticeKo = capture.signalNoticeKo,
+                    onStopSignal = vm::stopSignal,
+                    onDismissSignalNotice = vm::dismissSignalNotice,
+                ) { picked ->
+                    section = picked
+                    // **탭을 옮기면 마법사를 닫는다.** 마법사는 탭 내용 위에
+                    // 덮여 있어서, 닫지 않으면 다른 탭으로 가도 그대로 얹혀
+                    // 있다(기기에서 확인).
+                    wizardOpen = false
+                    wizard.stopWork()
+                    profilesOpen = false
+                    // 측정·분석으로 오면 그 구역에서 마지막에 보던 칩으로 돌아간다.
+                    //
+                    // **칩이 보이는지와 무관하다.** 예전에는 `hasModeChips` 로
+                    // 감쌌는데, 분석에 RTA 하나만 남아 칩이 사라지자(2026-09-24)
+                    // 이 줄이 통째로 건너뛰어졌다 — 아래 탭은 「분석」인데 화면은
+                    // 측정이 그대로 떠 있었다(기기에서 확인). 칩은 **보여 주는**
+                    // 일이고 이것은 **어디로 가느냐**라, 애초에 같은 조건일 까닭이
+                    // 없었다. 도구·설정은 `defaultMode` 가 그대로 돌려준다.
+                    mode = picked.defaultMode(mode)
                 }
+            },
+        ) { inner ->
+            // **분석은 구역째 눕힌다**(2026-09-25 담당자 지시: 「RTA와 FR은 모두
+            // 가로형으로만 보이면 좋을 것 같습니다」).
+            //
+            // 화면마다 걸지 않고 여기서 거는 까닭: RTA 와 FR 이 각자 잠그면
+            // 오갈 때마다 앞 화면의 잠금이 풀렸다 걸려, 폰이 한 번 섰다가 다시
+            // 눕는다. 구역에 걸어 두면 분석 안에서 움직이는 동안은 계속 걸려
+            // 있다. 분석을 떠나면 `onDispose` 가 원래 방향으로 돌려놓는다.
+            if (screen?.section == NavSection.Analyze) LockLandscape()
+
+            // **분석에 들어오면 곧바로 쌓기 시작한다**(2026-09-27 담당자 지시:
+            // 「분석 버튼을 누르면 보이지 않지만 시작을 해 달라」).
+            //
+            // 스펙트로그램은 시간이 쌓여야 쓸모가 생긴다 — 열고 나서 30초를
+            // 기다려야 그림이 차면 정작 궁금한 순간은 이미 지나 있다. RTA 를
+            // 보는 동안 미리 쌓아 두면 넘어가는 즉시 읽을 것이 있다.
+            //
+            // **구역을 떠나면 끈다.** 칸 2049개를 곱하고 줄이는 일을 예배
+            // 내내 하면 배터리로 돌아온다. 화면마다 켜고 끄지 않는 까닭은
+            // RTA↔Spectrum 을 오갈 때마다 엔진이 꺼졌다 켜져 그 사이의 장이
+            // 스펙트로그램에서 빈틈이 되기 때문이다.
+            val analyzing = screen?.section == NavSection.Analyze
+            DisposableEffect(analyzing) {
+                vm.setSpectrumEnabled(analyzing)
+                onDispose { if (analyzing) vm.setSpectrumEnabled(false) }
             }
+            val spectrogram = rememberSpectrogramFeed(capture, running = analyzing)
 
-            Box(Modifier.weight(1f)) {
-                // **칩이 화면을 정한다.** 구역은 칩을 고르는 자리일 뿐이고,
-                // `defaultMode` 가 「이 구역에 맞는 칩」을 보장한다. 예전에는
-                // 구역으로 먼저 갈랐는데, 칩이 하나뿐이라 칩 줄이 사라진
-                // 구역에서 둘이 어긋났다.
+            Column(Modifier.fillMaxSize().padding(inner)) {
+                // **RTA 에서는 머리글을 접는다**(2026-09-24 담당자 지시: 「SELAH RTA
+                // 제목 포함, USB MIC·미보정 표시도 없어도 된다 — RTA 만 해당」).
                 //
-                // 설정만 칩이 없어 따로 둔다.
-                when (screen) {
-                    null -> SettingsScreen(
-                        capture = capture,
-                        onSaveCalibration = vm::saveSimpleCalibration,
-                        onClearCalibration = vm::clearCalibration,
-                        onDismissCalibrationNotice = vm::dismissCalibrationNotice,
-                        onConfirmCalibrationRoute = vm::confirmCalibrationRoute,
-                        onConfirmPendingCalibration = vm::confirmPendingCalibration,
-                        onDismissPendingCalibration = vm::dismissPendingCalibration,
-                        onSplWeighting = vm::setSplWeighting,
-                        onPeakWeighting = vm::setPeakWeighting,
-                        onAnalysisWeighting = vm::setAnalysisWeighting,
-                        onResetSplWeighting = vm::resetSplWeighting,
-                        onResetPeakWeighting = vm::resetPeakWeighting,
-                        onResetAnalysisWeighting = vm::resetAnalysisWeighting,
-                        onFftSize = vm::setFftSize,
-                        onTimeWeight = vm::setTimeWeight,
-                        onLeqWindow = vm::setLeqWindow,
-                        onThemeMode = vm::setThemeMode,
-                        onPreferredInput = vm::setPreferredInput,
-                        onForgetDevice = vm::forgetDevice,
-                        onInputChannel = vm::setInputChannel,
-                        // 확장자를 못 믿는 제공자가 많아 형식을 넓게 받는다.
-                        // 내용으로 판별하므로 잘못 고른 파일은 파서가 거른다.
-                        onPickCurveFile = { pickCurve.launch(arrayOf("*/*")) },
-                        onClearCurve = vm::clearCurve,
-                        onToggleCurve = vm::setCurveEnabled,
-                        onConfirmCurveReading = vm::confirmCurveReading,
-                        onCurveMicName = vm::setCurveMicName,
-                        onDismissCurveNotice = vm::dismissCurveNotice,
-                        onOpenCalibrationWizard = { wizardOpen = true },
-                        onOpenCalibrationProfiles = {
-                            profiles.reload()
-                            profilesOpen = true
-                        },
-                        onSaveRange = vm::setRange,
-                        onResetRange = vm::resetRange,
-                        onRenameSegment = vm::setSegmentName,
-                        onAddSegment = vm::addSegment,
-                        onRemoveSegment = vm::removeSegment,
-                    )
+                // 눕힌 화면은 세로가 380dp 안팎뿐이라, 머리글 한 줄이 차트의
+                // 가로축 주파수 눈금을 화면 밖으로 밀어냈다. RTA 는 「어느 대역이
+                // 솟았나」를 보는 화면이라 기기·보정 배지 없이도 읽힌다.
+                //
+                // **Spectrum 도 같이 접는다**(2026-09-25). 지시를 받을 때는 없던
+                // 화면이지만 사정이 똑같다 — 눕혀서 차트만 띄우는 화면이고, 접어
+                // 사라지는 「미보정」 배지는 **차트 설명 줄이 대신 적는다**
+                // (`세로 SPL(미보정 · 참고용)`). 배지가 그냥 없어지는 것이
+                // 아니므로 접어도 된다.
+                //
+                // **FR 과 측정에서는 접지 않는다.** FR 은 단추가 있는 스크롤
+                // 화면이라 머리글이 차트를 밀지 않고, 측정은 절대 음압을 읽는
+                // 화면이라 배지를 숨기면 안 된다.
+                if (screen !in CHART_ONLY_MODES) TopBrandBar(capture)
 
-                    ViewMode.Spl -> MeasureScreen(
-                        capture = capture,
-                        onSegment = vm::setSegment,
-                        onAddSegment = vm::addSegment,
-                        hasPermission = hasPermission,
-                        onRequestPermission = {
-                            askPermission.launch(Manifest.permission.RECORD_AUDIO)
-                        },
-                        onStart = beginMeasure,
-                        onStop = vm::stop,
-                        onStartRecording = vm::askBeforeRecording,
-                        onStopRecording = vm::stopRecording,
-                        onDismissDeviceNotice = vm::dismissDeviceNotice,
-                    )
-                    ViewMode.Rta -> RtaScreen(
-                        capture,
-                        onMode = { mode = it },
-                        onSaveRtaCurve = vm::startRtaCapture,
-                        onCancelRtaCapture = vm::cancelRtaCapture,
-                        onStartRtaSequence = vm::startRtaSequence,
-                        onRtaOverlayShown = vm::setRtaOverlayShown,
-                        onRtaLiveVisible = vm::setRtaLiveVisible,
-                        onRenameRtaSet = vm::renameRtaSet,
-                        onDeleteRtaSet = vm::deleteRtaSet,
-                        onDeleteRtaMeasurement = vm::deleteRtaMeasurement,
-                        onDismissRtaNotice = vm::dismissRtaSaveNotice,
-                    )
-                    ViewMode.Spectrogram -> SpectrogramScreen(
-                        capture = capture,
-                        feed = spectrogram,
-                        onMode = { mode = it },
-                    )
-                    ViewMode.Spectrum -> SpectrumScreen(
-                        capture = capture,
-                        onMode = { mode = it },
-                    )
-                    ViewMode.Fr -> FrScreen(
-                        capture = capture,
-                        onMeasure = vm::measureResponse,
-                        onMeasureQuiet = vm::measureResponseQuiet,
-                        onMeasureSignal = vm::measureResponseSignal,
-                        onCancel = vm::cancelResponse,
-                        onPlayHere = vm::setResponsePlayHere,
-                        onDismissNotice = vm::dismissResponseNotice,
-                        // **이것이 빠져 있었다**(2026-09-26 담당자 보고).
-                        // 기본값 `{}` 이 그 사실을 감췄고, FR 에 들어오면
-                        // 나갈 길이 없었다. 기본값을 없애 두었으니 이제
-                        // 빠뜨리면 컴파일이 막는다.
-                        onMode = { mode = it },
-                    )
-                    // 지난 기록을 보는 화면이라 마이크가 필요 없다.
-                    ViewMode.History -> {
-                        // **화면이 열릴 때 읽는다.** 켜 둔 채 재고 돌아오는
-                        // 흐름이 흔해서, 처음 한 번만 읽으면 방금 잰 것이
-                        // 목록에 없다.
-                        androidx.compose.runtime.LaunchedEffect(capture.recordingId) {
-                            vm.refreshSessions()
-                        }
-                        HistoryScreen(
+                if (section.hasModeChips) {
+                    // RTA 는 차트가 화면을 꽉 채우는 화면이라 칩도 낮게 그린다.
+                    // 이 줄은 측정(SPL·기록)에만 나온다. 분석은 고르개를 차트
+                    // 안에서 그린다([NavSection.hasOwnModeSwitch]).
+                    ModeChips(section, mode) { picked ->
+                        mode = picked
+                        // 칩을 누르면 아래 탭도 따라온다. 두 줄이 서로 다른 곳을
+                        // 가리키면 지금 어디 있는지 알 수 없다.
+                        section = picked.section
+                    }
+                }
+
+                Box(Modifier.weight(1f)) {
+                    // **칩이 화면을 정한다.** 구역은 칩을 고르는 자리일 뿐이고,
+                    // `defaultMode` 가 「이 구역에 맞는 칩」을 보장한다. 예전에는
+                    // 구역으로 먼저 갈랐는데, 칩이 하나뿐이라 칩 줄이 사라진
+                    // 구역에서 둘이 어긋났다.
+                    //
+                    // 설정만 칩이 없어 따로 둔다.
+                    when (screen) {
+                        null -> SettingsScreen(
                             capture = capture,
-                            onOpen = vm::openSession,
-                            onClose = vm::closeSession,
-                            onExport = { vm.exportSession(it) },
-                            onExportPdf = { vm.exportReportPdf(it) },
-                            onDelete = vm::deleteSession,
-                            onDismissNotice = vm::dismissHistoryNotice,
-                            audioFileOf = { vm.audioFileOf(it) ?: java.io.File("") },
-                            onShareAudio = vm::shareAudioOnly,
-                            onMemo = vm::setSessionMemo,
-                            rows = capture.openedRows,
-                            onReanalyze = vm::reanalyzeSession,
-                            reanalyzeProgress = capture.reanalyzeProgress,
-                            onRestoreOriginal = vm::restoreOriginalAnalysis,
-                        )
-                    }
-                    ViewMode.Signal -> ToolsScreen(
-                        capture = capture,
-                        onPlaySignal = vm::playSignal,
-                        onStopSignal = vm::stopSignal,
-                        onSignalLevel = vm::setSignalLevel,
-                        onSignalToneHz = vm::setSignalToneHz,
-                        onSignalChannels = vm::setSignalChannels,
-                        onSignalOutput = vm::setSignalOutput,
-                        onDismissSignalNotice = vm::dismissSignalNotice,
-                        // **소리는 그대로 두고 화면만 옮긴다.** 재생은
-                        // 앱 전체가 함께 쓰는 ViewModel 이 들고 있으므로
-                        // 화면이 바뀌어도 끊기지 않는다.
-                        onMeasureInRta = {
-                            section = NavSection.Analyze
-                            mode = ViewMode.Rta
-                        },
-                    )
-                    // 캡처를 쓰지 않는다. 권한이 없어도 그대로 열린다.
-                    ViewMode.InstrumentEq -> InstrumentGuideScreen(
-                        capture = capture,
-                        // **측정 화면과 같은 길을 쓴다.** 권한이 없으면 먼저
-                        // 묻고, 있으면 곧바로 잰다 — 여기서 따로 시작하면
-                        // 알림 권한을 묻는 자리가 둘이 된다.
-                        onStartMeasure = {
-                            if (hasPermission) {
-                                beginMeasure()
-                            } else {
-                                askPermission.launch(Manifest.permission.RECORD_AUDIO)
-                            }
-                        },
-                    )
-                }
-
-                // **탭 내용 위에 덮는다.** 탭으로 두면 측정 중에 잘못
-                // 눌러 들어간다. 뒤로가기로 닫힌다.
-                if (wizardOpen) {
-                    BackHandler { wizardOpen = false; wizard.stopWork() }
-                    val example = if (wizardExample) remember { exampleOutcome() } else null
-                    // **잰 것이 있으면 잰 것을 보인다.** 예전에는 예시만
-                    // 넘기고 있어서, 세 번을 다 재고 5단계에 가도 화면이
-                    // 「아직 잰 것이 없습니다」였다 — 저장은 진짜 값으로
-                    // 되는데 **눈으로 볼 자리만 비어 있었다.** 5단계가 있는
-                    // 까닭이 저장 전에 보는 것이므로, 이건 단계 하나가
-                    // 통째로 없던 것과 같다(실기기 확인 2026-09-24).
-                    val shownOutcome = example ?: wizardState.outcome
-                    // 판정은 **저장 관문이 쓰는 것과 같은 함수**로 낸다
-                    // (WizardFlow.saveGate). 화면과 관문이 다른 판정을
-                    // 보이면 어느 쪽이 참인지 알 수 없다.
-                    val shownJudged: kr.joa.selahrta.dsp.QualityResult? = when {
-                        example != null -> exampleJudgement(example)
-                        shownOutcome != null && wizardState.quality != null ->
-                            kr.joa.selahrta.dsp.judgeCalibration(
-                                wizardState.quality!!,
-                                shownOutcome,
-                            )
-                        else -> null
-                    }
-                    Box(
-                        Modifier
-                            .fillMaxSize()
-                            .background(SelahColors.Background),
-                    ) {
-                        CalibrationWizardScreen(
-                            state = wizardState,
-                            shape = wizard.shape,
-                            noticeKo = wizardNotice,
-                            busyKo = wizardBusy,
-                            canMeasure = capture.opened != null,
-                            outcome = shownOutcome,
-                            judged = shownJudged,
-                            showingExample = wizardExample,
-                            // 확장자를 못 믿는 제공자가 많아 넓게 받는다.
+                            onSaveCalibration = vm::saveSimpleCalibration,
+                            onClearCalibration = vm::clearCalibration,
+                            onDismissCalibrationNotice = vm::dismissCalibrationNotice,
+                            onConfirmCalibrationRoute = vm::confirmCalibrationRoute,
+                            onConfirmPendingCalibration = vm::confirmPendingCalibration,
+                            onDismissPendingCalibration = vm::dismissPendingCalibration,
+                            onSplWeighting = vm::setSplWeighting,
+                            onPeakWeighting = vm::setPeakWeighting,
+                            onAnalysisWeighting = vm::setAnalysisWeighting,
+                            onResetSplWeighting = vm::resetSplWeighting,
+                            onResetPeakWeighting = vm::resetPeakWeighting,
+                            onResetAnalysisWeighting = vm::resetAnalysisWeighting,
+                            onFftSize = vm::setFftSize,
+                            onTimeWeight = vm::setTimeWeight,
+                            onLeqWindow = vm::setLeqWindow,
+                            onThemeMode = vm::setThemeMode,
+                            onPreferredInput = vm::setPreferredInput,
+                            onForgetDevice = vm::forgetDevice,
+                            onInputChannel = vm::setInputChannel,
+                            // 확장자를 못 믿는 제공자가 많아 형식을 넓게 받는다.
                             // 내용으로 판별하므로 잘못 고른 파일은 파서가 거른다.
-                            onPickCalFile = { pickWizardCal.launch(arrayOf("*/*")) },
-                            onChooseReading = wizard::chooseReading,
-                            onPhantom = wizard::acknowledgePhantom,
-                            onChooseHookup = wizard::chooseHookup,
-                            probeBlockedKo = if (capture.measure != MeasureState.Idle) {
-                                "재는 동안에는 탐색할 수 없습니다. 「측정」 화면에서 " +
-                                    "측정을 끝낸 뒤 돌아오십시오."
-                            } else {
-                                null
+                            onPickCurveFile = { pickCurve.launch(arrayOf("*/*")) },
+                            onClearCurve = vm::clearCurve,
+                            onToggleCurve = vm::setCurveEnabled,
+                            onConfirmCurveReading = vm::confirmCurveReading,
+                            onCurveMicName = vm::setCurveMicName,
+                            onDismissCurveNotice = vm::dismissCurveNotice,
+                            onOpenCalibrationWizard = { wizardOpen = true },
+                            onOpenCalibrationProfiles = {
+                                profiles.reload()
+                                profilesOpen = true
                             },
-                            onProbeMics = vm::probeMicrophones,
-                            onCaseRemoved = wizard::noteCaseRemoved,
-                            openedDeviceKey = capture.opened?.deviceKey,
-                            framesOf = wizard::framesFor,
-                            onRestartMeasurement = wizard::restartMeasurement,
-                            savedLabelKo = wizardSaved?.labelKo,
-                            canSave = capture.opened != null && wizardSaved == null,
-                            // **막힌 까닭은 마법사가 판단한다**(독립 검토 CA-01).
-                            // 화면이 스스로 셈하면 저장 쪽 판정과 어긋난다.
-                            // **수집 신원으로 견준다**(독립 재검토 CAR-01).
-                            // 열쇠만 보면 자리가 바뀐 내장 마이크가 그대로
-                            // 통과한다 — 열쇠에는 자리가 없다.
-                            transferBlockedKo = wizard.transferBlockedKo(wizardCapture.identity),
-                            onApplyLevelTransfer = { db ->
-                                vm.saveOffsetDirect(
-                                    db,
-                                    kr.joa.selahrta.calibration.CalibrationSource.FromReferenceMic,
-                                    expectedKey = wizard.transferTargetKey,
-                                )
+                            onSaveRange = vm::setRange,
+                            onResetRange = vm::resetRange,
+                            onRenameSegment = vm::setSegmentName,
+                            onAddSegment = vm::addSegment,
+                            onRemoveSegment = vm::removeSegment,
+                        )
+
+                        ViewMode.Spl -> MeasureScreen(
+                            capture = capture,
+                            onSegment = vm::setSegment,
+                            onAddSegment = vm::addSegment,
+                            hasPermission = hasPermission,
+                            onRequestPermission = {
+                                askPermission.launch(Manifest.permission.RECORD_AUDIO)
                             },
-                            onSave = {
-                                val opened = capture.opened
-                                if (opened != null) {
-                                    wizard.save(
-                                        currentProfileEnvironment(
-                                            opened, capture.inputs, deviceBuild,
-                                        ),
-                                        wizardCapture.identity,
-                                    )
+                            onStart = beginMeasure,
+                            onStop = vm::stop,
+                            onStartRecording = vm::askBeforeRecording,
+                            onStopRecording = vm::stopRecording,
+                            onDismissDeviceNotice = vm::dismissDeviceNotice,
+                        )
+                        ViewMode.Rta -> RtaScreen(
+                            capture,
+                            onMode = { mode = it },
+                            onSaveRtaCurve = vm::startRtaCapture,
+                            onCancelRtaCapture = vm::cancelRtaCapture,
+                            onStartRtaSequence = vm::startRtaSequence,
+                            onRtaOverlayShown = vm::setRtaOverlayShown,
+                            onRtaLiveVisible = vm::setRtaLiveVisible,
+                            onRenameRtaSet = vm::renameRtaSet,
+                            onDeleteRtaSet = vm::deleteRtaSet,
+                            onDeleteRtaMeasurement = vm::deleteRtaMeasurement,
+                            onDismissRtaNotice = vm::dismissRtaSaveNotice,
+                        )
+                        ViewMode.Spectrogram -> SpectrogramScreen(
+                            capture = capture,
+                            feed = spectrogram,
+                            onMode = { mode = it },
+                        )
+                        ViewMode.Spectrum -> SpectrumScreen(
+                            capture = capture,
+                            onMode = { mode = it },
+                        )
+                        ViewMode.Fr -> FrScreen(
+                            capture = capture,
+                            onMeasure = vm::measureResponse,
+                            onMeasureQuiet = vm::measureResponseQuiet,
+                            onMeasureSignal = vm::measureResponseSignal,
+                            onCancel = vm::cancelResponse,
+                            onPlayHere = vm::setResponsePlayHere,
+                            onDismissNotice = vm::dismissResponseNotice,
+                            // **이것이 빠져 있었다**(2026-09-26 담당자 보고).
+                            // 기본값 `{}` 이 그 사실을 감췄고, FR 에 들어오면
+                            // 나갈 길이 없었다. 기본값을 없애 두었으니 이제
+                            // 빠뜨리면 컴파일이 막는다.
+                            onMode = { mode = it },
+                        )
+                        // 지난 기록을 보는 화면이라 마이크가 필요 없다.
+                        ViewMode.History -> {
+                            // **화면이 열릴 때 읽는다.** 켜 둔 채 재고 돌아오는
+                            // 흐름이 흔해서, 처음 한 번만 읽으면 방금 잰 것이
+                            // 목록에 없다.
+                            androidx.compose.runtime.LaunchedEffect(capture.recordingId) {
+                                vm.refreshSessions()
+                            }
+                            HistoryScreen(
+                                capture = capture,
+                                onOpen = vm::openSession,
+                                onClose = vm::closeSession,
+                                onExport = { vm.exportSession(it) },
+                                onExportPdf = { vm.exportReportPdf(it) },
+                                onDelete = vm::deleteSession,
+                                onDismissNotice = vm::dismissHistoryNotice,
+                                audioFileOf = { vm.audioFileOf(it) ?: java.io.File("") },
+                                onShareAudio = vm::shareAudioOnly,
+                                onMemo = vm::setSessionMemo,
+                                rows = capture.openedRows,
+                                onReanalyze = vm::reanalyzeSession,
+                                reanalyzeProgress = capture.reanalyzeProgress,
+                                onRestoreOriginal = vm::restoreOriginalAnalysis,
+                            )
+                        }
+                        ViewMode.Signal -> ToolsScreen(
+                            capture = capture,
+                            onPlaySignal = vm::playSignal,
+                            onStopSignal = vm::stopSignal,
+                            onSignalLevel = vm::setSignalLevel,
+                            onSignalToneHz = vm::setSignalToneHz,
+                            onSignalChannels = vm::setSignalChannels,
+                            onSignalOutput = vm::setSignalOutput,
+                            onDismissSignalNotice = vm::dismissSignalNotice,
+                            // **소리는 그대로 두고 화면만 옮긴다.** 재생은
+                            // 앱 전체가 함께 쓰는 ViewModel 이 들고 있으므로
+                            // 화면이 바뀌어도 끊기지 않는다.
+                            onMeasureInRta = {
+                                section = NavSection.Analyze
+                                mode = ViewMode.Rta
+                            },
+                        )
+                        // 캡처를 쓰지 않는다. 권한이 없어도 그대로 열린다.
+                        ViewMode.InstrumentEq -> InstrumentGuideScreen(
+                            capture = capture,
+                            // **측정 화면과 같은 길을 쓴다.** 권한이 없으면 먼저
+                            // 묻고, 있으면 곧바로 잰다 — 여기서 따로 시작하면
+                            // 알림 권한을 묻는 자리가 둘이 된다.
+                            onStartMeasure = {
+                                if (hasPermission) {
+                                    beginMeasure()
+                                } else {
+                                    askPermission.launch(Manifest.permission.RECORD_AUDIO)
                                 }
                             },
-                            onMeasure = { step ->
-                                val spec = vm.rtaSpec()
-                                if (spec != null) {
-                                    wizard.measureStep(
-                                        step = step,
-                                        capture = wizardCapture,
-                                        fftSize = spec.first,
-                                        sampleRate = spec.second,
-                                        tick = { kotlinx.coroutines.delay(30) },
-                                    )
-                                }
-                            },
-                            onRunInputCheck = {
-                                val spec = vm.rtaSpec()
-                                if (spec != null) {
-                                    wizard.runInputCheck(
-                                        capture = wizardCapture,
-                                        fftSize = spec.first,
-                                        sampleRate = spec.second,
-                                        // 한 틱은 FFT 한 장이 나올 만한 시간보다
-                                        // 조금 짧게 둔다 — 길면 장을 건너뛰고,
-                                        // 너무 짧으면 헛돈다.
-                                        tick = { kotlinx.coroutines.delay(30) },
-                                    )
-                                }
-                            },
-                            onNext = wizard::goNext,
-                            onBack = wizard::goBack,
-                            onGoTo = wizard::goTo,
-                            onToggleExample = { wizardExample = !wizardExample },
-                            onDismissNotice = wizard::dismissNotice,
-                            // **닫으면 재기도 끊는다.** 예전에는 화면 값만
-                            // 바꿨고, 도는 작업은 그대로 남아 소리를 틀었다.
-                            onClose = { wizardOpen = false; wizard.stopWork() },
                         )
                     }
-                }
 
-                if (profilesOpen) {
-                    BackHandler { profilesOpen = false }
-                    Box(
-                        Modifier
-                            .fillMaxSize()
-                            .background(SelahColors.Background),
-                    ) {
-                        CalibrationProfilesScreen(
-                            state = profilesState,
-                            // **열린 값으로 대조한다.** 요청한 값이 아니라
-                            // 실제로 열린 경로여야 「지금 걸리는가」가 참이다.
-                            now = capture.opened?.let {
-                                currentProfileEnvironment(it, capture.inputs, deviceBuild)
-                            },
-                            onToggle = profiles::setEnabled,
-                            onDelete = profiles::delete,
-                            onOpen = profiles::open,
-                            onCloseOpened = profiles::close,
-                            onDismissNotice = profiles::dismissNotice,
-                            onClose = { profilesOpen = false },
+                    // **탭 내용 위에 덮는다.** 탭으로 두면 측정 중에 잘못
+                    // 눌러 들어간다. 뒤로가기로 닫힌다.
+                    if (wizardOpen) {
+                        BackHandler { wizardOpen = false; wizard.stopWork() }
+                        val example = if (wizardExample) remember { exampleOutcome() } else null
+                        // **잰 것이 있으면 잰 것을 보인다.** 예전에는 예시만
+                        // 넘기고 있어서, 세 번을 다 재고 5단계에 가도 화면이
+                        // 「아직 잰 것이 없습니다」였다 — 저장은 진짜 값으로
+                        // 되는데 **눈으로 볼 자리만 비어 있었다.** 5단계가 있는
+                        // 까닭이 저장 전에 보는 것이므로, 이건 단계 하나가
+                        // 통째로 없던 것과 같다(실기기 확인 2026-09-24).
+                        val shownOutcome = example ?: wizardState.outcome
+                        // 판정은 **저장 관문이 쓰는 것과 같은 함수**로 낸다
+                        // (WizardFlow.saveGate). 화면과 관문이 다른 판정을
+                        // 보이면 어느 쪽이 참인지 알 수 없다.
+                        val shownJudged: kr.joa.selahrta.dsp.QualityResult? = when {
+                            example != null -> exampleJudgement(example)
+                            shownOutcome != null && wizardState.quality != null ->
+                                kr.joa.selahrta.dsp.judgeCalibration(
+                                    wizardState.quality!!,
+                                    shownOutcome,
+                                )
+                            else -> null
+                        }
+                        Box(
+                            Modifier
+                                .fillMaxSize()
+                                .background(SelahColors.Background),
+                        ) {
+                            CalibrationWizardScreen(
+                                state = wizardState,
+                                shape = wizard.shape,
+                                noticeKo = wizardNotice,
+                                busyKo = wizardBusy,
+                                canMeasure = capture.opened != null,
+                                outcome = shownOutcome,
+                                judged = shownJudged,
+                                showingExample = wizardExample,
+                                // 확장자를 못 믿는 제공자가 많아 넓게 받는다.
+                                // 내용으로 판별하므로 잘못 고른 파일은 파서가 거른다.
+                                onPickCalFile = { pickWizardCal.launch(arrayOf("*/*")) },
+                                onChooseReading = wizard::chooseReading,
+                                onPhantom = wizard::acknowledgePhantom,
+                                onChooseHookup = wizard::chooseHookup,
+                                probeBlockedKo = if (capture.measure != MeasureState.Idle) {
+                                    "재는 동안에는 탐색할 수 없습니다. 「측정」 화면에서 " +
+                                        "측정을 끝낸 뒤 돌아오십시오."
+                                } else {
+                                    null
+                                },
+                                onProbeMics = vm::probeMicrophones,
+                                onCaseRemoved = wizard::noteCaseRemoved,
+                                openedDeviceKey = capture.opened?.deviceKey,
+                                framesOf = wizard::framesFor,
+                                onRestartMeasurement = wizard::restartMeasurement,
+                                savedLabelKo = wizardSaved?.labelKo,
+                                canSave = capture.opened != null && wizardSaved == null,
+                                // **막힌 까닭은 마법사가 판단한다**(독립 검토 CA-01).
+                                // 화면이 스스로 셈하면 저장 쪽 판정과 어긋난다.
+                                // **수집 신원으로 견준다**(독립 재검토 CAR-01).
+                                // 열쇠만 보면 자리가 바뀐 내장 마이크가 그대로
+                                // 통과한다 — 열쇠에는 자리가 없다.
+                                transferBlockedKo = wizard.transferBlockedKo(wizardCapture.identity),
+                                onApplyLevelTransfer = { db ->
+                                    vm.saveOffsetDirect(
+                                        db,
+                                        kr.joa.selahrta.calibration.CalibrationSource.FromReferenceMic,
+                                        expectedKey = wizard.transferTargetKey,
+                                    )
+                                },
+                                onSave = {
+                                    val opened = capture.opened
+                                    if (opened != null) {
+                                        wizard.save(
+                                            currentProfileEnvironment(
+                                                opened, capture.inputs, deviceBuild,
+                                            ),
+                                            wizardCapture.identity,
+                                        )
+                                    }
+                                },
+                                onMeasure = { step ->
+                                    val spec = vm.rtaSpec()
+                                    if (spec != null) {
+                                        wizard.measureStep(
+                                            step = step,
+                                            capture = wizardCapture,
+                                            fftSize = spec.first,
+                                            sampleRate = spec.second,
+                                            tick = { kotlinx.coroutines.delay(30) },
+                                        )
+                                    }
+                                },
+                                onRunInputCheck = {
+                                    val spec = vm.rtaSpec()
+                                    if (spec != null) {
+                                        wizard.runInputCheck(
+                                            capture = wizardCapture,
+                                            fftSize = spec.first,
+                                            sampleRate = spec.second,
+                                            // 한 틱은 FFT 한 장이 나올 만한 시간보다
+                                            // 조금 짧게 둔다 — 길면 장을 건너뛰고,
+                                            // 너무 짧으면 헛돈다.
+                                            tick = { kotlinx.coroutines.delay(30) },
+                                        )
+                                    }
+                                },
+                                onNext = wizard::goNext,
+                                onBack = wizard::goBack,
+                                onGoTo = wizard::goTo,
+                                onToggleExample = { wizardExample = !wizardExample },
+                                onDismissNotice = wizard::dismissNotice,
+                                // **닫으면 재기도 끊는다.** 예전에는 화면 값만
+                                // 바꿨고, 도는 작업은 그대로 남아 소리를 틀었다.
+                                onClose = { wizardOpen = false; wizard.stopWork() },
+                            )
+                        }
+                    }
+
+                    if (profilesOpen) {
+                        BackHandler { profilesOpen = false }
+                        Box(
+                            Modifier
+                                .fillMaxSize()
+                                .background(SelahColors.Background),
+                        ) {
+                            CalibrationProfilesScreen(
+                                state = profilesState,
+                                // **열린 값으로 대조한다.** 요청한 값이 아니라
+                                // 실제로 열린 경로여야 「지금 걸리는가」가 참이다.
+                                now = capture.opened?.let {
+                                    currentProfileEnvironment(it, capture.inputs, deviceBuild)
+                                },
+                                onToggle = profiles::setEnabled,
+                                onDelete = profiles::delete,
+                                onOpen = profiles::open,
+                                onCloseOpened = profiles::close,
+                                onDismissNotice = profiles::dismissNotice,
+                                onClose = { profilesOpen = false },
+                            )
+                        }
+                    }
+
+                    if (transferOpen) {
+                        // 닫으면 소리도 멈춘다. 앱이 뒤로 가면(ON_STOP) vm 이 전체 정지하고 세션이 끝난다.
+                        BackHandler { transfer.stop(null); transferOpen = false }
+                        val tf by transfer.state.collectAsStateWithLifecycle()
+                        var preconditionKo by remember { mutableStateOf<String?>(null) }
+                        // 시작 전 조건은 1초마다 다시 본다(입력 확인·출력 설정이 바뀔 수 있다).
+                        LaunchedEffect(tf.running) {
+                            while (!tf.running) {
+                                preconditionKo = transfer.refreshPreconditions()
+                                kotlinx.coroutines.delay(1_000)
+                            }
+                        }
+                        // 1초 박자 — 무거운 계산은 백그라운드, 판정·게시는 주 스레드(TF 설계 5장).
+                        LaunchedEffect(tf.running) {
+                            while (tf.running) {
+                                kotlinx.coroutines.delay(1_000)
+                                val token = transfer.beginTick() ?: continue
+                                val outcome = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                                    transfer.measure()
+                                }
+                                transfer.finishTick(token, outcome)
+                            }
+                        }
+                        kr.joa.selahrta.ui.screens.transfer.SimpleTransferScreen(
+                            state = tf,
+                            preconditionKo = preconditionKo,
+                            onStart = { transfer.start() },
+                            onStop = { transfer.stop(null) },
+                            onClose = { transfer.stop(null); transferOpen = false },
                         )
                     }
                 }

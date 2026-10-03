@@ -9,8 +9,12 @@ package kr.joa.selahrta.dsp
  *   표본 번호가 이어지지 않는다** — 한 직선으로 맞추면 안 된다.
  * @param timebase 이 측정의 **시간축이 검증됐는가**(6회차 R6-02). 엔진은 그것을
  *   스스로 알 수 없으므로 기본이 [TimebaseStatus.Unverified] 다. **소비자는
- *   [TimebaseStatus.Verified] 가 아니면 [transfer] 를 정상 측정 곡선으로 게시하지
+ *   [TimebaseStatus.Verified] 가 아닌 [transfer] 를 정상·검증된 측정 곡선으로 게시하지
  *   않는다** — 합성 ±20/−50 ppm 에서 지연은 찾았는데 고역이 −1.8/−12 dB 로 무너졌다.
+ *   **진단용으로 보이려면** 같은 화면에 미검증·클럭 드리프트 미확인임을 밝히는 경고를
+ *   결과와 함께 늘 둔다. 이렇게 보인 결과는 정상 측정도, 상대 비교의 정확도도 뜻하지
+ *   않는다(TF 설계 8장 — 34회차 수용 문구. 처음엔 「정상 측정 곡선으로 게시하지 않는다」
+ *   한 문장뿐이었다).
  */
 data class TransferMeasurement(
     val delay: DelayResult,
