@@ -902,6 +902,21 @@ R6-04 부분 종결. Medium 넷을 고쳤습니다. **실기기·가짜 입출�
 
 ---
 
+### 32회차 회신 뒤 — 설계 4판 (방향 전환, R32-01~04)
+
+판정 「구현·병합 보류」(High 1 · Medium 3). R31-04 닫힘, R31-03 교대 반례 해결. High 셋(R30-01·R31-01·R32-01)이 모두
+「TF 전용 플레이어」에서 나와, 담당자 승인으로 **TF 가 앱의 유일한 플레이어(`CaptureViewModel:769`)를 같이 쓰는 방향**으로 바꿨습니다.
+
+| 지적 | 4판 |
+|---|---|
+| R32-01 High | 4.1 — 인계 없음. TF 시작은 늘 FR·마법사 취소 + 그 신호 시작 자리에 `ensureActive()`. TF 세션 중 `playSignal` 입구 거절(의도 번호 올리기 전) |
+| R32-02 Medium | 4판엔 「정리 완료」에 기대는 인계가 없음. 열기 실패 자원은 `unverified` 3-5 에 기존 플레이어의 성질로 |
+| R32-03 Medium | 3.3 — 통지마다 `onRouteSnapshot`(같아도), `captureId`·`blockSeq`, `TransferIngest` 한 자물쇠 |
+| R32-04 Medium | 6.1 — 순서식 판정 표, `lastObserved`/`lastPublished`, epoch 마다 처음 값, 못 맞춤 10박자 |
+| 그 밖 | 3.2 출력 설정 「유선」 + 실제 USB 확인 · 4.2 `nextTap` · 4.4 `onTransferPlaybackEnded` |
+
+---
+
 ## 지난 회차에 보낸 것 — **판정이 다 났습니다**
 
 프로즈를 걷어내고 표로 남깁니다. **읽어야 할 것은 위의 새 절들**이고,
